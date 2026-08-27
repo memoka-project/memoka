@@ -211,6 +211,17 @@ pub(crate) fn sync_directory(path: &Path) -> Result<(), PersistenceError> {
     Ok(())
 }
 
+pub(crate) fn sync_file(path: &Path) -> Result<(), PersistenceError> {
+    // FlushFileBuffers requires a handle opened for writing on Windows. A
+    // read-only `File::open` handle happens to work with fsync on Unix, but
+    // returns ERROR_ACCESS_DENIED on Windows.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .sync_all()?;
+    Ok(())
+}
+
 pub struct ProductStore {
     pub(crate) connection: Connection,
     pub(crate) root: PathBuf,

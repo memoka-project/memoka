@@ -9,7 +9,9 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
+use crate::persistence::{
+    PersistenceError, ProductPersistenceState, ProductStore, sync_directory, sync_file,
+};
 
 pub(crate) const MAX_ATTACHMENT_BYTES: u64 = 128 * 1024 * 1024;
 pub(crate) const MAX_BATCH_FILES: usize = 16;
@@ -732,7 +734,7 @@ fn materialize_attachment(
     };
     if copy_required {
         fs::copy(&source, &target)?;
-        File::open(&target)?.sync_all()?;
+        sync_file(&target)?;
     }
     sync_directory(&directory)?;
     Ok((metadata, target))
@@ -1328,7 +1330,7 @@ fn publish_cas_object(
     // staging cleanup from leaving a writable hard link to an immutable CAS
     // object.
     fs::copy(staging, &temporary)?;
-    File::open(&temporary)?.sync_all()?;
+    sync_file(&temporary)?;
     match fs::rename(&temporary, &target) {
         Ok(()) => {}
         Err(error) if target.exists() => {

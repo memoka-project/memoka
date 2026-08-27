@@ -14,7 +14,9 @@ use crate::attachment::{
     resolve_attachment_cas_source, validate_filename, validate_mime_hint, validate_uuid_v7,
 };
 use crate::data_area::MIRROR_UPDATE_MARKER;
-use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
+use crate::persistence::{
+    PersistenceError, ProductPersistenceState, ProductStore, sync_directory, sync_file,
+};
 
 pub const PORTABLE_MIRROR_SCHEMA_VERSION: u32 = 1;
 pub const PORTABLE_MANIFEST_FILE: &str = "memoka-manifest.json";
@@ -347,7 +349,7 @@ fn commit_operation_with_hook(
     let request = &context.request;
     let manifest = parse_and_validate_manifest(&request.manifest, &request.items)?;
     for (index, item) in request.items.iter().enumerate() {
-        File::open(staging_file(&directory, index))?.sync_all()?;
+        sync_file(&staging_file(&directory, index))?;
         verify_file(
             &staging_file(&directory, index),
             &item.sha256,
@@ -413,7 +415,7 @@ fn commit_operation_with_hook(
 
     let manifest_staging = directory.join("manifest.publish.tmp");
     fs::write(&manifest_staging, request.manifest.as_bytes())?;
-    File::open(&manifest_staging)?.sync_all()?;
+    sync_file(&manifest_staging)?;
     let manifest_target = data_area.join(PORTABLE_MANIFEST_FILE);
     #[cfg(target_os = "windows")]
     if manifest_target.exists() {
@@ -532,7 +534,7 @@ pub fn restore_portable_mirror(source: &Path, target: &Path) -> Result<(), Persi
                 create_safe_directories(&target, parent, &mut affected_directories)?;
             }
             fs::copy(source_file, &target_file)?;
-            File::open(&target_file)?.sync_all()?;
+            sync_file(&target_file)?;
             if let Some(parent) = target_file.parent() {
                 affected_directories.insert(parent.to_path_buf());
             }
@@ -541,7 +543,7 @@ pub fn restore_portable_mirror(source: &Path, target: &Path) -> Result<(), Persi
         sync_directories(&affected_directories)?;
         let target_manifest = target.join(PORTABLE_MANIFEST_FILE);
         fs::copy(source.join(PORTABLE_MANIFEST_FILE), &target_manifest)?;
-        File::open(&target_manifest)?.sync_all()?;
+        sync_file(&target_manifest)?;
         copied.push(target_manifest);
         fs::rename(&staging_internal, target.join(".memoka"))?;
         internal_published = true;
@@ -711,7 +713,7 @@ fn restore_attachments(
         }
         if !object.exists() {
             fs::copy(source_file, &object)?;
-            File::open(&object)?.sync_all()?;
+            sync_file(&object)?;
         }
         store.connection.execute(
             "INSERT INTO attachment_objects (sha256, size, created_at)
