@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Memoka",
+  "version": "0.1.0",
+  "identifier": "dev.memoka.desktop",
+  "mainBinaryName": "memoka",
+  "build": {
+    "beforeDevCommand": "corepack pnpm dev",
+    "devUrl": "http://127.0.0.1:1421",
+    "beforeBuildCommand": "corepack pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost ws: http:; img-src 'self' data: blob: memoka-attachment: http://memoka-attachment.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "title": "Memoka",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "decorations": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "Jun Ando",
+    "homepage": "https://github.com/memoka-project/memoka",
+    "shortDescription": "Vimの操作感でMarkdownを意識せず書けるローカルファーストのメモ帳",
+    "longDescription": "Memoka is a local-first structured notes application with Vim-style editing.",
+    "category": "Productivity",
+    "copyright": "Copyright © 2026 Jun Ando and contributors",
+    "licenseFile": "../LICENSE",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": ["../LICENSE", "../PRIVACY.md", "../THIRD_PARTY_NOTICES.md"]
+  }
+}

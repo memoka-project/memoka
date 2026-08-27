@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm release:check-version
+      - name: Verify the committed third-party inventory
+        run: |
+          corepack pnpm release:notices
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md
+      - run: corepack pnpm verify
+      - run: corepack pnpm large-note-gate
+      - name: Compile the Win32 Clipboard and IME contract on Linux
+        run: cargo check -p memoka-desktop --tests --features windows-clipboard-contract
+      - run: corepack pnpm cli:build
+      - name: Assert the standalone CLI has no GTK/WebKit linkage
+        run: |
+          if ldd target/release/memoka-cli | grep -E 'gtk|webkit|javascriptcore'; then
+            echo 'memoka-cli must not link the desktop GUI stack' >&2
+            exit 1
+          fi
+
+  verify-windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm format:check
+      - run: corepack pnpm lint
+      - run: corepack pnpm typecheck
+      - run: corepack pnpm test
+      - run: cargo test -p memoka-desktop
+      - run: corepack pnpm build
+      - run: corepack pnpm cli:build

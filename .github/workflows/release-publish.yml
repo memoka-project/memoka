@@ -1,0 +1,39 @@
+name: Publish an existing tested release draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tested draft version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish-without-rebuild:
+    runs-on: ubuntu-24.04
+    environment: release-publication
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify version and draft state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          version="$(node scripts/check-release-version.mjs --version='${{ inputs.version }}')"
+          test "$(gh release view "v${version}" --json isDraft --jq .isDraft)" = true
+          test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name == "latest.json") | .name')"
+          test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name == "SHA256SUMS") | .name')"
+          test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name | endswith(".spdx.json")) | .name')"
+          mkdir release-verification
+          gh release download "v${version}" --pattern latest.json --pattern SHA256SUMS --dir release-verification
+          test "$(jq '.platforms | length' release-verification/latest.json)" -ge 2
+      - name: Publish the exact tested assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v${{ inputs.version }}" --draft=false --latest
