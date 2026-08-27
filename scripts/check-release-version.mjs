@@ -30,7 +30,10 @@ if (!/^\d+\.\d+\.\d+$/u.test(version)) {
 const requested = process.argv
   .find((argument) => argument.startsWith("--version="))
   ?.slice("--version=".length);
-const tag = process.env.GITHUB_REF_NAME?.replace(/^v/u, "");
+const tag =
+  process.env.GITHUB_REF_TYPE === "tag"
+    ? process.env.GITHUB_REF_NAME?.replace(/^v/u, "")
+    : undefined;
 for (const [source, candidate] of [
   ["--version", requested],
   ["GITHUB_REF_NAME", tag],
