@@ -191,6 +191,26 @@ impl From<serde_json::Error> for PersistenceError {
     }
 }
 
+pub(crate) fn sync_directory(path: &Path) -> Result<(), PersistenceError> {
+    #[cfg(target_os = "windows")]
+    {
+        // std::fs cannot open a directory for FlushFileBuffers on Windows.
+        // The individual files are synced before publication; retain the
+        // existence/type check here so callers still reject an invalid path.
+        if !fs::metadata(path)?.is_dir() {
+            return Err(PersistenceError::InvalidInput(format!(
+                "directory sync target is not a directory: {}",
+                path.display()
+            )));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::File::open(path)?.sync_all()?;
+    }
+    Ok(())
+}
+
 pub struct ProductStore {
     pub(crate) connection: Connection,
     pub(crate) root: PathBuf,

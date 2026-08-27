@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 
-use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore};
+use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
 use crate::portable_mirror::PortableMirrorOperationState;
 
 const DATA_AREA_SCHEMA_VERSION: u32 = 1;
@@ -172,11 +172,6 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Persist
         fs::remove_file(path)?;
     }
     fs::rename(staging, path)?;
-    Ok(())
-}
-
-fn sync_directory(path: &Path) -> Result<(), PersistenceError> {
-    File::open(path)?.sync_all()?;
     Ok(())
 }
 

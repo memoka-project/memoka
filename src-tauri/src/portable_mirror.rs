@@ -14,7 +14,7 @@ use crate::attachment::{
     resolve_attachment_cas_source, validate_filename, validate_mime_hint, validate_uuid_v7,
 };
 use crate::data_area::MIRROR_UPDATE_MARKER;
-use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore};
+use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
 
 pub const PORTABLE_MIRROR_SCHEMA_VERSION: u32 = 1;
 pub const PORTABLE_MANIFEST_FILE: &str = "memoka-manifest.json";
@@ -1220,11 +1220,6 @@ fn write_json_staging_file<T: Serialize>(path: &Path, value: &T) -> Result<(), P
         .open(path)?;
     serde_json::to_writer_pretty(&mut file, value)?;
     file.write_all(b"\n")?;
-    Ok(())
-}
-
-fn sync_directory(path: &Path) -> Result<(), PersistenceError> {
-    File::open(path)?.sync_all()?;
     Ok(())
 }
 

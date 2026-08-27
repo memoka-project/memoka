@@ -9,7 +9,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore};
+use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
 
 pub(crate) const MAX_ATTACHMENT_BYTES: u64 = 128 * 1024 * 1024;
 pub(crate) const MAX_BATCH_FILES: usize = 16;
@@ -1433,11 +1433,6 @@ fn is_previewable_mime(mime_type: &str) -> bool {
 
 fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn sync_directory(path: &Path) -> Result<(), PersistenceError> {
-    File::open(path)?.sync_all()?;
-    Ok(())
 }
 
 #[cfg(test)]
