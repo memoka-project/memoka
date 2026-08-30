@@ -6,10 +6,20 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 
 ## 対応環境とインストール
 
-v0.1.0の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。GitHub ReleasesからWindowsは
-NSIS、LinuxはAppImageまたはdebを取得し、同じReleaseの`SHA256SUMS`でdownloadを検証してください。
-AppImageは実行権限を付けて直接起動でき、debはOSのpackage managerでinstallします。macOS、ARM、
-Microsoft Store、apt repositoryはまだ提供しません。
+v0.1.0の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。公式binaryとして配布するのは
+Linux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを取得し、同じReleaseの
+`SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。AppImageの更新artifactは
+Tauri Updater用の鍵で署名します。deb、macOS、ARM、Microsoft Store、apt repositoryは提供しません。
+
+Windowsはコード署名済みbinaryを配布せず、GitHub ReleaseのSource code archiveまたはrepositoryから
+取得したsourceを利用環境上でbuildします。Node.js、Corepack、Rust、Tauri 2のWindows向け依存環境を
+用意したPowerShellで次を実行してください。生成されるローカルbuildは公式署名・自動更新の対象外です。
+
+```powershell
+corepack pnpm install --frozen-lockfile
+corepack pnpm verify
+corepack pnpm tauri:build
+```
 
 Wayland / fcitx5では、環境によって日本語変換候補windowがcaretからずれて表示される既知制約があります。
 入力欠落や二重確定とは分離して追跡しています。問題が大きい場合は`GTK_IM_MODULE=fcitx`を設定して起動し、

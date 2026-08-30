@@ -30,9 +30,11 @@ jobs:
           test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name == "latest.json") | .name')"
           test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name == "SHA256SUMS") | .name')"
           test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name | endswith(".spdx.json")) | .name')"
+          test -n "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name | endswith(".AppImage")) | .name')"
+          test -z "$(gh release view "v${version}" --json assets --jq '.assets[] | select(.name | endswith(".exe") or endswith(".msi")) | .name')"
           mkdir release-verification
           gh release download "v${version}" --pattern latest.json --pattern SHA256SUMS --dir release-verification
-          test "$(jq '.platforms | length' release-verification/latest.json)" -ge 2
+          jq -e '.platforms | length >= 1 and all(keys[]; startswith("linux-"))' release-verification/latest.json
       - name: Publish the exact tested assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

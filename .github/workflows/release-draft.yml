@@ -1,4 +1,4 @@
-name: Build signed release draft
+name: Build Linux release draft
 
 on:
   push:
@@ -48,31 +48,16 @@ jobs:
       - run: corepack pnpm verify
       - run: corepack pnpm large-note-gate
 
-  build:
+  build-linux:
     needs: validate
     permissions:
       contents: write
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            platform: linux
-          - os: windows-2025
-            platform: windows
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     environment: release-signing
     env:
       MEMOKA_UPDATER_PUBLIC_KEY: ${{ vars.MEMOKA_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      AZURE_CLIENT_ID: ${{ matrix.platform == 'windows' && secrets.AZURE_CLIENT_ID || '' }}
-      AZURE_CLIENT_SECRET: ${{ matrix.platform == 'windows' && secrets.AZURE_CLIENT_SECRET || '' }}
-      AZURE_TENANT_ID: ${{ matrix.platform == 'windows' && secrets.AZURE_TENANT_ID || '' }}
-      AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ matrix.platform == 'windows' && vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || '' }}
-      AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ matrix.platform == 'windows' && vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || '' }}
-      AZURE_ARTIFACT_SIGNING_PROFILE: ${{ matrix.platform == 'windows' && vars.AZURE_ARTIFACT_SIGNING_PROFILE || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,65 +68,39 @@ jobs:
         with:
           workspaces: . -> target
       - name: Install Linux bundle dependencies
-        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - name: Install Azure Artifact Signing CLI
-        if: matrix.platform == 'windows'
-        run: cargo install artifact-signing-cli --locked
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - name: Create release-only Tauri configuration
-        run: node scripts/prepare-release-config.mjs --platform=${{ matrix.platform }}
-      - uses: tauri-apps/tauri-action@v0
+        run: node scripts/prepare-release-config.mjs --platform=linux
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v${{ needs.validate.outputs.version }}
           releaseName: Memoka v${{ needs.validate.outputs.version }}
-          releaseBody: See CHANGELOG.md. This draft must pass the native release gate before publication.
+          releaseBody: Linux x86_64 AppImage release. Windows is distributed as source code only. See CHANGELOG.md. This draft must pass the native release gate before publication.
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           args: --config src-tauri/tauri.release.generated.json
       - name: Build standalone recovery CLI
         run: corepack pnpm cli:build
-      - name: Sign standalone Windows recovery CLI
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: artifact-signing-cli -e $env:AZURE_ARTIFACT_SIGNING_ENDPOINT -a $env:AZURE_ARTIFACT_SIGNING_ACCOUNT -c $env:AZURE_ARTIFACT_SIGNING_PROFILE -d "Memoka recovery CLI" target/release/memoka-cli.exe
-      - name: Verify every Windows Authenticode signature
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $files = @("target/release/memoka.exe", "target/release/memoka-cli.exe") + @(Get-ChildItem target/release/bundle -Recurse -Filter *.exe | ForEach-Object FullName)
-          foreach ($file in $files) {
-            $signature = Get-AuthenticodeSignature $file
-            if ($signature.Status -ne "Valid") {
-              throw "Invalid Authenticode signature: $file ($($signature.Status))"
-            }
-          }
       - name: Stage recovery CLI
         run: node scripts/stage-cli-release.mjs
       - name: Archive CLI on Linux
-        if: matrix.platform == 'linux'
         shell: bash
         run: tar -C dist-release -czf dist-release/memoka-cli-v${{ needs.validate.outputs.version }}-linux-x64.tar.gz memoka-cli-v${{ needs.validate.outputs.version }}-linux-x64
-      - name: Archive CLI on Windows
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: Compress-Archive -Path "dist-release/memoka-cli-v${{ needs.validate.outputs.version }}-windows-x64" -DestinationPath "dist-release/memoka-cli-v${{ needs.validate.outputs.version }}-windows-x64.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: release-linux-support
           if-no-files-found: error
-          path: |
-            dist-release/*.tar.gz
-            dist-release/*.zip
+          path: dist-release/*.tar.gz
 
   finalize:
-    needs: [validate, build]
+    needs: [validate, build-linux]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -149,15 +108,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-*
+          name: release-linux-support
           path: release-assets
-          merge-multiple: true
       - name: Upload standalone CLI archives to the existing draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          find release-assets -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 gh release upload "v${{ needs.validate.outputs.version }}" --clobber
+          find release-assets -type f -name '*.tar.gz' -print0 | xargs -0 gh release upload "v${{ needs.validate.outputs.version }}" --clobber
       - uses: anchore/sbom-action@v0
         with:
           path: .
@@ -173,7 +131,13 @@ jobs:
           gh release download "v${{ needs.validate.outputs.version }}" --dir release-assets
           latest_json="$(find release-assets -type f -name latest.json -print -quit)"
           test -n "$latest_json"
-          test "$(jq '.platforms | length' "$latest_json")" -ge 2
+          jq -e '.platforms | length >= 1 and all(keys[]; startswith("linux-"))' "$latest_json"
+          test -n "$(find release-assets -type f -name '*.AppImage' -print -quit)"
+          test -n "$(find release-assets -type f -name '*.AppImage.sig' -print -quit)"
+          if find release-assets -type f \( -iname '*.exe' -o -iname '*.msi' \) -print -quit | grep -q .; then
+            echo 'Windows binaries must not be attached to a public release' >&2
+            exit 1
+          fi
       - name: Generate portable SHA-256 checksums
         shell: bash
         run: |
