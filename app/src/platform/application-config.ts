@@ -10,12 +10,14 @@ import { validateVimKeyConfig } from "../vim/input";
 interface ApplicationKeyConfigLoadWire {
   readonly configPath: string;
   readonly config: PartialApplicationKeyConfig | null;
+  readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
 
 export interface LoadedApplicationKeyConfig {
   readonly config: ApplicationKeyConfig;
   readonly configPath: string | null;
+  readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
 
@@ -24,6 +26,7 @@ export async function loadApplicationKeyConfig(): Promise<LoadedApplicationKeyCo
     return {
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: null,
+      waitForMirrorOnExit: true,
       warning: null,
     };
   }
@@ -38,6 +41,7 @@ export async function loadApplicationKeyConfig(): Promise<LoadedApplicationKeyCo
     return {
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: null,
+      waitForMirrorOnExit: true,
       warning,
     };
   }
@@ -46,6 +50,7 @@ export async function loadApplicationKeyConfig(): Promise<LoadedApplicationKeyCo
     return {
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: loaded.configPath,
+      waitForMirrorOnExit: true,
       warning: loaded.warning,
     };
   }
@@ -57,6 +62,7 @@ export async function loadApplicationKeyConfig(): Promise<LoadedApplicationKeyCo
     return {
       config,
       configPath: loaded.configPath,
+      waitForMirrorOnExit: loaded.waitForMirrorOnExit,
       warning: null,
     };
   } catch (cause) {
@@ -65,6 +71,7 @@ export async function loadApplicationKeyConfig(): Promise<LoadedApplicationKeyCo
     return {
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: loaded.configPath,
+      waitForMirrorOnExit: true,
       warning,
     };
   }

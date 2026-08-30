@@ -82,6 +82,100 @@ describe("custom application window chrome", () => {
     await screen.findByRole("button", { name: "Memokaを最大化" });
   });
 
+  it("closes after canonical persistence without waiting for the derived mirror", async () => {
+    let closeRequested: (() => void | Promise<void>) | null = null;
+    const forceClose = vi.fn(async () => undefined);
+    const listAttachments = vi.fn(async () => {
+      throw new Error("the shutdown path must not start a mirror publication");
+    });
+    const fixture = createDesktopWindowFixture();
+    fixture.port.subscribeToCloseRequested = vi.fn(async (listener) => {
+      closeRequested = listener;
+      return () => undefined;
+    });
+    const requestNativeClose = async (): Promise<void> => {
+      if (!closeRequested) throw new Error("Close request was not subscribed");
+      await closeRequested();
+    };
+    fixture.port.forceClose = forceClose;
+    const view = render(
+      <App
+        desktopWindow={fixture.port}
+        portableMirror={{
+          listAttachments,
+          publish: async () => undefined,
+        }}
+        showDebugLine={false}
+        waitForMirrorOnExit={false}
+      />,
+    );
+
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    await waitFor(() => expect(closeRequested).not.toBeNull());
+    await requestNativeClose();
+
+    await waitFor(() => expect(forceClose).toHaveBeenCalledOnce());
+    expect(listAttachments).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("waits for the mirror by default and shows its shutdown progress", async () => {
+    let closeRequested: (() => void | Promise<void>) | null = null;
+    let releasePublish!: () => void;
+    let markPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      markPublishStarted = resolve;
+    });
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const forceClose = vi.fn(async () => undefined);
+    const fixture = createDesktopWindowFixture();
+    fixture.port.subscribeToCloseRequested = vi.fn(async (listener) => {
+      closeRequested = listener;
+      return () => undefined;
+    });
+    fixture.port.forceClose = forceClose;
+    const requestNativeClose = async (): Promise<void> => {
+      if (!closeRequested) throw new Error("Close request was not subscribed");
+      await closeRequested();
+    };
+    const view = render(
+      <App
+        desktopWindow={fixture.port}
+        portableMirror={{
+          listAttachments: async () => [],
+          publish: async (_publication, options) => {
+            options?.onPhase?.("uploading");
+            options?.onProgress?.({ completedBytes: 50, totalBytes: 100 });
+            markPublishStarted();
+            await publishGate;
+            options?.onPhase?.("committing");
+          },
+        }}
+        showDebugLine={false}
+      />,
+    );
+
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    await waitFor(() => expect(closeRequested).not.toBeNull());
+    const closing = requestNativeClose();
+    await publishStarted;
+
+    expect(forceClose).not.toHaveBeenCalled();
+    expect(
+      (
+        await screen.findByRole("dialog", { name: "Memokaを終了" })
+      ).getAttribute("aria-busy"),
+    ).toBe("true");
+    await screen.findByText(/Markdown mirrorを書き込んでいます… 50%/u);
+
+    releasePublish();
+    await closing;
+    await waitFor(() => expect(forceClose).toHaveBeenCalledOnce());
+    view.unmount();
+  });
+
   it("starts dragging only for a primary single press and toggles on double click", async () => {
     const fixture = createDesktopWindowFixture();
     const onError = vi.fn();

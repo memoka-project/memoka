@@ -21,9 +21,10 @@ corepack pnpm verify
 corepack pnpm tauri:build
 ```
 
+AppImageはホストdesktop sessionのWayland/X11、GTK input method、GIO、GStreamerを利用します。
 Wayland / fcitx5では、環境によって日本語変換候補windowがcaretからずれて表示される既知制約があります。
-入力欠落や二重確定とは分離して追跡しています。問題が大きい場合は`GTK_IM_MODULE=fcitx`を設定して起動し、
-display scale、WebKitGTK、fcitx5のversionを添えて報告してください。
+入力欠落や二重確定とは分離して追跡しています。問題がある場合は、desktop session、display scale、
+WebKitGTK、GLib、Mesa、fcitx5のversionを添えて報告してください。
 
 ## 開発
 
@@ -42,6 +43,15 @@ corepack pnpm large-note-gate
 corepack pnpm tauri:build
 ```
 
+ユーザー設定はapplication config directoryの`config.toml`から読み込みます。終了時は既定で最新の
+Markdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを次回起動後の自動生成へ
+回したい場合は次を設定します。
+
+```toml
+[shutdown]
+wait_for_mirror = false
+```
+
 製品コード、テスト、配布Workflowはこのrepositoryだけで完結します。内部仕様、ADR、計画、検証記録、
 release運用文書は公開source treeとは分離して管理しています。
 
@@ -49,6 +59,8 @@ release運用文書は公開source treeとは分離して管理しています�
 
 初回起動時にWorkspaceデータ領域を選択します。内部SSOTはその直下の`.memoka/`に保存され、
 人間可読なMarkdown mirrorはデータ領域直下へ自動出力されます。復旧前には同梱のCLIで検証します。
+通常起動できるMemokaは1プロセスだけです。二重起動した場合、新しいプロセスはWorkspaceを開かず終了し、
+既存Windowを復元して前面へ移動します。
 
 ```bash
 memoka-cli verify --source <portable-mirror-data-area>

@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 struct ApplicationConfigFile {
     leader: Option<String>,
     keymap: Option<KeymapConfigFile>,
+    shutdown: Option<ShutdownConfigFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -17,6 +18,12 @@ struct KeymapConfigFile {
     shared_navigation: Option<BTreeMap<String, Vec<String>>>,
     tree_normal: Option<BTreeMap<String, Vec<String>>>,
     visual_char: Option<BTreeMap<String, Vec<String>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShutdownConfigFile {
+    wait_for_mirror: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,6 +40,7 @@ pub struct ApplicationKeyConfigOverride {
 pub struct ApplicationKeyConfigLoadResult {
     config_path: String,
     config: Option<ApplicationKeyConfigOverride>,
+    wait_for_mirror_on_exit: bool,
     warning: Option<String>,
 }
 
@@ -44,6 +52,7 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
             return ApplicationKeyConfigLoadResult {
                 config_path: "config.toml".to_owned(),
                 config: None,
+                wait_for_mirror_on_exit: true,
                 warning: Some(format!(
                     "config.toml: 設定ディレクトリを取得できません: {error}"
                 )),
@@ -59,6 +68,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         return ApplicationKeyConfigLoadResult {
             config_path,
             config: None,
+            wait_for_mirror_on_exit: true,
             warning: None,
         };
     }
@@ -74,6 +84,11 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             return warning_result(path, format!("TOMLを解釈できません: {error}"));
         }
     };
+    let wait_for_mirror_on_exit = parsed
+        .shutdown
+        .as_ref()
+        .and_then(|shutdown| shutdown.wait_for_mirror)
+        .unwrap_or(true);
     let keymap = parsed.keymap;
     ApplicationKeyConfigLoadResult {
         config_path,
@@ -85,6 +100,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             tree_bindings: keymap.as_ref().and_then(|value| value.tree_normal.clone()),
             inline_format_bindings: keymap.and_then(|value| value.visual_char),
         }),
+        wait_for_mirror_on_exit,
         warning: None,
     }
 }
@@ -93,6 +109,7 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
     ApplicationKeyConfigLoadResult {
         config_path: path.display().to_string(),
         config: None,
+        wait_for_mirror_on_exit: true,
         warning: Some(format!(
             "{}: {detail}; 既定キー設定を使用します",
             path.display()
@@ -128,6 +145,9 @@ leader = ";"
 
 [keymap.visual_char]
 "selection.format" = ["M"]
+
+[shutdown]
+wait_for_mirror = false
 "#,
         )
         .expect("write fixture");
@@ -148,6 +168,7 @@ leader = ";"
                 .get("selection.format"),
             Some(&vec!["M".to_owned()])
         );
+        assert!(!loaded.wait_for_mirror_on_exit);
         assert!(loaded.warning.is_none());
     }
 
@@ -158,6 +179,7 @@ leader = ";"
         fs::write(&path, "unknown = true\n").expect("write fixture");
         let loaded = load_application_key_config(&path);
         assert!(loaded.config.is_none());
+        assert!(loaded.wait_for_mirror_on_exit);
         assert!(
             loaded
                 .warning

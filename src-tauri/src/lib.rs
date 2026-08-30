@@ -1,6 +1,7 @@
 use serde::Serialize;
 #[cfg(target_os = "linux")]
 use std::process::Command;
+use tauri::Manager;
 
 mod application_config;
 mod attachment;
@@ -201,9 +202,54 @@ fn linux_input_method_environment(gtk_im_module: Option<String>) -> InputMethodE
     }
 }
 
+#[cfg(target_os = "linux")]
+fn enable_linux_input_method_preedit(app: &tauri::App) -> tauri::Result<()> {
+    use webkit2gtk::{InputMethodContextExt, WebViewExt};
+
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    window.with_webview(|webview| {
+        if let Some(input_context) = webview.inner().input_method_context() {
+            // Wry disables WebKitGTK preedit by default so Fcitx can draw the
+            // composing text in its candidate window. That fallback is not
+            // reliable in native-Wayland AppImages: composition is accepted,
+            // but the in-progress text can remain completely invisible.
+            // Memoka edits through contenteditable, so let WebKit render the
+            // preedit range in the document like the development runtime.
+            input_context.set_enable_preedit(true);
+        }
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn foreground_existing_instance(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    window.show()?;
+    window.unminimize()?;
+    window.set_focus()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // selected-workspace.json is application-global, so every ordinary second
+    // launch targets the same selected data area. Register the official
+    // single-instance plugin before every other plugin to reject that process
+    // before it can open SQLite/CRDT state, then foreground the owner Window.
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(
+        |app, _arguments, _working_directory| {
+            if let Err(error) = foreground_existing_instance(app) {
+                log::warn!(target: "memoka::event", "event=existing-instance-focus-failed error={error}");
+            } else {
+                log::info!(target: "memoka::event", "event=existing-instance-focused");
+            }
+        },
+    ));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());
     // A development build has no release signing key and must not expose a
@@ -231,7 +277,9 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
-        .setup(|_app| {
+        .setup(|app| {
+            #[cfg(target_os = "linux")]
+            enable_linux_input_method_preedit(app)?;
             log::info!(target: "memoka::event", "event=application-started");
             Ok(())
         })

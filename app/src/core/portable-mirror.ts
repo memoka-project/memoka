@@ -90,6 +90,12 @@ export interface PortableMirrorBuildOptions {
 export interface PortableMirrorPublishOptions {
   readonly signal?: AbortSignal;
   readonly onPhase?: (phase: PortableMirrorPublishPhase) => void;
+  readonly onProgress?: (progress: PortableMirrorProgress) => void;
+}
+
+export interface PortableMirrorProgress {
+  readonly completedBytes: number;
+  readonly totalBytes: number;
 }
 
 export type PortableMirrorPublishPhase = "staging" | "uploading" | "committing";
@@ -106,6 +112,8 @@ export type PortableMirrorActivityPhase =
 export interface PortableMirrorActivitySnapshot {
   readonly phase: PortableMirrorActivityPhase;
   readonly dirty: boolean;
+  readonly completedBytes: number | null;
+  readonly totalBytes: number | null;
   readonly lastResult: "published" | "cancelled" | "error" | null;
   readonly lastDurationMs: number | null;
 }
@@ -495,6 +503,12 @@ class TauriPortableMirrorPort implements PortableMirrorPort {
   ): Promise<void> {
     throwIfMirrorAborted(options.signal);
     options.onPhase?.("staging");
+    const totalBytes = publication.uploads.reduce(
+      (total, upload) => total + upload.entry.size,
+      0,
+    );
+    let completedBytes = 0;
+    options.onProgress?.({ completedBytes, totalBytes });
     const operationId = createUuidV7();
     const request: PortableMirrorBeginRequest = {
       operationId,
@@ -507,6 +521,11 @@ class TauriPortableMirrorPort implements PortableMirrorPort {
       })),
     };
     await invoke("portable_mirror_begin", { request });
+    completedBytes = publication.uploads.reduce(
+      (total, upload) => total + (upload.bytes ? 0 : upload.entry.size),
+      0,
+    );
+    options.onProgress?.({ completedBytes, totalBytes });
     try {
       options.onPhase?.("uploading");
       for (let index = 0; index < publication.uploads.length; index += 1) {
@@ -515,6 +534,7 @@ class TauriPortableMirrorPort implements PortableMirrorPort {
         if (!upload.bytes) continue;
         if (upload.bytes.byteLength === 0) {
           await writeMirrorChunk(operationId, index, 0, upload.bytes);
+          options.onProgress?.({ completedBytes, totalBytes });
           continue;
         }
         for (
@@ -522,12 +542,13 @@ class TauriPortableMirrorPort implements PortableMirrorPort {
           offset < upload.bytes.byteLength;
           offset += PORTABLE_MIRROR_CHUNK_BYTES
         ) {
-          await writeMirrorChunk(
-            operationId,
-            index,
+          const chunk = upload.bytes.slice(
             offset,
-            upload.bytes.slice(offset, offset + PORTABLE_MIRROR_CHUNK_BYTES),
+            offset + PORTABLE_MIRROR_CHUNK_BYTES,
           );
+          await writeMirrorChunk(operationId, index, offset, chunk);
+          completedBytes += chunk.byteLength;
+          options.onProgress?.({ completedBytes, totalBytes });
           throwIfMirrorAborted(options.signal);
           await yieldToBrowser();
         }
@@ -576,6 +597,8 @@ export class PortableMirrorController {
   private activityPhase: PortableMirrorActivityPhase = "idle";
   private activityLastResult: PortableMirrorActivitySnapshot["lastResult"] =
     null;
+  private activityCompletedBytes: number | null = null;
+  private activityTotalBytes: number | null = null;
   private activityLastDurationMs: number | null = null;
   private readonly unsubscribe: () => void;
 
@@ -609,12 +632,16 @@ export class PortableMirrorController {
     this.unsubscribe();
     this.clearTimer();
     this.activityPhase = "off";
+    this.activityCompletedBytes = null;
+    this.activityTotalBytes = null;
   }
 
   activitySnapshot(): PortableMirrorActivitySnapshot {
     return {
       phase: this.activityPhase,
       dirty: this.dirty,
+      completedBytes: this.activityCompletedBytes,
+      totalBytes: this.activityTotalBytes,
       lastResult: this.activityLastResult,
       lastDurationMs: this.activityLastDurationMs,
     };
@@ -648,8 +675,13 @@ export class PortableMirrorController {
     this.activeAbort = abort;
     const startedAt = performance.now();
     this.activityPhase = "flushing";
+    this.activityCompletedBytes = null;
+    this.activityTotalBytes = null;
     this.publishing = (async () => {
-      await this.runtime.flush();
+      // The mirror is derived from canonical CRDT state and does not depend on
+      // the rebuildable FTS projection. Waiting for FTS here made mirror work,
+      // and previously native shutdown, inherit unrelated indexing latency.
+      await this.runtime.flushDurableState();
       throwIfMirrorAborted(abort.signal);
       this.activityPhase = "preparing";
       const sourceSignature = this.signature;
@@ -669,6 +701,11 @@ export class PortableMirrorController {
         signal: abort.signal,
         onPhase: (phase) => {
           if (this.activeAbort === abort) this.activityPhase = phase;
+        },
+        onProgress: ({ completedBytes, totalBytes }) => {
+          if (this.activeAbort !== abort) return;
+          this.activityCompletedBytes = completedBytes;
+          this.activityTotalBytes = totalBytes;
         },
       });
       if (this.signature !== sourceSignature) this.dirty = true;

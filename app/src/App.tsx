@@ -44,6 +44,10 @@ import { ApplicationTabBar } from "./components/ApplicationTabBar";
 import { DevelopmentDebugTasks } from "./components/DevelopmentDebugTasks";
 import { ApplicationUpdatePrompt } from "./components/ApplicationUpdatePrompt";
 import {
+  ApplicationShutdownProgress,
+  type ApplicationShutdownProgressState,
+} from "./components/ApplicationShutdownProgress";
+import {
   ApplicationWindowControls,
   ApplicationWindowDragRegion,
   type WindowControlErrorHandler,
@@ -109,6 +113,7 @@ export interface AppProps {
   applicationUpdate?: ApplicationUpdatePort;
   diagnostics?: ApplicationDiagnosticsPort;
   startupUpdateDelayMs?: number;
+  waitForMirrorOnExit?: boolean;
 }
 
 type VimCommandOrigin = "window" | "left-sidebar" | "right-sidebar";
@@ -125,6 +130,7 @@ export function App({
   applicationUpdate: applicationUpdateOverride,
   diagnostics: diagnosticsOverride,
   startupUpdateDelayMs = 10_000,
+  waitForMirrorOnExit = true,
 }: AppProps = {}) {
   validateApplicationKeyConfig(keyConfig);
   validateVimKeyConfig(keyConfig);
@@ -179,6 +185,8 @@ export function App({
   const [updateProgress, setUpdateProgress] =
     useState<ApplicationUpdateProgress | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [shutdownProgress, setShutdownProgress] =
+    useState<ApplicationShutdownProgressState | null>(null);
   const [applicationActive, setApplicationActive] = useState(true);
   const [treeFocusRequest, setTreeFocusRequest] = useState(0);
   const [outlineFocusRequest, setOutlineFocusRequest] = useState(0);
@@ -752,16 +760,46 @@ export function App({
       .subscribeToCloseRequested(async () => {
         if (closing || disposed) return;
         closing = true;
-        setDataAreaBusy(true);
+        let failureStage: ApplicationShutdownProgressState["stage"] = "saving";
         try {
-          await portableMirrorController.current?.flush();
-          await runtime.flush();
+          setShutdownProgress({ stage: "saving", mirror: null });
+          await nextBrowserPaint();
+          await runtime.flushDurableState();
+          const mirrorController = portableMirrorController.current;
+          if (waitForMirrorOnExit && mirrorController) {
+            failureStage = "mirror";
+            const refreshMirrorProgress = (): void => {
+              setShutdownProgress({
+                stage: "mirror",
+                mirror: mirrorController.activitySnapshot(),
+              });
+            };
+            refreshMirrorProgress();
+            const refreshTimer = globalThis.setInterval(
+              refreshMirrorProgress,
+              75,
+            );
+            try {
+              await nextBrowserPaint();
+              await mirrorController.flush();
+            } finally {
+              globalThis.clearInterval(refreshTimer);
+            }
+          }
+          failureStage = "closing";
+          setShutdownProgress({ stage: "closing", mirror: null });
           await desktopWindow.forceClose?.();
         } catch (error) {
           closing = false;
-          setDataAreaBusy(false);
+          setShutdownProgress(null);
+          const operation =
+            failureStage === "mirror"
+              ? "mirror生成"
+              : failureStage === "closing"
+                ? "終了処理"
+                : "保存";
           setCommandMessage(
-            `終了前の保存に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+            `終了前の${operation}に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       })
@@ -778,7 +816,7 @@ export function App({
       disposed = true;
       unlisten?.();
     };
-  }, [desktopWindow, runtime]);
+  }, [desktopWindow, runtime, waitForMirrorOnExit]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -881,6 +919,12 @@ export function App({
 
   const restoreManagedFocus = useCallback((): void => {
     if (!runtime || !snapshot) return;
+    if (shutdownProgress) {
+      appRoot.current
+        ?.querySelector<HTMLElement>("[data-memoka-focus-surface='shutdown']")
+        ?.focus();
+      return;
+    }
     if (updatePrompt) {
       appRoot.current
         ?.querySelector<HTMLElement>("[data-memoka-focus-surface='update']")
@@ -964,6 +1008,7 @@ export function App({
     requestEditorFocus,
     requestLeftUtilityFocus,
     runtime,
+    shutdownProgress,
     snapshot,
     updatePrompt,
     workspaceSearch,
@@ -1196,17 +1241,19 @@ export function App({
   ]
     .filter((column): column is string => column !== null)
     .join(" ");
-  const transientFocus = workspaceSearch
-    ? "workspace-search"
-    : blockTypePicker
-      ? "block-type-picker"
-      : inlineFormatPicker
-        ? "inline-format-picker"
-        : noteSearch
-          ? "note-search"
-          : commandLine
-            ? "command-line"
-            : null;
+  const transientFocus = shutdownProgress
+    ? "shutdown"
+    : workspaceSearch
+      ? "workspace-search"
+      : blockTypePicker
+        ? "block-type-picker"
+        : inlineFormatPicker
+          ? "inline-format-picker"
+          : noteSearch
+            ? "note-search"
+            : commandLine
+              ? "command-line"
+              : null;
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1218,6 +1265,14 @@ export function App({
   ): void => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+    if (
+      shutdownProgress &&
+      !target.closest("[data-memoka-focus-surface='shutdown']")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (
       updateProgress &&
       !target.closest("[data-memoka-focus-surface='update']")
@@ -1803,7 +1858,7 @@ export function App({
   return (
     <main
       ref={appRoot}
-      className={`app-shell${applicationActive ? "" : " app-shell--inactive"}${updateProgress ? " app-shell--update-busy" : ""}`}
+      className={`app-shell${applicationActive ? "" : " app-shell--inactive"}${updateProgress ? " app-shell--update-busy" : ""}${shutdownProgress ? " app-shell--shutdown-busy" : ""}`}
       data-persistence-state={snapshot.persistence}
       data-workspace-revision={snapshot.workspaceRevision}
       data-note-revision={snapshot.noteRevision ?? undefined}
@@ -1966,7 +2021,9 @@ export function App({
         ) : null}
       </div>
 
-      {updatePrompt ? (
+      {shutdownProgress ? (
+        <ApplicationShutdownProgress progress={shutdownProgress} />
+      ) : updatePrompt ? (
         <ApplicationUpdatePrompt
           release={updatePrompt.release}
           progress={updateProgress}
@@ -2079,6 +2136,20 @@ function EditorSplitLayout({
       <EditorSplitLayout node={node.second} renderWindow={renderWindow} />
     </div>
   );
+}
+
+function nextBrowserPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const complete = (): void => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(fallback);
+      resolve();
+    };
+    const fallback = window.setTimeout(complete, 50);
+    window.requestAnimationFrame(complete);
+  });
 }
 
 function SearchSidebarNotice({

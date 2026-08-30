@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+set -eu
+
+# memoka-appimage-launcher-v1
+# Keep the desktop session's GTK/GIO/GStreamer/IME routing. In particular, do
+# not force XWayland or an input-method cache copied from the build host.
+app_dir=${APPDIR:-}
+if [ -z "$app_dir" ]; then
+  app_dir=$(dirname "$(readlink -f "$0")")
+fi
+export APPDIR="$app_dir"
+export PATH="$app_dir/usr/bin${PATH:+:$PATH}"
+export LD_LIBRARY_PATH="$app_dir/usr/lib:$app_dir/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$app_dir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+# WebKitGTK resolves its helper processes relative to usr. Keeping this working
+# directory also prevents a bundled/host WebKit helper mismatch.
+cd "$app_dir/usr"
+exec "$app_dir/usr/bin/memoka" "$@"

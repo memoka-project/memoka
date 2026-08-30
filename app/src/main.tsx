@@ -4,6 +4,14 @@ import { loadApplicationKeyConfig } from "./platform/application-config";
 import "./styles.css";
 
 const root = ReactDOM.createRoot(document.getElementById("root")!);
-void loadApplicationKeyConfig().then(({ config, warning }) => {
-  root.render(<App keyConfig={config} keyConfigWarning={warning} />);
-});
+void loadApplicationKeyConfig().then(
+  ({ config, waitForMirrorOnExit, warning }) => {
+    root.render(
+      <App
+        keyConfig={config}
+        keyConfigWarning={warning}
+        waitForMirrorOnExit={waitForMirrorOnExit}
+      />,
+    );
+  },
+);

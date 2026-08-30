@@ -63,6 +63,8 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("ステータスライン");
     expect(helpText).toContain("h/lで折り畳み");
     expect(helpText).toContain("config.toml");
+    expect(helpText).toContain("wait_for_mirror = false");
+    expect(helpText).toContain("既存Windowを前面へ戻します");
     expect(helpText).toContain("[count]n / N");
     expect(helpText).toContain("Focused Section subtree");
     expect(helpText).toContain("zfはcaret位置を保って1階層深く");

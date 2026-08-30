@@ -78,6 +78,45 @@ textarea {
   background: #2e5d8d;
 }
 
+.application-shutdown-overlay {
+  position: fixed;
+  z-index: 2147483647;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  outline: none;
+  background: rgb(6 9 13 / 74%);
+  backdrop-filter: blur(2px);
+}
+
+.application-shutdown-progress {
+  width: min(460px, calc(100vw - 48px));
+  padding: 24px 26px;
+  border: 1px solid #5279a2;
+  border-radius: 8px;
+  background: #151b23;
+  box-shadow: 0 20px 56px rgb(0 0 0 / 52%);
+}
+
+.application-shutdown-progress h2 {
+  margin: 5px 0 18px;
+  font-size: 22px;
+}
+
+.application-shutdown-progress progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+}
+
+.application-shutdown-progress p {
+  min-height: 1.4em;
+  margin: 12px 0 0;
+  color: #b7c4d2;
+  font-size: 13px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: #83b9ff;

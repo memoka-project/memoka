@@ -238,11 +238,11 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キーはapplication config directoryのconfig.tomlで変更できます。不正な設定は全体を無効にして既定値へ戻します。",
+            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キーはapplication config directoryのconfig.tomlで変更できます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "portable-data",
-            "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・終了前・切替前に自動出力されます。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。",
+            "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・既定では終了前・切替前に自動出力されます。終了時に待つ間は生成phaseと書込率を表示します。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。Memokaを二重起動すると新しいプロセスはWorkspaceを開かず終了し、既存Windowを前面へ戻します。",
           ),
         ]),
       ]),

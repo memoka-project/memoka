@@ -1985,15 +1985,28 @@ export class CoreRuntime {
     return { adapter, editor: adapter.editor };
   }
 
-  async flush(): Promise<void> {
+  /**
+   * Drains the canonical CRDT and local-window state without waiting for
+   * rebuildable projections such as the workspace search index.
+   *
+   * Native shutdown uses this narrower durability barrier so a large pending
+   * FTS projection cannot keep the application window alive after all source
+   * data is already safe on disk.
+   */
+  async flushDurableState(): Promise<void> {
     this.flushPendingWindowViewUpdates();
     await Promise.all(
       [...this.notePersistence.values()].map((session) => session.flush()),
     );
     await this.localStateQueue;
+    this.flushEditorPersistenceNotification();
+    if (this.lastError) throw new Error(this.lastError);
+  }
+
+  async flush(): Promise<void> {
+    await this.flushDurableState();
     await this.flushWorkspaceSearchIndexDocuments();
     await this.workspaceSearchIndexQueue;
-    this.flushEditorPersistenceNotification();
     if (this.lastError) throw new Error(this.lastError);
   }
 

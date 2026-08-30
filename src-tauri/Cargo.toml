@@ -38,6 +38,7 @@ tauri-plugin-dialog = "2.7.2"
 tauri-plugin-log = "2.9.0"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-process = "2.3.1"
+tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-updater = "2.10.1"
 log = "0.4.29"
 toml = "0.8.2"
@@ -47,6 +48,7 @@ yrs = "0.27.3"
 [target.'cfg(target_os = "linux")'.dependencies]
 gdk = "0.18.2"
 gtk = "0.18.2"
+webkit2gtk = "=2.0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [

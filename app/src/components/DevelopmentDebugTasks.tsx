@@ -97,6 +97,8 @@ function offMirrorSnapshot(): PortableMirrorActivitySnapshot {
   return {
     phase: "off",
     dirty: false,
+    completedBytes: null,
+    totalBytes: null,
     lastResult: null,
     lastDurationMs: null,
   };

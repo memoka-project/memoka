@@ -8,6 +8,7 @@
     "beforeDevCommand": "corepack pnpm dev",
     "devUrl": "http://127.0.0.1:1421",
     "beforeBuildCommand": "corepack pnpm build",
+    "beforeBundleCommand": "node scripts/prepare-linux-appimage-tools.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "useLocalToolsDir": true,
     "publisher": "Jun Ando",
     "homepage": "https://github.com/memoka-project/memoka",
     "shortDescription": "Vimの操作感でMarkdownを意識せず書けるローカルファーストのメモ帳",
