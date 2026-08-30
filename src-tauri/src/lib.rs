@@ -316,6 +316,7 @@ pub fn run() {
         persistence::workspace_search_index_replace_document,
         persistence::workspace_search_index_update_hierarchy,
         persistence::workspace_search_index_query,
+        portable_mirror::portable_mirror_status,
         portable_mirror::portable_mirror_list_attachments,
         portable_mirror::portable_mirror_begin,
         portable_mirror::portable_mirror_write_chunk,

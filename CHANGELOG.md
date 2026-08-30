@@ -10,6 +10,7 @@
 - 終了前の保存完了後にnative windowを破棄できず、保存失敗と誤表示される問題を修正。
 - 終了時の正本保存、Markdown mirror、FTSの待機境界を分離。既定では進捗を表示してmirror完了を待ち、`config.toml`で次回起動後の生成へ回せるように変更。
 - Memokaの二重起動を拒否し、新しいプロセスから既存Windowを復元・前面化するsingle-instance連携を追加。
+- 起動時に正本と一致するMarkdown mirrorを再生成せず、通常の本文編集では変更Noteだけを差分更新するよう改善。
 
 ## [0.1.0] - 未公開
 

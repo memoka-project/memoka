@@ -242,7 +242,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "portable-data",
-            "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・既定では終了前・切替前に自動出力されます。終了時に待つ間は生成phaseと書込率を表示します。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。Memokaを二重起動すると新しいプロセスはWorkspaceを開かず終了し、既存Windowを前面へ戻します。",
+            "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・既定では終了前・切替前に自動出力されます。起動時にrevisionが一致すれば再生成せず、通常の本文編集は変更Noteだけを差分更新します。タイトル由来pathの変更やmirror破損時はリンク整合性のため全体を再構築します。終了時に待つ間は生成phaseと書込率を表示します。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。Memokaを二重起動すると新しいプロセスはWorkspaceを開かず終了し、既存Windowを前面へ戻します。",
           ),
         ]),
       ]),

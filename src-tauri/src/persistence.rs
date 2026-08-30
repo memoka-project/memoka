@@ -578,6 +578,26 @@ impl ProductStore {
         })
     }
 
+    pub fn document_revisions(&self) -> Result<Vec<DocumentRevision>, PersistenceError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT kind, document_id, revision
+            FROM documents
+            ORDER BY kind, document_id
+            ",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok(DocumentRevision {
+                    kind: row.get(0)?,
+                    document_id: row.get(1)?,
+                    revision: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PersistenceError::from)
+    }
+
     pub fn load_local_states(&self) -> Result<Vec<PersistedLocalState>, PersistenceError> {
         let mut statement = self.connection.prepare(
             "

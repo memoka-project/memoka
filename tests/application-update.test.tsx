@@ -193,6 +193,11 @@ describe("Memoka application update", () => {
     const update = new MemoryApplicationUpdatePort(RELEASE);
     const diagnostics = new MemoryApplicationDiagnosticsPort(DIAGNOSTICS);
     const failingMirror: PortableMirrorPort = {
+      status: async () => ({
+        manifest: null,
+        mirrorNeedsRepair: false,
+        documentRevisions: [],
+      }),
       listAttachments: async () => {
         throw new Error("injected mirror failure");
       },

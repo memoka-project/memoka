@@ -102,6 +102,11 @@ describe("custom application window chrome", () => {
       <App
         desktopWindow={fixture.port}
         portableMirror={{
+          status: async () => ({
+            manifest: null,
+            mirrorNeedsRepair: false,
+            documentRevisions: [],
+          }),
           listAttachments,
           publish: async () => undefined,
         }}
@@ -144,6 +149,11 @@ describe("custom application window chrome", () => {
       <App
         desktopWindow={fixture.port}
         portableMirror={{
+          status: async () => ({
+            manifest: null,
+            mirrorNeedsRepair: false,
+            documentRevisions: [],
+          }),
           listAttachments: async () => [],
           publish: async (_publication, options) => {
             options?.onPhase?.("uploading");

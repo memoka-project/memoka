@@ -9,13 +9,17 @@ import {
 } from "./section-markdown-backup";
 import { sectionSnapshotAsync, type SectionSnapshot } from "./section-model";
 import {
+  createPortableNotePathProjection,
   createPortablePathProjection,
+  createPortableSectionPathProjection,
   portableFileComponent,
+  type PortableNotePath,
 } from "./portable-paths";
 import { createUuidV7 } from "./ids";
 import {
   createNoteDocumentFromSectionSnapshot,
   createWorkspaceDocumentFromMetadata,
+  type NoteMetadata,
 } from "./documents";
 
 export const PORTABLE_MIRROR_SCHEMA_VERSION = 1;
@@ -69,6 +73,18 @@ export interface PortableMirrorManifest {
   readonly files: readonly PortableMirrorFileManifestEntry[];
 }
 
+export interface PortableMirrorDocumentRevision {
+  readonly kind: "workspace" | "note";
+  readonly documentId: string;
+  readonly revision: number;
+}
+
+export interface PortableMirrorStatus {
+  readonly manifest: PortableMirrorManifest | null;
+  readonly mirrorNeedsRepair: boolean;
+  readonly documentRevisions: readonly PortableMirrorDocumentRevision[];
+}
+
 interface PortableMirrorUpload {
   readonly path: string;
   readonly bytes?: Uint8Array;
@@ -85,6 +101,13 @@ export interface PortableMirrorBuildOptions {
   readonly signal?: AbortSignal;
   readonly budgetMilliseconds?: number;
   readonly yieldControl?: () => Promise<void>;
+}
+
+interface PortableMirrorNoteSource {
+  readonly metadata: NoteMetadata;
+  readonly rootSection: SectionSnapshot;
+  readonly schemaVersion: number;
+  readonly revision: number;
 }
 
 export interface PortableMirrorPublishOptions {
@@ -114,7 +137,7 @@ export interface PortableMirrorActivitySnapshot {
   readonly dirty: boolean;
   readonly completedBytes: number | null;
   readonly totalBytes: number | null;
-  readonly lastResult: "published" | "cancelled" | "error" | null;
+  readonly lastResult: "published" | "unchanged" | "cancelled" | "error" | null;
   readonly lastDurationMs: number | null;
 }
 
@@ -130,6 +153,7 @@ interface PortableMirrorBeginRequest {
 }
 
 export interface PortableMirrorPort {
+  status(): Promise<PortableMirrorStatus>;
   listAttachments(): Promise<readonly AttachmentMetadata[]>;
   publish(
     publication: PortableMirrorPublication,
@@ -145,12 +169,7 @@ export async function createPortableMirrorPublication(
 ): Promise<PortableMirrorPublication> {
   const scheduler = new PortableMirrorScheduler(options);
   const runtimeSnapshot = runtime.snapshot();
-  const noteSources: Array<{
-    metadata: (typeof runtimeSnapshot.notes)[number];
-    rootSection: SectionSnapshot;
-    schemaVersion: number;
-    revision: number;
-  }> = [];
+  const noteSources: PortableMirrorNoteSource[] = [];
   for (const metadata of runtimeSnapshot.notes) {
     const preview = await runtime.loadNotePreview(metadata.noteId, {
       includeDeleted: true,
@@ -333,6 +352,456 @@ export async function createPortableMirrorPublication(
   return { manifest, uploads };
 }
 
+/**
+ * Builds a publication containing only files whose canonical source changed.
+ * Human-readable path changes deliberately fall back to a full publication:
+ * relative Internal Link destinations in otherwise unchanged Markdown may
+ * also need to move when a Note or Section title changes.
+ */
+export async function createPortableMirrorUpdate(
+  runtime: CoreRuntime,
+  attachments: readonly AttachmentMetadata[],
+  status: PortableMirrorStatus,
+  generatedAt = new Date().toISOString(),
+  options: PortableMirrorBuildOptions = {},
+): Promise<PortableMirrorPublication | null> {
+  const previous = status.manifest;
+  if (status.mirrorNeedsRepair || !previous) {
+    return createPortableMirrorPublication(
+      runtime,
+      attachments,
+      generatedAt,
+      options,
+    );
+  }
+  const scheduler = new PortableMirrorScheduler(options);
+  const runtimeSnapshot = runtime.snapshot();
+  if (
+    previous.schemaVersion !== PORTABLE_MIRROR_SCHEMA_VERSION ||
+    previous.workspaceId !== runtimeSnapshot.workspaceId
+  ) {
+    return createPortableMirrorPublication(
+      runtime,
+      attachments,
+      generatedAt,
+      options,
+    );
+  }
+
+  const revisions = new Map(
+    status.documentRevisions.map((revision) => [
+      `${revision.kind}:${revision.documentId}`,
+      revision.revision,
+    ]),
+  );
+  const workspaceSource = runtime.portableWorkspaceSnapshot();
+  const workspaceRevision = revisions.get(
+    `workspace:${runtimeSnapshot.workspaceId}`,
+  );
+  if (workspaceRevision !== workspaceSource.revision) {
+    throw new Error("Workspace changed while checking the portable mirror");
+  }
+  const previousDocuments = new Map(
+    previous.documents.map((document) => [
+      `${document.kind}:${document.documentId}`,
+      document,
+    ]),
+  );
+  const previousNotes = new Map(
+    previous.notes.map((note) => [note.noteId, note]),
+  );
+  const noteBasePaths = await createPortableNotePathProjection(
+    runtimeSnapshot.notes.map((metadata) => ({ metadata })),
+    { checkpoint: () => scheduler.checkpoint() },
+  );
+  const noteBasePathById = new Map(
+    noteBasePaths.map((path) => [path.noteId, path]),
+  );
+  const currentNoteIds = new Set(
+    runtimeSnapshot.notes.map((metadata) => metadata.noteId),
+  );
+  if (
+    previous.notes.some((note) => !currentNoteIds.has(note.noteId)) ||
+    runtimeSnapshot.notes.some((metadata) => {
+      const old = previousNotes.get(metadata.noteId);
+      const path = noteBasePathById.get(metadata.noteId);
+      return Boolean(old && path && old.markdownPath !== path.markdownPath);
+    })
+  ) {
+    return createPortableMirrorPublication(
+      runtime,
+      attachments,
+      generatedAt,
+      options,
+    );
+  }
+
+  const changedNoteIds = new Set<string>();
+  for (const metadata of runtimeSnapshot.notes) {
+    const revision = revisions.get(`note:${metadata.noteId}`);
+    if (!revision) {
+      throw new Error(`Missing persisted Note revision: ${metadata.noteId}`);
+    }
+    const old = previousDocuments.get(`note:${metadata.noteId}`);
+    if (!old || old.sourceRevision !== revision) {
+      changedNoteIds.add(metadata.noteId);
+    }
+  }
+
+  const changedSources = new Map<string, PortableMirrorNoteSource>();
+  const projectedSections = new Map<
+    string,
+    Awaited<ReturnType<typeof createPortableSectionPathProjection>>
+  >();
+  for (const metadata of runtimeSnapshot.notes) {
+    if (!changedNoteIds.has(metadata.noteId)) continue;
+    const preview = await runtime.loadNotePreview(metadata.noteId, {
+      includeDeleted: true,
+    });
+    try {
+      const expectedRevision = revisions.get(`note:${metadata.noteId}`)!;
+      if (preview.revision !== expectedRevision) {
+        throw new Error(
+          `Note changed while checking mirror: ${metadata.noteId}`,
+        );
+      }
+      const rootSection = await sectionSnapshotAsync(
+        preview.document.rootSection,
+        {
+          signal: options.signal,
+          checkpoint: () => scheduler.checkpoint(),
+        },
+      );
+      const source: PortableMirrorNoteSource = {
+        metadata: { ...metadata, title: rootSection.title },
+        rootSection,
+        schemaVersion: preview.document.schemaVersion,
+        revision: preview.revision,
+      };
+      changedSources.set(metadata.noteId, source);
+      const basePath = noteBasePathById.get(metadata.noteId)!;
+      const sections = await createPortableSectionPathProjection(
+        rootSection,
+        basePath.markdownPath,
+        { checkpoint: () => scheduler.checkpoint() },
+      );
+      projectedSections.set(metadata.noteId, sections);
+      const oldSections = previousNotes.get(metadata.noteId)?.sections ?? [];
+      if (!sameSectionPaths(oldSections, sections)) {
+        return createPortableMirrorPublication(
+          runtime,
+          attachments,
+          generatedAt,
+          options,
+        );
+      }
+    } finally {
+      preview.release();
+    }
+    await scheduler.checkpoint(true);
+  }
+
+  const attachmentPaths = await allocateAttachmentPaths(attachments);
+  const previousAttachments = new Map(
+    previous.attachments.map((attachment) => [
+      attachment.attachmentId,
+      attachment,
+    ]),
+  );
+  const currentAttachmentIds = new Set(
+    attachments.map((attachment) => attachment.attachmentId),
+  );
+  const attachmentProjectionChanged =
+    previous.attachments.some(
+      (attachment) => !currentAttachmentIds.has(attachment.attachmentId),
+    ) ||
+    attachments.some((attachment) => {
+      const old = previousAttachments.get(attachment.attachmentId);
+      if (!old) return false;
+      return (
+        old.path !== attachmentPaths.get(attachment.attachmentId) ||
+        old.sha256 !== attachment.sha256 ||
+        old.size !== attachment.size ||
+        old.originalFilename !== attachment.originalFilename ||
+        old.mimeType !== attachment.mimeType
+      );
+    });
+  if (attachmentProjectionChanged) {
+    return createPortableMirrorPublication(
+      runtime,
+      attachments,
+      generatedAt,
+      options,
+    );
+  }
+
+  const oldWorkspace = previousDocuments.get(
+    `workspace:${runtimeSnapshot.workspaceId}`,
+  );
+  const workspaceChanged =
+    !oldWorkspace || oldWorkspace.sourceRevision !== workspaceRevision;
+  const newAttachments = attachments.filter(
+    (attachment) => !previousAttachments.has(attachment.attachmentId),
+  );
+  if (
+    !workspaceChanged &&
+    changedNoteIds.size === 0 &&
+    newAttachments.length === 0
+  ) {
+    return null;
+  }
+
+  const sectionPaths = new Map<string, string>();
+  for (const note of previous.notes) {
+    sectionPaths.set(note.noteId, note.markdownPath);
+    for (const section of note.sections) {
+      sectionPaths.set(section.sectionId, section.markdownPath);
+    }
+  }
+  for (const base of noteBasePaths) {
+    sectionPaths.set(base.noteId, base.markdownPath);
+  }
+  const uploads: PortableMirrorUpload[] = [];
+  const files = new Map(previous.files.map((entry) => [entry.path, entry]));
+  const documents = new Map(
+    previous.documents.map((document) => [
+      `${document.kind}:${document.documentId}`,
+      document,
+    ]),
+  );
+
+  if (workspaceChanged) {
+    if (oldWorkspace) files.delete(oldWorkspace.path);
+    const baselineWorkspace = createWorkspaceDocumentFromMetadata(
+      workspaceSource.workspaceId,
+      runtimeSnapshot.notes,
+    );
+    const upload = await byteUpload(
+      "memoka-recovery/workspace.yjs",
+      Y.encodeStateAsUpdate(baselineWorkspace.doc),
+      "document",
+    );
+    baselineWorkspace.doc.destroy();
+    uploads.push(upload);
+    files.set(upload.entry.path, upload.entry);
+    documents.set(`workspace:${workspaceSource.workspaceId}`, {
+      kind: "workspace",
+      documentId: workspaceSource.workspaceId,
+      schemaVersion: workspaceSource.schemaVersion,
+      sourceRevision: workspaceRevision,
+      path: upload.entry.path,
+      sha256: upload.entry.sha256,
+      size: upload.entry.size,
+    });
+    await scheduler.checkpoint(true);
+  }
+
+  for (const metadata of runtimeSnapshot.notes) {
+    if (!changedNoteIds.has(metadata.noteId)) continue;
+    const source = changedSources.get(metadata.noteId)!;
+    const base = noteBasePathById.get(metadata.noteId)!;
+    const projected: PortableNotePath = {
+      ...base,
+      sections: projectedSections.get(metadata.noteId)!,
+    };
+    const oldNote = previousNotes.get(metadata.noteId);
+    if (oldNote) {
+      files.delete(oldNote.markdownPath);
+      for (const section of oldNote.sections)
+        files.delete(section.markdownPath);
+    }
+    const oldDocument = previousDocuments.get(`note:${metadata.noteId}`);
+    if (oldDocument) files.delete(oldDocument.path);
+    const noteUploads = await createNoteUploads(
+      source,
+      projected,
+      sectionPaths,
+      attachmentPaths,
+      scheduler,
+    );
+    uploads.push(...noteUploads.uploads);
+    for (const upload of noteUploads.uploads) {
+      files.set(upload.entry.path, upload.entry);
+    }
+    documents.set(`note:${metadata.noteId}`, noteUploads.document);
+  }
+
+  const attachmentEntries: PortableMirrorAttachmentEntry[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.available) {
+      throw new Error(
+        `Attachment CAS object is unavailable: ${attachment.attachmentId}`,
+      );
+    }
+    const path = attachmentPaths.get(attachment.attachmentId)!;
+    const old = previousAttachments.get(attachment.attachmentId);
+    if (old) {
+      attachmentEntries.push(old);
+      continue;
+    }
+    const entry: PortableMirrorFileManifestEntry = {
+      path,
+      sha256: attachment.sha256,
+      size: attachment.size,
+      kind: "attachment",
+    };
+    uploads.push({
+      path,
+      sourceAttachmentId: attachment.attachmentId,
+      entry,
+    });
+    files.set(path, entry);
+    attachmentEntries.push({
+      attachmentId: attachment.attachmentId,
+      sha256: attachment.sha256,
+      size: attachment.size,
+      originalFilename: attachment.originalFilename,
+      mimeType: attachment.mimeType,
+      createdAt: attachment.createdAt,
+      path,
+    });
+  }
+
+  const notes = runtimeSnapshot.notes.map((metadata) => {
+    const base = noteBasePathById.get(metadata.noteId)!;
+    const old = previousNotes.get(metadata.noteId);
+    return {
+      noteId: metadata.noteId,
+      parentNoteId: metadata.parentNoteId,
+      deletedAt: metadata.deletedAt ?? null,
+      markdownPath: base.markdownPath,
+      sections: (
+        projectedSections.get(metadata.noteId) ??
+        old?.sections ??
+        []
+      ).map((section) => ({ ...section })),
+    };
+  });
+  const orderedDocuments: PortableMirrorDocumentEntry[] = [];
+  const workspaceDocument = documents.get(
+    `workspace:${runtimeSnapshot.workspaceId}`,
+  );
+  if (!workspaceDocument) {
+    throw new Error("Portable mirror Workspace recovery document is missing");
+  }
+  orderedDocuments.push(workspaceDocument);
+  for (const metadata of runtimeSnapshot.notes) {
+    const document = documents.get(`note:${metadata.noteId}`);
+    if (!document) {
+      throw new Error(
+        `Portable mirror Note document is missing: ${metadata.noteId}`,
+      );
+    }
+    orderedDocuments.push(document);
+  }
+  const manifest: PortableMirrorManifest = {
+    schemaVersion: PORTABLE_MIRROR_SCHEMA_VERSION,
+    generatedAt,
+    workspaceId: runtimeSnapshot.workspaceId,
+    notes,
+    documents: orderedDocuments,
+    attachments: attachmentEntries,
+    files: [...files.values()],
+  };
+  await scheduler.checkpoint();
+  return { manifest, uploads };
+}
+
+async function createNoteUploads(
+  source: PortableMirrorNoteSource,
+  projected: PortableNotePath,
+  sectionPaths: ReadonlyMap<string, string>,
+  attachmentPaths: ReadonlyMap<string, string>,
+  scheduler: PortableMirrorScheduler,
+): Promise<{
+  readonly uploads: readonly PortableMirrorUpload[];
+  readonly document: PortableMirrorDocumentEntry;
+}> {
+  const uploads: PortableMirrorUpload[] = [];
+  const snapshots = flattenSections(source.rootSection);
+  const relationships = sectionRelationships(source.rootSection);
+  const rootFile = encodePortableSection(
+    snapshots.get(source.metadata.noteId)!,
+    relationships.get(source.metadata.noteId)!,
+    projected.markdownPath,
+    source.metadata.noteId,
+    sectionPaths,
+    attachmentPaths,
+  );
+  uploads.push(await textUpload(projected.markdownPath, rootFile, "markdown"));
+  await scheduler.checkpoint();
+  for (const sectionPath of projected.sections) {
+    const snapshot = snapshots.get(sectionPath.sectionId);
+    const relationship = relationships.get(sectionPath.sectionId);
+    if (!snapshot || !relationship) {
+      throw new Error(`Missing projected Section: ${sectionPath.sectionId}`);
+    }
+    uploads.push(
+      await textUpload(
+        sectionPath.markdownPath,
+        encodePortableSection(
+          snapshot,
+          relationship,
+          sectionPath.markdownPath,
+          source.metadata.noteId,
+          sectionPaths,
+          attachmentPaths,
+        ),
+        "markdown",
+      ),
+    );
+    await scheduler.checkpoint();
+  }
+  const baselineNote = createNoteDocumentFromSectionSnapshot(
+    source.metadata.noteId,
+    source.rootSection,
+    {
+      createdAt: source.metadata.createdAt,
+      updatedAt: source.metadata.updatedAt,
+    },
+  );
+  const recoveryUpload = await byteUpload(
+    projected.recoveryPath,
+    Y.encodeStateAsUpdate(baselineNote.doc),
+    "document",
+  );
+  baselineNote.doc.destroy();
+  uploads.push(recoveryUpload);
+  await scheduler.checkpoint(true);
+  return {
+    uploads,
+    document: {
+      kind: "note",
+      documentId: source.metadata.noteId,
+      schemaVersion: source.schemaVersion,
+      sourceRevision: source.revision,
+      path: recoveryUpload.entry.path,
+      sha256: recoveryUpload.entry.sha256,
+      size: recoveryUpload.entry.size,
+    },
+  };
+}
+
+function sameSectionPaths(
+  left: readonly {
+    readonly sectionId: string;
+    readonly markdownPath: string;
+  }[],
+  right: readonly {
+    readonly sectionId: string;
+    readonly markdownPath: string;
+  }[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (section, index) =>
+        section.sectionId === right[index]?.sectionId &&
+        section.markdownPath === right[index]?.markdownPath,
+    )
+  );
+}
+
 function encodePortableSection(
   snapshot: SectionSnapshot,
   relationship: { parentSectionId: string | null; order: number },
@@ -493,6 +962,10 @@ async function byteUpload(
 }
 
 class TauriPortableMirrorPort implements PortableMirrorPort {
+  status(): Promise<PortableMirrorStatus> {
+    return invoke<PortableMirrorStatus>("portable_mirror_status");
+  }
+
   listAttachments(): Promise<readonly AttachmentMetadata[]> {
     return invoke("portable_mirror_list_attachments");
   }
@@ -587,11 +1060,65 @@ export function createDefaultPortableMirrorPort(): PortableMirrorPort | null {
   return tauri ? new TauriPortableMirrorPort() : null;
 }
 
+function portableMirrorStatusIsCurrent(
+  runtime: CoreRuntime,
+  status: PortableMirrorStatus,
+): boolean {
+  const manifest = status.manifest;
+  if (
+    status.mirrorNeedsRepair ||
+    !manifest ||
+    manifest.schemaVersion !== PORTABLE_MIRROR_SCHEMA_VERSION
+  ) {
+    return false;
+  }
+  const snapshot = runtime.snapshot();
+  if (manifest.workspaceId !== snapshot.workspaceId) return false;
+  const revisions = new Map(
+    status.documentRevisions.map((revision) => [
+      `${revision.kind}:${revision.documentId}`,
+      revision.revision,
+    ]),
+  );
+  const documents = new Map(
+    manifest.documents.map((document) => [
+      `${document.kind}:${document.documentId}`,
+      document,
+    ]),
+  );
+  const workspaceKey = `workspace:${snapshot.workspaceId}`;
+  if (
+    revisions.get(workspaceKey) !== snapshot.workspaceRevision ||
+    documents.get(workspaceKey)?.sourceRevision !== snapshot.workspaceRevision
+  ) {
+    return false;
+  }
+  if (manifest.notes.length !== snapshot.notes.length) return false;
+  const manifestNotes = new Map(
+    manifest.notes.map((note) => [note.noteId, note]),
+  );
+  for (const metadata of snapshot.notes) {
+    const note = manifestNotes.get(metadata.noteId);
+    const key = `note:${metadata.noteId}`;
+    const revision = revisions.get(key);
+    if (
+      !note ||
+      note.parentNoteId !== metadata.parentNoteId ||
+      note.deletedAt !== (metadata.deletedAt ?? null) ||
+      !revision ||
+      documents.get(key)?.sourceRevision !== revision
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class PortableMirrorController {
   private timer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private publishing: Promise<void> | null = null;
   private activeAbort: AbortController | null = null;
-  private dirty = true;
+  private dirty = false;
   private disposed = false;
   private signature = "";
   private activityPhase: PortableMirrorActivityPhase = "idle";
@@ -601,6 +1128,7 @@ export class PortableMirrorController {
   private activityTotalBytes: number | null = null;
   private activityLastDurationMs: number | null = null;
   private readonly unsubscribe: () => void;
+  private readonly initialization: Promise<void>;
 
   constructor(
     private readonly runtime: CoreRuntime,
@@ -608,17 +1136,25 @@ export class PortableMirrorController {
     private readonly onError: (error: Error) => void,
     private readonly idleMilliseconds = 10_000,
   ) {
+    let initialSnapshot = true;
     this.unsubscribe = runtime.subscribe((snapshot) => {
       const signature = `${snapshot.workspaceRevision}:${snapshot.noteContentRevision}`;
+      if (initialSnapshot) {
+        initialSnapshot = false;
+        this.signature = signature;
+        return;
+      }
       if (signature === this.signature) return;
       this.signature = signature;
       this.dirty = true;
       this.activeAbort?.abort();
       this.schedule();
     });
+    this.initialization = this.initialize(this.signature);
   }
 
   async flush(): Promise<void> {
+    await this.initialization;
     while (!this.disposed && (this.dirty || this.publishing)) {
       this.clearTimer();
       await this.publishDirty(false);
@@ -664,7 +1200,30 @@ export class PortableMirrorController {
     this.timer = null;
   }
 
+  private async initialize(sourceSignature: string): Promise<void> {
+    try {
+      await this.runtime.flushDurableState();
+      const status = await this.port.status();
+      if (this.disposed) return;
+      if (
+        this.signature !== sourceSignature ||
+        !portableMirrorStatusIsCurrent(this.runtime, status)
+      ) {
+        this.dirty = true;
+        this.schedule();
+      } else {
+        this.activityPhase = "idle";
+      }
+    } catch (error) {
+      if (this.disposed) return;
+      this.dirty = true;
+      this.activityPhase = "error";
+      this.onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   private async publishDirty(scheduleIfDirty = true): Promise<void> {
+    await this.initialization;
     if (this.publishing) {
       await this.publishing;
       return;
@@ -677,6 +1236,7 @@ export class PortableMirrorController {
     this.activityPhase = "flushing";
     this.activityCompletedBytes = null;
     this.activityTotalBytes = null;
+    let published = false;
     this.publishing = (async () => {
       // The mirror is derived from canonical CRDT state and does not depend on
       // the rebuildable FTS projection. Waiting for FTS here made mirror work,
@@ -685,11 +1245,19 @@ export class PortableMirrorController {
       throwIfMirrorAborted(abort.signal);
       this.activityPhase = "preparing";
       const sourceSignature = this.signature;
+      const status = await this.port.status();
+      throwIfMirrorAborted(abort.signal);
+      if (this.signature !== sourceSignature) {
+        this.dirty = true;
+        return;
+      }
+      if (portableMirrorStatusIsCurrent(this.runtime, status)) return;
       const attachments = await this.port.listAttachments();
       throwIfMirrorAborted(abort.signal);
-      const publication = await createPortableMirrorPublication(
+      const publication = await createPortableMirrorUpdate(
         this.runtime,
         attachments,
+        status,
         undefined,
         { signal: abort.signal },
       );
@@ -697,6 +1265,7 @@ export class PortableMirrorController {
         this.dirty = true;
         return;
       }
+      if (!publication) return;
       await this.port.publish(publication, {
         signal: abort.signal,
         onPhase: (phase) => {
@@ -708,11 +1277,16 @@ export class PortableMirrorController {
           this.activityTotalBytes = totalBytes;
         },
       });
+      published = true;
       if (this.signature !== sourceSignature) this.dirty = true;
     })();
     try {
       await this.publishing;
-      this.activityLastResult = this.dirty ? "cancelled" : "published";
+      this.activityLastResult = this.dirty
+        ? "cancelled"
+        : published
+          ? "published"
+          : "unchanged";
     } catch (error) {
       this.dirty = true;
       if (isMirrorAbort(error)) {

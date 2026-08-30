@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import {
   createPortableMirrorPublication,
+  createPortableMirrorUpdate,
   PortableMirrorController,
   type PortableMirrorPort,
   type PortableMirrorPublication,
+  type PortableMirrorStatus,
 } from "../app/src/core/portable-mirror";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -20,6 +22,22 @@ function blockJson(block: NoteBlock): unknown {
   const result = sectionSnapshot(note.rootSection).body[0];
   note.doc.destroy();
   return result;
+}
+
+async function mirrorStatus(
+  runtime: CoreRuntime,
+  manifest: PortableMirrorPublication["manifest"] | null,
+): Promise<PortableMirrorStatus> {
+  const current = await createPortableMirrorPublication(runtime, []);
+  return {
+    manifest,
+    mirrorNeedsRepair: false,
+    documentRevisions: current.manifest.documents.map((document) => ({
+      kind: document.kind,
+      documentId: document.documentId,
+      revision: document.sourceRevision,
+    })),
+  };
 }
 
 describe("portable Workspace mirror", () => {
@@ -162,8 +180,10 @@ describe("portable Workspace mirror", () => {
       initialTitle: "Project",
     });
     const publications: PortableMirrorPublication[] = [];
+    let manifest: PortableMirrorPublication["manifest"] | null = null;
     let failNext = true;
     const port: PortableMirrorPort = {
+      status: () => mirrorStatus(runtime, manifest),
       listAttachments: async () => [],
       publish: async (publication) => {
         if (failNext) {
@@ -171,6 +191,7 @@ describe("portable Workspace mirror", () => {
           throw new Error("injected publish failure");
         }
         publications.push(publication);
+        manifest = publication.manifest;
       },
     };
     const errors: Error[] = [];
@@ -180,10 +201,6 @@ describe("portable Workspace mirror", () => {
       (error) => errors.push(error),
       60_000,
     );
-    expect(controller.activitySnapshot()).toMatchObject({
-      phase: "waiting",
-      dirty: true,
-    });
     await expect(controller.flush()).rejects.toThrow(
       "injected publish failure",
     );
@@ -207,6 +224,105 @@ describe("portable Workspace mirror", () => {
     expect(publications[1]!.manifest.notes).toHaveLength(2);
     controller.destroy();
     expect(controller.activitySnapshot().phase).toBe("off");
+    runtime.destroy();
+  });
+
+  it("does not publish when startup revisions already match the manifest", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "Project",
+    });
+    const baseline = await createPortableMirrorPublication(runtime, []);
+    const publish = vi.fn(async () => undefined);
+    const controller = new PortableMirrorController(
+      runtime,
+      {
+        status: () => mirrorStatus(runtime, baseline.manifest),
+        listAttachments: async () => [],
+        publish,
+      },
+      () => undefined,
+      60_000,
+    );
+
+    await controller.flush();
+
+    expect(publish).not.toHaveBeenCalled();
+    expect(controller.activitySnapshot()).toMatchObject({
+      phase: "idle",
+      dirty: false,
+      lastResult: null,
+    });
+    controller.destroy();
+    runtime.destroy();
+  });
+
+  it("regenerates only the changed Note when portable paths stay stable", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "Project",
+    });
+    const projectId = runtime.noteId;
+    const second = await runtime.createNoteAtEnd("window-1", "Second");
+    await runtime.flushDurableState();
+    const baseline = await createPortableMirrorPublication(runtime, []);
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: second.noteId,
+        title: "Second",
+        tags: [],
+        body: [
+          blockJson({
+            type: "paragraph",
+            blockId: createUuidV7(),
+            content: [{ type: "text", text: "changed body" }],
+          }),
+        ],
+        children: [],
+      },
+      "2026-08-24T00:00:03.000Z",
+      Symbol("portable-mirror-delta-test"),
+    );
+    await runtime.flushDurableState();
+    const status = await mirrorStatus(runtime, baseline.manifest);
+
+    const update = await createPortableMirrorUpdate(
+      runtime,
+      [],
+      status,
+      "2026-08-24T00:00:04.000Z",
+    );
+
+    expect(update).not.toBeNull();
+    expect(update!.uploads.map(({ path }) => path)).toEqual([
+      "memoka-recovery/workspace.yjs",
+      "Second.md",
+      "memoka-recovery/Second.yjs",
+    ]);
+    const unchangedDocument = baseline.manifest.documents.find(
+      ({ kind, documentId }) => kind === "note" && documentId === projectId,
+    );
+    expect(
+      update!.manifest.documents.find(
+        ({ kind, documentId }) => kind === "note" && documentId === projectId,
+      ),
+    ).toEqual(unchangedDocument);
+    runtime.destroy();
+  });
+
+  it("uses a full publication when the existing mirror needs repair", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "Project",
+    });
+    const baseline = await createPortableMirrorPublication(runtime, []);
+    const status = await mirrorStatus(runtime, baseline.manifest);
+
+    const repair = await createPortableMirrorUpdate(runtime, [], {
+      ...status,
+      mirrorNeedsRepair: true,
+    });
+
+    expect(repair).not.toBeNull();
+    expect(repair!.uploads).toHaveLength(baseline.uploads.length);
     runtime.destroy();
   });
 
@@ -284,6 +400,7 @@ describe("portable Workspace mirror", () => {
       initialTitle: "Project",
     });
     const publications: PortableMirrorPublication[] = [];
+    let manifest: PortableMirrorPublication["manifest"] | null = null;
     let releaseFirst!: () => void;
     let firstStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -293,6 +410,7 @@ describe("portable Workspace mirror", () => {
       releaseFirst = resolve;
     });
     const port: PortableMirrorPort = {
+      status: () => mirrorStatus(runtime, manifest),
       listAttachments: async () => [],
       publish: async (publication) => {
         publications.push(publication);
@@ -300,6 +418,7 @@ describe("portable Workspace mirror", () => {
           firstStarted();
           await firstGate;
         }
+        manifest = publication.manifest;
       },
     };
     const controller = new PortableMirrorController(

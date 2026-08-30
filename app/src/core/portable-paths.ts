@@ -22,6 +22,12 @@ export interface PortableNotePath {
   readonly sections: readonly PortableSectionPath[];
 }
 
+export interface PortableNoteBasePath {
+  readonly noteId: string;
+  readonly markdownPath: string;
+  readonly recoveryPath: string;
+}
+
 export interface PortablePathProjection {
   readonly notes: readonly PortableNotePath[];
   readonly markdownPathBySectionId: ReadonlyMap<string, string>;
@@ -31,8 +37,12 @@ export interface PortablePathProjectionOptions {
   readonly checkpoint?: () => void | Promise<void>;
 }
 
+interface PortableNoteMetadataInput {
+  readonly metadata: NoteMetadata;
+}
+
 interface PendingNote {
-  readonly note: PortableNotePathInput;
+  readonly note: PortableNoteMetadataInput;
   readonly parentStemPath: string | null;
   readonly trash: boolean;
   readonly component: string;
@@ -62,6 +72,38 @@ export async function createPortablePathProjection(
   options: PortablePathProjectionOptions = {},
 ): Promise<PortablePathProjection> {
   validateInputs(inputs);
+  const notePaths = await createPortableNotePathProjection(inputs, options);
+  const inputById = new Map(
+    inputs.map((input) => [input.metadata.noteId, input]),
+  );
+  const paths: PortableNotePath[] = [];
+  const markdownPathBySectionId = new Map<string, string>();
+  for (const notePath of notePaths) {
+    const input = inputById.get(notePath.noteId)!;
+    const sectionPaths = await createPortableSectionPathProjection(
+      input.rootSection,
+      notePath.markdownPath,
+      options,
+    );
+    markdownPathBySectionId.set(
+      input.rootSection.sectionId,
+      notePath.markdownPath,
+    );
+    for (const section of sectionPaths) {
+      markdownPathBySectionId.set(section.sectionId, section.markdownPath);
+    }
+    paths.push({ ...notePath, sections: sectionPaths });
+    await options.checkpoint?.();
+  }
+  return { notes: paths, markdownPathBySectionId };
+}
+
+/** Projects only the Note tree, without loading or traversing Note bodies. */
+export async function createPortableNotePathProjection(
+  inputs: readonly PortableNoteMetadataInput[],
+  options: PortablePathProjectionOptions = {},
+): Promise<readonly PortableNoteBasePath[]> {
+  validateMetadataInputs(inputs);
   const byId = new Map(inputs.map((input) => [input.metadata.noteId, input]));
   const live = inputs.filter(({ metadata }) => !metadata.deletedAt);
   const trash = inputs.filter(({ metadata }) => Boolean(metadata.deletedAt));
@@ -70,8 +112,7 @@ export async function createPortablePathProjection(
     parentId === null ? true : Boolean(byId.get(parentId)?.metadata.deletedAt),
   );
 
-  const paths: PortableNotePath[] = [];
-  const markdownPathBySectionId = new Map<string, string>();
+  const paths: PortableNoteBasePath[] = [];
   const pending: PendingNote[] = [];
   await appendRootNotes(pending, liveChildren.get(null) ?? [], false, options);
   await appendRootNotes(pending, trashChildren.get(null) ?? [], true, options);
@@ -87,23 +128,10 @@ export async function createPortablePathProjection(
       logicalPath: stemPath,
       title: current.note.metadata.title || "新しいノート",
     });
-    const sectionPaths = await projectSectionPaths(
-      current.note.rootSection,
-      markdownPath,
-      options,
-    );
-    markdownPathBySectionId.set(
-      current.note.rootSection.sectionId,
-      markdownPath,
-    );
-    for (const section of sectionPaths) {
-      markdownPathBySectionId.set(section.sectionId, section.markdownPath);
-    }
     paths.push({
       noteId: current.note.metadata.noteId,
       markdownPath,
       recoveryPath: await recoveryPathFor(markdownPath),
-      sections: sectionPaths,
     });
 
     const children = siblings.get(current.note.metadata.noteId) ?? [];
@@ -127,12 +155,12 @@ export async function createPortablePathProjection(
     await options.checkpoint?.();
   }
 
-  return { notes: paths, markdownPathBySectionId };
+  return paths;
 }
 
 async function appendRootNotes(
   pending: PendingNote[],
-  roots: readonly PortableNotePathInput[],
+  roots: readonly PortableNoteMetadataInput[],
   trash: boolean,
   options: PortablePathProjectionOptions,
 ): Promise<void> {
@@ -156,10 +184,10 @@ async function appendRootNotes(
   );
 }
 
-async function projectSectionPaths(
+export async function createPortableSectionPathProjection(
   root: SectionSnapshot,
   noteMarkdownPath: string,
-  options: PortablePathProjectionOptions,
+  options: PortablePathProjectionOptions = {},
 ): Promise<PortableSectionPath[]> {
   const noteStem = noteMarkdownPath.slice(0, -".md".length);
   const result: PortableSectionPath[] = [];
@@ -345,11 +373,11 @@ async function recoveryPathFor(markdownPath: string): Promise<string> {
 }
 
 function groupNotes(
-  inputs: readonly PortableNotePathInput[],
+  inputs: readonly PortableNoteMetadataInput[],
   keepParent: (parentId: string | null) => boolean,
-): Map<string | null, PortableNotePathInput[]> {
+): Map<string | null, PortableNoteMetadataInput[]> {
   const ids = new Set(inputs.map(({ metadata }) => metadata.noteId));
-  const result = new Map<string | null, PortableNotePathInput[]>();
+  const result = new Map<string | null, PortableNoteMetadataInput[]>();
   for (const input of inputs) {
     const requestedParent = input.metadata.parentNoteId;
     const parent =
@@ -371,6 +399,7 @@ function groupNotes(
 }
 
 function validateInputs(inputs: readonly PortableNotePathInput[]): void {
+  validateMetadataInputs(inputs);
   const noteIds = new Set<string>();
   const sectionIds = new Set<string>();
   for (const input of inputs) {
@@ -390,6 +419,18 @@ function validateInputs(inputs: readonly PortableNotePathInput[]): void {
       sectionIds.add(section.sectionId);
       pending.push(...section.children);
     }
+  }
+}
+
+function validateMetadataInputs(
+  inputs: readonly PortableNoteMetadataInput[],
+): void {
+  const noteIds = new Set<string>();
+  for (const input of inputs) {
+    if (noteIds.has(input.metadata.noteId)) {
+      throw new Error(`Duplicate Note ID: ${input.metadata.noteId}`);
+    }
+    noteIds.add(input.metadata.noteId);
   }
 }
 

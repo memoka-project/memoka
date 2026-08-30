@@ -15,7 +15,8 @@ use crate::attachment::{
 };
 use crate::data_area::MIRROR_UPDATE_MARKER;
 use crate::persistence::{
-    PersistenceError, ProductPersistenceState, ProductStore, sync_directory, sync_file,
+    DocumentRevision, PersistenceError, ProductPersistenceState, ProductStore, sync_directory,
+    sync_file,
 };
 
 pub const PORTABLE_MIRROR_SCHEMA_VERSION: u32 = 1;
@@ -100,6 +101,14 @@ pub struct PortableMirrorManifest {
     pub documents: Vec<PortableMirrorDocumentEntry>,
     pub attachments: Vec<PortableMirrorAttachmentEntry>,
     pub files: Vec<PortableMirrorFileEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PortableMirrorStatus {
+    manifest: Option<PortableMirrorManifest>,
+    mirror_needs_repair: bool,
+    document_revisions: Vec<DocumentRevision>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -356,6 +365,7 @@ fn commit_operation_with_hook(
             item.expected_size,
         )?;
     }
+    validate_reused_files(&context.data_area, &manifest, &request.items)?;
     sync_directory(&directory)?;
     let data_area = &context.data_area;
     let marker = data_area.join(MIRROR_UPDATE_MARKER);
@@ -370,10 +380,10 @@ fn commit_operation_with_hook(
     after_staging_verified();
 
     let previous_paths = existing_manifest_paths(data_area)?;
-    let current_paths = request
-        .items
+    let current_paths = manifest
+        .files
         .iter()
-        .map(|item| item.path.clone())
+        .map(|entry| entry.path.clone())
         .collect::<BTreeSet<_>>();
     let mut affected_directories = BTreeSet::new();
     for (index, item) in request.items.iter().enumerate() {
@@ -429,6 +439,58 @@ fn commit_operation_with_hook(
     fs::remove_dir_all(directory)?;
     sync_directory(&context.internal_root.join("portable-staging"))?;
     let _ = manifest;
+    Ok(())
+}
+
+fn validate_reused_files(
+    data_area: &Path,
+    manifest: &PortableMirrorManifest,
+    items: &[PortableMirrorItem],
+) -> Result<(), PersistenceError> {
+    let staged = items
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect::<BTreeSet<_>>();
+    if staged.len() == manifest.files.len() {
+        return Ok(());
+    }
+    let previous_path = data_area.join(PORTABLE_MANIFEST_FILE);
+    let previous: PortableMirrorManifest = serde_json::from_slice(&fs::read(previous_path)?)?;
+    validate_manifest(&previous)?;
+    let previous_files = previous
+        .files
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    for entry in &manifest.files {
+        if staged.contains(entry.path.as_str()) {
+            continue;
+        }
+        let Some(existing) = previous_files.get(entry.path.as_str()) else {
+            return Err(PersistenceError::InvalidInput(format!(
+                "portable mirror delta cannot reuse an unknown file: {}",
+                entry.path
+            )));
+        };
+        if existing.sha256 != entry.sha256
+            || existing.size != entry.size
+            || existing.kind != entry.kind
+        {
+            return Err(PersistenceError::InvalidInput(format!(
+                "portable mirror delta changed a file without uploading it: {}",
+                entry.path
+            )));
+        }
+        let target = safe_mirror_target(data_area, &entry.path)?;
+        let metadata = fs::symlink_metadata(&target)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != entry.size
+        {
+            return Err(PersistenceError::InvalidInput(format!(
+                "portable mirror reusable file is unavailable: {}",
+                entry.path
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -748,19 +810,22 @@ fn parse_and_validate_manifest(
 ) -> Result<PortableMirrorManifest, PersistenceError> {
     let manifest: PortableMirrorManifest = serde_json::from_str(source)?;
     validate_manifest(&manifest)?;
-    let expected = items
-        .iter()
-        .map(|item| (&item.path, (&item.sha256, item.expected_size)))
-        .collect::<BTreeMap<_, _>>();
-    let actual = manifest
+    let files = manifest
         .files
         .iter()
-        .map(|item| (&item.path, (&item.sha256, item.size)))
+        .map(|entry| (entry.path.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    if expected != actual || expected.len() != items.len() || actual.len() != manifest.files.len() {
-        return Err(PersistenceError::InvalidInput(
-            "portable mirror Manifest files disagree with publication".to_owned(),
-        ));
+    for item in items {
+        let Some(entry) = files.get(item.path.as_str()) else {
+            return Err(PersistenceError::InvalidInput(
+                "portable mirror publication contains a file absent from its Manifest".to_owned(),
+            ));
+        };
+        if entry.sha256 != item.sha256 || entry.size != item.expected_size {
+            return Err(PersistenceError::InvalidInput(
+                "portable mirror Manifest files disagree with publication".to_owned(),
+            ));
+        }
     }
     Ok(manifest)
 }
@@ -1102,6 +1167,30 @@ fn existing_manifest_paths(data_area: &Path) -> Result<BTreeSet<String>, Persist
     Ok(manifest.files.into_iter().map(|entry| entry.path).collect())
 }
 
+fn current_manifest(data_area: &Path) -> Result<Option<PortableMirrorManifest>, PersistenceError> {
+    if data_area.join(MIRROR_UPDATE_MARKER).exists() {
+        return Ok(None);
+    }
+    let path = data_area.join(PORTABLE_MANIFEST_FILE);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let manifest: PortableMirrorManifest = serde_json::from_slice(&fs::read(path)?)?;
+    validate_manifest(&manifest)?;
+    for entry in &manifest.files {
+        let target = safe_mirror_target(data_area, &entry.path)?;
+        let metadata = fs::symlink_metadata(target)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != entry.size
+        {
+            return Err(PersistenceError::InvalidInput(format!(
+                "portable mirror file is unavailable: {}",
+                entry.path
+            )));
+        }
+    }
+    Ok(Some(manifest))
+}
+
 fn remove_empty_managed_parents(
     root: &Path,
     mut parent: Option<&Path>,
@@ -1240,6 +1329,26 @@ fn sync_directories(directories: &BTreeSet<PathBuf>) -> Result<(), PersistenceEr
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn portable_mirror_status(app: AppHandle) -> Result<PortableMirrorStatus, String> {
+    run_mirror_blocking(move || {
+        app.state::<ProductPersistenceState>()
+            .with_store(&app, |store| {
+                let data_area = store.data_area_path()?;
+                let manifest_exists = data_area.join(PORTABLE_MANIFEST_FILE).exists();
+                let marker_exists = data_area.join(MIRROR_UPDATE_MARKER).exists();
+                let manifest = current_manifest(&data_area).ok().flatten();
+                Ok(PortableMirrorStatus {
+                    mirror_needs_repair: marker_exists || (manifest_exists && manifest.is_none()),
+                    manifest,
+                    document_revisions: store.document_revisions()?,
+                })
+            })
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1405,9 +1514,9 @@ mod tests {
     use super::{
         MIRROR_UPDATE_MARKER, PORTABLE_MANIFEST_FILE, PORTABLE_MIRROR_SCHEMA_VERSION,
         PortableMirrorBeginRequest, PortableMirrorDocumentEntry, PortableMirrorFileEntry,
-        PortableMirrorItem, PortableMirrorManifest, begin_store, commit_operation_with_hook,
-        commit_store, load_operation_context, restore_portable_mirror, validate_restore_targets,
-        verify_portable_mirror, write_chunk_store,
+        PortableMirrorItem, PortableMirrorManifest, PortableMirrorNoteEntry, begin_store,
+        commit_operation_with_hook, commit_store, load_operation_context, restore_portable_mirror,
+        validate_restore_targets, verify_portable_mirror, write_chunk_store,
     };
     use crate::persistence::ProductStore;
     use sha2::{Digest, Sha256};
@@ -1483,6 +1592,137 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("size/type mismatch")
+        );
+    }
+
+    #[test]
+    fn delta_publication_reuses_unchanged_manifest_files() {
+        let temporary = tempdir().unwrap();
+        let data_area = temporary.path().join("workspace");
+        let internal = data_area.join(".memoka");
+        let mut store = ProductStore::open(&internal).unwrap();
+        let workspace_id = "0198d9c8-1a2b-7c3d-8e4f-1234567890ab";
+        let note_id = "0198d9c8-1a2b-7c3d-9e4f-1234567890ab";
+        let workspace_path = "memoka-recovery/workspace.yjs";
+        let note_path = "memoka-recovery/Project.yjs";
+        let markdown_path = "Project.md";
+        let original_workspace = b"workspace-one";
+        let updated_workspace = b"workspace-two";
+        let note = b"note-recovery";
+        let markdown = b"# Project\n";
+
+        let manifest = |workspace: &[u8], revision: i64, generated_at: &str| {
+            let workspace_hash = sha256(workspace);
+            let note_hash = sha256(note);
+            let markdown_hash = sha256(markdown);
+            PortableMirrorManifest {
+                schema_version: PORTABLE_MIRROR_SCHEMA_VERSION,
+                generated_at: generated_at.to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                notes: vec![PortableMirrorNoteEntry {
+                    note_id: note_id.to_owned(),
+                    parent_note_id: None,
+                    deleted_at: None,
+                    markdown_path: markdown_path.to_owned(),
+                    sections: vec![],
+                }],
+                documents: vec![
+                    PortableMirrorDocumentEntry {
+                        kind: "workspace".to_owned(),
+                        document_id: workspace_id.to_owned(),
+                        schema_version: 2,
+                        source_revision: revision,
+                        path: workspace_path.to_owned(),
+                        sha256: workspace_hash.clone(),
+                        size: workspace.len() as u64,
+                    },
+                    PortableMirrorDocumentEntry {
+                        kind: "note".to_owned(),
+                        document_id: note_id.to_owned(),
+                        schema_version: 3,
+                        source_revision: 1,
+                        path: note_path.to_owned(),
+                        sha256: note_hash.clone(),
+                        size: note.len() as u64,
+                    },
+                ],
+                attachments: vec![],
+                files: vec![
+                    PortableMirrorFileEntry {
+                        path: workspace_path.to_owned(),
+                        sha256: workspace_hash,
+                        size: workspace.len() as u64,
+                        kind: "document".to_owned(),
+                    },
+                    PortableMirrorFileEntry {
+                        path: markdown_path.to_owned(),
+                        sha256: markdown_hash,
+                        size: markdown.len() as u64,
+                        kind: "markdown".to_owned(),
+                    },
+                    PortableMirrorFileEntry {
+                        path: note_path.to_owned(),
+                        sha256: note_hash,
+                        size: note.len() as u64,
+                        kind: "document".to_owned(),
+                    },
+                ],
+            }
+        };
+        let first_manifest = manifest(original_workspace, 1, "2026-08-24T00:00:00.000Z");
+        let first_items = [
+            (workspace_path, original_workspace.as_slice()),
+            (markdown_path, markdown.as_slice()),
+            (note_path, note.as_slice()),
+        ];
+        let first_request = PortableMirrorBeginRequest {
+            operation_id: "delta-baseline".to_owned(),
+            manifest: serde_json::to_string_pretty(&first_manifest).unwrap(),
+            items: first_items
+                .iter()
+                .map(|(path, bytes)| PortableMirrorItem {
+                    path: (*path).to_owned(),
+                    expected_size: bytes.len() as u64,
+                    sha256: sha256(bytes),
+                    source_attachment_id: None,
+                })
+                .collect(),
+        };
+        begin_store(&mut store, &first_request).unwrap();
+        for (index, (_, bytes)) in first_items.iter().enumerate() {
+            write_chunk_store(&mut store, "delta-baseline", index, 0, bytes).unwrap();
+        }
+        commit_store(&mut store, "delta-baseline").unwrap();
+
+        let second_manifest = manifest(updated_workspace, 2, "2026-08-24T00:00:01.000Z");
+        let second_request = PortableMirrorBeginRequest {
+            operation_id: "delta-update".to_owned(),
+            manifest: serde_json::to_string_pretty(&second_manifest).unwrap(),
+            items: vec![PortableMirrorItem {
+                path: workspace_path.to_owned(),
+                expected_size: updated_workspace.len() as u64,
+                sha256: sha256(updated_workspace),
+                source_attachment_id: None,
+            }],
+        };
+        begin_store(&mut store, &second_request).unwrap();
+        write_chunk_store(&mut store, "delta-update", 0, 0, updated_workspace).unwrap();
+        commit_store(&mut store, "delta-update").unwrap();
+
+        assert_eq!(
+            fs::read(data_area.join(workspace_path)).unwrap(),
+            updated_workspace
+        );
+        assert_eq!(fs::read(data_area.join(markdown_path)).unwrap(), markdown);
+        assert_eq!(fs::read(data_area.join(note_path)).unwrap(), note);
+        assert_eq!(
+            verify_portable_mirror(&data_area)
+                .unwrap()
+                .documents
+                .first()
+                .unwrap()
+                .source_revision,
+            2
         );
     }
 
