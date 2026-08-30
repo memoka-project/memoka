@@ -6,7 +6,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 
 ## 対応環境とインストール
 
-v0.1.0の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。公式binaryとして配布するのは
+v0.1.1の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。公式binaryとして配布するのは
 Linux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを取得し、同じReleaseの
 `SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。AppImageの更新artifactは
 Tauri Updater用の鍵で署名します。deb、macOS、ARM、Microsoft Store、apt repositoryは提供しません。

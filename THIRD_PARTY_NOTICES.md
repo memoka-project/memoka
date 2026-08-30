@@ -525,6 +525,7 @@ linked upstream project and the dependency source package for the complete licen
 - tauri-plugin-log@2.9.0 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
 - tauri-plugin-opener@2.5.4 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
 - tauri-plugin-process@2.3.1 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
+- tauri-plugin-single-instance@2.4.3 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
 - tauri-plugin-updater@2.10.1 — Apache-2.0 OR MIT — https://github.com/tauri-apps/plugins-workspace
 - tauri-plugin@2.6.3 — Apache-2.0 OR MIT — https://tauri.app/
 - tauri-runtime-wry@2.11.4 — Apache-2.0 OR MIT — https://tauri.app/

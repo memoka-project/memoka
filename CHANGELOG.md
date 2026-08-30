@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-31
+
 - Linux AppImage配布、更新、診断、native受入を準備中。
 - AppImageがbuild hostのGLib / Wayland / GTK IME設定を強制し、新しいLinux環境で起動不能またはIME不通になる問題を修正。
 - LinuxでWebKitGTKのpreedit表示を有効化し、IME変換中の未確定文字列が見えない問題を修正。
@@ -12,12 +14,13 @@
 - Memokaの二重起動を拒否し、新しいプロセスから既存Windowを復元・前面化するsingle-instance連携を追加。
 - 起動時に正本と一致するMarkdown mirrorを再生成せず、通常の本文編集では変更Noteだけを差分更新するよう改善。
 
-## [0.1.0] - 未公開
+## [0.1.0] - 2026-08-30
 
 - Vim風編集、Note Tree、再帰Section、Focused Section、検索、内部リンク、添付CASを実装。
 - SQLite/YjsをSSOTとするWorkspaceデータ領域と、自動Markdown mirror、検証・復旧CLIを実装。
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/memoka-project/memoka/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/memoka-project/memoka/releases/tag/v0.1.0
