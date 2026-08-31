@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { CellSelection } from "@tiptap/pm/tables";
 import * as Y from "yjs";
 import {
   CoreCommandRegistry,
@@ -1845,6 +1846,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onTableActionPicker"
       | "onCommandLine"
       | "onApplicationCommand"
       | "onWindowCommand"
@@ -1869,12 +1871,19 @@ export class CoreRuntime {
       repeatStore: this.repeatStoreFor(windowId),
       getWindowState: () => this.requireContentWindowState(windowId),
       onSelectionUpdate: (editor, activeSectionId) => {
+        const selection = editor.state.selection;
         this.persistWindowUpdate(
           windowId,
           {
             selection: {
-              anchor: editor.state.selection.anchor,
-              head: editor.state.selection.head,
+              anchor:
+                selection instanceof CellSelection
+                  ? selection.$anchorCell.pos
+                  : selection.anchor,
+              head:
+                selection instanceof CellSelection
+                  ? selection.$headCell.pos
+                  : selection.head,
             },
           },
           attachedNoteId,
@@ -1898,6 +1907,7 @@ export class CoreRuntime {
       onNoteSearch: options.onNoteSearch,
       onBlockTypePicker: options.onBlockTypePicker,
       onInlineFormatPicker: options.onInlineFormatPicker,
+      onTableActionPicker: options.onTableActionPicker,
       openExternalLink: options.openExternalLink,
       attachmentRepository: options.attachmentRepository,
       onMessage: options.onMessage,
@@ -1964,6 +1974,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onTableActionPicker"
       | "onCommandLine"
       | "onApplicationCommand"
       | "onWindowCommand"

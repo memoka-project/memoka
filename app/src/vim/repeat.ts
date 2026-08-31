@@ -7,6 +7,7 @@ import {
   type VimRegister,
 } from "./editor-commands";
 import type { VimCommand, VimMode, VimOperator } from "./input";
+import type { TableActionRepeat } from "../core/table-actions";
 
 export interface VimRepeatDescriptor {
   command: VimCommand;
@@ -14,6 +15,8 @@ export interface VimRepeatDescriptor {
   count: number;
   countExplicit: boolean;
   argument?: string;
+  tableRectangle?: { width: number; height: number };
+  tableAction?: TableActionRepeat;
 }
 
 export interface VimRepeatCandidate extends VimRepeatDescriptor {
@@ -38,6 +41,12 @@ function cloneDescriptor(descriptor: VimRepeatDescriptor): VimRepeatDescriptor {
     count: descriptor.count,
     countExplicit: descriptor.countExplicit,
     argument: descriptor.argument,
+    tableRectangle: descriptor.tableRectangle
+      ? { ...descriptor.tableRectangle }
+      : undefined,
+    tableAction: descriptor.tableAction
+      ? { ...descriptor.tableAction }
+      : undefined,
   };
 }
 
@@ -49,6 +58,16 @@ function cloneDescriptor(descriptor: VimRepeatDescriptor): VimRepeatDescriptor {
 export function createVimRepeatDescriptor(
   candidate: VimRepeatCandidate,
 ): VimRepeatDescriptor | null {
+  if (
+    candidate.mode === "visual-block" &&
+    candidate.tableRectangle &&
+    candidate.operator === null &&
+    ["selection.delete", "selection.change", "selection.paste"].includes(
+      candidate.command,
+    )
+  ) {
+    return cloneDescriptor(candidate);
+  }
   if (candidate.mode !== "normal") return null;
   if (candidate.operator === "delete") {
     return cloneDescriptor(candidate);

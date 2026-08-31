@@ -12,6 +12,7 @@ import {
   type EditorState,
   type Selection,
 } from "@tiptap/pm/state";
+import { CellSelection } from "@tiptap/pm/tables";
 import type { EditorView } from "@tiptap/pm/view";
 import type { UndoManager } from "yjs";
 import { sanitizeExternalHtml } from "../editor/html-paste";
@@ -41,6 +42,7 @@ import {
   visualCharCursor,
   vimBlockCursorBeforeInsertCaret,
   vimRegisterLabel,
+  type EditorVimResult,
   type VimEditorView,
   type VimRegister,
   type VimVisualLineState,
@@ -51,15 +53,31 @@ import {
   measureVimInsertCaretGeometry,
 } from "./caret-geometry";
 import { createVisualLineDecorations } from "./decorations";
+import {
+  beginVisualBlock,
+  captureTableActionSelection,
+  createVisualBlockDecorations,
+  moveVisualBlockHeadToPosition,
+  restoreVisualBlockSelection,
+  repeatTableAction,
+  runVisualBlockCommand,
+  selectVisualBlockRectangle,
+  visualBlockCursor,
+  visualBlockDimensions,
+  type TableActionSelection,
+} from "./table-editing";
+import type { TableActionRepeat } from "../core/table-actions";
 import { VimLogicalLineGutter } from "./logical-line-gutter";
 import { VimVisualLineOverlay } from "./visual-line-overlay";
 import {
   MARKDOWN_CLIPBOARD_MIME,
   MEMOKA_CLIPBOARD_MIME,
+  TSV_CLIPBOARD_MIME,
   decodeVimClipboard,
   readInternalClipboard,
   readMarkdownClipboard,
   registerFromMarkdown,
+  registerFromTabularClipboard,
   type PreferredClipboardFormats,
   type VimClipboardWriteResult,
 } from "./clipboard";
@@ -156,6 +174,7 @@ export interface ProductVimSessionOptions {
     count: number,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
   onInlineFormat?: () => boolean;
+  onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
   onOpenAttachment?: (attachmentId: string) => void | Promise<void>;
   onMessage?: (message: string) => void;
@@ -310,11 +329,13 @@ export class ProductVimSession {
       const lineNumberCursor = (state: EditorState): number =>
         this.mode === "visual-line" && this.visualLine
           ? this.visualLine.cursor
-          : this.mode === "visual-char"
-            ? visualCharCursor({ state })
-            : state.selection instanceof NodeSelection
-              ? state.selection.from
-              : state.selection.head;
+          : this.mode === "visual-block"
+            ? visualBlockCursor({ state })
+            : this.mode === "visual-char"
+              ? visualCharCursor({ state })
+              : state.selection instanceof NodeSelection
+                ? state.selection.from
+                : state.selection.head;
 
       return new Plugin({
         key: pluginKey,
@@ -322,7 +343,9 @@ export class ProductVimSession {
           decorations: (state) =>
             this.mode === "visual-line" && this.visualLine
               ? createVisualLineDecorations(state, this.visualLine)
-              : null,
+              : this.mode === "visual-block"
+                ? createVisualBlockDecorations(state)
+                : null,
           handleClick: (view, position, event) =>
             this.handleClick(view, position, event),
           handleDOMEvents: {
@@ -402,7 +425,23 @@ export class ProductVimSession {
   activate(): void {
     if (!this.view) return;
     applyNativeCaretMode(this.view.dom, this.mode);
-    if (this.mode !== "insert") {
+    if (this.mode === "visual-block") {
+      const selection = this.view.state.selection;
+      const restored =
+        selection instanceof CellSelection
+          ? restoreVisualBlockSelection(
+              this.view,
+              selection.$anchorCell.pos,
+              selection.$headCell.pos,
+            )
+          : beginVisualBlock(this.view);
+      if (!restored) {
+        this.mode = "normal";
+        applyNativeCaretMode(this.view.dom, "normal");
+        applyModeSelection(this.view, "normal", undefined, false);
+        this.options.onModeChange?.("normal");
+      }
+    } else if (this.mode !== "insert") {
       applyModeSelection(this.view, this.mode, undefined, false);
     }
     this.scheduleCaretRefresh(this.view);
@@ -502,11 +541,13 @@ export class ProductVimSession {
       this.gutter?.refreshCursor(
         this.mode === "visual-line" && this.visualLine
           ? this.visualLine.cursor
-          : this.mode === "visual-char"
-            ? visualCharCursor({ state: this.view.state })
-            : this.view.state.selection instanceof NodeSelection
-              ? this.view.state.selection.from
-              : this.view.state.selection.head,
+          : this.mode === "visual-block"
+            ? visualBlockCursor({ state: this.view.state })
+            : this.mode === "visual-char"
+              ? visualCharCursor({ state: this.view.state })
+              : this.view.state.selection instanceof NodeSelection
+                ? this.view.state.selection.from
+                : this.view.state.selection.head,
       );
       this.visualLineOverlay?.refreshLayout();
     }
@@ -626,6 +667,27 @@ export class ProductVimSession {
       return true;
     }
 
+    const fallback = readPasteFallback(event.clipboardData);
+    const tabularRegister = registerFromTabularClipboard(
+      {
+        html: fallback.html,
+        tsv: event.clipboardData.getData(TSV_CLIPBOARD_MIME) || null,
+        markdown: markdown || null,
+        plain: fallback.plain,
+      },
+      view.state.schema,
+    );
+    if (tabularRegister) {
+      this.clipboardReadGeneration += 1;
+      const handled = this.pasteClipboardRegister(
+        view,
+        tabularRegister,
+        "internal",
+      );
+      if (handled) event.preventDefault();
+      return handled;
+    }
+
     const markdownRegister = readMarkdownClipboard(
       event.clipboardData,
       view.state.schema,
@@ -640,8 +702,6 @@ export class ProductVimSession {
       if (handled) event.preventDefault();
       return handled;
     }
-
-    const fallback = readPasteFallback(event.clipboardData);
 
     if (
       !this.options.onPasteRead ||
@@ -758,7 +818,7 @@ export class ProductVimSession {
       return;
     }
     const resolvedFallback: PasteFallback = {
-      html: fallback.html,
+      html: formats?.html || fallback.html,
       plain: formats?.plain || fallback.plain,
     };
     if (
@@ -773,7 +833,22 @@ export class ProductVimSession {
     ) {
       return;
     }
-    if (fallback.html && this.pasteClipboardFallback(view, "html", fallback)) {
+    const tabularRegister = formats
+      ? registerFromTabularClipboard(
+          { ...formats, plain: resolvedFallback.plain },
+          view.state.schema,
+        )
+      : null;
+    if (
+      tabularRegister &&
+      this.pasteClipboardRegister(view, tabularRegister, "internal")
+    ) {
+      return;
+    }
+    if (
+      resolvedFallback.html &&
+      this.pasteClipboardFallback(view, "html", resolvedFallback)
+    ) {
       return;
     }
 
@@ -1058,16 +1133,20 @@ export class ProductVimSession {
         return true;
       }
     }
-    if (!isComposing && event.key === "Tab") {
+    if (!isComposing && isTabKey(event) && this.mode === "insert") {
       event.preventDefault();
-      const result =
-        this.mode === "insert"
-          ? runEditorTab(view, event.shiftKey)
-          : { handled: false, detail: "tab:focus-kept" };
+      const result = runEditorTab(view, isReverseTab(event));
       view.focus();
       this.action = `${result.detail}:${result.handled ? "changed" : "boundary"}`;
       this.emit();
       this.scheduleCaretRefresh(view);
+      return true;
+    }
+    if (!isComposing && isTabKey(event) && this.mode !== "normal") {
+      event.preventDefault();
+      view.focus();
+      this.action = "tab:focus-kept:boundary";
+      this.emit();
       return true;
     }
 
@@ -1119,6 +1198,14 @@ export class ProductVimSession {
           selectionCursor(view),
         );
         this.changeMode(view, "replace");
+      } else if (command === "mode.visual-block") {
+        if (beginVisualBlock(view)) {
+          this.changeMode(view, "visual-block");
+        } else {
+          this.action = "mode:visual-block:table-only";
+          this.emit();
+          this.scheduleCaretRefresh(view);
+        }
       } else {
         this.changeMode(view, modeForCommand(command));
       }
@@ -1223,6 +1310,22 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "table.action_picker") {
+      event.preventDefault();
+      const selection = captureTableActionSelection(
+        view,
+        this.mode,
+        this.visualLine,
+      );
+      const opened = selection
+        ? (this.options.onTableActions?.(selection) ?? false)
+        : false;
+      this.action = opened ? "table:actions:open" : "table:actions:unavailable";
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return true;
+    }
+
     if (command === "navigation.open-external-link") {
       event.preventDefault();
       this.openExternalLink(view);
@@ -1310,13 +1413,17 @@ export class ProductVimSession {
       const cursorBeforeCommand =
         this.mode === "visual-char"
           ? view.state.selection.from
-          : selectionCursor(view);
+          : this.mode === "visual-block"
+            ? visualBlockCursor(view)
+            : selectionCursor(view);
       const isolateUndo = isolatesUndoUnit(command, resolution.operator);
       const continuesIntoInsert = changesIntoInsert(
         command,
         resolution.operator,
       );
       const undoStackDepth = undoManager?.undoStack.length ?? 0;
+      const tableRectangle =
+        this.mode === "visual-block" ? visualBlockDimensions(view) : null;
       if (isolateUndo) undoManager?.stopCapturing();
       const putCheckpoint =
         command === "put.after" || command === "put.before"
@@ -1347,14 +1454,21 @@ export class ProductVimSession {
                 resolution.count,
                 resolution.countExplicit,
               )
-            : runEditorVimCommand(
-                view,
-                command,
-                this.mode,
-                currentRegister,
-                resolution.count,
-                resolution.countExplicit,
-              );
+            : this.mode === "visual-block"
+              ? runVisualBlockCommand(
+                  view,
+                  command,
+                  currentRegister,
+                  resolution.count,
+                )
+              : runEditorVimCommand(
+                  view,
+                  command,
+                  this.mode,
+                  currentRegister,
+                  resolution.count,
+                  resolution.countExplicit,
+                );
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
             mode: this.mode,
@@ -1363,11 +1477,23 @@ export class ProductVimSession {
             count: resolution.count,
             countExplicit: resolution.countExplicit ?? false,
             argument: resolution.argument,
+            tableRectangle: tableRectangle ?? undefined,
           })
         : null;
       if (result.handled && putCheckpoint) {
         putCheckpoint.manager?.undoStack.at(-1)?.meta.set(cursorHistoryKey, {
           beforeCursor: putCheckpoint.cursor,
+          afterCursor: selectionCursor(view),
+        } satisfies CursorHistoryEntry);
+      }
+      if (
+        result.handled &&
+        tableRectangle &&
+        !continuesIntoInsert &&
+        (command === "selection.delete" || command === "selection.paste")
+      ) {
+        undoManager?.undoStack.at(-1)?.meta.set(cursorHistoryKey, {
+          beforeCursor: cursorBeforeCommand,
           afterCursor: selectionCursor(view),
         } satisfies CursorHistoryEntry);
       }
@@ -1555,6 +1681,14 @@ export class ProductVimSession {
       );
       return;
     }
+    const tabularRegister = formats
+      ? registerFromTabularClipboard(formats, view.state.schema)
+      : null;
+    if (tabularRegister) {
+      this.registerStore.set(tabularRegister);
+      this.putWorkspaceRegister(view, command, count, countExplicit);
+      return;
+    }
     this.externalFileClipboardPaths = null;
     this.putWorkspaceRegister(view, command, count, countExplicit);
   }
@@ -1647,25 +1781,64 @@ export class ProductVimSession {
     }
     const undoManager = findUndoManager(view);
     undoManager?.stopCapturing();
+    const undoStackDepth = undoManager?.undoStack.length ?? 0;
     const cursorBefore = selectionCursor(view);
-    const result = replayVimRepeat(
-      view,
-      descriptor,
-      this.registerStore.read(view.state.schema),
-      count,
-      countExplicit,
+    const continuesIntoInsert = changesIntoInsert(
+      descriptor.command,
+      descriptor.operator,
     );
+    const result: EditorVimResult = descriptor.tableAction
+      ? (() => {
+          const tableResult = repeatTableAction(
+            view,
+            descriptor.tableAction,
+            countExplicit ? count : 1,
+          );
+          return {
+            handled: tableResult.changed,
+            detail: `table:action:${descriptor.tableAction.action}`,
+          };
+        })()
+      : descriptor.tableRectangle
+        ? selectVisualBlockRectangle(
+            view,
+            descriptor.tableRectangle.width,
+            descriptor.tableRectangle.height,
+          )
+          ? runVisualBlockCommand(
+              view,
+              descriptor.command,
+              this.registerStore.read(view.state.schema),
+              countExplicit ? count : descriptor.count,
+            )
+          : { handled: false, detail: "table:visual-block:repeat" }
+        : replayVimRepeat(
+            view,
+            descriptor,
+            this.registerStore.read(view.state.schema),
+            count,
+            countExplicit,
+          );
     if (
       result.handled &&
+      !continuesIntoInsert &&
       (descriptor.command === "put.after" ||
-        descriptor.command === "put.before")
+        descriptor.command === "put.before" ||
+        (descriptor.tableRectangle &&
+          (descriptor.command === "selection.delete" ||
+            descriptor.command === "selection.paste")) ||
+        descriptor.tableAction)
     ) {
       undoManager?.undoStack.at(-1)?.meta.set(cursorHistoryKey, {
         beforeCursor: cursorBefore,
         afterCursor: selectionCursor(view),
       } satisfies CursorHistoryEntry);
     }
-    undoManager?.stopCapturing();
+    if (result.handled && continuesIntoInsert && result.nextMode === "insert") {
+      this.beginChangeUndoCapture(undoManager, undoStackDepth, cursorBefore);
+    }
+    if (!continuesIntoInsert) undoManager?.stopCapturing();
+    if (result.nextMode) this.changeMode(view, result.nextMode);
     this.action = `repeat:${result.detail}${countExplicit && count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
     if (result.register !== undefined) this.registerStore.set(result.register);
     else this.emit();
@@ -1700,7 +1873,9 @@ export class ProductVimSession {
     if (!view || view.isDestroyed) return null;
     return this.mode === "visual-line" && this.visualLine
       ? this.visualLine.cursor
-      : visualCursor(view, this.mode);
+      : this.mode === "visual-block"
+        ? visualBlockCursor(view)
+        : visualCursor(view, this.mode);
   }
 
   prepareExternalMutationUndoBoundary(): void {
@@ -1717,6 +1892,7 @@ export class ProductVimSession {
     position: number,
     beforeCursor: number,
     detail: string,
+    repeat?: TableActionRepeat,
   ): boolean {
     const view = this.view;
     if (!view || view.isDestroyed) return false;
@@ -1727,6 +1903,15 @@ export class ProductVimSession {
       beforeCursor,
     );
     findUndoManager(view)?.stopCapturing();
+    if (applied && repeat) {
+      this.repeatStore.record({
+        command: "table.action_picker",
+        operator: null,
+        count: 1,
+        countExplicit: false,
+        tableAction: repeat,
+      });
+    }
     if (applied) this.requestImeOff();
     return applied;
   }
@@ -1734,12 +1919,15 @@ export class ProductVimSession {
   applyViewportCaretPosition(position: number): boolean {
     const view = this.view;
     if (!view || view.isDestroyed) return false;
-    const result = moveVimSelectionToViewportPosition(
-      view,
-      this.mode,
-      position,
-      this.visualLine,
-    );
+    const result =
+      this.mode === "visual-block"
+        ? moveVisualBlockHeadToPosition(view, position)
+        : moveVimSelectionToViewportPosition(
+            view,
+            this.mode,
+            position,
+            this.visualLine,
+          );
     if (!result.handled) return false;
     if (result.visualLine) this.visualLine = result.visualLine;
     this.input = createVimInputState();
@@ -2001,6 +2189,8 @@ export class ProductVimSession {
 
   private changeMode(view: EditorView, nextMode: VimMode): void {
     const previousMode = this.mode;
+    const visualBlockExitCursor =
+      previousMode === "visual-block" ? visualBlockCursor(view) : undefined;
     const insertExitCursor =
       (previousMode === "insert" || previousMode === "replace") &&
       nextMode === "normal"
@@ -2023,8 +2213,19 @@ export class ProductVimSession {
     if (nextMode === "visual-line") {
       this.visualLine = beginVisualLine(view);
       this.refreshVisualLineDecorations(view);
+    } else if (nextMode === "visual-block") {
+      this.visualLine = null;
+      if (!(view.state.selection instanceof TextSelection)) {
+        view.focus();
+      } else if (!beginVisualBlock(view)) {
+        this.mode = "normal";
+        applyNativeCaretMode(view.dom, "normal");
+        applyModeSelection(view, "normal", view.state.selection.head);
+        nextMode = "normal";
+      }
     } else {
-      const cursor = insertExitCursor ?? this.visualLine?.cursor;
+      const cursor =
+        insertExitCursor ?? visualBlockExitCursor ?? this.visualLine?.cursor;
       this.visualLine = null;
       applyModeSelection(view, nextMode, cursor);
     }
@@ -2339,6 +2540,7 @@ function shouldReadPreferredClipboard(
       type === MEMOKA_CLIPBOARD_MIME ||
       type === MARKDOWN_CLIPBOARD_MIME ||
       type === "text/html" ||
+      type === TSV_CLIPBOARD_MIME ||
       type === "text/plain" ||
       type.startsWith("text/plain;") ||
       type === "Files" ||
@@ -2410,6 +2612,8 @@ function modeForCommand(command: VimCommand): VimMode {
       return "visual-char";
     case "mode.visual-line":
       return "visual-line";
+    case "mode.visual-block":
+      return "visual-block";
     default:
       return "normal";
   }
@@ -2457,18 +2661,45 @@ function changesIntoInsert(
 }
 
 function eventSequence(event: KeyboardEvent): string {
+  if (isTabKey(event)) return isReverseTab(event) ? "Shift+Tab" : "Tab";
   const eventKey = event.key.toLowerCase();
   const codeKey = event.code.match(/^Key([A-Z])$/u)?.[1]?.toLowerCase();
   const key = codeKey ?? eventKey;
   if (
     event.ctrlKey &&
-    ["b", "d", "f", "h", "i", "j", "k", "l", "o", "r", "t", "u", "w"].includes(
-      key,
-    )
+    [
+      "b",
+      "d",
+      "f",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "o",
+      "r",
+      "t",
+      "u",
+      "v",
+      "w",
+    ].includes(key)
   ) {
     return `Ctrl+${key}`;
   }
   return event.key;
+}
+
+function isTabKey(event: KeyboardEvent): boolean {
+  // WebKitGTK may expose Shift-Tab using the XKB keysym name instead of the
+  // DOM-standard `Tab`. Treat both spellings as the same editor key so the
+  // browser never moves focus out of a boundary Table Cell.
+  return (
+    event.key === "Tab" || event.key === "ISO_Left_Tab" || event.code === "Tab"
+  );
+}
+
+function isReverseTab(event: KeyboardEvent): boolean {
+  return event.shiftKey || event.key === "ISO_Left_Tab";
 }
 
 function suppressUnmappedEditingKey(
@@ -2522,6 +2753,11 @@ function applyModeSelection(
     beginVisualChar(view, current, focus);
     return;
   }
+  if (mode === "visual-block") {
+    if (!beginVisualBlock(view))
+      applyModeSelection(view, "normal", current, focus);
+    return;
+  }
   if (mode === "normal") {
     const bounded = Math.max(0, Math.min(current, state.doc.content.size));
     const cursor = clampVimBlockCursor(view, bounded);
@@ -2565,11 +2801,13 @@ function findUndoManager(view: EditorView): UndoManager | null {
 
 function visualCursor(view: EditorView, mode: VimMode): number {
   let cursor =
-    mode === "visual-char"
-      ? visualCharCursor(view)
-      : view.state.selection instanceof NodeSelection
-        ? view.state.selection.from
-        : view.state.selection.head;
+    mode === "visual-block"
+      ? visualBlockCursor(view)
+      : mode === "visual-char"
+        ? visualCharCursor(view)
+        : view.state.selection instanceof NodeSelection
+          ? view.state.selection.from
+          : view.state.selection.head;
   if (mode === "normal") cursor = clampVimBlockCursor(view, cursor);
   return cursor;
 }

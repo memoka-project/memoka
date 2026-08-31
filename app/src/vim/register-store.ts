@@ -34,6 +34,12 @@ function cloneRegister(
         sectionIds: [...register.sectionIds],
         slice: cloneSlice(register.slice),
       };
+    case "table-cells":
+      return {
+        ...register,
+        alignments: [...register.alignments],
+        slice: cloneSlice(register.slice),
+      };
   }
 }
 

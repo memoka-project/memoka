@@ -3,7 +3,10 @@ import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { createUuidV7 } from "../core/ids";
 import { BODY_CHUNK_NODE, SECTION_BODY_NODE } from "../core/section-model";
-import type { BlockTransformTarget } from "../core/block-types";
+import type {
+  BlockTransformTarget,
+  TableDimensions,
+} from "../core/block-types";
 
 export interface BlockTransformCommand {
   readonly name: "block.transform";
@@ -12,6 +15,7 @@ export interface BlockTransformCommand {
     readonly target: BlockTransformTarget;
     /** The slash picker may consume the otherwise empty Paragraph's `/`. */
     readonly consumeSlash?: boolean;
+    readonly tableDimensions?: TableDimensions;
   };
 }
 
@@ -59,6 +63,7 @@ export function runBlockTransformCommand(
     source.node,
     command.payload.target,
     command.payload.consumeSlash === true,
+    command.payload.tableDimensions,
   );
   if ("reason" in replacement) return replacement;
 
@@ -91,6 +96,7 @@ function createReplacement(
   source: ProseMirrorNode,
   target: BlockTransformTarget,
   consumeSlash: boolean,
+  tableDimensions?: TableDimensions,
 ):
   | { readonly node: ProseMirrorNode; readonly selection: "text" | "node" }
   | Extract<BlockTransformResult, { changed: false }> {
@@ -189,7 +195,7 @@ function createReplacement(
     if (!consumeSlash && (sourceType !== "paragraph" || source.content.size)) {
       return { changed: false, reason: "unsupported" };
     }
-    const table = createEmptyTable(schema, blockId);
+    const table = createEmptyTable(schema, blockId, tableDimensions);
     return table
       ? { node: table, selection: "text" }
       : { changed: false, reason: "unsupported" };
@@ -285,6 +291,7 @@ function paragraphInlineContent(
 function createEmptyTable(
   schema: Schema,
   blockId: string,
+  dimensions: TableDimensions = { rows: 3, columns: 3 },
 ): ProseMirrorNode | null {
   const table = schema.nodes.table;
   const row = schema.nodes.tableRow;
@@ -292,11 +299,14 @@ function createEmptyTable(
   const cell = schema.nodes.tableCell;
   const paragraph = schema.nodes.paragraph;
   if (!table || !row || !header || !cell || !paragraph) return null;
-  const rows = Array.from({ length: 3 }, (_, rowIndex) => {
+  const rowCount = normalizedTableDimension(dimensions.rows);
+  const columnCount = normalizedTableDimension(dimensions.columns);
+  if (rowCount === null || columnCount === null) return null;
+  const rows = Array.from({ length: rowCount }, (_, rowIndex) => {
     const cellType = rowIndex === 0 ? header : cell;
     return row.create(
       { blockId: createUuidV7() },
-      Array.from({ length: 3 }, () =>
+      Array.from({ length: columnCount }, () =>
         cellType.create(
           { blockId: createUuidV7(), alignment: null },
           paragraph.create({ blockId: createUuidV7() }),
@@ -305,4 +315,9 @@ function createEmptyTable(
     );
   });
   return table.create({ blockId }, rows);
+}
+
+function normalizedTableDimension(value: number): number | null {
+  if (!Number.isInteger(value) || value < 1 || value > 50) return null;
+  return value;
 }

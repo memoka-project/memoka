@@ -18,6 +18,7 @@ struct KeymapConfigFile {
     shared_navigation: Option<BTreeMap<String, Vec<String>>>,
     tree_normal: Option<BTreeMap<String, Vec<String>>>,
     visual_char: Option<BTreeMap<String, Vec<String>>>,
+    table: Option<BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,6 +34,7 @@ pub struct ApplicationKeyConfigOverride {
     shared_navigation_bindings: Option<BTreeMap<String, Vec<String>>>,
     tree_bindings: Option<BTreeMap<String, Vec<String>>>,
     inline_format_bindings: Option<BTreeMap<String, Vec<String>>>,
+    table_bindings: Option<BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,7 +100,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
                 .as_ref()
                 .and_then(|value| value.shared_navigation.clone()),
             tree_bindings: keymap.as_ref().and_then(|value| value.tree_normal.clone()),
-            inline_format_bindings: keymap.and_then(|value| value.visual_char),
+            inline_format_bindings: keymap.as_ref().and_then(|value| value.visual_char.clone()),
+            table_bindings: keymap.and_then(|value| value.table),
         }),
         wait_for_mirror_on_exit,
         warning: None,
@@ -146,6 +149,10 @@ leader = ";"
 [keymap.visual_char]
 "selection.format" = ["M"]
 
+[keymap.table]
+"table.action_picker" = ["Leader A"]
+"mode.visual-block" = ["Ctrl+v"]
+
 [shutdown]
 wait_for_mirror = false
 "#,
@@ -160,6 +167,13 @@ wait_for_mirror = false
                 .expect("shared")
                 .get("cursor.logical-up"),
             Some(&vec!["w".to_owned()])
+        );
+        assert_eq!(
+            config
+                .table_bindings
+                .expect("table")
+                .get("table.action_picker"),
+            Some(&vec!["Leader A".to_owned()])
         );
         assert_eq!(
             config

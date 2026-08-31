@@ -74,8 +74,9 @@ function transform(
   blockId: string,
   target: Parameters<TiptapEditorAdapter["transformBlock"]>[1],
   consumeSlash = false,
+  tableDimensions?: Parameters<TiptapEditorAdapter["transformBlock"]>[3],
 ) {
-  return adapter.transformBlock(blockId, target, consumeSlash);
+  return adapter.transformBlock(blockId, target, consumeSlash, tableDimensions);
 }
 
 function press(editor: Editor, key: string): KeyboardEvent {
@@ -202,6 +203,32 @@ describe("Memoka block.transform", () => {
     expect(table.child(0).child(0).type.name).toBe("tableHeader");
     expect(table.child(1).child(0).type.name).toBe("tableCell");
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+    destroy();
+  });
+
+  it("creates a Table with the dimensions selected by the slash picker", async () => {
+    const { adapter, destroy, editor } = await editorHarness();
+    const blockId = createUuidV7();
+    editor.commands.setContent(
+      directBodyContent([
+        {
+          type: "paragraph",
+          attrs: { blockId },
+          content: [{ type: "text", text: "/" }],
+        },
+      ]),
+    );
+    expect(
+      transform(adapter, blockId, "table", true, {
+        rows: 2,
+        columns: 4,
+      }),
+    ).toMatchObject({ changed: true });
+    const table = nodeByBlockId(editor, blockId);
+    expect(table.childCount).toBe(2);
+    expect(table.child(0).childCount).toBe(4);
+    expect(table.child(0).child(0).type.name).toBe("tableHeader");
+    expect(table.child(1).child(0).type.name).toBe("tableCell");
     destroy();
   });
 

@@ -36,6 +36,7 @@ describe("application key configuration", () => {
       sharedNavigationBindings: { "cursor.logical-up": ["q"] },
       treeBindings: { "note.create_child": ["C"] },
       inlineFormatBindings: { "selection.format": ["M"] },
+      tableBindings: { "table.action_picker": ["Leader x"] },
     });
     expect(config.leaderKey).toBe(";");
     expect(config.sharedNavigationBindings?.["cursor.logical-up"]).toEqual([
@@ -47,6 +48,8 @@ describe("application key configuration", () => {
     expect(config.treeBindings?.["note.create_child"]).toEqual(["C"]);
     expect(config.treeBindings?.["note.open"]).toEqual(["Enter"]);
     expect(config.inlineFormatBindings?.["selection.format"]).toEqual(["M"]);
+    expect(config.tableBindings?.["table.action_picker"]).toEqual(["Leader x"]);
+    expect(config.tableBindings?.["mode.visual-block"]).toEqual(["Ctrl+v"]);
   });
 
   it("maps the configured visual-character formatting sequence", () => {
@@ -86,7 +89,12 @@ describe("application key configuration", () => {
       kind: "execute",
       command: "cursor.logical-up",
     });
-    for (const mode of ["normal", "visual-char", "visual-line"] as const) {
+    for (const mode of [
+      "normal",
+      "visual-char",
+      "visual-line",
+      "visual-block",
+    ] as const) {
       const prefix = advanceVimInput(
         createVimInputState(),
         mode,
@@ -101,6 +109,59 @@ describe("application key configuration", () => {
         resolvedCommand: "cursor.logical-up",
         action: { kind: "execute", command: "cursor.logical-up" },
       });
+    }
+  });
+
+  it("maps configurable Table entry, traversal, and action sequences", () => {
+    const config = mergeApplicationKeyConfig({
+      tableBindings: {
+        "mode.visual-block": ["Ctrl+t"],
+        "table.next_cell": ["qn"],
+        "table.previous_cell": ["qp"],
+        "table.action_picker": ["Leader q"],
+      },
+    });
+    validateVimKeyConfig(config);
+
+    expect(
+      advanceVimInput(
+        createVimInputState(),
+        "normal",
+        "Ctrl+t",
+        noteContext,
+        config,
+      ),
+    ).toMatchObject({ resolvedCommand: "mode.visual-block" });
+    const traversalPrefix = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      "q",
+      noteContext,
+      config,
+    );
+    expect(traversalPrefix.action).toMatchObject({ kind: "pending" });
+    expect(
+      advanceVimInput(
+        traversalPrefix.state,
+        "normal",
+        "n",
+        noteContext,
+        config,
+      ),
+    ).toMatchObject({ resolvedCommand: "table.next_cell" });
+
+    for (const mode of ["normal", "visual-line", "visual-block"] as const) {
+      const prefix = advanceVimInput(
+        createVimInputState(),
+        mode,
+        ",",
+        noteContext,
+        config,
+      );
+      expect(prefix.action).toMatchObject({ kind: "pending" });
+      expect(
+        advanceVimInput(prefix.state, mode, "q", noteContext, config),
+      ).toMatchObject({ resolvedCommand: "table.action_picker" });
     }
   });
 

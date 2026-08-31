@@ -756,7 +756,8 @@ textarea {
 }
 
 .memoka-vim-caret--visual-char,
-.memoka-vim-caret--visual-line {
+.memoka-vim-caret--visual-line,
+.memoka-vim-caret--visual-block {
   border-color: #fff0bd;
   background: rgb(246 207 119 / 58%);
 }
@@ -774,7 +775,8 @@ textarea {
 }
 
 .memoka-vim-caret--horizontal-rule.memoka-vim-caret--visual-char,
-.memoka-vim-caret--horizontal-rule.memoka-vim-caret--visual-line {
+.memoka-vim-caret--horizontal-rule.memoka-vim-caret--visual-line,
+.memoka-vim-caret--horizontal-rule.memoka-vim-caret--visual-block {
   background:
     linear-gradient(
       to bottom,
@@ -1402,6 +1404,78 @@ textarea {
   white-space: pre-wrap;
 }
 
+.table-size-picker__left {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid #293442;
+}
+
+.table-size-picker__keyboard-surface {
+  align-self: center;
+  justify-self: center;
+  padding: 22px;
+  outline: none;
+}
+
+.table-size-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(10, 24px);
+  gap: 4px;
+}
+
+.table-size-picker__cell {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #364454;
+  border-radius: 2px;
+  background: #151d27;
+}
+
+.table-size-picker__cell--active {
+  border-color: #5d8fbe;
+  background: #294766;
+}
+
+.table-size-picker__cell--cursor {
+  border-color: #b7d8f8;
+  box-shadow: 0 0 0 1px #b7d8f8;
+}
+
+.table-size-picker__dimensions {
+  display: block;
+  margin-top: 18px;
+  color: #edf5ff;
+  font-size: 14px;
+  text-align: center;
+}
+
+.table-size-picker__guide {
+  min-height: 38px;
+  padding: 11px 14px;
+  border-top: 1px solid #293442;
+  color: #77879a;
+  font-size: 10px;
+  text-align: center;
+}
+
+.table-size-picker__preview {
+  padding: 28px;
+}
+
+.table-size-picker__preview > div {
+  align-self: center;
+  color: #b8c4d2;
+  line-height: 1.6;
+}
+
+.table-size-picker__preview strong {
+  color: #edf5ff;
+  font-size: 18px;
+}
+
 .inline-format-picker__row,
 .inline-format-picker__link-row {
   display: grid;
@@ -1468,6 +1542,42 @@ textarea {
 .inline-format-picker__preview-content a {
   color: #73b4ff;
   text-underline-offset: 3px;
+}
+
+.table-action-picker__row {
+  display: grid;
+  gap: 3px;
+}
+
+.table-action-picker__row > strong {
+  overflow: hidden;
+  color: #e4ebf4;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-action-picker__row > span {
+  overflow: hidden;
+  color: #77879a;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-action-picker__preview {
+  padding: 28px;
+}
+
+.table-action-picker__preview-content {
+  align-self: center;
+  color: #b8c4d2;
+  line-height: 1.6;
+}
+
+.table-action-picker__preview-content > strong {
+  color: #edf5ff;
+  font-size: 18px;
 }
 
 .application-commandline {
@@ -1636,6 +1746,12 @@ textarea {
 .memoka-editor .selectedCell {
   background: #293d54;
   box-shadow: inset 0 0 0 1px #5d87b0;
+}
+
+.memoka-editor .memoka-visual-block-head {
+  box-shadow:
+    inset 0 0 0 2px #eacb78,
+    inset 0 0 0 3px rgb(16 20 26 / 70%);
 }
 
 .memoka-editor .memoka-visual-line-selected:not(.memoka-table-row-selected) {

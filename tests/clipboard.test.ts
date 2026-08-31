@@ -1,4 +1,5 @@
 import { Editor } from "@tiptap/core";
+import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -12,11 +13,17 @@ import {
   MARKDOWN_CLIPBOARD_MIME,
   MEMOKA_CLIPBOARD_SCHEMA_VERSION,
   MEMOKA_CLIPBOARD_MIME,
+  TSV_CLIPBOARD_MIME,
   decodeVimClipboard,
   encodeVimClipboard,
   registerFromMarkdown,
+  registerFromHtmlTable,
+  registerFromMarkdownTable,
+  registerFromTabularClipboard,
+  registerFromTabSeparatedValues,
 } from "../app/src/vim/clipboard";
 import type { VimRegister } from "../app/src/vim/editor-commands";
+import { captureVisualBlockRegister } from "../app/src/vim/table-editing";
 import { addSecondWindow } from "./helpers/runtime";
 import { sectionSnapshot } from "../app/src/core/section-model";
 import {
@@ -1224,6 +1231,219 @@ describe("Memoka structured Clipboard", () => {
     });
     editor.destroy();
     note.doc.destroy();
+  });
+
+  it("round-trips a Visual Block rectangle as internal, GFM, HTML, and TSV", () => {
+    const note = createNoteDocument("01900000-0000-7000-8000-000000000001");
+    const editor = new Editor({
+      extensions: productEditorExtensions(note, { directBodyOnly: true }),
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableHeader",
+                  attrs: { align: "left" },
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "H1" }],
+                    },
+                  ],
+                },
+                {
+                  type: "tableHeader",
+                  attrs: { align: "right" },
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "H2" }],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  attrs: { align: "left" },
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "alpha" }],
+                    },
+                  ],
+                },
+                {
+                  type: "tableCell",
+                  attrs: { align: "right" },
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [
+                        {
+                          type: "text",
+                          marks: [{ type: "bold" }],
+                          text: "beta",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const table = editor.state.doc.firstChild;
+    if (!table) throw new Error("Table fixture is empty");
+    const map = TableMap.get(table);
+    const first = 1 + map.positionAt(1, 0, table);
+    const last = 1 + map.positionAt(1, 1, table);
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        CellSelection.create(editor.state.doc, first, last),
+      ),
+    );
+    const register = captureVisualBlockRegister(editor.view);
+    if (!register) throw new Error("Rectangle register was not captured");
+    const formats = encodeVimClipboard(register, editor.schema);
+
+    expect(JSON.parse(formats[MEMOKA_CLIPBOARD_MIME])).toMatchObject({
+      schemaVersion: MEMOKA_CLIPBOARD_SCHEMA_VERSION,
+      kind: "table-cells",
+      width: 2,
+      height: 1,
+      includesHeader: false,
+      alignments: ["left", "right"],
+    });
+    expect(formats[TSV_CLIPBOARD_MIME]).toBe("alpha\tbeta");
+    expect(formats[MARKDOWN_CLIPBOARD_MIME]).toBe(
+      "|  |  |\n| :--- | ---: |\n| alpha | **beta** |\n",
+    );
+    expect(formats["text/plain"]).toBe(formats[MARKDOWN_CLIPBOARD_MIME]);
+    expect(formats["text/html"]).toMatch(/^<table><tbody><tr/u);
+    expect(
+      decodeVimClipboard(formats[MEMOKA_CLIPBOARD_MIME], editor.schema),
+    ).toMatchObject({ kind: "table-cells", width: 2, height: 1 });
+    const mergedPayload = JSON.parse(formats[MEMOKA_CLIPBOARD_MIME]) as {
+      slice: {
+        content: Array<{
+          content: Array<{ attrs: Record<string, unknown> }>;
+        }>;
+      };
+    };
+    mergedPayload.slice.content[0]!.content[0]!.attrs.colspan = 2;
+    expect(
+      decodeVimClipboard(JSON.stringify(mergedPayload), editor.schema),
+    ).toBeNull();
+
+    const tsvRegister = registerFromTabSeparatedValues(
+      '"a\tb"\tc\n1\t"two\nlines"',
+      editor.schema,
+    );
+    expect(tsvRegister).toMatchObject({
+      kind: "table-cells",
+      width: 2,
+      height: 2,
+    });
+    if (!tsvRegister) throw new Error("TSV register was not parsed");
+    expect(
+      encodeVimClipboard(tsvRegister, editor.schema)[TSV_CLIPBOARD_MIME],
+    ).toBe('"a\tb"\tc\n1\t"two\nlines"');
+    expect(
+      registerFromHtmlTable(
+        "<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td><strong>x</strong></td><td>y</td></tr></tbody></table>",
+        editor.schema,
+      ),
+    ).toMatchObject({
+      kind: "table-cells",
+      width: 2,
+      height: 2,
+      includesHeader: true,
+    });
+    expect(
+      registerFromHtmlTable(
+        "<p>before</p><table><tr><td>A</td></tr></table>",
+        editor.schema,
+      ),
+    ).toBeNull();
+    expect(
+      registerFromMarkdownTable(
+        "| A | B |\n| --- | --- |\n| x | y |",
+        editor.schema,
+      ),
+    ).toMatchObject({
+      kind: "table-cells",
+      width: 2,
+      height: 2,
+      includesHeader: true,
+    });
+    expect(
+      registerFromTabularClipboard(
+        {
+          html: null,
+          tsv: null,
+          markdown: null,
+          plain: "| A | B |\n| --- | --- |\n| x | y |",
+        },
+        editor.schema,
+      ),
+    ).toMatchObject({
+      kind: "table-cells",
+      width: 2,
+      height: 2,
+      includesHeader: true,
+    });
+
+    editor.destroy();
+    note.doc.destroy();
+  });
+
+  it("puts an external TSV rectangle with p and synthesizes a header outside a Table", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      readPreferredClipboard: () => ({
+        availableTypes: [TSV_CLIPBOARD_MIME],
+        internal: null,
+        markdown: null,
+        html: null,
+        tsv: "A\tB\n1\t2",
+        plain: null,
+        filePaths: [],
+      }),
+    });
+    editor.commands.setContent("<p>anchor</p>");
+    editor.commands.setTextSelection(firstParagraphPosition(editor) + 1);
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "p");
+    await Promise.resolve();
+    await runtime.flush();
+
+    const table = Array.from(
+      { length: editor.state.doc.childCount },
+      (_, index) => editor.state.doc.child(index),
+    ).find((node) => node.type.name === "table");
+    expect(table?.childCount).toBe(3);
+    expect(table?.child(0).textContent).toBe("");
+    expect(table?.child(1).textContent).toBe("AB");
+    expect(table?.child(2).textContent).toBe("12");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
   });
 
   it("escapes paragraph-shaped text and inline Markdown punctuation", () => {

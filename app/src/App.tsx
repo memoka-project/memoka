@@ -35,6 +35,10 @@ import {
   type InlineFormatPickerSession,
 } from "./components/InlineFormatPicker";
 import {
+  TableActionPicker,
+  type TableActionPickerSession,
+} from "./components/TableActionPicker";
+import {
   WorkspaceSearchPalette,
   type WorkspaceSearchSession,
 } from "./components/WorkspaceSearchPalette";
@@ -175,6 +179,8 @@ export function App({
     useState<BlockTypePickerSession | null>(null);
   const [inlineFormatPicker, setInlineFormatPicker] =
     useState<InlineFormatPickerSession | null>(null);
+  const [tableActionPicker, setTableActionPicker] =
+    useState<TableActionPickerSession | null>(null);
   const [commandMessage, setCommandMessage] = useState(keyConfigWarning ?? "");
   const [availableUpdate, setAvailableUpdate] =
     useState<ApplicationRelease | null>(null);
@@ -350,6 +356,7 @@ export function App({
       setNoteSearch(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
+      setTableActionPicker(null);
       setCommandLine(session);
     },
     [clearEditorFocusRequests],
@@ -362,6 +369,7 @@ export function App({
       setNoteSearch(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
+      setTableActionPicker(null);
       setWorkspaceSearch(session);
     },
     [clearEditorFocusRequests],
@@ -374,6 +382,7 @@ export function App({
       setCommandLine(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
+      setTableActionPicker(null);
       setNoteSearch(session);
     },
     [clearEditorFocusRequests],
@@ -386,6 +395,7 @@ export function App({
       setCommandLine(null);
       setNoteSearch(null);
       setInlineFormatPicker(null);
+      setTableActionPicker(null);
       setBlockTypePicker(session);
     },
     [clearEditorFocusRequests],
@@ -398,7 +408,21 @@ export function App({
       setCommandLine(null);
       setNoteSearch(null);
       setBlockTypePicker(null);
+      setTableActionPicker(null);
       setInlineFormatPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
+  const openTableActionPicker = useCallback(
+    (session: TableActionPickerSession): void => {
+      clearEditorFocusRequests();
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setInlineFormatPicker(null);
+      setTableActionPicker(session);
     },
     [clearEditorFocusRequests],
   );
@@ -1249,11 +1273,13 @@ export function App({
         ? "block-type-picker"
         : inlineFormatPicker
           ? "inline-format-picker"
-          : noteSearch
-            ? "note-search"
-            : commandLine
-              ? "command-line"
-              : null;
+          : tableActionPicker
+            ? "table-action-picker"
+            : noteSearch
+              ? "note-search"
+              : commandLine
+                ? "command-line"
+                : null;
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1844,6 +1870,7 @@ export function App({
         onWorkspaceSearch={openWorkspaceSearch}
         onBlockTypePicker={openBlockTypePicker}
         onInlineFormatPicker={openInlineFormatPicker}
+        onTableActionPicker={openTableActionPicker}
         onMessage={setCommandMessage}
         onNoteSearch={openNoteSearch}
         onCommandLine={openCommandLine}
@@ -2055,6 +2082,13 @@ export function App({
         <InlineFormatPicker
           session={inlineFormatPicker}
           onClose={() => setInlineFormatPicker(null)}
+          onMessage={setCommandMessage}
+          focused
+        />
+      ) : tableActionPicker ? (
+        <TableActionPicker
+          session={tableActionPicker}
+          onClose={() => setTableActionPicker(null)}
           onMessage={setCommandMessage}
           focused
         />
@@ -2447,6 +2481,7 @@ function EditorWindow({
   onWorkspaceSearch,
   onBlockTypePicker,
   onInlineFormatPicker,
+  onTableActionPicker,
   onMessage,
   onNoteSearch,
   onCommandLine,
@@ -2471,6 +2506,7 @@ function EditorWindow({
   onWorkspaceSearch: (session: WorkspaceSearchSession) => void;
   onBlockTypePicker: (session: BlockTypePickerSession) => void;
   onInlineFormatPicker: (session: InlineFormatPickerSession) => void;
+  onTableActionPicker: (session: TableActionPickerSession) => void;
   onMessage: (message: string) => void;
   onNoteSearch: (session: ApplicationNoteSearchSession) => void;
   onCommandLine: (session: ApplicationCommandLineSession) => void;
@@ -2546,7 +2582,8 @@ function EditorWindow({
         onBlockTypePicker({
           windowId,
           blockId,
-          transform: (target) => adapter.transformBlock(blockId, target, true),
+          transform: (target, tableDimensions) =>
+            adapter.transformBlock(blockId, target, true, tableDimensions),
           attach: () =>
             adapter.chooseAttachmentFiles({ blockId, consumeSlash: true }),
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
@@ -2556,6 +2593,13 @@ function EditorWindow({
           windowId,
           selectedText: request.selectedText,
           existingHref: request.existingHref,
+          apply: request.apply,
+          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+        }),
+      onTableActionPicker: (request) =>
+        onTableActionPicker({
+          windowId,
+          selection: request.selection,
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
@@ -2609,6 +2653,7 @@ function EditorWindow({
     onWorkspaceSearch,
     onBlockTypePicker,
     onInlineFormatPicker,
+    onTableActionPicker,
     onMessage,
     onNoteSearch,
     onCommandLine,

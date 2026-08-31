@@ -10,7 +10,7 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 import { liftListItem, sinkListItem } from "@tiptap/pm/schema-list";
-import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
+import { addRowAfter, goToNextCell, TableMap } from "@tiptap/pm/tables";
 import { canJoin } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import {
@@ -24,9 +24,17 @@ import {
   type VimCharacterCellRect,
 } from "./caret-geometry";
 import type { VimCommand, VimMode, VimOperator } from "./input";
-import { classifyVimWordCharacters, type VimWordClass } from "./word-semantics";
+import { classifyVimWordCharacters } from "./word-semantics";
 import { createUuidV7 } from "../core/ids";
 import { BODY_CHUNK_NODE } from "../core/section-model";
+import {
+  moveNormalTableCharacter,
+  moveNormalTableCell,
+  moveNormalTableRow,
+  pasteTableCellsIntoTable,
+  tableFromCellsRegister,
+  type VimTableCellsRegister,
+} from "./table-editing";
 
 export type VimEditorView = Pick<
   EditorView,
@@ -70,7 +78,8 @@ export type VimRegister =
       sourceNoteId: string | null;
       sectionIds: string[];
       slice: Slice;
-    };
+    }
+  | VimTableCellsRegister;
 
 export interface VimVisualLineState {
   anchorUnit: number;
@@ -2188,6 +2197,9 @@ export function vimRegisterLabel(register: VimRegister | null): string {
   if (register.kind === "section") {
     return `Section×${register.sectionIds.length}: ${text}`;
   }
+  if (register.kind === "table-cells") {
+    return `Table ${register.height}×${register.width}: ${text}`;
+  }
   const kind =
     register.structureKind === "list-item"
       ? "ListItem"
@@ -2300,6 +2312,13 @@ function moveLogical(
   semanticLines?: VimLogicalLine[],
   count = 1,
 ): boolean {
+  if (mode === "normal") {
+    const moved = moveNormalTableRow(view, direction, count);
+    // Preserve the current Cell column while the target row remains inside
+    // the Table. At the first/last row, continue through the shared logical
+    // line model so k/j can leave the Table instead of becoming a boundary.
+    if (moved === true) return true;
+  }
   const lines = semanticLines ?? blockSemantics.logicalLines(view);
   if (lines.length === 0) return false;
   const head =
@@ -2342,6 +2361,10 @@ function moveCharacter(
   mode: VimMode,
   count = 1,
 ): boolean {
+  if (mode === "normal") {
+    const moved = moveNormalTableCharacter(view, direction, count);
+    if (moved !== null) return moved;
+  }
   const lines = blockSemantics.logicalLines(view);
   if (lines.length === 0) return false;
   const head =
@@ -2444,7 +2467,7 @@ function wordClasses(
   view: VimEditorView,
   positions: number[],
   lineTo: number,
-): Array<`${VimWordClass}:${number}` | null> {
+): Array<string | null> {
   const characters = positions.map((_, index) =>
     characterAt(view, positions, index, lineTo),
   );
@@ -2454,9 +2477,14 @@ function wordClasses(
     if (index > 0 && positions[index] !== (positions[index - 1] ?? 0) + 1) {
       structuralSegment += 1;
     }
-    return wordClass === null
-      ? null
-      : (`${wordClass}:${structuralSegment}` as `${VimWordClass}:${number}`);
+    if (wordClass !== null) return `${wordClass}:${structuralSegment}`;
+    const cell = tableCellAtPosition(view, positions[index]);
+    // A structurally empty Cell still occupies one Vim word-motion stop. Its
+    // fallback cursor has no character to classify, so give it a synthetic
+    // class instead of treating it as skippable whitespace.
+    return cell?.node.textContent.length === 0
+      ? `empty-table-cell:${cell.from}`
+      : null;
   });
 }
 
@@ -4090,6 +4118,28 @@ export function pasteVimRegisterAtSelection(
   view: VimEditorView,
   register: VimRegister,
 ): boolean {
+  if (register.kind === "table-cells") {
+    if (pasteTableCellsIntoTable(view, register, "before")) return true;
+    const table = tableFromCellsRegister(view, register);
+    if (!table) return false;
+    try {
+      const { from, to } = view.state.selection;
+      const transaction = view.state.tr.replaceRangeWith(from, to, table);
+      transaction.setSelection(
+        Selection.near(
+          transaction.doc.resolve(
+            Math.min(from + table.nodeSize, transaction.doc.content.size),
+          ),
+          -1,
+        ),
+      );
+      view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+      view.focus();
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (register.kind === "text") {
     if (register.slice) {
       return pasteTextSlice(
@@ -4254,6 +4304,32 @@ function putOnce(
 ): boolean {
   if (!register) return false;
   const cursor = selectionCursor(view);
+  if (register.kind === "table-cells") {
+    if (pasteTableCellsIntoTable(view, register, direction)) return true;
+    const table = tableFromCellsRegister(view, register);
+    if (!table) return false;
+    const units = blockSemantics.structuralUnits(view);
+    if (units.length === 0) return false;
+    const target =
+      units[blockSemantics.currentStructuralUnitIndex(units, cursor)];
+    if (!target) return false;
+    const insertionPosition =
+      sectionBodyStartAfterHeader(view, target) ??
+      (direction === "after" ? target.to : target.from);
+    try {
+      const transaction = view.state.tr.insert(insertionPosition, table);
+      const map = TableMap.get(table);
+      const cellPosition = insertionPosition + 1 + map.positionAt(0, 0, table);
+      transaction.setSelection(
+        Selection.near(transaction.doc.resolve(cellPosition + 2), 1),
+      );
+      view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+      view.focus();
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (register.kind === "section") {
     return putSection(view, register, direction);
   }
@@ -4946,6 +5022,10 @@ type EditorVimCommandHandler = (
 const editorVimCommandHandlers: Partial<
   Record<VimCommand, EditorVimCommandHandler>
 > = {
+  "table.next_cell": (view, _mode, _register, count) =>
+    moveNormalTableCell(view, 1, count),
+  "table.previous_cell": (view, _mode, _register, count) =>
+    moveNormalTableCell(view, -1, count),
   "insert.line-start": (view) => enterInsertAtLineBoundary(view, "start"),
   "insert.line-end": (view) => enterInsertAtLineBoundary(view, "end"),
   "line.open-below": (view) => openLogicalLine(view, "below"),

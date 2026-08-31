@@ -62,6 +62,42 @@ describe("Memoka semantic dot-repeat descriptor", () => {
     ).toBeNull();
   });
 
+  it("records Table Visual Block mutations with immutable dimensions", () => {
+    const candidate = createVimRepeatDescriptor({
+      mode: "visual-block",
+      command: "selection.change",
+      operator: null,
+      count: 1,
+      countExplicit: false,
+      tableRectangle: { width: 3, height: 2 },
+    });
+    expect(candidate).toEqual({
+      command: "selection.change",
+      operator: null,
+      count: 1,
+      countExplicit: false,
+      tableRectangle: { width: 3, height: 2 },
+    });
+    if (!candidate?.tableRectangle) {
+      throw new Error("Table repeat descriptor was not created");
+    }
+    const store = new VimRepeatStore();
+    store.record(candidate);
+    candidate.tableRectangle.width = 9;
+    expect(store.read()?.tableRectangle).toEqual({ width: 3, height: 2 });
+
+    expect(
+      createVimRepeatDescriptor({
+        mode: "visual-block",
+        command: "selection.yank",
+        operator: null,
+        count: 1,
+        countExplicit: false,
+        tableRectangle: { width: 1, height: 1 },
+      }),
+    ).toBeNull();
+  });
+
   it("keeps a Window-local immutable descriptor snapshot", () => {
     const descriptor = createVimRepeatDescriptor({
       mode: "normal",

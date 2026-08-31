@@ -27,10 +27,18 @@ export const TREE_SPECIFIC_COMMAND_IDS = [
 
 export const INLINE_FORMAT_COMMAND_IDS = ["selection.format"] as const;
 
+export const TABLE_COMMAND_IDS = [
+  "table.action_picker",
+  "table.next_cell",
+  "table.previous_cell",
+  "mode.visual-block",
+] as const;
+
 export type SharedNavigationCommandId =
   (typeof SHARED_NAVIGATION_COMMAND_IDS)[number];
 export type TreeSpecificCommandId = (typeof TREE_SPECIFIC_COMMAND_IDS)[number];
 export type InlineFormatCommandId = (typeof INLINE_FORMAT_COMMAND_IDS)[number];
+export type TableCommandId = (typeof TABLE_COMMAND_IDS)[number];
 
 export interface ApplicationKeyConfig {
   readonly leaderKey: string;
@@ -43,6 +51,7 @@ export interface ApplicationKeyConfig {
   readonly inlineFormatBindings?: Readonly<
     Record<InlineFormatCommandId, readonly string[]>
   >;
+  readonly tableBindings?: Readonly<Record<TableCommandId, readonly string[]>>;
 }
 
 export interface PartialApplicationKeyConfig {
@@ -55,6 +64,9 @@ export interface PartialApplicationKeyConfig {
   >;
   readonly inlineFormatBindings?: Readonly<
     Partial<Record<InlineFormatCommandId, readonly string[]>>
+  >;
+  readonly tableBindings?: Readonly<
+    Partial<Record<TableCommandId, readonly string[]>>
   >;
 }
 
@@ -89,6 +101,12 @@ export const DEFAULT_APPLICATION_KEY_CONFIG: ApplicationKeyConfig =
     inlineFormatBindings: Object.freeze({
       "selection.format": ["m"],
     }),
+    tableBindings: Object.freeze({
+      "table.action_picker": ["Leader a"],
+      "table.next_cell": ["Tab"],
+      "table.previous_cell": ["Shift+Tab"],
+      "mode.visual-block": ["Ctrl+v"],
+    }),
   });
 
 export function mergeApplicationKeyConfig(
@@ -107,6 +125,10 @@ export function mergeApplicationKeyConfig(
     inlineFormatBindings: mergeBindings(
       DEFAULT_APPLICATION_KEY_CONFIG.inlineFormatBindings!,
       partial.inlineFormatBindings,
+    ),
+    tableBindings: mergeBindings(
+      DEFAULT_APPLICATION_KEY_CONFIG.tableBindings!,
+      partial.tableBindings,
     ),
   };
   validateApplicationKeyConfig(config);
@@ -149,6 +171,11 @@ export function validateApplicationKeyConfig(
       DEFAULT_APPLICATION_KEY_CONFIG.inlineFormatBindings!,
     new Set(INLINE_FORMAT_COMMAND_IDS),
     "Visual inline format",
+  );
+  validateBindingRecord(
+    config.tableBindings ?? DEFAULT_APPLICATION_KEY_CONFIG.tableBindings!,
+    new Set(TABLE_COMMAND_IDS),
+    "Table",
   );
   const effectiveTree = [
     ...Object.entries(
@@ -240,7 +267,7 @@ function sequenceKeys(sequence: string): string[] {
   for (const token of tokens) {
     if (
       /^Ctrl\+[a-z]$/u.test(token) ||
-      ["Enter", "Escape", "Space", "Tab"].includes(token)
+      ["Enter", "Escape", "Space", "Tab", "Shift+Tab", "Leader"].includes(token)
     ) {
       keys.push(token);
     } else if (/^[^\s]+$/u.test(token) && !token.includes("+")) {

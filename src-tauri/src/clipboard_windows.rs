@@ -2,7 +2,7 @@
 
 use super::{
     ExplicitClipboardContent, HTML_CLIPBOARD_MIME, MARKDOWN_CLIPBOARD_MIME, MEMOKA_CLIPBOARD_MIME,
-    PLAIN_CLIPBOARD_MIME, PreferredClipboardFormats, RichClipboardFormats,
+    PLAIN_CLIPBOARD_MIME, PreferredClipboardFormats, RichClipboardFormats, TSV_CLIPBOARD_MIME,
     UTF8_PLAIN_CLIPBOARD_MIME, validate_clipboard_size,
 };
 use std::mem::size_of;
@@ -79,6 +79,8 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
     let internal_format = registered_format(MEMOKA_CLIPBOARD_MIME)?;
     let markdown_format = registered_format(MARKDOWN_CLIPBOARD_MIME)?;
     let html_format = registered_format(HTML_FORMAT)?;
+    let raw_html_format = registered_format(HTML_CLIPBOARD_MIME)?;
+    let tsv_format = registered_format(TSV_CLIPBOARD_MIME)?;
     let clipboard = open_clipboard()?;
     let mut available_types = Vec::new();
     let internal = if format_available(internal_format) {
@@ -93,9 +95,24 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
     } else {
         None
     };
-    if format_available(html_format) {
+    let html = if format_available(raw_html_format) {
         available_types.push(HTML_CLIPBOARD_MIME.to_owned());
-    }
+        Some(read_utf8_format(raw_html_format, HTML_CLIPBOARD_MIME)?)
+    } else if format_available(html_format) {
+        available_types.push(HTML_CLIPBOARD_MIME.to_owned());
+        Some(extract_cf_html_fragment(&read_global_bytes(
+            html_format,
+            HTML_CLIPBOARD_MIME,
+        )?)?)
+    } else {
+        None
+    };
+    let tsv = if format_available(tsv_format) {
+        available_types.push(TSV_CLIPBOARD_MIME.to_owned());
+        Some(read_utf8_format(tsv_format, TSV_CLIPBOARD_MIME)?)
+    } else {
+        None
+    };
     let file_paths = if format_available(CF_HDROP as u32) {
         available_types.push("CF_HDROP".to_owned());
         read_file_drop_paths()?
@@ -108,21 +125,34 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
         available_types.push(UTF8_PLAIN_CLIPBOARD_MIME.to_owned());
     }
     available_types.sort();
-    let plain =
-        if internal.is_none() && markdown.is_none() && file_paths.is_empty() && plain_available {
-            Some(read_unicode_text()?)
-        } else {
-            None
-        };
+    let plain = if internal.is_none()
+        && markdown.is_none()
+        && html.is_none()
+        && tsv.is_none()
+        && file_paths.is_empty()
+        && plain_available
+    {
+        Some(read_unicode_text()?)
+    } else {
+        None
+    };
     drop(clipboard);
 
-    if internal.is_none() && markdown.is_none() && plain.is_none() && file_paths.is_empty() {
+    if internal.is_none()
+        && markdown.is_none()
+        && html.is_none()
+        && tsv.is_none()
+        && plain.is_none()
+        && file_paths.is_empty()
+    {
         return Ok(None);
     }
     Ok(Some(PreferredClipboardFormats {
         available_types,
         internal,
         markdown,
+        html,
+        tsv,
         plain,
         file_paths,
     }))
@@ -189,6 +219,9 @@ fn set_rich_formats(formats: &RichClipboardFormats) -> Result<(), String> {
     set_clipboard_utf8(registered_format(HTML_CLIPBOARD_MIME)?, &formats.html)?;
     let cf_html = build_cf_html(&formats.html)?;
     set_clipboard_bytes(registered_format(HTML_FORMAT)?, &cf_html)?;
+    if let Some(tsv) = &formats.tsv {
+        set_clipboard_utf8(registered_format(TSV_CLIPBOARD_MIME)?, tsv)?;
+    }
     set_clipboard_unicode_text(&formats.plain)
 }
 

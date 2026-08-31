@@ -3,12 +3,18 @@ import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   INLINE_FORMAT_COMMAND_IDS,
   SHARED_NAVIGATION_COMMAND_IDS,
+  TABLE_COMMAND_IDS,
   validateApplicationKeyConfig,
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
 
 export type VimMode =
-  "normal" | "insert" | "replace" | "visual-char" | "visual-line";
+  | "normal"
+  | "insert"
+  | "replace"
+  | "visual-char"
+  | "visual-line"
+  | "visual-block";
 
 export const VIM_COMMANDS = [
   "mode.insert",
@@ -17,6 +23,7 @@ export const VIM_COMMANDS = [
   "mode.normal",
   "mode.visual-char",
   "mode.visual-line",
+  "mode.visual-block",
   "insert.line-start",
   "insert.line-end",
   "line.open-below",
@@ -88,6 +95,9 @@ export const VIM_COMMANDS = [
   "selection.change",
   "selection.paste",
   "selection.format",
+  "table.action_picker",
+  "table.next_cell",
+  "table.previous_cell",
   "put.after",
   "put.before",
   "history.undo",
@@ -226,6 +236,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     "Leader t": "utility.toggle-tree",
     "Leader o": "utility.toggle-outline",
     "Leader b": "workspace.search_buffers",
+    "Leader a": "table.action_picker",
     "/": "note.search",
     n: "note.search_next",
     N: "note.search_previous",
@@ -264,6 +275,9 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     P: "put.before",
     v: "mode.visual-char",
     V: "mode.visual-line",
+    "Ctrl+v": "mode.visual-block",
+    Tab: "table.next_cell",
+    "Shift+Tab": "table.previous_cell",
     u: "history.undo",
     "Ctrl+r": "history.redo",
     ".": "edit.repeat",
@@ -323,6 +337,26 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "selection.change",
     p: "selection.paste",
     P: "selection.paste",
+    "Leader a": "table.action_picker",
+  }),
+  ...modeBindings("visual-block", {
+    Escape: "mode.normal",
+    h: "cursor.left",
+    l: "cursor.right",
+    j: "cursor.logical-down",
+    k: "cursor.logical-up",
+    gj: "cursor.display-down",
+    gk: "cursor.display-up",
+    gg: "cursor.document-start",
+    G: "cursor.document-end",
+    "0": "motion.line-start",
+    $: "motion.line-end",
+    y: "selection.yank",
+    d: "selection.delete",
+    c: "selection.change",
+    p: "selection.paste",
+    P: "selection.paste",
+    "Leader a": "table.action_picker",
   }),
 ];
 
@@ -338,6 +372,7 @@ const sharedNavigationModes = new Set<VimMode>([
   "normal",
   "visual-char",
   "visual-line",
+  "visual-block",
 ]);
 const vimKeymapCache = new WeakMap<
   ApplicationKeyConfig,
@@ -483,7 +518,7 @@ export function advanceVimInput(
   const leaderPrefixKey =
     state.pending === null &&
     key === keyConfig.leaderKey &&
-    mode === "normal" &&
+    (mode === "normal" || mode === "visual-line" || mode === "visual-block") &&
     acceptsApplicationKeys;
   const resolvedCommand = leaderPrefixKey
     ? null
@@ -812,7 +847,11 @@ function effectiveVimKeymap(
       !(
         sharedNavigationModes.has(context) &&
         sharedNavigationCommands.has(command)
-      ) && command !== "selection.format",
+      ) &&
+      command !== "selection.format" &&
+      !TABLE_COMMAND_IDS.includes(
+        command as (typeof TABLE_COMMAND_IDS)[number],
+      ),
   );
   const configured =
     config.sharedNavigationBindings ??
@@ -870,6 +909,34 @@ function effectiveVimKeymap(
       });
     }
   }
+  const table =
+    config.tableBindings ?? DEFAULT_APPLICATION_KEY_CONFIG.tableBindings!;
+  for (const command of TABLE_COMMAND_IDS) {
+    const contexts: readonly VimMode[] =
+      command === "table.action_picker"
+        ? ["normal", "visual-line", "visual-block"]
+        : ["normal"];
+    for (const context of contexts) {
+      for (const sequence of table[command]) {
+        const normalized = normalizeConfiguredVimSequence(sequence);
+        const conflict = bindings.find((binding) => {
+          if (binding.context !== context) return false;
+          const configuredKeys = vimSequenceKeys(normalized);
+          const existingKeys = vimSequenceKeys(binding.sequence);
+          return (
+            isKeyPrefix(configuredKeys, existingKeys) ||
+            isKeyPrefix(existingKeys, configuredKeys)
+          );
+        });
+        if (conflict) {
+          throw new Error(
+            `Ambiguous ${context} key bindings: ${command}:${normalized} and ${conflict.command}:${conflict.sequence}`,
+          );
+        }
+        bindings.push({ context, sequence: normalized, command });
+      }
+    }
+  }
   const keymap = new DeclarativeKeymap(bindings, VIM_COMMANDS);
   vimKeymapCache.set(config, keymap);
   return keymap;
@@ -891,12 +958,19 @@ function hasVimKeyPrefix(
 }
 
 function normalizeConfiguredVimSequence(sequence: string): string {
-  return sequence.trim().split(/\s+/u).filter(Boolean).join("");
+  return sequence
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((token) => (token === "Leader" ? "Leader " : token))
+    .join("");
 }
 
 function vimSequenceKeys(sequence: string): string[] {
   const keys: string[] = [];
-  for (const token of sequence.match(/Ctrl\+[a-z]|Leader\s|./gu) ?? []) {
+  for (const token of sequence.match(
+    /Ctrl\+[a-z]|Shift\+Tab|Leader\s|Tab|Escape|Enter|./gu,
+  ) ?? []) {
     keys.push(token === "Leader " ? "Leader" : token);
   }
   return keys;

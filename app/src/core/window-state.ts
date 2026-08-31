@@ -71,9 +71,14 @@ export function validateWindowLocalViewState(
   const state = value as Partial<WindowLocalViewState>;
   if (
     !state.mode ||
-    !["normal", "insert", "replace", "visual-char", "visual-line"].includes(
-      state.mode,
-    )
+    ![
+      "normal",
+      "insert",
+      "replace",
+      "visual-char",
+      "visual-line",
+      "visual-block",
+    ].includes(state.mode)
   ) {
     throw new Error("Window-local state has an invalid mode");
   }

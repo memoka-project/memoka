@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  DOMParser as ProseMirrorDOMParser,
   DOMSerializer,
   Fragment,
   Slice,
@@ -10,17 +11,20 @@ import {
   markdownTextWithMarks,
   parseMarkdownPaste,
 } from "../editor/markdown-paste";
+import { sanitizeExternalHtml } from "../editor/html-paste";
 import { normalizeExternalLink } from "../core/external-links";
+import { createUuidV7 } from "../core/ids";
 import { defaultVimBlockSemantics } from "./block-semantics";
 import type { VimRegister } from "./editor-commands";
 
 export const MEMOKA_CLIPBOARD_MIME =
   "application/x-memoka-structured-blocks+json";
 export const MARKDOWN_CLIPBOARD_MIME = "text/markdown";
-export const MEMOKA_CLIPBOARD_SCHEMA_VERSION = 6;
+export const TSV_CLIPBOARD_MIME = "text/tab-separated-values";
+export const MEMOKA_CLIPBOARD_SCHEMA_VERSION = 7;
 
 interface TextClipboardPayload {
-  schemaVersion: 6;
+  schemaVersion: 7;
   kind: "text";
   text: string;
   slice?: {
@@ -31,7 +35,7 @@ interface TextClipboardPayload {
 }
 
 interface BlockLinesClipboardPayload {
-  schemaVersion: 6;
+  schemaVersion: 7;
   kind: "block-lines";
   text: string;
   lineCount: number;
@@ -46,7 +50,7 @@ interface BlockLinesClipboardPayload {
 }
 
 interface StructureClipboardPayload {
-  schemaVersion: 6;
+  schemaVersion: 7;
   kind: "structure";
   text: string;
   structureKind: "block" | "list-item" | "table-row";
@@ -59,7 +63,7 @@ interface StructureClipboardPayload {
 }
 
 interface SectionClipboardPayload {
-  schemaVersion: 6;
+  schemaVersion: 7;
   kind: "section";
   text: string;
   transfer: "copy" | "cut";
@@ -72,17 +76,34 @@ interface SectionClipboardPayload {
   };
 }
 
+interface TableCellsClipboardPayload {
+  schemaVersion: 7;
+  kind: "table-cells";
+  text: string;
+  width: number;
+  height: number;
+  includesHeader: boolean;
+  alignments: Array<"left" | "center" | "right" | null>;
+  slice: {
+    content: unknown;
+    openStart: 0;
+    openEnd: 0;
+  };
+}
+
 type MemokaClipboardPayload =
   | TextClipboardPayload
   | BlockLinesClipboardPayload
   | StructureClipboardPayload
-  | SectionClipboardPayload;
+  | SectionClipboardPayload
+  | TableCellsClipboardPayload;
 
 export interface VimClipboardFormats {
   [MEMOKA_CLIPBOARD_MIME]: string;
   "text/html": string;
   [MARKDOWN_CLIPBOARD_MIME]: string;
   "text/plain": string;
+  [TSV_CLIPBOARD_MIME]?: string;
 }
 
 export type VimClipboardWriteResult = "rich" | "plain-text" | "unavailable";
@@ -91,6 +112,8 @@ export interface PreferredClipboardFormats {
   availableTypes: string[];
   internal: string | null;
   markdown: string | null;
+  html?: string | null;
+  tsv?: string | null;
   plain?: string | null;
   filePaths?: string[];
 }
@@ -145,7 +168,10 @@ function structureHtml(register: VimRegister, schema: Schema): string {
       return `<pre><code>${escapeHtml(register.text)}</code></pre>`;
     }
   }
-  if (register.kind === "structure" && register.structureKind === "table-row") {
+  if (
+    register.kind === "table-cells" ||
+    (register.kind === "structure" && register.structureKind === "table-row")
+  ) {
     const root = document.createElement("div");
     const table = document.createElement("table");
     const body = document.createElement("tbody");
@@ -443,6 +469,11 @@ function registerMarkdown(
       ? protectParagraphBlockStart(inline)
       : register.text;
   }
+  if (register.kind === "table-cells") {
+    const rows: ProseMirrorNode[] = [];
+    register.slice.content.forEach((row) => rows.push(row));
+    return tableMarkdown(rows, resolveInternalLinkTitle);
+  }
   const blocks: string[] = [];
   register.slice.content.forEach((node) => {
     const markdown = nodeMarkdown(node, "", resolveInternalLinkTitle);
@@ -499,6 +530,22 @@ function payloadForRegister(register: VimRegister): MemokaClipboardPayload {
       },
     };
   }
+  if (register.kind === "table-cells") {
+    return {
+      schemaVersion: MEMOKA_CLIPBOARD_SCHEMA_VERSION,
+      kind: "table-cells",
+      text: register.text,
+      width: register.width,
+      height: register.height,
+      includesHeader: register.includesHeader,
+      alignments: [...register.alignments],
+      slice: {
+        content: register.slice.content.toJSON(),
+        openStart: 0,
+        openEnd: 0,
+      },
+    };
+  }
   return {
     schemaVersion: MEMOKA_CLIPBOARD_SCHEMA_VERSION,
     kind: "structure",
@@ -519,14 +566,23 @@ export function encodeVimClipboard(
   resolveInternalLinkTitle?: InternalLinkClipboardTitleResolver,
 ): VimClipboardFormats {
   const markdown = registerMarkdown(register, resolveInternalLinkTitle);
+  const tableRows: ProseMirrorNode[] = [];
+  if (register.kind === "table-cells") {
+    register.slice.content.forEach((row) => tableRows.push(row));
+  }
+  const tsv =
+    register.kind === "table-cells" ? tableRowsTsv(tableRows) : undefined;
   return {
     [MEMOKA_CLIPBOARD_MIME]: JSON.stringify(payloadForRegister(register)),
     "text/html": structureHtml(register, schema),
     [MARKDOWN_CLIPBOARD_MIME]: markdown,
     "text/plain":
-      register.kind === "structure" || register.kind === "section"
+      register.kind === "structure" ||
+      register.kind === "section" ||
+      register.kind === "table-cells"
         ? markdown
         : register.text,
+    ...(tsv === undefined ? {} : { [TSV_CLIPBOARD_MIME]: tsv }),
   };
 }
 
@@ -546,6 +602,7 @@ export function decodeVimClipboard(
         payload.schemaVersion !== 2 &&
         payload.schemaVersion !== 4 &&
         payload.schemaVersion !== 5 &&
+        payload.schemaVersion !== 6 &&
         payload.schemaVersion !== MEMOKA_CLIPBOARD_SCHEMA_VERSION) ||
       typeof payload.kind !== "string" ||
       typeof payload.text !== "string"
@@ -555,7 +612,8 @@ export function decodeVimClipboard(
     if (payload.kind === "text") {
       let slice: Slice | undefined;
       if (
-        payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION &&
+        (payload.schemaVersion === 6 ||
+          payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
         payload.slice !== undefined
       ) {
         const decoded = clipboardSlice(payload.slice, schema);
@@ -590,6 +648,7 @@ export function decodeVimClipboard(
       (payload.schemaVersion === 2 ||
         payload.schemaVersion === 4 ||
         payload.schemaVersion === 5 ||
+        payload.schemaVersion === 6 ||
         payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
       payload.kind === "block-lines" &&
       Number.isInteger(payload.lineCount) &&
@@ -641,6 +700,7 @@ export function decodeVimClipboard(
     }
     if (
       (payload.schemaVersion === 5 ||
+        payload.schemaVersion === 6 ||
         payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
       payload.kind === "section" &&
       (payload.transfer === "copy" || payload.transfer === "cut") &&
@@ -675,11 +735,67 @@ export function decodeVimClipboard(
       };
     }
     if (
+      payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION &&
+      payload.kind === "table-cells" &&
+      Number.isInteger(payload.width) &&
+      Number(payload.width) > 0 &&
+      Number.isInteger(payload.height) &&
+      Number(payload.height) > 0 &&
+      typeof payload.includesHeader === "boolean" &&
+      Array.isArray(payload.alignments) &&
+      payload.alignments.length === Number(payload.width) &&
+      payload.alignments.every(
+        (align) =>
+          align === null ||
+          align === "left" ||
+          align === "center" ||
+          align === "right",
+      )
+    ) {
+      const slice = clipboardSlice(payload.slice, schema);
+      if (
+        !slice ||
+        slice.openStart !== 0 ||
+        slice.openEnd !== 0 ||
+        slice.content.childCount !== Number(payload.height) ||
+        !sliceHasSafeExternalLinks(slice)
+      ) {
+        return null;
+      }
+      let rowsValid = true;
+      const rows: ProseMirrorNode[] = [];
+      slice.content.forEach((row) => {
+        rowsValid &&=
+          row.type.name === "tableRow" &&
+          row.childCount === Number(payload.width);
+        rows.push(row);
+      });
+      const validated = rowsValid ? tableCellsRegisterFromRows(rows) : null;
+      if (
+        !validated ||
+        validated.width !== Number(payload.width) ||
+        validated.height !== Number(payload.height) ||
+        validated.includesHeader !== payload.includesHeader
+      ) {
+        return null;
+      }
+      return {
+        kind: "table-cells",
+        text: payload.text,
+        width: Number(payload.width),
+        height: Number(payload.height),
+        includesHeader: payload.includesHeader,
+        alignments: validated.alignments,
+        slice,
+      };
+    }
+    if (
       payload.kind === "structure" &&
       (payload.structureKind === "block" ||
         payload.structureKind === "list-item" ||
         ((payload.schemaVersion === 4 ||
           payload.schemaVersion === 5 ||
+          payload.schemaVersion === 6 ||
           payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
           payload.structureKind === "table-row")) &&
       Array.isArray(payload.nodeNames) &&
@@ -795,6 +911,215 @@ export function registerFromMarkdown(
     : null;
 }
 
+function tableCellsRegisterFromRows(
+  rows: readonly ProseMirrorNode[],
+): Extract<VimRegister, { kind: "table-cells" }> | null {
+  if (rows.length === 0) return null;
+  let width = -1;
+  let valid = true;
+  rows.forEach((row) => {
+    if (row.type.name !== "tableRow" || row.childCount === 0) {
+      valid = false;
+      return;
+    }
+    if (width < 0) width = row.childCount;
+    if (row.childCount !== width) valid = false;
+    row.forEach((cell) => {
+      if (
+        (cell.type.name !== "tableCell" && cell.type.name !== "tableHeader") ||
+        cell.attrs.colspan !== 1 ||
+        cell.attrs.rowspan !== 1
+      ) {
+        valid = false;
+      }
+    });
+  });
+  if (!valid || width <= 0) return null;
+  const includesHeader = rows[0]!.content.content.every(
+    (cell) => cell.type.name === "tableHeader",
+  );
+  const alignments = Array.from<"left" | "center" | "right" | null>({
+    length: width,
+  }).fill(null);
+  for (const row of rows) {
+    row.forEach((cell, _offset, column) => {
+      const align = cell.attrs.align;
+      if (
+        alignments[column] === null &&
+        (align === "left" || align === "center" || align === "right")
+      ) {
+        alignments[column] = align;
+      }
+    });
+  }
+  const slice = new Slice(Fragment.fromArray([...rows]), 0, 0);
+  if (!sliceHasSafeExternalLinks(slice)) return null;
+  return {
+    kind: "table-cells",
+    text: tableRowsTsv(rows),
+    width,
+    height: rows.length,
+    includesHeader,
+    alignments,
+    slice,
+  };
+}
+
+export function registerFromMarkdownTable(
+  markdown: string,
+  schema: Schema,
+): Extract<VimRegister, { kind: "table-cells" }> | null {
+  const parsed = parseMarkdownPaste(markdown, schema);
+  const table =
+    parsed?.slice.content.childCount === 1 &&
+    parsed.slice.content.firstChild?.type.name === "table"
+      ? parsed.slice.content.firstChild
+      : null;
+  if (!table) return null;
+  const rows: ProseMirrorNode[] = [];
+  table.forEach((row) => rows.push(row));
+  return tableCellsRegisterFromRows(rows);
+}
+
+export function registerFromHtmlTable(
+  html: string,
+  schema: Schema,
+): Extract<VimRegister, { kind: "table-cells" }> | null {
+  if (typeof document === "undefined") return null;
+  const sanitized = sanitizeExternalHtml(html);
+  if (!sanitized) return null;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = sanitized;
+  const parsed = ProseMirrorDOMParser.fromSchema(schema).parse(wrapper);
+  const table =
+    parsed.childCount === 1 && parsed.firstChild?.type.name === "table"
+      ? parsed.firstChild
+      : null;
+  if (!table) return null;
+  const rows: ProseMirrorNode[] = [];
+  table.forEach((row) => rows.push(row));
+  return tableCellsRegisterFromRows(rows);
+}
+
+export function registerFromTabSeparatedValues(
+  source: string,
+  schema: Schema,
+): Extract<VimRegister, { kind: "table-cells" }> | null {
+  const values = parseTabSeparatedValues(source);
+  const rowType = schema.nodes.tableRow;
+  const cellType = schema.nodes.tableCell;
+  const paragraphType = schema.nodes.paragraph;
+  if (!values || !rowType || !cellType || !paragraphType) return null;
+  const width = Math.max(...values.map((row) => row.length));
+  if (width <= 0) return null;
+  const rows = values.map((row) => {
+    const cells = Array.from({ length: width }, (_, column) => {
+      const value = row[column] ?? "";
+      const paragraphs = value
+        .split("\n")
+        .map((line) =>
+          paragraphType.create(
+            { blockId: createUuidV7() },
+            line.length > 0 ? schema.text(line) : null,
+          ),
+        );
+      return cellType.create(
+        {
+          blockId: createUuidV7(),
+          colspan: 1,
+          rowspan: 1,
+          colwidth: null,
+          align: null,
+        },
+        Fragment.fromArray(paragraphs),
+      );
+    });
+    return rowType.create(
+      { blockId: createUuidV7() },
+      Fragment.fromArray(cells),
+    );
+  });
+  return tableCellsRegisterFromRows(rows);
+}
+
+export function registerFromTabularClipboard(
+  formats: Pick<
+    PreferredClipboardFormats,
+    "html" | "tsv" | "markdown" | "plain"
+  >,
+  schema: Schema,
+): Extract<VimRegister, { kind: "table-cells" }> | null {
+  return (
+    (formats.html ? registerFromHtmlTable(formats.html, schema) : null) ??
+    (formats.tsv
+      ? registerFromTabSeparatedValues(formats.tsv, schema)
+      : null) ??
+    (formats.markdown
+      ? registerFromMarkdownTable(formats.markdown, schema)
+      : null) ??
+    (formats.plain ? registerFromMarkdownTable(formats.plain, schema) : null)
+  );
+}
+
+function tableRowsTsv(rows: readonly ProseMirrorNode[]): string {
+  return rows
+    .map((row) => {
+      const cells: string[] = [];
+      row.forEach((cell) =>
+        cells.push(
+          escapeTsvCell(cell.textBetween(0, cell.content.size, "\n", "\n")),
+        ),
+      );
+      return cells.join("\t");
+    })
+    .join("\n");
+}
+
+function escapeTsvCell(value: string): string {
+  return /[\t\r\n"]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+}
+
+function parseTabSeparatedValues(source: string): string[][] | null {
+  if (source.length === 0) return null;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+    if (quoted) {
+      if (character === '"' && source[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        value += character;
+      }
+      continue;
+    }
+    if (character === '"' && value.length === 0) {
+      quoted = true;
+    } else if (character === "\t") {
+      row.push(value);
+      value = "";
+    } else if (character === "\n") {
+      row.push(value.replace(/\r$/u, ""));
+      rows.push(row);
+      row = [];
+      value = "";
+    } else {
+      value += character;
+    }
+  }
+  if (quoted) return null;
+  if (row.length > 0 || value.length > 0 || !source.endsWith("\n")) {
+    row.push(value.replace(/\r$/u, ""));
+    rows.push(row);
+  }
+  return rows.length > 0 ? rows : null;
+}
+
 export class BrowserVimClipboard {
   supportsNativeBridge(): boolean {
     return (
@@ -883,6 +1208,7 @@ export class BrowserVimClipboard {
             html: formats["text/html"],
             markdown: formats[MARKDOWN_CLIPBOARD_MIME],
             plain: formats["text/plain"],
+            tsv: formats[TSV_CLIPBOARD_MIME] ?? null,
           },
         });
         return "rich";
@@ -934,6 +1260,12 @@ function validatePreferredClipboardFormats(
     !value.availableTypes.every((type) => typeof type === "string") ||
     (value.internal !== null && typeof value.internal !== "string") ||
     (value.markdown !== null && typeof value.markdown !== "string") ||
+    (value.html !== undefined &&
+      value.html !== null &&
+      typeof value.html !== "string") ||
+    (value.tsv !== undefined &&
+      value.tsv !== null &&
+      typeof value.tsv !== "string") ||
     (value.plain !== undefined &&
       value.plain !== null &&
       typeof value.plain !== "string") ||
@@ -947,6 +1279,8 @@ function validatePreferredClipboardFormats(
     availableTypes: value.availableTypes,
     internal: value.internal,
     markdown: value.markdown,
+    html: value.html ?? null,
+    tsv: value.tsv ?? null,
     plain: value.plain ?? null,
     filePaths: value.filePaths ?? [],
   };

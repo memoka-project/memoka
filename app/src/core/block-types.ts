@@ -12,6 +12,11 @@ export const BLOCK_TRANSFORM_TARGETS = [
 
 export type BlockTransformTarget = (typeof BLOCK_TRANSFORM_TARGETS)[number];
 
+export interface TableDimensions {
+  readonly rows: number;
+  readonly columns: number;
+}
+
 export type BlockTypePickerTarget = BlockTransformTarget | "attachment";
 
 export interface BlockTypeCatalogEntry {
@@ -59,7 +64,7 @@ export const BLOCK_TYPE_CATALOG: readonly BlockTypeCatalogEntry[] = [
     id: "table",
     name: "Table",
     aliases: ["table", "grid", "表", "テーブル"],
-    description: "3列×3行の表を作成します。先頭行は見出しです。",
+    description: "行数と列数を選んで表を作成します。先頭行は見出しです。",
     example: "| 見出し | 見出し | 見出し |",
   },
   {

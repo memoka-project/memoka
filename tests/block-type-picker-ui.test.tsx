@@ -117,4 +117,43 @@ describe("Memoka Block Type picker", () => {
     expect(transform).not.toHaveBeenCalled();
     expect(restoreFocus).not.toHaveBeenCalled();
   });
+
+  it("chooses Table columns and rows with an NxN keyboard grid", async () => {
+    const transform = vi.fn(() => ({
+      changed: true as const,
+      target: "table" as const,
+      selection: "text" as const,
+    }));
+    const onClose = vi.fn();
+    const restoreFocus = vi.fn();
+    render(
+      <BlockTypePicker
+        session={{
+          windowId: "window-1",
+          blockId: "block-1",
+          transform,
+          restoreFocus,
+        }}
+        onClose={onClose}
+        onMessage={vi.fn()}
+      />,
+    );
+    const input = screen.getByRole("combobox", {
+      name: "ブロックタイプを検索",
+    });
+    fireEvent.change(input, { target: { value: "table" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    const grid = screen.getByRole("grid", { name: "Tableサイズ" });
+    await waitFor(() => expect(document.activeElement).toBe(grid));
+    expect(screen.getByText("3列 × 3行")).toBeTruthy();
+    fireEvent.keyDown(grid, { key: "Enter" });
+
+    expect(transform).toHaveBeenCalledWith("table", {
+      rows: 3,
+      columns: 3,
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+  });
 });

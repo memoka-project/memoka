@@ -112,7 +112,7 @@ export function createMemokaHelpSectionSnapshot(
                 ),
                 listItem(
                   "mode-visual",
-                  "v: 文字選択、V: 論理行・構造単位の選択",
+                  "v: 文字選択、V: 論理行・構造単位の選択、Table内のCtrl-v: 矩形Cell選択",
                 ),
               ]),
             ],
@@ -174,6 +174,59 @@ export function createMemokaHelpSectionSnapshot(
           ],
         ),
       ]),
+      section("table-editing", "Table編集", [
+        table(
+          "table-editing",
+          ["Mode", "キー", "動作"],
+          [
+            [
+              "Normal",
+              "h / l、j / k",
+              "現在Cell内を左右移動／同じ列の前後行へ移動",
+            ],
+            [
+              "Normal",
+              "w / b / e",
+              "同じ行のword境界を移動。空Cellも1つの停止位置",
+            ],
+            [
+              "Normal",
+              "Tab / Shift-Tab",
+              "行優先順で次／前のCellへ移動。Table端では停止",
+            ],
+            [
+              "Insert",
+              "Enter / Shift-Enter",
+              "Cell内Paragraphを分割／Hard Breakを入力",
+            ],
+            [
+              "Insert",
+              "Tab / Shift-Tab",
+              "次／前のCellへ移動。最終CellのTabは本文行を追加",
+            ],
+            ["Insert", "Ctrl-Enter", "Table直後に新しいParagraphを作って脱出"],
+            [
+              "Visual Block",
+              "Ctrl-v → h/j/k/l",
+              "結合セルのないTableで矩形Cell範囲を選択",
+            ],
+            [
+              "Visual Block",
+              "y / d / c / p / P",
+              "矩形をcopy／内容clear／現在Cellから置換。行・列構造は維持",
+            ],
+            [
+              "Normal / Visual Line / Visual Block",
+              "<Leader>a（既定 ,a）",
+              "選択数ぶんの行・列追加、削除／移動、列揃え、Table削除を検索",
+            ],
+          ],
+        ),
+        paragraph(
+          "table-clipboard",
+          "Tableの矩形yankはMemoka内部構造、HTML、GFM Markdown、TSVを同時にClipboardへ出力します。Table内のp/Pはどちらも現在Cellを左上として貼り付けます。Table外でp/Pすると、headerを含む矩形はそのまま、本文行だけの矩形は空headerを補って新しいGFM互換Tableを作ります。行・列追加は.で選択数ごと再実行でき、先頭行は常にheaderです。",
+        ),
+      ]),
       section("windows", "Window・Sidebar・Tab", [
         table(
           "windows",
@@ -206,7 +259,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "block-type-picker",
-            "直接本文の空ParagraphでInsert modeから「/」を入力すると、共通検索ペインでParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Image Block stub、Attachment Fileを選べます。Esc / Ctrl-cで取り消すと「/」は本文に残ります。確定後のuは最初に「/」へ戻り、もう一度uを押すと「/」も戻します。",
+            "直接本文の空ParagraphでInsert modeから「/」を入力すると、共通検索ペインでParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Image Block stub、Attachment Fileを選べます。Tableは続く10×10グリッドでh/j/k/lまたは矢印を使って行列数を選び、Enterで作成します。Esc / Ctrl-cで取り消すと「/」は本文に残ります。確定後のuは最初に「/」へ戻り、もう一度uを押すと「/」も戻します。",
           ),
           listItem(
             "attachments",
@@ -238,7 +291,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キーはapplication config directoryのconfig.tomlで変更できます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
+            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Table操作キーはapplication config directoryのconfig.tomlで変更できます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "portable-data",

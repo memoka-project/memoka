@@ -70,8 +70,12 @@ import {
   type InternalLinkCompletionSnapshot,
 } from "./internal-link-completion";
 import type { InternalLinkCandidate } from "../core/internal-link-candidates";
-import type { BlockTransformTarget } from "../core/block-types";
+import type {
+  BlockTransformTarget,
+  TableDimensions,
+} from "../core/block-types";
 import type { InlineFormatAction } from "../core/inline-formats";
+import type { TableActionId } from "../core/table-actions";
 import type { AttachmentRepository } from "../core/attachments";
 import { createDefaultExternalLinkPort } from "../platform/external-link";
 import {
@@ -90,6 +94,12 @@ import {
   type AttachmentInsertTarget,
 } from "./attachment-insert";
 import type { VimRegister } from "../vim/editor-commands";
+import {
+  runTableAction,
+  restoreVisualBlockSelection,
+  type TableActionResult,
+  type TableActionSelection,
+} from "../vim/table-editing";
 
 export interface BlockTypePickerRequest {
   readonly blockId: string;
@@ -99,6 +109,11 @@ export interface InlineFormatPickerRequest {
   readonly selectedText: string;
   readonly existingHref: string | null;
   readonly apply: (action: InlineFormatAction) => InlineFormatResult;
+}
+
+export interface TableActionPickerRequest {
+  readonly selection: TableActionSelection;
+  readonly apply: (action: TableActionId) => TableActionResult;
 }
 
 export interface TiptapEditorAdapterOptions {
@@ -140,6 +155,7 @@ export interface TiptapEditorAdapterOptions {
   onNoteSearch?: (origin: NoteSearchOrigin) => void;
   onBlockTypePicker?: (request: BlockTypePickerRequest) => void;
   onInlineFormatPicker?: (request: InlineFormatPickerRequest) => void;
+  onTableActionPicker?: (request: TableActionPickerRequest) => void;
   openExternalLink?: (href: string) => void | Promise<void>;
   attachmentRepository?: AttachmentRepository;
   onMessage?: (message: string) => void;
@@ -287,6 +303,7 @@ export class TiptapEditorAdapter {
             this.handleNoteSearchRepeat(cursor, direction, count)
         : undefined,
       onInlineFormat: () => this.requestInlineFormatPicker(),
+      onTableActions: (selection) => this.requestTableActionPicker(selection),
       onOpenExternalLink:
         options.openExternalLink ?? ((href) => externalLinkPort.open(href)),
       onOpenAttachment: options.attachmentRepository
@@ -377,6 +394,7 @@ export class TiptapEditorAdapter {
     blockId: string,
     target: BlockTransformTarget,
     consumeSlash = false,
+    tableDimensions?: TableDimensions,
   ): BlockTransformResult {
     if (this.currentEditor.isDestroyed) {
       return { changed: false, reason: "missing" };
@@ -388,7 +406,7 @@ export class TiptapEditorAdapter {
     this.vimSession.prepareExternalMutationUndoBoundary();
     const result = runBlockTransformCommand(this.currentEditor.view, {
       name: "block.transform",
-      payload: { blockId, target, consumeSlash },
+      payload: { blockId, target, consumeSlash, tableDimensions },
     });
     document.undoManager.stopCapturing();
     if (result.changed && result.selection === "node") {
@@ -443,6 +461,47 @@ export class TiptapEditorAdapter {
       this.vimSession.applyNavigationPosition(
         selection.from,
         "selection:format:no-op",
+      );
+      this.vimSession.requestInputMethodDeactivation();
+    }
+    return result;
+  }
+
+  private requestTableActionPicker(selection: TableActionSelection): boolean {
+    if (this.currentEditor.isDestroyed || !this.options.onTableActionPicker) {
+      return false;
+    }
+    this.options.onTableActionPicker({
+      selection,
+      apply: (action) => this.applyTableAction(selection, action),
+    });
+    return true;
+  }
+
+  private applyTableAction(
+    selection: TableActionSelection,
+    action: TableActionId,
+  ): TableActionResult {
+    if (this.currentEditor.isDestroyed) {
+      return {
+        changed: false,
+        reason: "missing",
+        position: selection.beforeCursor,
+      };
+    }
+    this.vimSession.prepareExternalMutationUndoBoundary();
+    const result = runTableAction(this.currentEditor.view, selection, action);
+    if (result.changed) {
+      this.vimSession.completeExternalSelectionMutation(
+        result.position,
+        selection.beforeCursor,
+        `table.action:${action}:changed`,
+        result.repeat,
+      );
+    } else if (result.reason === "boundary") {
+      this.vimSession.applyNavigationPosition(
+        selection.beforeCursor,
+        `table.action:${action}:boundary`,
       );
       this.vimSession.requestInputMethodDeactivation();
     }
@@ -942,10 +1001,14 @@ export class TiptapEditorAdapter {
     if (!state) return;
     if (state.selection) {
       const maximum = editor.state.doc.content.size;
-      editor.commands.setTextSelection({
-        from: Math.max(0, Math.min(state.selection.anchor, maximum)),
-        to: Math.max(0, Math.min(state.selection.head, maximum)),
-      });
+      const anchor = Math.max(0, Math.min(state.selection.anchor, maximum));
+      const head = Math.max(0, Math.min(state.selection.head, maximum));
+      if (
+        state.mode !== "visual-block" ||
+        !restoreVisualBlockSelection(editor.view, anchor, head)
+      ) {
+        editor.commands.setTextSelection({ from: anchor, to: head });
+      }
     }
     if (this.options.restoreScrollOnAttach !== false) {
       requestAnimationFrame(() => {

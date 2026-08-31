@@ -4,6 +4,7 @@ use tauri::AppHandle;
 const MEMOKA_CLIPBOARD_MIME: &str = "application/x-memoka-structured-blocks+json";
 const MARKDOWN_CLIPBOARD_MIME: &str = "text/markdown";
 const HTML_CLIPBOARD_MIME: &str = "text/html";
+const TSV_CLIPBOARD_MIME: &str = "text/tab-separated-values";
 const PLAIN_CLIPBOARD_MIME: &str = "text/plain";
 const UTF8_PLAIN_CLIPBOARD_MIME: &str = "text/plain;charset=utf-8";
 #[cfg(target_os = "linux")]
@@ -40,6 +41,8 @@ pub(crate) struct PreferredClipboardFormats {
     available_types: Vec<String>,
     internal: Option<String>,
     markdown: Option<String>,
+    html: Option<String>,
+    tsv: Option<String>,
     plain: Option<String>,
     file_paths: Vec<String>,
 }
@@ -59,6 +62,7 @@ pub(crate) struct RichClipboardFormats {
     html: String,
     markdown: String,
     plain: String,
+    tsv: Option<String>,
 }
 
 #[cfg(target_os = "linux")]
@@ -186,6 +190,9 @@ fn validate_rich_clipboard_formats(formats: &RichClipboardFormats) -> Result<(),
     ] {
         validate_clipboard_size(mime_type, content.len())?;
     }
+    if let Some(tsv) = &formats.tsv {
+        validate_clipboard_size(TSV_CLIPBOARD_MIME, tsv.len())?;
+    }
     Ok(())
 }
 
@@ -254,13 +261,17 @@ fn linux_uri_target_entries(info: u32) -> Vec<gtk::TargetEntry> {
 
 #[cfg(target_os = "linux")]
 fn rich_clipboard_targets(formats: &RichClipboardFormats) -> Vec<(&'static str, &str)> {
-    vec![
-        (MEMOKA_CLIPBOARD_MIME, &formats.internal),
-        ("text/html", &formats.html),
-        (MARKDOWN_CLIPBOARD_MIME, &formats.markdown),
-        ("text/plain", &formats.plain),
-        ("text/plain;charset=utf-8", &formats.plain),
-    ]
+    let mut targets = vec![
+        (MEMOKA_CLIPBOARD_MIME, formats.internal.as_str()),
+        ("text/html", formats.html.as_str()),
+        (MARKDOWN_CLIPBOARD_MIME, formats.markdown.as_str()),
+        ("text/plain", formats.plain.as_str()),
+        ("text/plain;charset=utf-8", formats.plain.as_str()),
+    ];
+    if let Some(tsv) = &formats.tsv {
+        targets.push((TSV_CLIPBOARD_MIME, tsv.as_str()));
+    }
+    targets
 }
 
 #[cfg(target_os = "linux")]
@@ -289,6 +300,14 @@ fn read_linux_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>,
         .contains(&MARKDOWN_CLIPBOARD_MIME)
         .then(|| read_linux_clipboard_mime(&clipboard, MARKDOWN_CLIPBOARD_MIME))
         .transpose()?;
+    let html = preferred
+        .contains(&HTML_CLIPBOARD_MIME)
+        .then(|| read_linux_clipboard_mime(&clipboard, HTML_CLIPBOARD_MIME))
+        .transpose()?;
+    let tsv = preferred
+        .contains(&TSV_CLIPBOARD_MIME)
+        .then(|| read_linux_clipboard_mime(&clipboard, TSV_CLIPBOARD_MIME))
+        .transpose()?;
     let plain = plain_mime
         .map(|mime_type| read_linux_clipboard_mime(&clipboard, mime_type))
         .transpose()?;
@@ -304,6 +323,8 @@ fn read_linux_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>,
         available_types,
         internal,
         markdown,
+        html,
+        tsv,
         plain,
         file_paths,
     }))
@@ -575,14 +596,19 @@ fn decode_clipboard_bytes(mime_type: &str, bytes: Vec<u8>) -> Result<String, Str
 
 #[cfg(target_os = "linux")]
 fn preferred_mime_types(available_types: &[String]) -> Vec<&'static str> {
-    [MEMOKA_CLIPBOARD_MIME, MARKDOWN_CLIPBOARD_MIME]
-        .into_iter()
-        .filter(|mime_type| {
-            available_types
-                .iter()
-                .any(|available| available == mime_type)
-        })
-        .collect()
+    [
+        MEMOKA_CLIPBOARD_MIME,
+        HTML_CLIPBOARD_MIME,
+        TSV_CLIPBOARD_MIME,
+        MARKDOWN_CLIPBOARD_MIME,
+    ]
+    .into_iter()
+    .filter(|mime_type| {
+        available_types
+            .iter()
+            .any(|available| available == mime_type)
+    })
+    .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -601,25 +627,31 @@ mod tests {
         GNOME_FILES_CLIPBOARD_MIME, HTML_CLIPBOARD_MIME, MARKDOWN_CLIPBOARD_MIME,
         MAX_PREFERRED_CLIPBOARD_BYTES, MEMOKA_CLIPBOARD_MIME, PLAIN_CLIPBOARD_MIME,
         PORTAL_FILE_TRANSFER_CLIPBOARD_MIME, PORTAL_FILES_CLIPBOARD_MIME, RichClipboardFormats,
-        URI_CLIPBOARD_MIME_CANDIDATES, URI_LIST_CLIPBOARD_MIME, UTF8_PLAIN_CLIPBOARD_MIME,
-        decode_clipboard_bytes, explicit_plain_mime, explicit_requested_mime, file_uri_from_path,
-        local_path_from_file_uri, parse_linux_file_clipboard, preferred_mime_types,
-        preferred_plain_fallback_mime, rich_clipboard_targets, rich_file_clipboard_payloads,
-        validate_clipboard_size,
+        TSV_CLIPBOARD_MIME, URI_CLIPBOARD_MIME_CANDIDATES, URI_LIST_CLIPBOARD_MIME,
+        UTF8_PLAIN_CLIPBOARD_MIME, decode_clipboard_bytes, explicit_plain_mime,
+        explicit_requested_mime, file_uri_from_path, local_path_from_file_uri,
+        parse_linux_file_clipboard, preferred_mime_types, preferred_plain_fallback_mime,
+        rich_clipboard_targets, rich_file_clipboard_payloads, validate_clipboard_size,
     };
 
     #[test]
-    fn selects_only_memoka_and_explicit_markdown_in_priority_order() {
+    fn selects_rich_table_interchange_formats_in_priority_order() {
         let available = vec![
             "text/plain;charset=utf-8".to_owned(),
             MARKDOWN_CLIPBOARD_MIME.to_owned(),
             "text/html".to_owned(),
+            TSV_CLIPBOARD_MIME.to_owned(),
             MEMOKA_CLIPBOARD_MIME.to_owned(),
         ];
 
         assert_eq!(
             preferred_mime_types(&available),
-            vec![MEMOKA_CLIPBOARD_MIME, MARKDOWN_CLIPBOARD_MIME]
+            vec![
+                MEMOKA_CLIPBOARD_MIME,
+                HTML_CLIPBOARD_MIME,
+                TSV_CLIPBOARD_MIME,
+                MARKDOWN_CLIPBOARD_MIME,
+            ]
         );
     }
 
@@ -682,6 +714,7 @@ mod tests {
             html: "<p>日本語</p>".to_owned(),
             markdown: "日本語".to_owned(),
             plain: "日本語".to_owned(),
+            tsv: Some("見出し\t値".to_owned()),
         };
 
         let targets = rich_clipboard_targets(&formats);
@@ -691,6 +724,13 @@ mod tests {
                 .find(|(mime_type, _)| *mime_type == "text/plain")
                 .map(|(_, content)| *content),
             Some("日本語")
+        );
+        assert_eq!(
+            targets
+                .iter()
+                .find(|(mime_type, _)| *mime_type == TSV_CLIPBOARD_MIME)
+                .map(|(_, content)| *content),
+            Some("見出し\t値")
         );
         assert_eq!(
             targets
@@ -708,6 +748,7 @@ mod tests {
             html: "<p>file</p>".to_owned(),
             markdown: "[file](attachment:id)".to_owned(),
             plain: "[file](attachment:id)".to_owned(),
+            tsv: None,
         };
 
         let payloads = rich_file_clipboard_payloads(vec!["/tmp/file.pdf".to_owned()], &formats)
