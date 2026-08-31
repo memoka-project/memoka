@@ -1,30 +1,114 @@
 # Memoka
 
+> [!WARNING]
+> **Memokaは開発中のベータ版です。** 今後のreleaseでは、保存データ、設定、操作仕様を含む
+> 互換性を壊す変更を行う可能性があります。重要なデータには必ず外部のバックアップと世代管理を
+> 用意してください。
+
 Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ローカルファーストのメモ帳です。
 ノートはTreeで整理し、各ノートの本文はSectionと構造化blockとして保存します。Markdownは
 編集用の第二データではなく、選択したデータ領域へ自動生成される可搬mirrorです。
 
 ## 対応環境とインストール
 
-v0.1.1の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。公式binaryとして配布するのは
-Linux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを取得し、同じReleaseの
-`SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。AppImageの更新artifactは
-Tauri Updater用の鍵で署名します。deb、macOS、ARM、Microsoft Store、apt repositoryは提供しません。
+v0.1.1の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
+Microsoft Store、apt repositoryは提供しません。
 
-Windowsはコード署名済みbinaryを配布せず、GitHub ReleaseのSource code archiveまたはrepositoryから
-取得したsourceを利用環境上でbuildします。Node.js、Corepack、Rust、Tauri 2のWindows向け依存環境を
-用意したPowerShellで次を実行してください。生成されるローカルbuildは公式署名・自動更新の対象外です。
+### Linux x86_64
 
-```powershell
-corepack pnpm install --frozen-lockfile
-corepack pnpm verify
-corepack pnpm tauri:build
-```
+公式binaryとして配布するのはLinux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを
+取得し、同じReleaseの`SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。
+AppImageの更新artifactはTauri Updater用の鍵で署名します。
 
 AppImageはホストdesktop sessionのWayland/X11、GTK input method、GIO、GStreamerを利用します。
 Wayland / fcitx5では、環境によって日本語変換候補windowがcaretからずれて表示される既知制約があります。
 入力欠落や二重確定とは分離して追跡しています。問題がある場合は、desktop session、display scale、
 WebKitGTK、GLib、Mesa、fcitx5のversionを添えて報告してください。
+
+### Windows 11 x64（source build）
+
+Windowsはコード署名済みbinaryを配布せず、GitHub ReleaseのSource code archiveまたはrepositoryから
+取得したsourceを利用環境上でbuildします。生成されるローカルbuildは公式署名・自動更新の対象外であり、
+Windows SmartScreenの警告が表示される場合があります。
+
+以下はWindows 11 x64と`winget`を前提とした手順です。MemokaのCIと同じNode.js 24 LTS、Rustの
+MSVC toolchain、Tauri 2が必要とするMicrosoft C++ Build ToolsとWebView2 Runtimeを導入します。
+詳細は[Tauri 2のWindows prerequisites](https://v2.tauri.app/start/prerequisites/)も参照してください。
+
+#### 1. build依存環境をインストールする
+
+PowerShellを開き、次を実行します。Build Toolsの導入時にはUACによる管理者権限の確認が表示されます。
+`Microsoft.VisualStudio.Workload.VCTools`はTauriが必要とするC++ desktop workloadで、
+`--includeRecommended`によりMSVC toolsetとWindows SDKも導入します。
+
+```powershell
+winget install --exact --id Git.Git --source winget --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
+winget install --exact --id OpenJS.NodeJS.LTS --source winget --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
+winget install --exact --id Rustlang.Rustup --source winget --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
+winget install --exact --id Microsoft.EdgeWebView2Runtime --source winget --silent --accept-source-agreements --accept-package-agreements --disable-interactivity
+winget install --exact --id Microsoft.VisualStudio.BuildTools --source winget --accept-source-agreements --accept-package-agreements --disable-interactivity `
+  --override "--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Windows 11には通常WebView2 Runtimeが既に含まれます。その場合、上のWebView2コマンドはインストール済みと
+表示されるだけです。すべてのインストールが終わったらPowerShellを閉じ、新しいPowerShellを開いてPATHを
+読み直します。
+
+#### 2. toolchainを初期化して確認する
+
+```powershell
+rustup default stable-msvc
+rustup target add x86_64-pc-windows-msvc
+corepack enable
+
+git --version
+node --version
+corepack --version
+rustc --version
+cargo --version
+```
+
+`node --version`は`v24`系を想定しています。`rustc -Vv`の`host`が
+`x86_64-pc-windows-msvc`であることも確認できます。
+
+#### 3. sourceと依存packageを取得する
+
+```powershell
+git clone https://github.com/memoka-project/memoka.git
+Set-Location memoka
+corepack pnpm install --frozen-lockfile
+```
+
+Source code archiveを展開した場合は、`git clone`の代わりに展開先へ`Set-Location`してください。
+`package.json`の`packageManager`指定により、Corepackはこのprojectで固定したpnpmを使用します。
+
+#### 4. 検証・起動・buildを行う
+
+CI相当の主要検証は次で実行します。
+
+```powershell
+corepack pnpm verify
+```
+
+開発版を起動する場合は次を実行します。初回はRust crateのcompileに時間がかかります。
+
+```powershell
+corepack pnpm tauri:dev
+```
+
+Windows用のrelease buildを作る場合は次を実行します。
+
+```powershell
+corepack pnpm tauri:build
+```
+
+`tauri:build`はWindowsではNSIS installerだけを生成します。主な出力先は次のとおりです。
+
+- application本体: `target\release\memoka.exe`
+- unsigned NSIS installer: `target\release\bundle\nsis\`
+
+復旧CLIも必要な場合は`corepack pnpm cli:build`を実行します。出力は
+`target\release\memoka-cli.exe`です。
 
 ## 開発
 
