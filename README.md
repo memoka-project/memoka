@@ -11,7 +11,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 
 ## 対応環境とインストール
 
-v0.1.1の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
+v0.1.2の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
 Microsoft Store、apt repositoryは提供しません。
 
 ### Linux x86_64

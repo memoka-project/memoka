@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-31
+
+- GFM Table向けのVisual Block、Cell移動、行列操作、alignment変更、Undo、`.` repeatを含むkeyboard-first編集を追加。
+- Tableの内部Clipboardに加え、HTML、GFM Markdown、TSVによる外部applicationとのcopy / pasteを追加。
+- `/table`から行列数を選択できる10×10 gridを追加し、既定サイズを3列×3行に設定。
+- Table内の`j/k`は列を保って移動し、先頭／最終行ではTable外の隣接論理行へ続くよう修正。
+- README冒頭にbeta版と互換性変更の注意を追加し、wingetを使うWindows source build手順を整備。
+
 ## [0.1.1] - 2026-08-31
 
 - Linux AppImage配布、更新、診断、native受入を準備中。
@@ -21,6 +29,7 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/memoka-project/memoka/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/memoka-project/memoka/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/memoka-project/memoka/releases/tag/v0.1.0
