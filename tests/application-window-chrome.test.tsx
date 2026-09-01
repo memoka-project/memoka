@@ -124,6 +124,45 @@ describe("custom application window chrome", () => {
     view.unmount();
   });
 
+  it.each(["q", "qa"])(
+    ":%s exits through the same durable shutdown path",
+    async (commandName) => {
+      const fixture = createDesktopWindowFixture();
+      const forceClose = vi.fn(async () => undefined);
+      fixture.port.forceClose = forceClose;
+      const view = render(
+        <App
+          desktopWindow={fixture.port}
+          portableMirror={null}
+          showDebugLine={false}
+        />,
+      );
+
+      const editor = await waitFor(() => {
+        const element =
+          view.container.querySelector<HTMLElement>(".memoka-editor");
+        if (!element) throw new Error("Editor did not mount");
+        return element;
+      });
+      editor.focus();
+      fireEvent.keyDown(editor, { key: "Escape", code: "Escape" });
+      fireEvent.keyDown(editor, {
+        key: ":",
+        code: "Semicolon",
+        shiftKey: true,
+      });
+      const command = await screen.findByRole("textbox", {
+        name: "Memoka Command",
+      });
+      fireEvent.change(command, { target: { value: commandName } });
+      fireEvent.keyDown(command, { key: "Enter" });
+
+      await screen.findByRole("dialog", { name: "Memokaを終了" });
+      await waitFor(() => expect(forceClose).toHaveBeenCalledOnce());
+      view.unmount();
+    },
+  );
+
   it("waits for the mirror by default and shows its shutdown progress", async () => {
     let closeRequested: (() => void | Promise<void>) | null = null;
     let releasePublish!: () => void;

@@ -211,6 +211,7 @@ export function App({
   const portableMirrorController = useRef<PortableMirrorController | null>(
     null,
   );
+  const shutdownInFlight = useRef(false);
   const startupUpdateCheckStarted = useRef(false);
   const applicationReadyRecorded = useRef(false);
 
@@ -775,57 +776,62 @@ export function App({
     recordDiagnostic("workspace-open-failed");
   }, [recordDiagnostic, startupError]);
 
+  const requestApplicationShutdown = useCallback(async (): Promise<void> => {
+    if (shutdownInFlight.current) return;
+    if (!runtime || !desktopWindow?.forceClose) {
+      setCommandMessage(":quit · デスクトップの終了処理を利用できません");
+      return;
+    }
+    shutdownInFlight.current = true;
+    let failureStage: ApplicationShutdownProgressState["stage"] = "saving";
+    try {
+      setShutdownProgress({ stage: "saving", mirror: null });
+      await nextBrowserPaint();
+      await runtime.flushDurableState();
+      const mirrorController = portableMirrorController.current;
+      if (waitForMirrorOnExit && mirrorController) {
+        failureStage = "mirror";
+        const refreshMirrorProgress = (): void => {
+          setShutdownProgress({
+            stage: "mirror",
+            mirror: mirrorController.activitySnapshot(),
+          });
+        };
+        refreshMirrorProgress();
+        const refreshTimer = globalThis.setInterval(refreshMirrorProgress, 75);
+        try {
+          await nextBrowserPaint();
+          await mirrorController.flush();
+        } finally {
+          globalThis.clearInterval(refreshTimer);
+        }
+      }
+      failureStage = "closing";
+      setShutdownProgress({ stage: "closing", mirror: null });
+      await desktopWindow.forceClose();
+    } catch (error) {
+      shutdownInFlight.current = false;
+      setShutdownProgress(null);
+      const operation =
+        failureStage === "mirror"
+          ? "mirror生成"
+          : failureStage === "closing"
+            ? "終了処理"
+            : "保存";
+      setCommandMessage(
+        `終了前の${operation}に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }, [desktopWindow, runtime, waitForMirrorOnExit]);
+
   useEffect(() => {
     if (!runtime || !desktopWindow?.subscribeToCloseRequested) return;
     let disposed = false;
-    let closing = false;
     let unlisten: (() => void) | null = null;
     void desktopWindow
-      .subscribeToCloseRequested(async () => {
-        if (closing || disposed) return;
-        closing = true;
-        let failureStage: ApplicationShutdownProgressState["stage"] = "saving";
-        try {
-          setShutdownProgress({ stage: "saving", mirror: null });
-          await nextBrowserPaint();
-          await runtime.flushDurableState();
-          const mirrorController = portableMirrorController.current;
-          if (waitForMirrorOnExit && mirrorController) {
-            failureStage = "mirror";
-            const refreshMirrorProgress = (): void => {
-              setShutdownProgress({
-                stage: "mirror",
-                mirror: mirrorController.activitySnapshot(),
-              });
-            };
-            refreshMirrorProgress();
-            const refreshTimer = globalThis.setInterval(
-              refreshMirrorProgress,
-              75,
-            );
-            try {
-              await nextBrowserPaint();
-              await mirrorController.flush();
-            } finally {
-              globalThis.clearInterval(refreshTimer);
-            }
-          }
-          failureStage = "closing";
-          setShutdownProgress({ stage: "closing", mirror: null });
-          await desktopWindow.forceClose?.();
-        } catch (error) {
-          closing = false;
-          setShutdownProgress(null);
-          const operation =
-            failureStage === "mirror"
-              ? "mirror生成"
-              : failureStage === "closing"
-                ? "終了処理"
-                : "保存";
-          setCommandMessage(
-            `終了前の${operation}に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+      .subscribeToCloseRequested(() => {
+        if (disposed) return;
+        return requestApplicationShutdown();
       })
       .then((dispose) => {
         if (disposed) dispose();
@@ -840,7 +846,7 @@ export function App({
       disposed = true;
       unlisten?.();
     };
-  }, [desktopWindow, runtime, waitForMirrorOnExit]);
+  }, [desktopWindow, requestApplicationShutdown, runtime]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -1771,6 +1777,9 @@ export function App({
             session?.restoreFocus();
           },
         );
+        return;
+      case "application.quit":
+        void requestApplicationShutdown();
         return;
       case "application.help":
         void runtime.openHelpNote(effectiveTargetWindowId).then(

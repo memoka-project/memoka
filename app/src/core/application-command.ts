@@ -18,6 +18,7 @@ export type ApplicationCommandId =
   | "application.update"
   | "application.version"
   | "application.diagnostics"
+  | "application.quit"
   | "application.help";
 
 export interface ApplicationCommandDefinition {
@@ -141,6 +142,12 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "diagnostics",
     aliases: ["diag"],
     description: "ローカル診断情報とログ保存先を表示する",
+  },
+  {
+    id: "application.quit",
+    name: "quit",
+    aliases: ["q", "qa"],
+    description: "保存と必要なmirror生成を完了してMemokaを終了する",
   },
   {
     id: "application.help",
