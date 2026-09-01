@@ -127,14 +127,21 @@ corepack pnpm large-note-gate
 corepack pnpm tauri:build
 ```
 
-ユーザー設定はapplication config directoryの`config.toml`から読み込みます。終了時は既定で最新の
-Markdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを次回起動後の自動生成へ
-回したい場合は次を設定します。
+ユーザー設定はapplication config directoryの`config.toml`から読み込みます。カラーテーマは
+[Nightfox](https://github.com/EdenEast/nightfox.nvim)の7テーマから選べます。既定は`nightfox`です。
+`:colorscheme`（`:colo`）はライブプレビュー付きの選択画面を開き、`:colorscheme duskfox`のように
+直接指定することもできます。確定したテーマは次のトップレベル設定へ保存され、Workspaceを切り替えても
+アプリケーション全体で共通です。
 
 ```toml
+theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
+
 [shutdown]
 wait_for_mirror = false
 ```
+
+終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
+次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。
 
 製品コード、テスト、配布Workflowはこのrepositoryだけで完結します。内部仕様、ADR、計画、検証記録、
 release運用文書は公開source treeとは分離して管理しています。
@@ -156,3 +163,6 @@ memoka-cli restore --source <portable-mirror-data-area> --target <empty-data-are
 ## ライセンス
 
 [MIT License](LICENSE)
+
+組み込みカラーパレットはNightfox（MIT License、Copyright (c) 2021 James Simpson）に基づきます。
+固定した上流commitとライセンス全文は[Third-party notices](THIRD_PARTY_NOTICES.md)に記載しています。

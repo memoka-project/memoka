@@ -22,9 +22,14 @@ describe("Section depth guides", () => {
     section.append(body, children);
     document.body.append(rootBody, section);
 
-    expect(getComputedStyle(rootBody).borderLeftStyle).toBe("");
-    expect(getComputedStyle(body).borderLeftStyle).toBe("solid");
-    expect(getComputedStyle(children).borderLeftStyle).toBe("solid");
+    const guidedSelector =
+      ".memoka-section > .memoka-section-body, .memoka-section > .memoka-section-children";
+    expect(rootBody.matches(guidedSelector)).toBe(false);
+    expect(body.matches(guidedSelector)).toBe(true);
+    expect(children.matches(guidedSelector)).toBe(true);
+    expect(style.textContent).toContain(
+      "border-left: 1px solid var(--memoka-color-border-subtle)",
+    );
 
     style.remove();
   });

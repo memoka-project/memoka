@@ -24,6 +24,7 @@ import {
 } from "../app/src/core/section-model";
 import { CoreRuntime } from "../app/src/core/runtime";
 import type { NoteSearchOrigin } from "../app/src/core/note-search";
+import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 
 function createNoteSearchOrigin(): NoteSearchOrigin {
   return {
@@ -86,6 +87,54 @@ function openCommandLine(editor: HTMLElement): HTMLInputElement {
 
 describe("Memoka Application utilities", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("previews, cancels, and persists application color themes", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const view = render(
+      <App
+        initialTheme="nightfox"
+        applicationConfig={{ saveTheme }}
+        showDebugLine={false}
+      />,
+    );
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+
+    let command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "colorscheme" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    const picker = await screen.findByRole("combobox", {
+      name: "カラーテーマを検索",
+    });
+    fireEvent.keyDown(picker, { key: "ArrowUp" });
+    await waitFor(() =>
+      expect(
+        document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+      ).toBe("dayfox"),
+    );
+    fireEvent.keyDown(picker, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+      ).toBe("nightfox"),
+    );
+    expect(saveTheme).not.toHaveBeenCalled();
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "colo duskfox" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() => expect(saveTheme).toHaveBeenCalledWith("duskfox"));
+    expect(
+      document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+    ).toBe("duskfox");
+    view.unmount();
+  });
 
   it("closes a focused Sidebar with Ctrl-w c and keeps only the current Window with Ctrl-w o", async () => {
     const view = render(<App />);

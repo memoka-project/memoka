@@ -42,6 +42,7 @@ tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-updater = "2.10.1"
 log = "0.4.29"
 toml = "0.8.2"
+toml_edit = "0.20.2"
 unicode-normalization = "0.1"
 yrs = "0.27.3"
 

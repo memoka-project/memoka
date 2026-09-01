@@ -294,6 +294,10 @@ export function createMemokaHelpSectionSnapshot(
             "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Table操作キーはapplication config directoryのconfig.tomlで変更できます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
+            "color-theme",
+            "カラーテーマは:colorscheme（:colo）でNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxからライブプレビューして選べます。Enterでapplication config directoryのconfig.tomlへ保存し、Esc / Ctrl-cで開始時の配色へ戻します。:colorscheme duskfoxのような直接指定もできます。既定はNightfoxで、テーマはWorkspaceではなくアプリケーション全体の設定です。",
+          ),
+          listItem(
             "portable-data",
             "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・既定では終了前・切替前に自動出力されます。起動時にrevisionが一致すれば再生成せず、通常の本文編集は変更Noteだけを差分更新します。タイトル由来pathの変更やmirror破損時はリンク整合性のため全体を再構築します。終了時に待つ間は生成phaseと書込率を表示します。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。Memokaを二重起動すると新しいプロセスはWorkspaceを開かず終了し、既存Windowを前面へ戻します。",
           ),

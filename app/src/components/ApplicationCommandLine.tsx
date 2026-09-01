@@ -19,7 +19,11 @@ export function ApplicationCommandLine({
   focused = true,
 }: {
   session: ApplicationCommandLineSession;
-  onExecute: (command: ApplicationCommandId, message: string) => void;
+  onExecute: (
+    command: ApplicationCommandId,
+    message: string,
+    argument: string | null,
+  ) => void;
   onClose: () => void;
   focused?: boolean;
 }) {
@@ -44,7 +48,7 @@ export function ApplicationCommandLine({
       setError(parsed.message);
       return;
     }
-    onExecute(parsed.command.id, `:${parsed.command.name}`);
+    onExecute(parsed.command.id, `:${parsed.command.name}`, parsed.argument);
   };
 
   return (

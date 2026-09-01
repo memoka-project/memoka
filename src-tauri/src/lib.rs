@@ -292,6 +292,7 @@ pub fn run() {
         deactivate_input_method,
         input_method_environment,
         application_config::application_key_config_load,
+        application_config::application_theme_save,
         clipboard::clipboard_write_rich,
         clipboard::clipboard_read_preferred,
         clipboard::clipboard_read_explicit,

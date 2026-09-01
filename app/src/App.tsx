@@ -38,6 +38,7 @@ import {
   TableActionPicker,
   type TableActionPickerSession,
 } from "./components/TableActionPicker";
+import { ThemePicker, type ThemePickerSession } from "./components/ThemePicker";
 import {
   WorkspaceSearchPalette,
   type WorkspaceSearchSession,
@@ -58,6 +59,11 @@ import {
 } from "./components/ApplicationWindowChrome";
 import { focusSurfaceFromPointer } from "./components/focus-surface";
 import type { ApplicationCommandId } from "./core/application-command";
+import {
+  DEFAULT_APPLICATION_THEME_ID,
+  normalizeApplicationThemeId,
+  type ApplicationThemeId,
+} from "./core/application-theme";
 import type { TiptapEditorAdapter } from "./editor/tiptap-adapter";
 import type { EditorNavigationDestination } from "./core/editor-navigation";
 import type { InternalLinkCompletionSnapshot } from "./editor/internal-link-completion";
@@ -106,8 +112,15 @@ import {
   createDefaultApplicationDiagnosticsPort,
   type ApplicationDiagnosticsPort,
 } from "./platform/application-diagnostics";
+import {
+  createDefaultApplicationConfigPort,
+  type ApplicationConfigPort,
+} from "./platform/application-config";
+import { applyApplicationTheme } from "./platform/application-theme";
 
 export interface AppProps {
+  initialTheme?: ApplicationThemeId;
+  applicationConfig?: ApplicationConfigPort;
   keyConfig?: ApplicationKeyConfig;
   keyConfigWarning?: string | null;
   showDebugLine?: boolean;
@@ -123,6 +136,8 @@ export interface AppProps {
 type VimCommandOrigin = "window" | "left-sidebar" | "right-sidebar";
 
 export function App({
+  initialTheme = DEFAULT_APPLICATION_THEME_ID,
+  applicationConfig: applicationConfigOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
   keyConfigWarning = null,
   showDebugLine = Boolean(
@@ -138,6 +153,12 @@ export function App({
 }: AppProps = {}) {
   validateApplicationKeyConfig(keyConfig);
   validateVimKeyConfig(keyConfig);
+  const [defaultApplicationConfig] = useState(
+    createDefaultApplicationConfigPort,
+  );
+  const applicationConfig =
+    applicationConfigOverride ?? defaultApplicationConfig;
+  const [themeId, setThemeId] = useState<ApplicationThemeId>(initialTheme);
   const [defaultDesktopWindow] = useState(createDefaultDesktopWindowPort);
   const [attachmentRepository] = useState(createDefaultAttachmentRepository);
   const [defaultDataArea] = useState(createDefaultDataAreaPort);
@@ -181,6 +202,9 @@ export function App({
     useState<InlineFormatPickerSession | null>(null);
   const [tableActionPicker, setTableActionPicker] =
     useState<TableActionPickerSession | null>(null);
+  const [themePicker, setThemePicker] = useState<ThemePickerSession | null>(
+    null,
+  );
   const [commandMessage, setCommandMessage] = useState(keyConfigWarning ?? "");
   const [availableUpdate, setAvailableUpdate] =
     useState<ApplicationRelease | null>(null);
@@ -213,6 +237,10 @@ export function App({
   );
   const shutdownInFlight = useRef(false);
   const startupUpdateCheckStarted = useRef(false);
+
+  useLayoutEffect(() => {
+    applyApplicationTheme(document.documentElement, themeId);
+  }, [themeId]);
   const applicationReadyRecorded = useRef(false);
 
   const recordDiagnostic = useCallback(
@@ -969,6 +997,14 @@ export function App({
         ?.focus();
       return;
     }
+    if (themePicker) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>(
+          "input[aria-label='カラーテーマを検索']",
+        )
+        ?.focus();
+      return;
+    }
     if (noteSearch) {
       appRoot.current
         ?.querySelector<HTMLInputElement>("input[aria-label='ノート内を検索']")
@@ -1040,6 +1076,7 @@ export function App({
     runtime,
     shutdownProgress,
     snapshot,
+    themePicker,
     updatePrompt,
     workspaceSearch,
   ]);
@@ -1275,17 +1312,19 @@ export function App({
     ? "shutdown"
     : workspaceSearch
       ? "workspace-search"
-      : blockTypePicker
-        ? "block-type-picker"
-        : inlineFormatPicker
-          ? "inline-format-picker"
-          : tableActionPicker
-            ? "table-action-picker"
-            : noteSearch
-              ? "note-search"
-              : commandLine
-                ? "command-line"
-                : null;
+      : themePicker
+        ? "theme-picker"
+        : blockTypePicker
+          ? "block-type-picker"
+          : inlineFormatPicker
+            ? "inline-format-picker"
+            : tableActionPicker
+              ? "table-action-picker"
+              : noteSearch
+                ? "note-search"
+                : commandLine
+                  ? "command-line"
+                  : null;
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1624,6 +1663,7 @@ export function App({
   const executeApplicationCommand = (
     command: ApplicationCommandId,
     message: string,
+    argument: string | null,
   ): void => {
     const session = commandLine;
     setCommandLine(null);
@@ -1778,6 +1818,38 @@ export function App({
           },
         );
         return;
+      case "application.colorscheme": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          clearEditorFocusRequests();
+          setThemePicker({ initialThemeId: themeId, restoreFocus });
+          setCommandMessage(":colorscheme · テーマを選択");
+          return;
+        }
+        const requestedTheme = normalizeApplicationThemeId(argument);
+        if (!requestedTheme) {
+          setCommandMessage(`:colorscheme · 未対応のテーマです: ${argument}`);
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const previousTheme = themeId;
+        setThemeId(requestedTheme);
+        queueMicrotask(restoreFocus);
+        void applicationConfig.saveTheme(requestedTheme).then(
+          () => {
+            setCommandMessage(`:colorscheme · ${requestedTheme}`);
+          },
+          (cause: unknown) => {
+            setThemeId(previousTheme);
+            setCommandMessage(
+              `:colorscheme · 保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+            );
+          },
+        );
+        return;
+      }
       case "application.quit":
         void requestApplicationShutdown();
         return;
@@ -2078,6 +2150,23 @@ export function App({
           runtime={runtime}
           session={workspaceSearch}
           onClose={() => setWorkspaceSearch(null)}
+          focused
+        />
+      ) : themePicker ? (
+        <ThemePicker
+          session={themePicker}
+          onPreview={setThemeId}
+          onAccept={async (selectedTheme) => {
+            await applicationConfig.saveTheme(selectedTheme);
+            setThemeId(selectedTheme);
+            setCommandMessage(`:colorscheme · ${selectedTheme}`);
+            setThemePicker(null);
+            queueMicrotask(themePicker.restoreFocus);
+          }}
+          onCancel={() => {
+            setThemeId(themePicker.initialThemeId);
+            setThemePicker(null);
+          }}
           focused
         />
       ) : blockTypePicker ? (

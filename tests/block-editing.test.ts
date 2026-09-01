@@ -946,13 +946,17 @@ describe("Memoka block editing boundaries", () => {
     expect(selectedRules).toHaveLength(2);
     for (const { element } of selectedRules) {
       const selectedStyle = getComputedStyle(element);
-      expect(selectedStyle.backgroundColor).toBe("rgb(41, 61, 84)");
+      expect(selectedStyle.backgroundColor).toBe(
+        "var(--memoka-color-selection)",
+      );
       expect(
         selectedStyle
           .getPropertyValue("--memoka-horizontal-rule-line-color")
           .trim(),
-      ).toBe("#b4d9fb");
-      expect(selectedStyle.borderTopStyle).toBe("solid");
+      ).toBe("var(--memoka-color-selection-text)");
+      expect(style.textContent).toContain(
+        "border: 1px solid var(--memoka-color-selection-border)",
+      );
       expect(selectedStyle.backgroundImage).toContain("linear-gradient");
     }
     const caret = await vi.waitFor(() => {
@@ -964,9 +968,8 @@ describe("Memoka block editing boundaries", () => {
     });
     expect(caret.dataset.nodeName).toBe("horizontalRule");
     expect(caret.classList).toContain("memoka-vim-caret--horizontal-rule");
-    expect(getComputedStyle(caret).backgroundImage).toContain(
-      "linear-gradient",
-    );
+    expect(style.textContent).toContain(".memoka-vim-caret--horizontal-rule");
+    expect(style.textContent).toContain("linear-gradient(\n      to bottom");
 
     for (const ruleLayout of ruleLayouts) ruleLayout.mockRestore();
     destroy();

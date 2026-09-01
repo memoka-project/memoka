@@ -20,10 +20,13 @@ export interface SearchPaneProps<Item> {
   readonly countLabel: ReactNode;
   readonly onAccept?: (item: Item) => void;
   readonly onRestore?: (item: Item) => void;
+  readonly initialSelectedItemId?: string | null;
+  readonly onSelectionChange?: (item: Item | null) => void;
   readonly onClose: () => void;
   readonly restoreFocus: () => void;
   readonly commandContext?: SearchKeymapContext;
   readonly busy?: boolean;
+  readonly closeDisabled?: boolean;
   readonly error?: ReactNode;
   readonly empty?: ReactNode;
   readonly listFooter?: ReactNode;
@@ -47,10 +50,13 @@ export function SearchPane<Item>({
   countLabel,
   onAccept,
   onRestore,
+  initialSelectedItemId = null,
+  onSelectionChange,
   onClose,
   restoreFocus,
   commandContext = "search.insert",
   busy = false,
+  closeDisabled = false,
   error = null,
   empty = null,
   listFooter = null,
@@ -61,7 +67,9 @@ export function SearchPane<Item>({
 }: SearchPaneProps<Item>) {
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(
+    initialSelectedItemId,
+  );
   const displayedItems = useMemo(() => [...items].reverse(), [items]);
   const requestedIndex = selectedItemId
     ? displayedItems.findIndex((item) => itemId(item) === selectedItemId)
@@ -72,6 +80,10 @@ export function SearchPane<Item>({
       : Math.max(0, displayedItems.length - 1);
   const selected = displayedItems[selectedIndex] ?? null;
   const listId = `${idPrefix}-results`;
+
+  useEffect(() => {
+    onSelectionChange?.(selected);
+  }, [onSelectionChange, selected]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -97,6 +109,7 @@ export function SearchPane<Item>({
   }, []);
 
   const close = (): void => {
+    if (closeDisabled) return;
     onClose();
     queueMicrotask(restoreFocus);
   };

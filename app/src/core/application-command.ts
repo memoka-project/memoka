@@ -18,6 +18,7 @@ export type ApplicationCommandId =
   | "application.update"
   | "application.version"
   | "application.diagnostics"
+  | "application.colorscheme"
   | "application.quit"
   | "application.help";
 
@@ -26,6 +27,7 @@ export interface ApplicationCommandDefinition {
   readonly name: string;
   readonly aliases: readonly string[];
   readonly description: string;
+  readonly argument: "none" | "optional";
 }
 
 export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
@@ -34,126 +36,154 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "tree",
     aliases: [],
     description: "Treeを開く",
+    argument: "none",
   },
   {
     id: "workspace.search_trash",
     name: "trash",
     aliases: [],
     description: "ゴミ箱内のノートを検索する",
+    argument: "none",
   },
   {
     id: "workspace.search_buffers",
     name: "buffers",
     aliases: ["ls"],
     description: "読み込み済みBufferを検索する",
+    argument: "none",
   },
   {
     id: "utility.outline",
     name: "outline",
     aliases: [],
     description: "現在WindowのOutlineを開く",
+    argument: "none",
   },
   {
     id: "window.split-horizontal",
     name: "split",
     aliases: ["sp"],
     description: "現在Windowを上下に分割する",
+    argument: "none",
   },
   {
     id: "window.split-vertical",
     name: "vsplit",
     aliases: ["vs"],
     description: "現在Windowを左右に分割する",
+    argument: "none",
   },
   {
     id: "window.close",
     name: "close",
     aliases: ["clo"],
     description: "現在Windowを閉じる",
+    argument: "none",
   },
   {
     id: "buffer.close",
     name: "bdelete",
     aliases: ["bd"],
     description: "現在Bufferを閉じてWindowを空にする",
+    argument: "none",
   },
   {
     id: "tab.create",
     name: "tabnew",
     aliases: [],
     description: "空のTabPageを開く",
+    argument: "none",
   },
   {
     id: "tab.close",
     name: "tabclose",
     aliases: ["tabc"],
     description: "現在TabPageを閉じる",
+    argument: "none",
   },
   {
     id: "tab.next",
     name: "tabnext",
     aliases: ["tabn"],
     description: "次のTabPageへ移動する",
+    argument: "none",
   },
   {
     id: "tab.previous",
     name: "tabprevious",
     aliases: ["tabp"],
     description: "前のTabPageへ移動する",
+    argument: "none",
   },
   {
     id: "editor.paste_markdown",
     name: "paste-markdown",
     aliases: [],
     description: "ClipboardをMarkdownとして現在位置へ貼り付ける",
+    argument: "none",
   },
   {
     id: "editor.paste_html",
     name: "paste-html",
     aliases: [],
     description: "ClipboardをHTMLとして現在位置へ貼り付ける",
+    argument: "none",
   },
   {
     id: "editor.attach",
     name: "attach",
     aliases: [],
     description: "ファイルを現在位置へ添付する",
+    argument: "none",
   },
   {
     id: "workspace.switch",
     name: "switch-workspace",
     aliases: [],
     description: "別のWorkspaceデータ領域へ切り替える",
+    argument: "none",
   },
   {
     id: "application.update",
     name: "update",
     aliases: [],
     description: "署名済みのMemoka更新を確認・適用する",
+    argument: "none",
   },
   {
     id: "application.version",
     name: "version",
     aliases: ["ver"],
     description: "MemokaとTauriのバージョンを表示する",
+    argument: "none",
   },
   {
     id: "application.diagnostics",
     name: "diagnostics",
     aliases: ["diag"],
     description: "ローカル診断情報とログ保存先を表示する",
+    argument: "none",
+  },
+  {
+    id: "application.colorscheme",
+    name: "colorscheme",
+    aliases: ["colo"],
+    description: "Nightfoxカラーテーマを選択・変更する",
+    argument: "optional",
   },
   {
     id: "application.quit",
     name: "quit",
     aliases: ["q", "qa"],
     description: "保存と必要なmirror生成を完了してMemokaを終了する",
+    argument: "none",
   },
   {
     id: "application.help",
     name: "help",
     aliases: [],
     description: "管理Helpノートを同期して開く",
+    argument: "none",
   },
 ];
 
@@ -162,6 +192,7 @@ export type ApplicationCommandParseResult =
   | {
       readonly kind: "command";
       readonly command: ApplicationCommandDefinition;
+      readonly argument: string | null;
     }
   | { readonly kind: "error"; readonly message: string };
 
@@ -171,20 +202,27 @@ export function parseApplicationCommand(
   const source = input.trim().replace(/^:/u, "").trim();
   if (!source) return { kind: "empty" };
   const [name, ...arguments_] = source.split(/\s+/u);
-  if (arguments_.length > 0) {
-    return {
-      kind: "error",
-      message: `引数を受け付けないCommandです: ${name}`,
-    };
-  }
   const normalized = name.toLocaleLowerCase();
   const command = APPLICATION_COMMANDS.find(
     (candidate) =>
       candidate.name === normalized || candidate.aliases.includes(normalized),
   );
-  return command
-    ? { kind: "command", command }
-    : { kind: "error", message: `未対応のCommandです: ${name}` };
+  if (!command) {
+    return { kind: "error", message: `未対応のCommandです: ${name}` };
+  }
+  if (command.argument === "none" && arguments_.length > 0) {
+    return {
+      kind: "error",
+      message: `引数を受け付けないCommandです: ${name}`,
+    };
+  }
+  if (arguments_.length > 1) {
+    return {
+      kind: "error",
+      message: `引数は1つまで指定できます: ${name}`,
+    };
+  }
+  return { kind: "command", command, argument: arguments_[0] ?? null };
 }
 
 export function applicationCommandHelp(): string {

@@ -58,6 +58,20 @@ describe("Memoka Application Command-line", () => {
       kind: "command",
       command: { id: "application.quit" },
     });
+    expect(parseApplicationCommand("colo duskfox")).toMatchObject({
+      kind: "command",
+      command: { id: "application.colorscheme" },
+      argument: "duskfox",
+    });
+    expect(parseApplicationCommand(":colorscheme")).toMatchObject({
+      kind: "command",
+      command: { id: "application.colorscheme" },
+      argument: null,
+    });
+    expect(parseApplicationCommand("colorscheme duskfox extra")).toEqual({
+      kind: "error",
+      message: "引数は1つまで指定できます: colorscheme",
+    });
     expect(parseApplicationCommand("   ")).toEqual({ kind: "empty" });
     expect(parseApplicationCommand("buffers extra")).toEqual({
       kind: "error",
@@ -72,7 +86,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: notes",
     });
     expect(applicationCommandHelp()).toBe(
-      ":tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :switch-workspace · :update · :version · :diagnostics · :quit",
+      ":tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :quit",
     );
   });
 
