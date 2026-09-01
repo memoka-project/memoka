@@ -16,6 +16,7 @@ import {
   type PersistenceCommitResponse,
 } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { isWebKitGtkRuntime } from "../app/src/editor/section-title-composition";
 import {
   childSections,
   createBodyChunks,
@@ -76,6 +77,72 @@ function press(
   });
   editor.view.dom.dispatchEvent(event);
   return event;
+}
+
+function composition(
+  editor: Editor,
+  type: "compositionstart" | "compositionupdate" | "compositionend",
+  data = "",
+): void {
+  editor.view.dom.dispatchEvent(
+    new CompositionEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      data,
+    }),
+  );
+}
+
+interface InputTargetRange {
+  readonly startContainer: Node;
+  readonly startOffset: number;
+  readonly endContainer: Node;
+  readonly endOffset: number;
+}
+
+function input(
+  editor: Editor,
+  type: "beforeinput" | "input",
+  inputType: string,
+  data: string | null,
+  targetRanges: readonly InputTargetRange[] = [],
+): InputEvent {
+  const event = new InputEvent(type, {
+    bubbles: true,
+    cancelable: type === "beforeinput",
+    data,
+    inputType,
+    isComposing: true,
+  });
+  Object.defineProperty(event, "getTargetRanges", {
+    configurable: true,
+    value: () => targetRanges,
+  });
+  editor.view.dom.dispatchEvent(event);
+  return event;
+}
+
+function emulateWebKitGtkNavigator(): () => void {
+  const properties = {
+    platform: "Linux x86_64",
+    userAgent:
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 " +
+      "(KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+  } as const;
+  const previous = Object.entries(properties).map(([name, value]) => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, name);
+    Object.defineProperty(navigator, name, {
+      configurable: true,
+      value,
+    });
+    return [name, descriptor] as const;
+  });
+  return () => {
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(navigator, name, descriptor);
+      else Reflect.deleteProperty(navigator, name);
+    }
+  };
 }
 
 function editorUndoManager(editor: Editor): UndoManager {
@@ -673,6 +740,158 @@ describe("Memoka Section editor semantics", () => {
     adapter.destroy();
     runtime.destroy();
     root.remove();
+  });
+
+  it("lets an active IME confirmation reach ProseMirror without splitting the Section title", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "",
+    });
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+    editor.commands.focus();
+    let bubbled = false;
+    root.addEventListener("keydown", () => {
+      bubbled = true;
+    });
+
+    composition(editor, "compositionstart");
+    const confirm = press(editor, "Enter", { isComposing: false });
+    expect(confirm.defaultPrevented).toBe(false);
+    expect(bubbled).toBe(true);
+    editor.commands.insertContent("日本語");
+    composition(editor, "compositionend", "日本語");
+    await settle(runtime);
+
+    expect(readNoteTitle(runtime.noteDocument)).toBe("日本語");
+    expect(editor.state.doc.child(1).firstChild?.textContent).toBe("");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("recognizes WebKitGTK without treating Linux Chromium as affected", () => {
+    expect(
+      isWebKitGtkRuntime({
+        platform: "Linux x86_64",
+        userAgent:
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 " +
+          "(KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+      }),
+    ).toBe(true);
+    expect(
+      isWebKitGtkRuntime({
+        platform: "Linux x86_64",
+        userAgent:
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps WebKitGTK composition in a Section title through confirmation", async () => {
+    const restoreNavigator = emulateWebKitGtkNavigator();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "",
+    });
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+      editor.commands.focus();
+
+      composition(editor, "compositionstart");
+      editor.commands.insertContent("日本語");
+      const beforeActiveEnter = editor.state.doc;
+      let activeEnterTransactions = 0;
+      editor.on("transaction", () => {
+        activeEnterTransactions += 1;
+      });
+      const activeConfirmationEnter = press(editor, "Enter", {
+        isComposing: false,
+      });
+      expect(activeConfirmationEnter.defaultPrevented).toBe(false);
+      expect(activeEnterTransactions).toBe(0);
+      expect(editor.state.doc).toBe(beforeActiveEnter);
+
+      const header = root.querySelector<HTMLElement>(
+        "header[data-section-header]",
+      );
+      const provisional = Array.from(header?.childNodes ?? []).find(
+        (node): node is Text =>
+          node.nodeType === Node.TEXT_NODE && node.textContent === "日本語",
+      );
+      expect(header).not.toBeNull();
+      expect(provisional).toBeDefined();
+      if (!header || !provisional) throw new Error("Missing provisional title");
+
+      input(editor, "beforeinput", "deleteCompositionText", null, [
+        {
+          startContainer: provisional,
+          startOffset: 0,
+          endContainer: provisional,
+          endOffset: provisional.length,
+        },
+      ]);
+      const sentinel = provisional.previousSibling;
+      expect(sentinel?.textContent).toBe("\u200b");
+      if (!(sentinel instanceof Text)) throw new Error("Missing IME sentinel");
+
+      // Model WebKit's destructive half of composition confirmation. The
+      // browser may merge its text nodes, but the Header remains mounted and
+      // the input handler still removes the marker from the merged node.
+      provisional.data = sentinel.data;
+      sentinel.remove();
+      expect(header.textContent).toBe("\u200b");
+      expect(header.isConnected).toBe(true);
+      input(editor, "input", "deleteCompositionText", null);
+      expect(header.textContent).toBe("");
+      expect(header.isConnected).toBe(true);
+
+      // WebKit's following insertFromComposition targets that same Header.
+      header.append(document.createTextNode("日本語"));
+      input(editor, "beforeinput", "insertFromComposition", "日本語");
+      input(editor, "input", "insertFromComposition", "日本語");
+      composition(editor, "compositionend", "日本語");
+      const beforeConfirmation = editor.state.doc;
+      let transactions = 0;
+      editor.on("transaction", () => {
+        transactions += 1;
+      });
+
+      const confirmationEnter = press(editor, "Enter", {
+        isComposing: false,
+      });
+
+      expect(confirmationEnter.defaultPrevented).toBe(true);
+      expect(transactions).toBe(0);
+      expect(editor.state.doc).toBe(beforeConfirmation);
+      expect(readNoteTitle(runtime.noteDocument)).toBe("日本語");
+      expect(editor.state.selection.$from.parent.type.name).toBe(
+        "sectionHeader",
+      );
+      expect(editor.state.doc.child(1).firstChild?.textContent).toBe("");
+
+      // jsdom identifies itself as Safari, whose built-in ProseMirror guard
+      // has its own 500 ms window. After that test-environment-only window,
+      // the intentional next Enter proves Memoka's guard was one-shot.
+      await new Promise((resolve) => window.setTimeout(resolve, 510));
+      const intentionalEnter = press(editor, "Enter");
+      expect(intentionalEnter.defaultPrevented).toBe(true);
+      expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+      restoreNavigator();
+    }
   });
 
   it("preserves the mounted Section identity when a rich paste replaces its content", async () => {

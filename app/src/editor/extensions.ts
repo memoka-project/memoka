@@ -50,6 +50,7 @@ import {
   BODY_CHUNK_VIEWPORT_CHANGED_EVENT,
   type BodyChunkViewportChangedDetail,
 } from "./body-chunk-viewport-event";
+import { SectionTitleCompositionGuard } from "./section-title-composition";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -1865,6 +1866,7 @@ export function productEditorExtensions(
       resolveTitle: options.resolveInternalLinkTitle,
     }),
     SourceBlock,
+    ...(!options.directBodyOnly ? [SectionTitleCompositionGuard] : []),
     SectionIdentity,
     ...(!options.directBodyOnly ? [BodyChunkViewport, BodyChunking] : []),
     BlockIdentity,
