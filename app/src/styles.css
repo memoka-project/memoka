@@ -689,6 +689,17 @@ textarea {
   text-autospace: normal;
 }
 
+/*
+ * WebKitGTK can use different antialiasing paths for ordinary editable text
+ * and text inside a native Table. The difference is most visible as uneven
+ * weight on a light canvas, so use one grayscale path for rendered Note text
+ * and its search preview in light themes.
+ */
+:root[data-memoka-theme-appearance="light"]
+  :is(.memoka-editor, .workspace-search-preview-document) {
+  -webkit-font-smoothing: antialiased;
+}
+
 .memoka-editor strong:not(.memoka-attachment-card__name) {
   color: var(--memoka-color-markup-strong);
   font-weight: 700;

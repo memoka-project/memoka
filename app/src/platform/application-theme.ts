@@ -5,6 +5,8 @@ import {
 } from "../core/application-theme";
 
 export const APPLICATION_THEME_DATA_ATTRIBUTE = "data-memoka-theme";
+export const APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE =
+  "data-memoka-theme-appearance";
 
 const TOKEN_VARIABLES: Readonly<
   Record<keyof ApplicationThemeTokens, `--memoka-color-${string}`>
@@ -94,6 +96,10 @@ export function applyApplicationTheme(
 ): void {
   const theme = applicationTheme(themeId);
   target.setAttribute(APPLICATION_THEME_DATA_ATTRIBUTE, theme.id);
+  target.setAttribute(
+    APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE,
+    theme.appearance,
+  );
   target.style.colorScheme = theme.appearance;
   for (const [name, value] of Object.entries(
     applicationThemeCssProperties(themeId),

@@ -12,6 +12,7 @@ import {
   normalizeApplicationThemeId,
 } from "../app/src/core/application-theme";
 import {
+  APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE,
   APPLICATION_THEME_DATA_ATTRIBUTE,
   applicationThemeCssProperties,
   applyApplicationTheme,
@@ -95,6 +96,9 @@ describe("Memoka application themes", () => {
     expect(target.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE)).toBe(
       "dayfox",
     );
+    expect(
+      target.getAttribute(APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE),
+    ).toBe("light");
     expect(target.style.colorScheme).toBe("light");
     const properties = applicationThemeCssProperties("dayfox");
     expect(Object.keys(properties)).toHaveLength(
@@ -103,6 +107,12 @@ describe("Memoka application themes", () => {
     for (const [name, value] of Object.entries(properties)) {
       expect(target.style.getPropertyValue(name)).toBe(value);
     }
+
+    applyApplicationTheme(target, "nightfox");
+    expect(
+      target.getAttribute(APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE),
+    ).toBe("dark");
+    expect(target.style.colorScheme).toBe("dark");
   });
 
   it("keeps component CSS on semantic tokens instead of literal colors", () => {
@@ -118,5 +128,8 @@ describe("Memoka application themes", () => {
     expect(css).toContain("var(--memoka-color-markup-strong)");
     expect(css).toContain("var(--memoka-color-markup-link-reference)");
     expect(css).toContain("var(--memoka-color-markup-heading-6)");
+    expect(css).toMatch(
+      /:root\[data-memoka-theme-appearance="light"\][\s\S]*?-webkit-font-smoothing: antialiased;/u,
+    );
   });
 });
