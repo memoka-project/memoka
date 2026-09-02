@@ -7,6 +7,8 @@ import {
   DEFAULT_APPLICATION_THEME_ID,
   applicationTheme,
   filterApplicationThemes,
+  markupHeadingLevelForSectionDepth,
+  nextMarkupHeadingLevel,
   normalizeApplicationThemeId,
 } from "../app/src/core/application-theme";
 import {
@@ -56,6 +58,37 @@ describe("Memoka application themes", () => {
     ]);
   });
 
+  it("derives Neovim-style markup colors from every Nightfox palette", () => {
+    for (const theme of APPLICATION_THEMES) {
+      expect(theme.tokens).toMatchObject({
+        markupStrong: theme.palette.red,
+        markupItalic: theme.palette.yellow,
+        markupStrikethrough: theme.palette.comment,
+        markupRaw: theme.palette.cyan,
+        markupLinkUrl: theme.palette.orange,
+        markupLinkReference: theme.palette.magenta,
+        markupHeading1: theme.palette.red,
+        markupHeading2: theme.palette.orange,
+        markupHeading3: theme.palette.yellow,
+        markupHeading4: theme.palette.green,
+        markupHeading5: theme.palette.cyan,
+        markupHeading6: theme.palette.blue,
+      });
+    }
+  });
+
+  it("cycles Section depths through the six Markdown heading colors", () => {
+    expect(
+      Array.from({ length: 14 }, (_, depth) =>
+        markupHeadingLevelForSectionDepth(depth),
+      ),
+    ).toEqual([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 1, 2]);
+    expect(nextMarkupHeadingLevel(6)).toBe(1);
+    expect(() => markupHeadingLevelForSectionDepth(-1)).toThrow(
+      "Section depth must be a non-negative integer",
+    );
+  });
+
   it("projects every semantic token onto the application root", () => {
     const target = document.createElement("div");
     applyApplicationTheme(target, "dayfox");
@@ -82,5 +115,8 @@ describe("Memoka application themes", () => {
     expect(css).toContain("var(--memoka-color-focus)");
     expect(css).toContain("var(--memoka-color-selection)");
     expect(css).toContain("var(--memoka-color-danger-surface)");
+    expect(css).toContain("var(--memoka-color-markup-strong)");
+    expect(css).toContain("var(--memoka-color-markup-link-reference)");
+    expect(css).toContain("var(--memoka-color-markup-heading-6)");
   });
 });

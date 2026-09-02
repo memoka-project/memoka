@@ -19,6 +19,7 @@ export const APPLICATION_THEME_IDS = [
 
 export type ApplicationThemeId = (typeof APPLICATION_THEME_IDS)[number];
 export type ApplicationThemeAppearance = "dark" | "light";
+export type MarkupHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
 export const DEFAULT_APPLICATION_THEME_ID: ApplicationThemeId = "nightfox";
 
@@ -97,6 +98,18 @@ export interface ApplicationThemeTokens {
   readonly codeSurface: string;
   readonly quote: string;
   readonly horizontalRule: string;
+  readonly markupStrong: string;
+  readonly markupItalic: string;
+  readonly markupStrikethrough: string;
+  readonly markupRaw: string;
+  readonly markupLinkUrl: string;
+  readonly markupLinkReference: string;
+  readonly markupHeading1: string;
+  readonly markupHeading2: string;
+  readonly markupHeading3: string;
+  readonly markupHeading4: string;
+  readonly markupHeading5: string;
+  readonly markupHeading6: string;
 }
 
 export interface ApplicationThemeDefinition {
@@ -309,6 +322,22 @@ export function normalizeApplicationThemeId(
   return isApplicationThemeId(normalized) ? normalized : null;
 }
 
+/** Maps the displayed Root to H1 and repeats the H1-H6 colors after H6. */
+export function markupHeadingLevelForSectionDepth(
+  depth: number,
+): MarkupHeadingLevel {
+  if (!Number.isSafeInteger(depth) || depth < 0) {
+    throw new Error(`Section depth must be a non-negative integer: ${depth}`);
+  }
+  return ((depth % 6) + 1) as MarkupHeadingLevel;
+}
+
+export function nextMarkupHeadingLevel(
+  level: MarkupHeadingLevel,
+): MarkupHeadingLevel {
+  return level === 6 ? 1 : ((level + 1) as MarkupHeadingLevel);
+}
+
 export function filterApplicationThemes(
   query: string,
 ): readonly ApplicationThemeDefinition[] {
@@ -419,6 +448,21 @@ function semanticTokens(
     codeSurface: palette.bg0,
     quote: palette.comment,
     horizontalRule: palette.bg4,
+    // Follow Nightfox's Treesitter markup families where possible. Memoka's
+    // depth-aware heading colors are an H1-H6 rainbow extension; deeper
+    // Sections intentionally retain the H6 color.
+    markupStrong: palette.red,
+    markupItalic: palette.yellow,
+    markupStrikethrough: palette.comment,
+    markupRaw: palette.cyan,
+    markupLinkUrl: palette.orange,
+    markupLinkReference: palette.magenta,
+    markupHeading1: palette.red,
+    markupHeading2: palette.orange,
+    markupHeading3: palette.yellow,
+    markupHeading4: palette.green,
+    markupHeading5: palette.cyan,
+    markupHeading6: palette.blue,
   };
 }
 

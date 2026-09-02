@@ -18,6 +18,7 @@ import {
 } from "../app/src/components/ApplicationNoteSearch";
 import { WorkspaceOutline } from "../app/src/components/WorkspaceOutline";
 import { createNoteDocument } from "../app/src/core/documents";
+import { createUuidV7 } from "../app/src/core/ids";
 import {
   createSectionXml,
   insertChildSection,
@@ -1114,6 +1115,9 @@ describe("Memoka Application utilities", () => {
     expect(rows[0]?.getAttribute("aria-level")).toBe("1");
     expect(rows[1]?.getAttribute("aria-level")).toBe("2");
     expect(rows[2]?.getAttribute("aria-level")).toBe("3");
+    expect(rows[0]?.dataset.memokaMarkupHeading).toBe("1");
+    expect(rows[1]?.dataset.memokaMarkupHeading).toBe("2");
+    expect(rows[2]?.dataset.memokaMarkupHeading).toBe("3");
     const revealSecond = vi.fn();
     Object.defineProperty(rows[1]!, "scrollIntoView", {
       configurable: true,
@@ -1140,6 +1144,57 @@ describe("Memoka Application utilities", () => {
     );
     fireEvent.keyDown(outline, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+    note.doc.destroy();
+  });
+
+  it("cycles H1-H6 colors for deep Outline Section titles", () => {
+    const noteId = createUuidV7();
+    let parentSectionId = noteId;
+    const sections = Array.from({ length: 7 }, (_, index) => {
+      const sectionId = createUuidV7();
+      const entry = {
+        sectionId,
+        title: `Depth ${index + 1}`,
+        parentSectionId,
+      };
+      parentSectionId = sectionId;
+      return entry;
+    });
+    const note = createOutlineNote(noteId, sections);
+    const view = render(
+      <WorkspaceOutline
+        note={note}
+        focusRequest={0}
+        onJump={async () => undefined}
+        onClose={() => undefined}
+        onFocus={() => undefined}
+      />,
+    );
+    const levels = [
+      ...screen
+        .getByRole("tree", { name: "Sectionアウトライン" })
+        .querySelectorAll<HTMLElement>('[role="treeitem"]'),
+    ].map((row) => row.dataset.memokaMarkupHeading);
+    expect(levels).toEqual(["1", "2", "3", "4", "5", "6", "1", "2"]);
+
+    view.rerender(
+      <WorkspaceOutline
+        note={note}
+        scopeSectionId={sections[2]?.sectionId}
+        focusRequest={0}
+        onJump={async () => undefined}
+        onClose={() => undefined}
+        onFocus={() => undefined}
+      />,
+    );
+    const focusedLevels = [
+      ...screen
+        .getByRole("tree", { name: "Sectionアウトライン" })
+        .querySelectorAll<HTMLElement>('[role="treeitem"]'),
+    ].map((row) => row.dataset.memokaMarkupHeading);
+    expect(focusedLevels).toEqual(["4", "5", "6", "1", "2"]);
+
+    view.unmount();
     note.doc.destroy();
   });
 
@@ -1178,8 +1233,10 @@ describe("Memoka Application utilities", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.textContent).toContain("Focused");
     expect(rows[0]?.getAttribute("aria-level")).toBe("1");
+    expect(rows[0]?.dataset.memokaMarkupHeading).toBe("2");
     expect(rows[1]?.textContent).toContain("Visible child");
     expect(rows[1]?.getAttribute("aria-level")).toBe("2");
+    expect(rows[1]?.dataset.memokaMarkupHeading).toBe("3");
     expect(screen.queryByText("Root")).toBeNull();
     expect(screen.queryByText("Hidden sibling")).toBeNull();
 

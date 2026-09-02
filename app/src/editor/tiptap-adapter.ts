@@ -7,7 +7,7 @@ import {
 } from "../core/documents";
 import {
   BODY_CHUNK_NODE,
-  findSectionById,
+  findSectionWithDepth,
   SECTION_BODY_NODE,
   SECTION_CHILDREN_NODE,
 } from "../core/section-model";
@@ -61,6 +61,7 @@ import {
   type NoteSearchOrigin,
 } from "../core/note-search";
 import {
+  applyEditorSectionHeadingDepth,
   productEditorExtensions,
   refreshInternalSectionLinkNodeViews,
   type InternalLinkTitleResolver,
@@ -791,7 +792,9 @@ export class TiptapEditorAdapter {
     }
     const focusedSectionId =
       this.options.getWindowState?.().focusedSectionId ?? document.noteId;
-    this.boundSection = findSectionById(document.rootSection, focusedSectionId);
+    this.boundSection =
+      findSectionWithDepth(document.rootSection, focusedSectionId)?.element ??
+      null;
     const editor = new Editor({
       element: this.element,
       extensions: [
@@ -977,8 +980,18 @@ export class TiptapEditorAdapter {
       }
       const focusedSectionId =
         this.options.getWindowState?.().focusedSectionId ?? document.noteId;
-      const current = findSectionById(document.rootSection, focusedSectionId);
-      if (current && current !== this.boundSection) this.recreateEditor();
+      const current = findSectionWithDepth(
+        document.rootSection,
+        focusedSectionId,
+      );
+      if (current && current.element !== this.boundSection) {
+        this.recreateEditor();
+      } else if (current) {
+        applyEditorSectionHeadingDepth(
+          this.currentEditor.view.dom,
+          current.depth,
+        );
+      }
       if (pendingDepthShift) {
         this.applyPendingSectionDepthShift(pendingDepthShift);
       }

@@ -105,7 +105,12 @@ function ThemePreview({ theme }: { theme: ApplicationThemeDefinition | null }) {
     "--theme-preview-muted": sample.tokens.textMuted,
     "--theme-preview-focus": sample.tokens.focus,
     "--theme-preview-selection": sample.tokens.selectionStrong,
-    "--theme-preview-link": sample.tokens.link,
+    "--theme-preview-heading": sample.tokens.markupHeading1,
+    "--theme-preview-strong": sample.tokens.markupStrong,
+    "--theme-preview-italic": sample.tokens.markupItalic,
+    "--theme-preview-raw": sample.tokens.markupRaw,
+    "--theme-preview-link-url": sample.tokens.markupLinkUrl,
+    "--theme-preview-link-reference": sample.tokens.markupLinkReference,
   } as CSSProperties;
   const swatches = [
     sample.palette.red,
@@ -125,10 +130,21 @@ function ThemePreview({ theme }: { theme: ApplicationThemeDefinition | null }) {
         <div className="theme-picker__sample-body">
           <span className="theme-picker__sample-gutter">12</span>
           <div>
-            <strong>{sample.name}</strong>
+            <strong className="theme-picker__sample-heading">
+              {sample.name}
+            </strong>
             <p>
-              Vimの操作感で
-              <span className="theme-picker__sample-link">すばやく書く</span>
+              <strong className="theme-picker__sample-strong">太字</strong>
+              <em className="theme-picker__sample-italic">斜体</em>
+              <code className="theme-picker__sample-code">inline code</code>
+            </p>
+            <p>
+              <span className="theme-picker__sample-external-link">
+                外部リンク
+              </span>
+              <span className="theme-picker__sample-internal-link">
+                内部リンク
+              </span>
             </p>
             <p className="theme-picker__sample-selection">選択中のテキスト</p>
           </div>

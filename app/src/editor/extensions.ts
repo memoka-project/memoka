@@ -33,6 +33,11 @@ import type {
   AttachmentRepository,
 } from "../core/attachments";
 import { isSafeExternalLink } from "../core/external-links";
+import {
+  markupHeadingLevelForSectionDepth,
+  nextMarkupHeadingLevel,
+  type MarkupHeadingLevel,
+} from "../core/application-theme";
 import { NOTE_BLOCK_NODE_NAMES, type NoteDocument } from "../core/documents";
 import {
   BODY_CHUNK_HARD_BLOCKS,
@@ -40,7 +45,7 @@ import {
   BODY_CHUNK_NODE,
   BODY_CHUNK_TARGET_BLOCKS,
   BODY_CHUNK_TARGET_BYTES,
-  findSectionById,
+  findSectionWithDepth,
   SECTION_BODY_NODE,
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
@@ -208,12 +213,19 @@ export const InternalSectionLink = Node.create<InternalSectionLinkOptions>({
   },
 });
 
-export const Section = Node.create({
+interface SectionOptions {
+  readonly rootSectionDepth: number;
+}
+
+export const Section = Node.create<SectionOptions>({
   name: SECTION_NODE,
   topNode: true,
   content: `${SECTION_HEADER_NODE} ${SECTION_BODY_NODE} ${SECTION_CHILDREN_NODE}`,
   defining: true,
   isolating: true,
+  addOptions() {
+    return { rootSectionDepth: 0 };
+  },
   parseHTML() {
     return [{ tag: "section[data-section]" }];
   },
@@ -228,7 +240,110 @@ export const Section = Node.create({
       0,
     ];
   },
+  addNodeView() {
+    const rootHeadingLevel = markupHeadingLevelForSectionDepth(
+      this.options.rootSectionDepth,
+    );
+    return ({ node }) => {
+      const element = document.createElement("section");
+      element.className = "memoka-section";
+      element.dataset.section = "true";
+      let destroyed = false;
+      const refreshHeadingLevel = (): void => {
+        if (destroyed) return;
+        refreshSectionHeadingLevels(element, rootHeadingLevel);
+      };
+      queueMicrotask(refreshHeadingLevel);
+      return {
+        dom: element,
+        contentDOM: element,
+        update: (nextNode) => {
+          if (nextNode.type !== node.type) return false;
+          node = nextNode;
+          queueMicrotask(refreshHeadingLevel);
+          return true;
+        },
+        ignoreMutation: (mutation) =>
+          mutation.type === "attributes" &&
+          mutation.target === element &&
+          mutation.attributeName === "data-memoka-markup-heading",
+        destroy: () => {
+          destroyed = true;
+        },
+      };
+    };
+  },
+  addProseMirrorPlugins() {
+    const rootSectionDepth = this.options.rootSectionDepth;
+    return [
+      new Plugin({
+        view: (view) => {
+          const previous = view.dom.getAttribute("data-memoka-markup-heading");
+          applyEditorSectionHeadingDepth(view.dom, rootSectionDepth);
+          return {
+            destroy: () => {
+              if (previous === null) {
+                view.dom.removeAttribute("data-memoka-markup-heading");
+              } else {
+                view.dom.setAttribute("data-memoka-markup-heading", previous);
+              }
+            },
+          };
+        },
+      }),
+    ];
+  },
 });
+
+export function applyEditorSectionHeadingDepth(
+  editorRoot: HTMLElement,
+  rootSectionDepth: number,
+): void {
+  const rootHeadingLevel = markupHeadingLevelForSectionDepth(rootSectionDepth);
+  editorRoot.dataset.memokaMarkupHeading = String(rootHeadingLevel);
+  for (const section of editorRoot.querySelectorAll<HTMLElement>(
+    ".memoka-section",
+  )) {
+    const parent =
+      section.parentElement?.closest<HTMLElement>(".memoka-section");
+    const parentLevel = sectionElementHeadingLevel(parent) ?? rootHeadingLevel;
+    section.dataset.memokaMarkupHeading = String(
+      nextMarkupHeadingLevel(parentLevel),
+    );
+  }
+}
+
+function refreshSectionHeadingLevels(
+  root: HTMLElement,
+  rootHeadingLevel: MarkupHeadingLevel,
+): void {
+  const parentSection =
+    root.parentElement?.closest<HTMLElement>(".memoka-section");
+  const parentLevel =
+    sectionElementHeadingLevel(parentSection) ?? rootHeadingLevel;
+  const level = nextMarkupHeadingLevel(parentLevel);
+  if (root.dataset.memokaMarkupHeading === String(level)) return;
+  root.dataset.memokaMarkupHeading = String(level);
+
+  for (const section of root.querySelectorAll<HTMLElement>(".memoka-section")) {
+    const parent =
+      section.parentElement?.closest<HTMLElement>(".memoka-section");
+    const ancestorLevel =
+      sectionElementHeadingLevel(parent) ?? rootHeadingLevel;
+    section.dataset.memokaMarkupHeading = String(
+      nextMarkupHeadingLevel(ancestorLevel),
+    );
+  }
+}
+
+function sectionElementHeadingLevel(
+  element: HTMLElement | null | undefined,
+): MarkupHeadingLevel | null {
+  const level = Number(element?.dataset.memokaMarkupHeading);
+  return Number.isSafeInteger(level) && level >= 1 && level <= 6
+    ? (level as MarkupHeadingLevel)
+    : null;
+}
 
 export const SectionHeader = Node.create({
   name: SECTION_HEADER_NODE,
@@ -1811,11 +1926,14 @@ export function productEditorExtensions(
     attachmentRepository?: EditorAttachmentRepository;
   } = {},
 ) {
+  const focusedSection = options.directBodyOnly
+    ? null
+    : options.focusedSectionId
+      ? findSectionWithDepth(note.rootSection, options.focusedSectionId)
+      : { element: note.rootSection, depth: 0 };
   const fragment = options.directBodyOnly
     ? directBodyTestFragment(note)
-    : options.focusedSectionId
-      ? findSectionById(note.rootSection, options.focusedSectionId)
-      : note.rootSection;
+    : focusedSection?.element;
   if (!fragment) {
     throw new Error(`Unknown focused Section: ${options.focusedSectionId}`);
   }
@@ -1838,7 +1956,15 @@ export function productEditorExtensions(
     }),
     ...(options.directBodyOnly
       ? [DirectTestDocument]
-      : [Section, SectionHeader, SectionBody, BodyChunk, SectionChildren]),
+      : [
+          Section.configure({
+            rootSectionDepth: focusedSection?.depth ?? 0,
+          }),
+          SectionHeader,
+          SectionBody,
+          BodyChunk,
+          SectionChildren,
+        ]),
     ...(!options.directBodyOnly ? [rootTitlePlaceholder(note.noteId)] : []),
     TableKit.configure({
       table: {

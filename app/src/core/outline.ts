@@ -1,11 +1,13 @@
 import { noteDisplayTitle, type NoteDocument } from "./documents";
-import { deriveSectionCatalog, findSectionById } from "./section-model";
+import { deriveSectionCatalog, findSectionWithDepth } from "./section-model";
 
 export interface NoteOutlineEntry {
   readonly sectionId: string;
   readonly parentSectionId: string | null;
-  /** Zero-based Section depth. ARIA tree levels are derived as depth + 1. */
+  /** Zero-based depth relative to the visible Outline scope. */
   readonly depth: number;
+  /** Zero-based absolute depth from the Note Root. */
+  readonly noteDepth: number;
   readonly title: string;
 }
 
@@ -14,12 +16,13 @@ export function deriveNoteOutline(
   note: NoteDocument,
   scopeSectionId: string = note.noteId,
 ): NoteOutlineEntry[] {
-  const scope = findSectionById(note.rootSection, scopeSectionId);
+  const scope = findSectionWithDepth(note.rootSection, scopeSectionId);
   if (!scope) return [];
-  return deriveSectionCatalog(note.noteId, scope).map((section) => ({
+  return deriveSectionCatalog(note.noteId, scope.element).map((section) => ({
     sectionId: section.sectionId,
     parentSectionId: section.parentSectionId,
     depth: section.depth,
+    noteDepth: scope.depth + section.depth,
     title:
       section.sectionId === note.noteId
         ? noteDisplayTitle(section.title)

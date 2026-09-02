@@ -37,6 +37,12 @@ export interface SectionCatalogEntry {
   readonly element: Y.XmlElement;
 }
 
+export interface LocatedSection {
+  readonly element: Y.XmlElement;
+  /** Zero-based depth from the Note Root. */
+  readonly depth: number;
+}
+
 export interface SectionSnapshot {
   readonly sectionId: string;
   readonly title: string;
@@ -301,6 +307,26 @@ export function findSectionById(
     const children = childSections(current);
     for (let index = children.length - 1; index >= 0; index -= 1) {
       pending.push(children[index]!);
+    }
+  }
+  return null;
+}
+
+export function findSectionWithDepth(
+  root: Y.XmlElement,
+  targetSectionId: string,
+): LocatedSection | null {
+  assertUuidV7(targetSectionId, "targetSectionId");
+  const pending: LocatedSection[] = [{ element: root, depth: 0 }];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (sectionId(current.element) === targetSectionId) return current;
+    const children = childSections(current.element);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      pending.push({
+        element: children[index]!,
+        depth: current.depth + 1,
+      });
     }
   }
   return null;

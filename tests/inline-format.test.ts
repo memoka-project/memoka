@@ -73,7 +73,17 @@ describe("Memoka inline formatting", () => {
     bold.textContent = "日本語";
     const italic = document.createElement("em");
     italic.textContent = "日本語";
-    editor.append(bold, italic);
+    const strike = document.createElement("s");
+    strike.textContent = "日本語";
+    const code = document.createElement("code");
+    code.textContent = "日本語";
+    const externalLink = document.createElement("a");
+    externalLink.href = "https://example.com";
+    externalLink.textContent = "外部リンク";
+    const internalLink = document.createElement("span");
+    internalLink.className = "internal-section-link";
+    internalLink.textContent = "内部リンク";
+    editor.append(bold, italic, strike, code, externalLink, internalLink);
     document.head.append(style);
     document.body.append(editor);
     try {
@@ -82,6 +92,24 @@ describe("Memoka inline formatting", () => {
       expect(getComputedStyle(italic).fontStyle).toBe("oblique 12deg");
       expect(getComputedStyle(italic).textDecorationStyle).toBe("dotted");
       expect(getComputedStyle(italic).textDecorationLine).toBe("underline");
+      expect(style.textContent).toContain(
+        ".memoka-editor strong:not(.memoka-attachment-card__name)",
+      );
+      expect(style.textContent).toContain(
+        "color: var(--memoka-color-markup-italic)",
+      );
+      expect(style.textContent).toContain(
+        "color: var(--memoka-color-markup-strikethrough)",
+      );
+      expect(style.textContent).toContain(
+        "color: var(--memoka-color-markup-raw)",
+      );
+      expect(style.textContent).toContain(
+        "color: var(--memoka-color-markup-link-url)",
+      );
+      expect(style.textContent).toContain(
+        "color: var(--memoka-color-markup-link-reference)",
+      );
     } finally {
       editor.remove();
       style.remove();

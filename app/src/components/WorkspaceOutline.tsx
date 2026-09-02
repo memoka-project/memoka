@@ -13,6 +13,7 @@ import {
 import { deriveNoteOutline } from "../core/outline";
 import { focusSurfaceFromPointer } from "./focus-surface";
 import type { OutlineSidebarViewState } from "../core/application-state";
+import { markupHeadingLevelForSectionDepth } from "../core/application-theme";
 
 export function WorkspaceOutline({
   note,
@@ -155,6 +156,9 @@ export function WorkspaceOutline({
               role="treeitem"
               aria-level={entry.depth + 1}
               aria-selected={selectedRow}
+              data-memoka-markup-heading={markupHeadingLevelForSectionDepth(
+                entry.noteDepth,
+              )}
               style={{ "--outline-level": entry.depth } as CSSProperties}
               onClick={() => {
                 selectSection(entry.sectionId);

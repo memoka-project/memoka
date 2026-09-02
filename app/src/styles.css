@@ -490,6 +490,7 @@ textarea {
 .outline-title {
   min-width: 0;
   overflow: hidden;
+  color: var(--memoka-markup-heading-color, var(--memoka-color-text-muted));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -684,17 +685,24 @@ textarea {
   caret-color: transparent;
 }
 
-.memoka-editor strong {
+.memoka-editor strong:not(.memoka-attachment-card__name) {
+  color: var(--memoka-color-markup-strong);
   font-weight: 700;
 }
 
 .memoka-editor em {
+  color: var(--memoka-color-markup-italic);
   font-style: oblique 12deg;
-  text-decoration-color: var(--memoka-color-warning);
+  text-decoration-color: currentColor;
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
+}
+
+.memoka-editor :is(s, del) {
+  color: var(--memoka-color-markup-strikethrough);
+  text-decoration-color: currentColor;
 }
 
 .memoka-logical-line-number {
@@ -816,10 +824,74 @@ textarea {
   position: relative;
   min-height: 1.65em;
   margin: 0 0 0.65em;
-  color: var(--memoka-color-text-strong);
+  color: var(--memoka-color-markup-heading-1);
   font-size: 1.48em;
   font-weight: 700;
   line-height: 1.35;
+}
+
+/* Editor and Outline share one cyclic H1-H6 color assignment. */
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="1"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-1);
+}
+
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="2"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-2);
+}
+
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="3"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-3);
+}
+
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="4"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-4);
+}
+
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="5"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-5);
+}
+
+:is(
+  .memoka-editor,
+  .workspace-search-preview-document,
+  .memoka-section,
+  .outline-row
+)[data-memoka-markup-heading="6"] {
+  --memoka-markup-heading-color: var(--memoka-color-markup-heading-6);
+}
+
+:is(
+    .memoka-editor,
+    .workspace-search-preview-document
+  )[data-memoka-markup-heading]
+  > .memoka-section-header,
+.memoka-section[data-memoka-markup-heading] > .memoka-section-header {
+  color: var(--memoka-markup-heading-color);
 }
 
 .memoka-section-header[data-note-title-placeholder]::before {
@@ -907,18 +979,18 @@ textarea {
   border-left: 1px solid var(--memoka-color-border-subtle);
 }
 
-.memoka-editor code {
+.memoka-editor :not(pre) > code {
   padding: 0.08em 0.28em;
   border-radius: 3px;
-  color: var(--memoka-color-code-text);
+  color: var(--memoka-color-markup-raw);
   background: var(--memoka-color-code-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .memoka-editor a {
-  color: var(--memoka-color-link);
+  color: var(--memoka-color-markup-link-url);
   cursor: text;
-  text-decoration-color: var(--memoka-color-link-muted);
+  text-decoration-color: currentColor;
   text-underline-offset: 3px;
 }
 
@@ -1065,10 +1137,10 @@ textarea {
 }
 
 .internal-section-link {
-  color: var(--memoka-color-link);
+  color: var(--memoka-color-markup-link-reference);
   cursor: text;
   text-decoration: underline;
-  text-decoration-color: var(--memoka-color-link-muted);
+  text-decoration-color: currentColor;
   text-underline-offset: 3px;
 }
 
@@ -1430,7 +1502,8 @@ textarea {
   text-align: right;
 }
 
-.theme-picker__sample-body strong {
+.theme-picker__sample-heading {
+  color: var(--theme-preview-heading);
   font-size: 22px;
 }
 
@@ -1438,10 +1511,33 @@ textarea {
   margin: 18px 0;
 }
 
-.theme-picker__sample-link {
-  margin-left: 0.35em;
-  color: var(--theme-preview-link);
+.theme-picker__sample-strong {
+  color: var(--theme-preview-strong);
+}
+
+.theme-picker__sample-italic {
+  margin-left: 0.55em;
+  color: var(--theme-preview-italic);
+}
+
+.theme-picker__sample-code {
+  margin-left: 0.55em;
+  color: var(--theme-preview-raw);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.theme-picker__sample-external-link,
+.theme-picker__sample-internal-link {
   text-decoration: underline;
+}
+
+.theme-picker__sample-external-link {
+  color: var(--theme-preview-link-url);
+}
+
+.theme-picker__sample-internal-link {
+  margin-left: 0.7em;
+  color: var(--theme-preview-link-reference);
 }
 
 .theme-picker__sample-selection {
@@ -1622,20 +1718,32 @@ textarea {
 }
 
 .inline-format-picker__example strong {
+  color: var(--memoka-color-markup-strong);
   font-weight: 700;
 }
 
 .inline-format-picker__example em {
+  color: var(--memoka-color-markup-italic);
   font-style: oblique 12deg;
-  text-decoration-color: var(--memoka-color-warning);
+  text-decoration-color: currentColor;
   text-decoration-line: underline;
   text-decoration-style: dotted;
   text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
 }
 
+.inline-format-picker__example s {
+  color: var(--memoka-color-markup-strikethrough);
+  text-decoration-color: currentColor;
+}
+
+.inline-format-picker__example code {
+  color: var(--memoka-color-markup-raw);
+}
+
 .inline-format-picker__preview-content a {
-  color: var(--memoka-color-link);
+  color: var(--memoka-color-markup-link-url);
+  text-decoration-color: currentColor;
   text-underline-offset: 3px;
 }
 

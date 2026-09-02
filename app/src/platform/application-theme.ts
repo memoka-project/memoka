@@ -58,6 +58,18 @@ const TOKEN_VARIABLES: Readonly<
   codeSurface: "--memoka-color-code-surface",
   quote: "--memoka-color-quote",
   horizontalRule: "--memoka-color-horizontal-rule",
+  markupStrong: "--memoka-color-markup-strong",
+  markupItalic: "--memoka-color-markup-italic",
+  markupStrikethrough: "--memoka-color-markup-strikethrough",
+  markupRaw: "--memoka-color-markup-raw",
+  markupLinkUrl: "--memoka-color-markup-link-url",
+  markupLinkReference: "--memoka-color-markup-link-reference",
+  markupHeading1: "--memoka-color-markup-heading-1",
+  markupHeading2: "--memoka-color-markup-heading-2",
+  markupHeading3: "--memoka-color-markup-heading-3",
+  markupHeading4: "--memoka-color-markup-heading-4",
+  markupHeading5: "--memoka-color-markup-heading-5",
+  markupHeading6: "--memoka-color-markup-heading-6",
 };
 
 export type ApplicationThemeCssProperties = Readonly<

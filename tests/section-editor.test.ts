@@ -597,6 +597,7 @@ describe("Memoka Section editor semantics", () => {
     const second = runtime.editorForTesting("window-2", secondRoot, {
       directBodyOnly: false,
     });
+    expect(second.editor.view.dom.dataset.memokaMarkupHeading).toBe("2");
     first.editor.commands.setTextSelection(
       positionOf(
         first.editor,
@@ -611,6 +612,9 @@ describe("Memoka Section editor semantics", () => {
     await settle(runtime);
 
     expect(second.adapter.editor.view.dom.dataset.sectionId).toBe(bId);
+    expect(second.adapter.editor.view.dom.dataset.memokaMarkupHeading).toBe(
+      "3",
+    );
     expect(second.adapter.editor.getText()).toContain("B body");
     second.adapter.editor.commands.setTextSelection(
       positionOf(second.adapter.editor, "paragraph"),
