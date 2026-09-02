@@ -87,28 +87,26 @@ describe("Memoka inline formatting", () => {
     document.head.append(style);
     document.body.append(editor);
     try {
+      const css = style.textContent ?? "";
       expect(getComputedStyle(editor).fontSynthesis).toBe("weight style");
       expect(getComputedStyle(bold).fontWeight).toBe("700");
       expect(getComputedStyle(italic).fontStyle).toBe("oblique 12deg");
       expect(getComputedStyle(italic).textDecorationStyle).toBe("dotted");
       expect(getComputedStyle(italic).textDecorationLine).toBe("underline");
-      expect(style.textContent).toContain(
+      expect(css).toContain(
         ".memoka-editor strong:not(.memoka-attachment-card__name)",
       );
-      expect(style.textContent).toContain(
-        "color: var(--memoka-color-markup-italic)",
+      expect(css).toContain("color: var(--memoka-color-markup-italic)");
+      expect(css).toContain("color: var(--memoka-color-markup-strikethrough)");
+      expect(css).toContain("color: var(--memoka-color-markup-raw)");
+      expect(css).toContain("color: var(--memoka-color-markup-link-url)");
+      expect(css).toContain("color: var(--memoka-color-markup-link-reference)");
+      expect(css).toMatch(/\.memoka-editor\s*\{[^}]*text-autospace: normal;/su);
+      expect(css).toMatch(
+        /\.memoka-editor :not\(pre\) > code\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
       );
-      expect(style.textContent).toContain(
-        "color: var(--memoka-color-markup-strikethrough)",
-      );
-      expect(style.textContent).toContain(
-        "color: var(--memoka-color-markup-raw)",
-      );
-      expect(style.textContent).toContain(
-        "color: var(--memoka-color-markup-link-url)",
-      );
-      expect(style.textContent).toContain(
-        "color: var(--memoka-color-markup-link-reference)",
+      expect(css).toMatch(
+        /\.memoka-editor pre\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
       );
     } finally {
       editor.remove();

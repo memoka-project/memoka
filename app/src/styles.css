@@ -686,6 +686,7 @@ textarea {
   font-synthesis: weight style;
   line-height: 1.65;
   caret-color: transparent;
+  text-autospace: normal;
 }
 
 .memoka-editor strong:not(.memoka-attachment-card__name) {
@@ -948,6 +949,7 @@ textarea {
   font-weight: inherit;
   line-height: inherit;
   pointer-events: none;
+  text-autospace: normal;
   white-space: pre-wrap;
 }
 
@@ -1004,6 +1006,8 @@ textarea {
   color: var(--memoka-color-markup-raw);
   background: var(--memoka-color-code-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  text-autospace: no-autospace;
 }
 
 .memoka-editor a {
@@ -1138,6 +1142,8 @@ textarea {
   border-radius: 8px;
   background: var(--memoka-color-code-surface);
   font-family: var(--memoka-font-monospace);
+  font-size: 0.85em;
+  text-autospace: no-autospace;
 }
 
 .memoka-editor .memoka-source-block {
@@ -1417,6 +1423,13 @@ textarea {
 .workspace-search-preview-document {
   min-height: 100%;
   outline: none;
+  text-autospace: normal;
+}
+
+.workspace-search-preview-document :not(pre) > code,
+.workspace-search-preview-document pre {
+  font-size: 0.85em;
+  text-autospace: no-autospace;
 }
 
 .workspace-search-preview-document > :first-child {
