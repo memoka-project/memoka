@@ -26,6 +26,11 @@ import {
 import { CoreRuntime } from "../app/src/core/runtime";
 import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
+import {
+  APPLICATION_FONT_CSS_VARIABLE,
+  type ApplicationZoomPort,
+} from "../app/src/platform/application-appearance";
+import { DEFAULT_APPLICATION_FONT_FAMILY } from "../app/src/core/application-appearance";
 
 function createNoteSearchOrigin(): NoteSearchOrigin {
   return {
@@ -91,10 +96,12 @@ describe("Memoka Application utilities", () => {
 
   it("previews, cancels, and persists application color themes", async () => {
     const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {});
     const view = render(
       <App
         initialTheme="nightfox"
-        applicationConfig={{ saveTheme }}
+        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
         showDebugLine={false}
       />,
     );
@@ -134,6 +141,118 @@ describe("Memoka Application utilities", () => {
     expect(
       document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
     ).toBe("duskfox");
+    view.unmount();
+  });
+
+  it("previews and persists application fonts", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {});
+    const view = render(
+      <App
+        initialFontFamily={DEFAULT_APPLICATION_FONT_FAMILY}
+        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        showDebugLine={false}
+      />,
+    );
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "font" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    const picker = await screen.findByRole("combobox", {
+      name: "フォント名またはfont-familyを入力",
+    });
+    fireEvent.change(picker, {
+      target: { value: "Noto Sans CJK JP, sans-serif" },
+    });
+    await waitFor(() =>
+      expect(
+        document.documentElement.style.getPropertyValue(
+          APPLICATION_FONT_CSS_VARIABLE,
+        ),
+      ).toBe("Noto Sans CJK JP, sans-serif"),
+    );
+    expect(document.documentElement.style.fontFamily).toBe(
+      '"Noto Sans CJK JP", sans-serif',
+    );
+    fireEvent.keyDown(picker, { key: "Enter" });
+    await waitFor(() =>
+      expect(saveFontFamily).toHaveBeenCalledWith(
+        "Noto Sans CJK JP, sans-serif",
+      ),
+    );
+    view.unmount();
+  });
+
+  it("zooms from every focus surface and persists command values", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {});
+    const setZoomPercent = vi.fn(async () => {});
+    const applicationZoom: ApplicationZoomPort = { setZoomPercent };
+    const view = render(
+      <App
+        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationZoom={applicationZoom}
+        showDebugLine={false}
+      />,
+    );
+    const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    tree.focus();
+    fireEvent.keyDown(tree, { key: "+", code: "Equal", ctrlKey: true });
+    await waitFor(() => expect(setZoomPercent).toHaveBeenCalledWith(110));
+    await waitFor(() => expect(saveZoomPercent).toHaveBeenCalledWith(110));
+
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "zoom 130" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() => expect(setZoomPercent).toHaveBeenCalledWith(130));
+    await waitFor(() => expect(saveZoomPercent).toHaveBeenCalledWith(130));
+
+    fireEvent.keyDown(editor, { key: "0", code: "Digit0", ctrlKey: true });
+    await waitFor(() => expect(setZoomPercent).toHaveBeenCalledWith(100));
+    await waitFor(() => expect(saveZoomPercent).toHaveBeenCalledWith(100));
+    view.unmount();
+  });
+
+  it("rolls a zoom preview back when its application setting cannot be saved", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {
+      throw new Error("config write failed");
+    });
+    const setZoomPercent = vi.fn(async () => {});
+    const view = render(
+      <App
+        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationZoom={{ setZoomPercent }}
+        showDebugLine={false}
+      />,
+    );
+    const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    fireEvent.keyDown(tree, { key: "+", code: "Equal", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(setZoomPercent).toHaveBeenNthCalledWith(1, 110);
+      expect(setZoomPercent).toHaveBeenNthCalledWith(2, 100);
+    });
+    expect(saveZoomPercent).toHaveBeenCalledWith(110);
+    expect(
+      screen.getByText(/zoom · 変更を保存できませんでした/),
+    ).not.toBeNull();
     view.unmount();
   });
 

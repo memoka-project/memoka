@@ -39,6 +39,7 @@ import {
   type TableActionPickerSession,
 } from "./components/TableActionPicker";
 import { ThemePicker, type ThemePickerSession } from "./components/ThemePicker";
+import { FontPicker, type FontPickerSession } from "./components/FontPicker";
 import {
   WorkspaceSearchPalette,
   type WorkspaceSearchSession,
@@ -64,6 +65,13 @@ import {
   normalizeApplicationThemeId,
   type ApplicationThemeId,
 } from "./core/application-theme";
+import {
+  APPLICATION_ZOOM_STEP_PERCENT,
+  DEFAULT_APPLICATION_FONT_FAMILY,
+  DEFAULT_APPLICATION_ZOOM_PERCENT,
+  clampApplicationZoomPercent,
+  normalizeApplicationZoomPercent,
+} from "./core/application-appearance";
 import type { TiptapEditorAdapter } from "./editor/tiptap-adapter";
 import type { EditorNavigationDestination } from "./core/editor-navigation";
 import type { InternalLinkCompletionSnapshot } from "./editor/internal-link-completion";
@@ -117,10 +125,19 @@ import {
   type ApplicationConfigPort,
 } from "./platform/application-config";
 import { applyApplicationTheme } from "./platform/application-theme";
+import {
+  applyApplicationFont,
+  createDefaultApplicationZoomPort,
+  refreshApplicationLayout,
+  type ApplicationZoomPort,
+} from "./platform/application-appearance";
 
 export interface AppProps {
   initialTheme?: ApplicationThemeId;
+  initialFontFamily?: string;
+  initialZoomPercent?: number;
   applicationConfig?: ApplicationConfigPort;
+  applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
   keyConfigWarning?: string | null;
   showDebugLine?: boolean;
@@ -137,7 +154,10 @@ type VimCommandOrigin = "window" | "left-sidebar" | "right-sidebar";
 
 export function App({
   initialTheme = DEFAULT_APPLICATION_THEME_ID,
+  initialFontFamily = DEFAULT_APPLICATION_FONT_FAMILY,
+  initialZoomPercent = DEFAULT_APPLICATION_ZOOM_PERCENT,
   applicationConfig: applicationConfigOverride,
+  applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
   keyConfigWarning = null,
   showDebugLine = Boolean(
@@ -159,6 +179,10 @@ export function App({
   const applicationConfig =
     applicationConfigOverride ?? defaultApplicationConfig;
   const [themeId, setThemeId] = useState<ApplicationThemeId>(initialTheme);
+  const [fontFamily, setFontFamily] = useState(initialFontFamily);
+  const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
+  const [defaultApplicationZoom] = useState(createDefaultApplicationZoomPort);
+  const applicationZoom = applicationZoomOverride ?? defaultApplicationZoom;
   const [defaultDesktopWindow] = useState(createDefaultDesktopWindowPort);
   const [attachmentRepository] = useState(createDefaultAttachmentRepository);
   const [defaultDataArea] = useState(createDefaultDataAreaPort);
@@ -205,6 +229,7 @@ export function App({
   const [themePicker, setThemePicker] = useState<ThemePickerSession | null>(
     null,
   );
+  const [fontPicker, setFontPicker] = useState<FontPickerSession | null>(null);
   const [commandMessage, setCommandMessage] = useState(keyConfigWarning ?? "");
   const [availableUpdate, setAvailableUpdate] =
     useState<ApplicationRelease | null>(null);
@@ -226,6 +251,9 @@ export function App({
   const sidebarInputState = useRef(createSidebarInputState());
   const sidebarFocusGeneration = useRef(0);
   const controlKeyPressed = useRef(false);
+  const zoomPercentRef = useRef(initialZoomPercent);
+  const persistedZoomPercent = useRef(initialZoomPercent);
+  const zoomRequestGeneration = useRef(0);
   const appRoot = useRef<HTMLElement>(null);
   const applicationActiveRef = useRef(true);
   const requestedEditorFocus = useRef<string | null>(null);
@@ -241,6 +269,76 @@ export function App({
   useLayoutEffect(() => {
     applyApplicationTheme(document.documentElement, themeId);
   }, [themeId]);
+  useLayoutEffect(() => {
+    applyApplicationFont(document.documentElement, fontFamily);
+    refreshApplicationLayout();
+  }, [fontFamily]);
+
+  const changeApplicationZoom = useCallback(
+    async (requestedZoomPercent: number): Promise<void> => {
+      const requested = normalizeApplicationZoomPercent(requestedZoomPercent);
+      if (requested === null) {
+        setCommandMessage(
+          `:zoom · 50〜200の10%刻みで指定してください: ${requestedZoomPercent}`,
+        );
+        return;
+      }
+      if (requested === zoomPercentRef.current) {
+        setCommandMessage(`zoom · ${requested}%`);
+        return;
+      }
+
+      const generation = ++zoomRequestGeneration.current;
+      zoomPercentRef.current = requested;
+      setZoomPercent(requested);
+      setCommandMessage(`zoom · ${requested}%`);
+      try {
+        await applicationZoom.setZoomPercent(requested);
+        if (generation !== zoomRequestGeneration.current) return;
+        refreshApplicationLayout();
+        await applicationConfig.saveZoomPercent(requested);
+        if (generation !== zoomRequestGeneration.current) return;
+        persistedZoomPercent.current = requested;
+      } catch (cause) {
+        if (generation !== zoomRequestGeneration.current) return;
+        const fallback = persistedZoomPercent.current;
+        zoomPercentRef.current = fallback;
+        setZoomPercent(fallback);
+        try {
+          await applicationZoom.setZoomPercent(fallback);
+          refreshApplicationLayout();
+        } catch {
+          // Keep the original failure visible; a second platform error adds no
+          // actionable information for the user.
+        }
+        setCommandMessage(
+          `zoom · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig, applicationZoom],
+  );
+
+  useEffect(() => {
+    const handleZoomKeyDown = (event: globalThis.KeyboardEvent): void => {
+      const control =
+        event.ctrlKey ||
+        event.metaKey ||
+        event.getModifierState("Control") ||
+        controlKeyPressed.current;
+      if (!control || event.altKey) return;
+      const requested = applicationZoomShortcutTarget(
+        event,
+        zoomPercentRef.current,
+      );
+      if (requested === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void changeApplicationZoom(requested);
+    };
+    window.addEventListener("keydown", handleZoomKeyDown, true);
+    return () => window.removeEventListener("keydown", handleZoomKeyDown, true);
+  }, [changeApplicationZoom]);
   const applicationReadyRecorded = useRef(false);
 
   const recordDiagnostic = useCallback(
@@ -1005,6 +1103,14 @@ export function App({
         ?.focus();
       return;
     }
+    if (fontPicker) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>(
+          "input[aria-label='フォント名またはfont-familyを入力']",
+        )
+        ?.focus();
+      return;
+    }
     if (noteSearch) {
       appRoot.current
         ?.querySelector<HTMLInputElement>("input[aria-label='ノート内を検索']")
@@ -1070,6 +1176,7 @@ export function App({
     }
   }, [
     commandLine,
+    fontPicker,
     noteSearch,
     requestEditorFocus,
     requestLeftUtilityFocus,
@@ -1850,6 +1957,37 @@ export function App({
         );
         return;
       }
+      case "application.font": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        clearEditorFocusRequests();
+        setFontPicker({ initialFontFamily: fontFamily, restoreFocus });
+        setCommandMessage(":font · フォントを選択");
+        return;
+      }
+      case "application.zoom": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(`:zoom · ${zoomPercent}%`);
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const parsed = /^\d+$/u.test(argument) ? Number(argument) : Number.NaN;
+        const requested = normalizeApplicationZoomPercent(parsed);
+        if (requested === null) {
+          setCommandMessage(
+            `:zoom · 50〜200の10%刻みで指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeApplicationZoom(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
       case "application.quit":
         void requestApplicationShutdown();
         return;
@@ -2166,6 +2304,23 @@ export function App({
           onCancel={() => {
             setThemeId(themePicker.initialThemeId);
             setThemePicker(null);
+          }}
+          focused
+        />
+      ) : fontPicker ? (
+        <FontPicker
+          session={fontPicker}
+          onPreview={setFontFamily}
+          onAccept={async (selectedFontFamily) => {
+            await applicationConfig.saveFontFamily(selectedFontFamily);
+            setFontFamily(selectedFontFamily);
+            setCommandMessage(`:font · ${selectedFontFamily}`);
+            setFontPicker(null);
+            queueMicrotask(fontPicker.restoreFocus);
+          }}
+          onCancel={() => {
+            setFontFamily(fontPicker.initialFontFamily);
+            setFontPicker(null);
           }}
           focused
         />
@@ -2937,6 +3092,39 @@ function EditorWindow({
       </div>
     </article>
   );
+}
+
+function applicationZoomShortcutTarget(
+  event: Pick<globalThis.KeyboardEvent, "key" | "code">,
+  currentZoomPercent: number,
+): number | null {
+  if (
+    event.key === "+" ||
+    event.key === "=" ||
+    event.code === "Equal" ||
+    event.code === "NumpadAdd"
+  ) {
+    return clampApplicationZoomPercent(
+      currentZoomPercent + APPLICATION_ZOOM_STEP_PERCENT,
+    );
+  }
+  if (
+    event.key === "-" ||
+    event.code === "Minus" ||
+    event.code === "NumpadSubtract"
+  ) {
+    return clampApplicationZoomPercent(
+      currentZoomPercent - APPLICATION_ZOOM_STEP_PERCENT,
+    );
+  }
+  if (
+    event.key === "0" ||
+    event.code === "Digit0" ||
+    event.code === "Numpad0"
+  ) {
+    return DEFAULT_APPLICATION_ZOOM_PERCENT;
+  }
+  return null;
 }
 
 function modeLabel(mode: string): string {

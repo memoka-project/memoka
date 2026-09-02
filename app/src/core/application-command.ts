@@ -19,6 +19,8 @@ export type ApplicationCommandId =
   | "application.version"
   | "application.diagnostics"
   | "application.colorscheme"
+  | "application.font"
+  | "application.zoom"
   | "application.quit"
   | "application.help";
 
@@ -169,6 +171,20 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "colorscheme",
     aliases: ["colo"],
     description: "Nightfoxカラーテーマを選択・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.font",
+    name: "font",
+    aliases: [],
+    description: "アプリケーション全体のフォントを選択・変更する",
+    argument: "none",
+  },
+  {
+    id: "application.zoom",
+    name: "zoom",
+    aliases: [],
+    description: "現在のZoom倍率を表示、または50〜200%の範囲で変更する",
     argument: "optional",
   },
   {

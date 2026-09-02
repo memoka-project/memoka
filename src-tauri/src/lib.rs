@@ -293,6 +293,8 @@ pub fn run() {
         input_method_environment,
         application_config::application_key_config_load,
         application_config::application_theme_save,
+        application_config::application_font_family_save,
+        application_config::application_zoom_percent_save,
         clipboard::clipboard_write_rich,
         clipboard::clipboard_read_preferred,
         clipboard::clipboard_read_explicit,

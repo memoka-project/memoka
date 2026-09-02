@@ -133,8 +133,15 @@ corepack pnpm tauri:build
 直接指定することもできます。確定したテーマは次のトップレベル設定へ保存され、Workspaceを切り替えても
 アプリケーション全体で共通です。
 
+`:font`はプリセットまたは任意のCSS `font-family`をライブプレビューして選択します。通常のUIと本文へ
+適用され、コード、行番号、Command-line、デバッグ情報は等幅フォントを維持します。Zoomは
+`Ctrl+=` / `Ctrl++`、`Ctrl+-`、`Ctrl+0`で変更・リセットでき、`:zoom 120`のような直接指定もできます。
+フォントとZoomもWorkspaceには依存しません。
+
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
+font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
+zoom_percent = 110 # 50〜200、10%刻み
 
 [shutdown]
 wait_for_mirror = false

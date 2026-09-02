@@ -7,6 +7,12 @@ use tauri::{AppHandle, Manager};
 use toml_edit::{Document, value};
 
 const DEFAULT_APPLICATION_THEME: ApplicationTheme = ApplicationTheme::Nightfox;
+const DEFAULT_APPLICATION_FONT_FAMILY: &str =
+    r#"Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif"#;
+const DEFAULT_APPLICATION_ZOOM_PERCENT: u16 = 100;
+const MIN_APPLICATION_ZOOM_PERCENT: u16 = 50;
+const MAX_APPLICATION_ZOOM_PERCENT: u16 = 200;
+const APPLICATION_ZOOM_STEP_PERCENT: u16 = 10;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -51,6 +57,8 @@ impl ApplicationTheme {
 #[serde(deny_unknown_fields)]
 struct ApplicationConfigFile {
     theme: Option<ApplicationTheme>,
+    font_family: Option<String>,
+    zoom_percent: Option<u16>,
     leader: Option<String>,
     keymap: Option<KeymapConfigFile>,
     shutdown: Option<ShutdownConfigFile>,
@@ -87,6 +95,8 @@ pub struct ApplicationKeyConfigLoadResult {
     config_path: String,
     config: Option<ApplicationKeyConfigOverride>,
     theme: ApplicationTheme,
+    font_family: String,
+    zoom_percent: u16,
     wait_for_mirror_on_exit: bool,
     warning: Option<String>,
 }
@@ -100,6 +110,8 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 config_path: "config.toml".to_owned(),
                 config: None,
                 theme: DEFAULT_APPLICATION_THEME,
+                font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+                zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
                 wait_for_mirror_on_exit: true,
                 warning: Some(format!(
                     "config.toml: 設定ディレクトリを取得できません: {error}"
@@ -121,6 +133,26 @@ pub fn application_theme_save(app: AppHandle, theme: String) -> Result<(), Strin
     save_application_theme(&directory.join("config.toml"), theme)
 }
 
+#[tauri::command]
+pub fn application_font_family_save(app: AppHandle, font_family: String) -> Result<(), String> {
+    let font_family = validate_application_font_family(&font_family)?.to_owned();
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_application_font_family(&directory.join("config.toml"), &font_family)
+}
+
+#[tauri::command]
+pub fn application_zoom_percent_save(app: AppHandle, zoom_percent: u16) -> Result<(), String> {
+    validate_application_zoom_percent(zoom_percent)?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_application_zoom_percent(&directory.join("config.toml"), zoom_percent)
+}
+
 fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     let config_path = path.display().to_string();
     if !path.exists() {
@@ -128,6 +160,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             config_path,
             config: None,
             theme: DEFAULT_APPLICATION_THEME,
+            font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+            zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
             wait_for_mirror_on_exit: true,
             warning: None,
         };
@@ -150,6 +184,19 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         .and_then(|shutdown| shutdown.wait_for_mirror)
         .unwrap_or(true);
     let theme = parsed.theme.unwrap_or(DEFAULT_APPLICATION_THEME);
+    let font_family = match parsed.font_family.as_deref() {
+        Some(value) => match validate_application_font_family(value) {
+            Ok(value) => value.to_owned(),
+            Err(error) => return warning_result(path, error),
+        },
+        None => DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+    };
+    let zoom_percent = parsed
+        .zoom_percent
+        .unwrap_or(DEFAULT_APPLICATION_ZOOM_PERCENT);
+    if let Err(error) = validate_application_zoom_percent(zoom_percent) {
+        return warning_result(path, error);
+    }
     let keymap = parsed.keymap;
     ApplicationKeyConfigLoadResult {
         config_path,
@@ -163,12 +210,35 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             table_bindings: keymap.and_then(|value| value.table),
         }),
         theme,
+        font_family,
+        zoom_percent,
         wait_for_mirror_on_exit,
         warning: None,
     }
 }
 
 fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), String> {
+    update_application_config(path, |document| {
+        document["theme"] = value(theme.as_str());
+    })
+}
+
+fn save_application_font_family(path: &Path, font_family: &str) -> Result<(), String> {
+    update_application_config(path, |document| {
+        document["font_family"] = value(font_family);
+    })
+}
+
+fn save_application_zoom_percent(path: &Path, zoom_percent: u16) -> Result<(), String> {
+    update_application_config(path, |document| {
+        document["zoom_percent"] = value(i64::from(zoom_percent));
+    })
+}
+
+fn update_application_config(
+    path: &Path,
+    update: impl FnOnce(&mut Document),
+) -> Result<(), String> {
     let source = if path.exists() {
         fs::read_to_string(path)
             .map_err(|error| format!("{}: 設定を読み込めません: {error}", path.display()))?
@@ -178,7 +248,7 @@ fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), St
     if !source.trim().is_empty() {
         toml::from_str::<ApplicationConfigFile>(&source).map_err(|error| {
             format!(
-                "{}: 既存設定が不正なためテーマを保存できません: {error}",
+                "{}: 既存設定が不正なため設定を保存できません: {error}",
                 path.display()
             )
         })?;
@@ -186,7 +256,7 @@ fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), St
     let mut document = source
         .parse::<Document>()
         .map_err(|error| format!("{}: 既存設定を編集できません: {error}", path.display()))?;
-    document["theme"] = value(theme.as_str());
+    update(&mut document);
     let mut output = document.to_string();
     if !output.ends_with('\n') {
         output.push('\n');
@@ -219,14 +289,40 @@ fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), St
     Ok(())
 }
 
+fn validate_application_font_family(value: &str) -> Result<&str, String> {
+    let normalized = value.trim();
+    if normalized.is_empty()
+        || normalized.len() > 256
+        || normalized
+            .chars()
+            .any(|character| character.is_control() || matches!(character, ';' | '{' | '}'))
+    {
+        return Err("font_familyは1〜256文字の有効なCSS font-familyで指定してください".to_owned());
+    }
+    Ok(normalized)
+}
+
+fn validate_application_zoom_percent(value: u16) -> Result<(), String> {
+    if !(MIN_APPLICATION_ZOOM_PERCENT..=MAX_APPLICATION_ZOOM_PERCENT).contains(&value)
+        || value % APPLICATION_ZOOM_STEP_PERCENT != 0
+    {
+        return Err(format!(
+            "zoom_percentは{MIN_APPLICATION_ZOOM_PERCENT}〜{MAX_APPLICATION_ZOOM_PERCENT}の{APPLICATION_ZOOM_STEP_PERCENT}%刻みで指定してください"
+        ));
+    }
+    Ok(())
+}
+
 fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult {
     ApplicationKeyConfigLoadResult {
         config_path: path.display().to_string(),
         config: None,
         theme: DEFAULT_APPLICATION_THEME,
+        font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+        zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
         wait_for_mirror_on_exit: true,
         warning: Some(format!(
-            "{}: {detail}; 既定キー設定を使用します",
+            "{}: {detail}; 既定設定を使用します",
             path.display()
         )),
     }
@@ -234,7 +330,11 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
 
 #[cfg(test)]
 mod tests {
-    use super::{ApplicationTheme, load_application_key_config, save_application_theme};
+    use super::{
+        ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_ZOOM_PERCENT,
+        load_application_key_config, save_application_font_family, save_application_theme,
+        save_application_zoom_percent,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -245,6 +345,8 @@ mod tests {
         let absent = load_application_key_config(&missing);
         assert!(absent.config.is_none());
         assert_eq!(absent.theme, ApplicationTheme::Nightfox);
+        assert_eq!(absent.font_family, DEFAULT_APPLICATION_FONT_FAMILY);
+        assert_eq!(absent.zoom_percent, DEFAULT_APPLICATION_ZOOM_PERCENT);
         assert!(absent.warning.is_none());
         assert!(!missing.exists());
 
@@ -253,6 +355,8 @@ mod tests {
             r#"
 leader = ";"
 theme = "duskfox"
+font_family = 'Noto Sans CJK JP, sans-serif'
+zoom_percent = 120
 
 [keymap.shared_navigation]
 "cursor.logical-up" = ["w"]
@@ -276,6 +380,8 @@ wait_for_mirror = false
         let config = loaded.config.expect("config");
         assert_eq!(config.leader_key.as_deref(), Some(";"));
         assert_eq!(loaded.theme, ApplicationTheme::Duskfox);
+        assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
+        assert_eq!(loaded.zoom_percent, 120);
         assert_eq!(
             config
                 .shared_navigation_bindings
@@ -302,7 +408,7 @@ wait_for_mirror = false
     }
 
     #[test]
-    fn updates_only_the_theme_and_preserves_comments_and_other_settings() {
+    fn updates_appearance_and_preserves_comments_and_other_settings() {
         let directory = tempdir().expect("tempdir");
         let path = directory.path().join("config.toml");
         fs::write(
@@ -317,13 +423,19 @@ wait_for_mirror = false
         .expect("write fixture");
 
         save_application_theme(&path, ApplicationTheme::Dayfox).expect("save theme");
+        save_application_font_family(&path, "Noto Serif CJK JP, serif").expect("save font family");
+        save_application_zoom_percent(&path, 130).expect("save zoom");
         let updated = fs::read_to_string(&path).expect("read updated config");
         assert!(updated.contains("# personal config"));
         assert!(updated.contains("leader = \";\""));
         assert!(updated.contains("wait_for_mirror = false"));
         assert!(updated.contains("theme = \"dayfox\""));
+        assert!(updated.contains("font_family = \"Noto Serif CJK JP, serif\""));
+        assert!(updated.contains("zoom_percent = 130"));
         let loaded = load_application_key_config(&path);
         assert_eq!(loaded.theme, ApplicationTheme::Dayfox);
+        assert_eq!(loaded.font_family, "Noto Serif CJK JP, serif");
+        assert_eq!(loaded.zoom_percent, 130);
         assert!(!loaded.wait_for_mirror_on_exit);
     }
 
@@ -353,6 +465,31 @@ wait_for_mirror = false
                 .warning
                 .expect("warning")
                 .contains(&path.display().to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_font_and_zoom_settings() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("config.toml");
+        fs::write(&path, "font_family = \"sans-serif; color: red\"\n").expect("write invalid font");
+        let invalid_font = load_application_key_config(&path);
+        assert!(invalid_font.config.is_none());
+        assert!(
+            invalid_font
+                .warning
+                .expect("font warning")
+                .contains("font_family")
+        );
+
+        fs::write(&path, "zoom_percent = 125\n").expect("write invalid zoom");
+        let invalid_zoom = load_application_key_config(&path);
+        assert!(invalid_zoom.config.is_none());
+        assert!(
+            invalid_zoom
+                .warning
+                .expect("zoom warning")
+                .contains("zoom_percent")
         );
     }
 }

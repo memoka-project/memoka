@@ -23,6 +23,7 @@ describe("Memoka application window configuration", () => {
       "core:window:allow-minimize",
       "core:window:allow-start-dragging",
       "core:window:allow-toggle-maximize",
+      "core:webview:allow-set-webview-zoom",
       "dialog:allow-open",
       "opener:allow-default-urls",
       "process:allow-restart",

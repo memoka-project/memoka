@@ -298,6 +298,10 @@ export function createMemokaHelpSectionSnapshot(
             "カラーテーマは:colorscheme（:colo）でNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxからライブプレビューして選べます。Enterでapplication config directoryのconfig.tomlへ保存し、Esc / Ctrl-cで開始時の配色へ戻します。:colorscheme duskfoxのような直接指定もできます。既定はNightfoxで、テーマはWorkspaceではなくアプリケーション全体の設定です。",
           ),
           listItem(
+            "appearance",
+            "フォントは:fontの共通検索ペインでプリセットまたは任意のCSS font-familyをライブプレビューして選択します。通常UIと本文へ適用し、コード、行番号、Command-line、デバッグ情報は等幅のままです。Ctrl+= / Ctrl++で10%拡大、Ctrl+-で10%縮小、Ctrl+0で100%へ戻せます。:zoomは現在値、:zoom 120は指定値を適用します。Zoomは50〜200%の10%刻みです。フォントとZoomはconfig.tomlへ保存され、Workspaceを切り替えても共通です。",
+          ),
+          listItem(
             "portable-data",
             "初回起動時にWorkspaceデータ領域を選びます。内部SSOTはその中の.memoka、タイトル由来Markdownと復旧用mirrorは直下へ10秒idle後・既定では終了前・切替前に自動出力されます。起動時にrevisionが一致すれば再生成せず、通常の本文編集は変更Noteだけを差分更新します。タイトル由来pathの変更やmirror破損時はリンク整合性のため全体を再構築します。終了時に待つ間は生成phaseと書込率を表示します。別領域へ移るときは:switch-workspaceを使います。mirrorは外部編集を読み戻しません。Memokaを二重起動すると新しいプロセスはWorkspaceを開かず終了し、既存Windowを前面へ戻します。",
           ),

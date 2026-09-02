@@ -1,12 +1,11 @@
 :root {
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
+  --memoka-font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --memoka-font-monospace:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  font-family: var(--memoka-font-family);
   color: var(--memoka-color-text);
   background: var(--memoka-color-canvas);
   accent-color: var(--memoka-color-focus);
@@ -594,8 +593,11 @@ textarea {
   justify-content: space-between;
   gap: 16px;
   color: var(--memoka-color-text-subtle);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
+}
+
+.debug-line {
+  font-family: var(--memoka-font-monospace);
 }
 
 .editor-viewport {
@@ -674,6 +676,7 @@ textarea {
   padding: 38px 42px 120px 74px;
   outline: none;
   color: var(--memoka-color-text);
+  font-family: var(--memoka-font-family);
   font-size: 17px;
   /*
    * Most Linux installations only provide an upright regular face for the
@@ -820,12 +823,24 @@ textarea {
   margin: 0 0 0.8em;
 }
 
+.memoka-editor :is(ul, ol) > li > p {
+  margin-bottom: 0;
+}
+
+.memoka-editor :is(ul, ol) > li > p + p {
+  margin-top: 0.8em;
+}
+
+.memoka-editor :is(ul, ol) > li + li {
+  margin-top: 0.25em;
+}
+
 .memoka-section-header {
   position: relative;
-  min-height: 1.65em;
-  margin: 0 0 0.65em;
+  min-height: 1.5em;
+  margin: 0 0 0.5em;
   color: var(--memoka-color-markup-heading-1);
-  font-size: 1.48em;
+  font-size: 1.26em;
   font-weight: 700;
   line-height: 1.35;
 }
@@ -904,7 +919,7 @@ textarea {
 }
 
 .memoka-section .memoka-section-header {
-  margin-top: 0.7em;
+  margin-top: 0.55em;
 }
 
 .memoka-section-body,
@@ -926,7 +941,11 @@ textarea {
 .memoka-body-chunk__static-content {
   overflow-wrap: anywhere;
   color: inherit;
-  font: inherit;
+  font-family: var(--memoka-font-family);
+  font-size: inherit;
+  font-style: inherit;
+  font-variant: inherit;
+  font-weight: inherit;
   line-height: inherit;
   pointer-events: none;
   white-space: pre-wrap;
@@ -1118,6 +1137,7 @@ textarea {
   border: 1px solid var(--memoka-color-border);
   border-radius: 8px;
   background: var(--memoka-color-code-surface);
+  font-family: var(--memoka-font-monospace);
 }
 
 .memoka-editor .memoka-source-block {
@@ -1155,7 +1175,7 @@ textarea {
   color: var(--memoka-color-text);
   background: var(--memoka-color-overlay-surface);
   box-shadow: 0 16px 42px var(--memoka-color-shadow);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--memoka-font-family);
   font-size: 12px;
 }
 
@@ -1186,7 +1206,7 @@ textarea {
   color: var(--memoka-color-text);
   background: var(--memoka-color-overlay-surface);
   box-shadow: 0 22px 70px var(--memoka-color-shadow);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--memoka-font-family);
   transform: translate(-50%, -50%);
 }
 
@@ -1386,7 +1406,7 @@ textarea {
   overflow: auto;
   padding: 22px 28px;
   color: var(--memoka-color-text-muted);
-  font-family: system-ui, sans-serif;
+  font-family: var(--memoka-font-family);
   line-height: 1.65;
 }
 
@@ -1443,19 +1463,22 @@ textarea {
   box-shadow: inset 0 -1px var(--memoka-color-danger);
 }
 
-.theme-picker__row {
+.theme-picker__row,
+.font-picker__row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
 }
 
-.theme-picker__row > strong {
+.theme-picker__row > strong,
+.font-picker__row > strong {
   color: var(--memoka-color-text);
   font-size: 13px;
 }
 
-.theme-picker__row > span {
+.theme-picker__row > span,
+.font-picker__row > span {
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
 }
@@ -1473,7 +1496,7 @@ textarea {
   color: var(--theme-preview-text);
   background: var(--theme-preview-bg);
   box-shadow: 0 18px 52px var(--memoka-color-shadow);
-  font-family: system-ui, sans-serif;
+  font-family: var(--memoka-font-family);
 }
 
 .theme-picker__sample-tabs {
@@ -1543,6 +1566,49 @@ textarea {
 .theme-picker__sample-selection {
   padding: 5px 7px;
   background: var(--theme-preview-selection);
+}
+
+.font-picker__preview {
+  place-items: center;
+  padding: 28px;
+}
+
+.font-picker__sample {
+  width: min(100%, 560px);
+  padding: 30px 34px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--memoka-color-focus-muted);
+  border-radius: 8px;
+  color: var(--memoka-color-text);
+  background: var(--memoka-color-surface);
+  box-shadow: 0 18px 52px var(--memoka-color-shadow);
+}
+
+.font-picker__sample-label {
+  display: block;
+  margin-bottom: 24px;
+  color: var(--memoka-color-text-subtle);
+  font-family: var(--memoka-font-monospace);
+  font-size: 10px;
+}
+
+.font-picker__sample h2 {
+  margin: 0 0 20px;
+  color: var(--memoka-color-markup-heading-1);
+  font-size: 1.4em;
+}
+
+.font-picker__sample p {
+  margin: 0 0 16px;
+  line-height: 1.65;
+}
+
+.font-picker__sample code {
+  padding: 0.08em 0.28em;
+  border-radius: 3px;
+  color: var(--memoka-color-markup-raw);
+  background: var(--memoka-color-code-surface);
+  font-family: var(--memoka-font-monospace);
 }
 
 .theme-picker__swatches {
