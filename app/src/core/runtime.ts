@@ -1848,6 +1848,7 @@ export class CoreRuntime {
       | "onInlineFormatPicker"
       | "onTableActionPicker"
       | "onCommandLine"
+      | "onCommandPicker"
       | "onApplicationCommand"
       | "onWindowCommand"
       | "onNavigationDestination"
@@ -1914,6 +1915,7 @@ export class CoreRuntime {
       onNoteSearchRepeat: (origin, direction, count) =>
         this.repeatNoteSearch(windowId, origin, direction, count),
       onCommandLine: options.onCommandLine,
+      onCommandPicker: options.onCommandPicker,
       onApplicationCommand: options.onApplicationCommand,
       onWindowCommand: options.onWindowCommand,
       onSectionFocus: (direction, currentSectionId, origin) => {
@@ -1976,6 +1978,7 @@ export class CoreRuntime {
       | "onInlineFormatPicker"
       | "onTableActionPicker"
       | "onCommandLine"
+      | "onCommandPicker"
       | "onApplicationCommand"
       | "onWindowCommand"
       | "keyConfig"

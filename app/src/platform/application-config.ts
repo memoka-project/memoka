@@ -91,7 +91,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       warning,
     };
   }
-  if (loaded.warning) {
+  if (loaded.warning && !loaded.config) {
     console.warn(loaded.warning);
     return {
       config: DEFAULT_APPLICATION_KEY_CONFIG,
@@ -103,6 +103,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       warning: loaded.warning,
     };
   }
+  if (loaded.warning) console.warn(loaded.warning);
   try {
     const config = loaded.config
       ? mergeApplicationKeyConfig(loaded.config)
@@ -125,7 +126,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily,
       zoomPercent,
       waitForMirrorOnExit: loaded.waitForMirrorOnExit,
-      warning: null,
+      warning: loaded.warning,
     };
   } catch (cause) {
     const warning = `${loaded.configPath}: ${errorMessage(cause)}; 既定設定を使用します`;

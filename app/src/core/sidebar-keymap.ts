@@ -4,14 +4,15 @@ import {
   validateApplicationKeyConfig,
   type ApplicationKeyConfig,
 } from "./application-key-config";
+import {
+  resolveLeaderShortcut,
+  type LeaderActiveCommandId,
+  type LeaderShortcutResolution,
+} from "./leader-shortcuts";
 
 export type SidebarCommandId =
+  | LeaderActiveCommandId
   | "application.command_line"
-  | "workspace.search_title"
-  | "workspace.search_body"
-  | "workspace.search_buffers"
-  | "utility.toggle-tree"
-  | "utility.toggle-outline"
   | "sidebar.close"
   | "window.focus-left"
   | "window.focus-down"
@@ -24,6 +25,9 @@ export type SidebarCommandId =
 
 export const SIDEBAR_COMMAND_IDS: readonly SidebarCommandId[] = [
   "application.command_line",
+  "application.command_picker",
+  "context.action_picker",
+  "note.search",
   "workspace.search_title",
   "workspace.search_body",
   "workspace.search_buffers",
@@ -49,31 +53,6 @@ export const sidebarKeymap = new DeclarativeKeymap<
       context: "sidebar.normal",
       sequence: ":",
       command: "application.command_line",
-    },
-    {
-      context: "sidebar.normal",
-      sequence: "Leader f",
-      command: "workspace.search_title",
-    },
-    {
-      context: "sidebar.normal",
-      sequence: "Leader g",
-      command: "workspace.search_body",
-    },
-    {
-      context: "sidebar.normal",
-      sequence: "Leader t",
-      command: "utility.toggle-tree",
-    },
-    {
-      context: "sidebar.normal",
-      sequence: "Leader o",
-      command: "utility.toggle-outline",
-    },
-    {
-      context: "sidebar.normal",
-      sequence: "Leader b",
-      command: "workspace.search_buffers",
     },
     {
       context: "sidebar.normal",
@@ -145,6 +124,13 @@ export type SidebarInputAction =
       readonly prefix: "g" | "tab" | "leader" | "window";
     }
   | { readonly kind: "cancel" }
+  | {
+      readonly kind: "leader-shortcut";
+      readonly resolution: Exclude<
+        LeaderShortcutResolution,
+        { kind: "execute" }
+      >;
+    }
   | { readonly kind: "unmapped" };
 
 export interface SidebarInputResolution {
@@ -278,15 +264,31 @@ export function advanceSidebarInput(
       consume: true,
     };
   }
+  if (state.pending === "leader") {
+    const leaderResolution = resolveLeaderShortcut(key, "sidebar");
+    if (leaderResolution.kind === "execute") {
+      return {
+        state: createSidebarInputState(),
+        action: { kind: "execute", command: leaderResolution.command },
+        consume: true,
+      };
+    }
+    return {
+      state: createSidebarInputState(),
+      action: {
+        kind: "leader-shortcut",
+        resolution: leaderResolution,
+      },
+      consume: true,
+    };
+  }
   const windowKey = key.startsWith("Ctrl+") ? key.slice("Ctrl+".length) : key;
   const sequence =
     state.pending === "g"
       ? `g${key}`
       : state.pending === "tab"
         ? `t${key}`
-        : state.pending === "leader"
-          ? `Leader ${key}`
-          : `Ctrl+w ${windowKey}`;
+        : `Ctrl+w ${windowKey}`;
   const command = sidebarKeymap.resolve("sidebar.normal", sequence);
   if (command) {
     return {

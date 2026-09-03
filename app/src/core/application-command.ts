@@ -1,3 +1,8 @@
+import {
+  normalizeWorkspaceSearchText,
+  workspaceSearchTerms,
+} from "./workspace-search";
+
 export type ApplicationCommandId =
   | "utility.tree"
   | "workspace.search_trash"
@@ -245,4 +250,17 @@ export function applicationCommandHelp(): string {
   return APPLICATION_COMMANDS.filter(({ id }) => id !== "application.help")
     .map(({ name }) => `:${name}`)
     .join(" · ");
+}
+
+export function filterApplicationCommands(
+  query: string,
+): readonly ApplicationCommandDefinition[] {
+  const terms = workspaceSearchTerms(query);
+  if (terms.length === 0) return APPLICATION_COMMANDS;
+  return APPLICATION_COMMANDS.filter((command) => {
+    const searchable = normalizeWorkspaceSearchText(
+      [command.name, ...command.aliases, command.description].join(" "),
+    );
+    return terms.every((term) => searchable.includes(term));
+  });
 }

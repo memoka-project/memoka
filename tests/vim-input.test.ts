@@ -446,9 +446,12 @@ describe("Memoka Vim input grammar", () => {
       action: { kind: "execute", command: "workspace.search_body" },
     });
     for (const [key, command] of [
+      ["a", "context.action_picker"],
       ["t", "utility.toggle-tree"],
       ["o", "utility.toggle-outline"],
       ["b", "workspace.search_buffers"],
+      ["c", "application.command_picker"],
+      ["s", "note.search"],
     ] as const) {
       const utilityLeader = advanceVimInput(
         createVimInputState(),
@@ -468,6 +471,34 @@ describe("Memoka Vim input grammar", () => {
       advanceVimInput(createVimInputState(), "insert", ",", noteContext)
         .resolvedCommand,
     ).toBeNull();
+    const visualLeader = advanceVimInput(
+      createVimInputState(),
+      "visual-char",
+      ",",
+      noteContext,
+    );
+    expect(
+      advanceVimInput(visualLeader.state, "visual-char", "y", noteContext),
+    ).toMatchObject({
+      action: {
+        kind: "leader-shortcut",
+        resolution: { kind: "reserved", shortcut: { id: "yank" } },
+      },
+    });
+    const unknownLeader = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      ",",
+      noteContext,
+    );
+    expect(
+      advanceVimInput(unknownLeader.state, "normal", "x", noteContext),
+    ).toMatchObject({
+      action: {
+        kind: "leader-shortcut",
+        resolution: { kind: "unmapped", key: "x" },
+      },
+    });
     expect(
       advanceVimInput(createVimInputState(), "normal", " ", noteContext),
     ).toMatchObject({ action: { kind: "unmapped" } });

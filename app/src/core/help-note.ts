@@ -1,4 +1,5 @@
 import { APPLICATION_COMMANDS } from "./application-command";
+import { LEADER_SHORTCUT_CATALOG } from "./leader-shortcuts";
 import type {
   ListItemBlock,
   NoteBlock,
@@ -126,6 +127,21 @@ export function createMemokaHelpSectionSnapshot(
             "保存操作は不要です。確定した編集はCore transactionを通って自動保存されます。",
           ),
         ]),
+      ]),
+      section("leader-shortcuts", "Leader shortcuts", [
+        paragraph(
+          "leader-summary",
+          "既定Leaderは「,」です。config.tomlで物理Leaderキーだけを変更でき、後続のカテゴリ文字はHelp・設定・将来のPluginで共通になるよう固定されています。未実装の予約キーも別の操作として再解釈されません。",
+        ),
+        table(
+          "leader-shortcuts",
+          ["キー", "カテゴリ", "状態"],
+          LEADER_SHORTCUT_CATALOG.map((shortcut) => [
+            `<Leader>${shortcut.key}`,
+            shortcut.label,
+            shortcut.status === "active" ? "利用可能" : "予約済み（未実装）",
+          ]),
+        ),
       ]),
       section("movement-editing", "移動と編集", [
         table(
@@ -279,7 +295,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "search",
-            "/で現在のFocused Section subtree内を部分一致検索し、n / Nで次・前の一致へ移動します。Root表示中はNoteDoc全体が対象です。,fでSectionタイトルとパンくず、,gで直接本文を検索します。Workspace検索の空白区切りはAND条件です。",
+            "/または,sで現在のFocused Section subtree内を部分一致検索し、n / Nで次・前の一致へ移動します。Root表示中はNoteDoc全体が対象です。,fでSectionタイトルとパンくず、,gで直接本文を検索します。Workspace検索の空白区切りはAND条件です。",
           ),
           listItem(
             "outline",
@@ -291,7 +307,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Table操作キーはapplication config directoryのconfig.tomlで変更できます。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
+            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "color-theme",
@@ -308,6 +324,10 @@ export function createMemokaHelpSectionSnapshot(
         ]),
       ]),
       section("command-line", "Command-line", [
+        paragraph(
+          "command-picker",
+          ",cは共通検索ペインでCommandを選び、選択したcanonical nameを下部のCommand-lineへ転記します。「:」は従来どおり空のCommand-lineを直接開きます。",
+        ),
         {
           type: "codeBlock",
           blockId: id("code-block:commands"),

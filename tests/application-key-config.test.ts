@@ -37,7 +37,7 @@ describe("application key configuration", () => {
       sharedNavigationBindings: { "cursor.logical-up": ["q"] },
       treeBindings: { "note.create_child": ["C"] },
       inlineFormatBindings: { "selection.format": ["M"] },
-      tableBindings: { "table.action_picker": ["Leader x"] },
+      tableBindings: { "table.next_cell": ["Ctrl+n"] },
     });
     expect(config.leaderKey).toBe(";");
     expect(config.whichwrap).toBe(false);
@@ -50,7 +50,7 @@ describe("application key configuration", () => {
     expect(config.treeBindings?.["note.create_child"]).toEqual(["C"]);
     expect(config.treeBindings?.["note.open"]).toEqual(["Enter"]);
     expect(config.inlineFormatBindings?.["selection.format"]).toEqual(["M"]);
-    expect(config.tableBindings?.["table.action_picker"]).toEqual(["Leader x"]);
+    expect(config.tableBindings?.["table.next_cell"]).toEqual(["Ctrl+n"]);
     expect(config.tableBindings?.["mode.visual-block"]).toEqual(["Ctrl+v"]);
   });
 
@@ -114,13 +114,12 @@ describe("application key configuration", () => {
     }
   });
 
-  it("maps configurable Table entry, traversal, and action sequences", () => {
+  it("maps configurable Table entry and traversal sequences while keeping Context Actions fixed", () => {
     const config = mergeApplicationKeyConfig({
       tableBindings: {
         "mode.visual-block": ["Ctrl+t"],
         "table.next_cell": ["qn"],
         "table.previous_cell": ["qp"],
-        "table.action_picker": ["Leader q"],
       },
     });
     validateVimKeyConfig(config);
@@ -162,8 +161,8 @@ describe("application key configuration", () => {
       );
       expect(prefix.action).toMatchObject({ kind: "pending" });
       expect(
-        advanceVimInput(prefix.state, mode, "q", noteContext, config),
-      ).toMatchObject({ resolvedCommand: "table.action_picker" });
+        advanceVimInput(prefix.state, mode, "a", noteContext, config),
+      ).toMatchObject({ resolvedCommand: "context.action_picker" });
     }
   });
 
@@ -204,5 +203,10 @@ describe("application key configuration", () => {
     expect(() =>
       mergeApplicationKeyConfig({ whichwrap: "yes" as never }),
     ).toThrow("whichwrap must be a boolean");
+    expect(() =>
+      mergeApplicationKeyConfig({
+        tableBindings: { "table.next_cell": ["Leader q"] },
+      }),
+    ).toThrow("Leader categories are reserved by the application");
   });
 });

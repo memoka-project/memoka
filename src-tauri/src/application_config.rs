@@ -205,7 +205,17 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     if let Err(error) = validate_application_zoom_percent(zoom_percent) {
         return warning_result(path, error);
     }
-    let keymap = parsed.keymap;
+    let mut keymap = parsed.keymap;
+    let ignored_table_action_picker = keymap
+        .as_mut()
+        .and_then(|value| value.table.as_mut())
+        .and_then(|table| table.remove("table.action_picker"));
+    let warning = ignored_table_action_picker.map(|_| {
+        format!(
+            "{}: [keymap.table].table.action_pickerは廃止されました; Context ActionsはLeader aに固定されます",
+            path.display()
+        )
+    });
     ApplicationKeyConfigLoadResult {
         config_path,
         config: Some(ApplicationKeyConfigOverride {
@@ -222,7 +232,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         font_family,
         zoom_percent,
         wait_for_mirror_on_exit,
-        warning: None,
+        warning,
     }
 }
 
@@ -406,8 +416,8 @@ wait_for_mirror = false
             config
                 .table_bindings
                 .expect("table")
-                .get("table.action_picker"),
-            Some(&vec!["Leader A".to_owned()])
+                .get("mode.visual-block"),
+            Some(&vec!["Ctrl+v".to_owned()])
         );
         assert_eq!(
             config
@@ -417,7 +427,12 @@ wait_for_mirror = false
             Some(&vec!["M".to_owned()])
         );
         assert!(!loaded.wait_for_mirror_on_exit);
-        assert!(loaded.warning.is_none());
+        assert!(
+            loaded
+                .warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("table.action_pickerは廃止"))
+        );
     }
 
     #[test]

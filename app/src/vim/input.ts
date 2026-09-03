@@ -7,6 +7,10 @@ import {
   validateApplicationKeyConfig,
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
+import {
+  resolveLeaderShortcut,
+  type LeaderShortcutResolution,
+} from "../core/leader-shortcuts";
 
 export type VimMode =
   | "normal"
@@ -55,6 +59,7 @@ export const VIM_COMMANDS = [
   "note.search_next",
   "note.search_previous",
   "application.command_line",
+  "application.command_picker",
   "utility.toggle-tree",
   "utility.toggle-outline",
   "window.split-horizontal",
@@ -95,7 +100,7 @@ export const VIM_COMMANDS = [
   "selection.change",
   "selection.paste",
   "selection.format",
-  "table.action_picker",
+  "context.action_picker",
   "table.next_cell",
   "table.previous_cell",
   "put.after",
@@ -172,6 +177,10 @@ export type VimInputAction =
     }
   | {
       kind: "unmapped";
+    }
+  | {
+      kind: "leader-shortcut";
+      resolution: Exclude<LeaderShortcutResolution, { kind: "execute" }> | null;
     };
 
 export interface VimInputResolution {
@@ -231,12 +240,6 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     G: "cursor.document-end",
     "Ctrl+o": "navigation.jump-back",
     "Ctrl+i": "navigation.jump-forward",
-    "Leader f": "workspace.search_title",
-    "Leader g": "workspace.search_body",
-    "Leader t": "utility.toggle-tree",
-    "Leader o": "utility.toggle-outline",
-    "Leader b": "workspace.search_buffers",
-    "Leader a": "table.action_picker",
     "/": "note.search",
     n: "note.search_next",
     N: "note.search_previous",
@@ -337,7 +340,6 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "selection.change",
     p: "selection.paste",
     P: "selection.paste",
-    "Leader a": "table.action_picker",
   }),
   ...modeBindings("visual-block", {
     Escape: "mode.normal",
@@ -356,7 +358,6 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "selection.change",
     p: "selection.paste",
     P: "selection.paste",
-    "Leader a": "table.action_picker",
   }),
 ];
 
@@ -518,7 +519,8 @@ export function advanceVimInput(
   const leaderPrefixKey =
     state.pending === null &&
     key === keyConfig.leaderKey &&
-    (mode === "normal" || mode === "visual-line" || mode === "visual-block") &&
+    mode !== "insert" &&
+    mode !== "replace" &&
     acceptsApplicationKeys;
   const resolvedCommand = leaderPrefixKey
     ? null
@@ -538,6 +540,50 @@ export function advanceVimInput(
       operator: null,
       count: parsedCount(state.count),
       action: { kind: "unmapped" },
+    };
+  }
+
+  if (state.pending?.kind === "prefix" && state.pending.key === "leader") {
+    if (context.isComposing) {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: null,
+        operator: null,
+        count: parsedCount(state.pending.count),
+        action: { kind: "unmapped" },
+      };
+    }
+    if (key === "Escape") {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: null,
+        operator: null,
+        count: parsedCount(state.pending.count),
+        action: { kind: "leader-shortcut", resolution: null },
+      };
+    }
+    const leaderResolution = resolveLeaderShortcut(key, "editor");
+    if (leaderResolution.kind === "execute") {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: leaderResolution.command,
+        operator: null,
+        count: parsedCount(state.pending.count),
+        countExplicit: state.pending.count.length > 0,
+        action: { kind: "execute", command: leaderResolution.command },
+      };
+    }
+    return {
+      state: createVimInputState(),
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: parsedCount(state.pending.count),
+      countExplicit: state.pending.count.length > 0,
+      action: { kind: "leader-shortcut", resolution: leaderResolution },
     };
   }
 
@@ -912,10 +958,7 @@ function effectiveVimKeymap(
   const table =
     config.tableBindings ?? DEFAULT_APPLICATION_KEY_CONFIG.tableBindings!;
   for (const command of TABLE_COMMAND_IDS) {
-    const contexts: readonly VimMode[] =
-      command === "table.action_picker"
-        ? ["normal", "visual-line", "visual-block"]
-        : ["normal"];
+    const contexts: readonly VimMode[] = ["normal"];
     for (const context of contexts) {
       for (const sequence of table[command]) {
         const normalized = normalizeConfiguredVimSequence(sequence);

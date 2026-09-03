@@ -107,6 +107,8 @@ describe("Memoka Sidebar application keymap", () => {
       ["t", "utility.toggle-tree"],
       ["o", "utility.toggle-outline"],
       ["b", "workspace.search_buffers"],
+      ["c", "application.command_picker"],
+      ["s", "note.search"],
     ] as const) {
       const utilityLeader = advanceSidebarInput(
         createSidebarInputState(),
@@ -118,6 +120,41 @@ describe("Memoka Sidebar application keymap", () => {
         action: { kind: "execute", command },
       });
     }
+    const unavailableLeader = advanceSidebarInput(
+      createSidebarInputState(),
+      key(","),
+    );
+    expect(
+      advanceSidebarInput(unavailableLeader.state, key("a")),
+    ).toMatchObject({
+      action: {
+        kind: "leader-shortcut",
+        resolution: { kind: "unavailable" },
+      },
+      consume: true,
+    });
+    const reservedLeader = advanceSidebarInput(
+      createSidebarInputState(),
+      key(","),
+    );
+    expect(advanceSidebarInput(reservedLeader.state, key("C"))).toMatchObject({
+      action: {
+        kind: "leader-shortcut",
+        resolution: { kind: "reserved", shortcut: { id: "settings" } },
+      },
+      consume: true,
+    });
+    const unknownLeader = advanceSidebarInput(
+      createSidebarInputState(),
+      key(","),
+    );
+    expect(advanceSidebarInput(unknownLeader.state, key("x"))).toMatchObject({
+      action: {
+        kind: "leader-shortcut",
+        resolution: { kind: "unmapped", key: "x" },
+      },
+      consume: true,
+    });
 
     const g = advanceSidebarInput(createSidebarInputState(), key("g"));
     expect(g).toMatchObject({

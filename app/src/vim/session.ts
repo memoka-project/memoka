@@ -97,6 +97,10 @@ import {
   type VimWindowCommand,
 } from "./input";
 import type { ApplicationKeyConfig } from "../core/application-key-config";
+import {
+  leaderShortcutForCommand,
+  leaderShortcutMessage,
+} from "../core/leader-shortcuts";
 import type {
   WorkspaceSearchScope,
   WorkspaceSearchTarget,
@@ -182,6 +186,7 @@ export interface ProductVimSessionOptions {
   onOpenAttachment?: (attachmentId: string) => void | Promise<void>;
   onMessage?: (message: string) => void;
   onCommandLine?: () => void;
+  onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
   onWindowCommand?: (command: VimWindowCommand) => void;
   onSectionFocus?: (
@@ -1177,6 +1182,24 @@ export class ProductVimSession {
       return true;
     }
 
+    if (resolution.action.kind === "leader-shortcut") {
+      event.preventDefault();
+      if (resolution.action.resolution) {
+        this.options.onMessage?.(
+          leaderShortcutMessage(
+            resolution.action.resolution,
+            this.options.keyConfig?.leaderKey ?? ",",
+          ),
+        );
+        this.action = `leader:${resolution.action.resolution.kind}`;
+      } else {
+        this.action = "leader:cancelled";
+      }
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return true;
+    }
+
     const command = resolution.resolvedCommand;
     if (command?.startsWith("mode.")) {
       event.preventDefault();
@@ -1315,7 +1338,7 @@ export class ProductVimSession {
       return true;
     }
 
-    if (command === "table.action_picker") {
+    if (command === "context.action_picker") {
       event.preventDefault();
       const selection = captureTableActionSelection(
         view,
@@ -1326,6 +1349,12 @@ export class ProductVimSession {
         ? (this.options.onTableActions?.(selection) ?? false)
         : false;
       this.action = opened ? "table:actions:open" : "table:actions:unavailable";
+      if (!opened) {
+        const shortcut = leaderShortcutForCommand("context.action_picker");
+        this.options.onMessage?.(
+          `${this.options.keyConfig?.leaderKey ?? ","}${shortcut.key} · ${shortcut.label} · 利用可能な操作がありません`,
+        );
+      }
       this.emit();
       this.scheduleCaretRefresh(view);
       return true;
@@ -1392,6 +1421,17 @@ export class ProductVimSession {
       this.action = this.options.onCommandLine
         ? "command-line:open"
         : "command-line:unavailable";
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return true;
+    }
+
+    if (command === "application.command_picker") {
+      event.preventDefault();
+      this.options.onCommandPicker?.();
+      this.action = this.options.onCommandPicker
+        ? "command-picker:open"
+        : "command-picker:unavailable";
       this.emit();
       this.scheduleCaretRefresh(view);
       return true;
@@ -1912,7 +1952,7 @@ export class ProductVimSession {
     findUndoManager(view)?.stopCapturing();
     if (applied && repeat) {
       this.repeatStore.record({
-        command: "table.action_picker",
+        command: "context.action_picker",
         operator: null,
         count: 1,
         countExplicit: false,

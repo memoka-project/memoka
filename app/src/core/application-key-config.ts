@@ -28,7 +28,6 @@ export const TREE_SPECIFIC_COMMAND_IDS = [
 export const INLINE_FORMAT_COMMAND_IDS = ["selection.format"] as const;
 
 export const TABLE_COMMAND_IDS = [
-  "table.action_picker",
   "table.next_cell",
   "table.previous_cell",
   "mode.visual-block",
@@ -106,7 +105,6 @@ export const DEFAULT_APPLICATION_KEY_CONFIG: ApplicationKeyConfig =
       "selection.format": ["m"],
     }),
     tableBindings: Object.freeze({
-      "table.action_picker": ["Leader a"],
       "table.next_cell": ["Tab"],
       "table.previous_cell": ["Shift+Tab"],
       "mode.visual-block": ["Ctrl+v"],
@@ -261,6 +259,11 @@ function validateBindingRecord<Command extends string>(
     for (const sequence of sequences) {
       if (typeof sequence !== "string" || sequenceKeys(sequence).length === 0) {
         throw new Error(`Invalid key sequence for ${command}`);
+      }
+      if (sequenceKeys(sequence)[0] === "Leader") {
+        throw new Error(
+          `Leader categories are reserved by the application: ${command}:${sequence}`,
+        );
       }
       if (seen.has(sequence)) {
         throw new Error(`Duplicate key sequence for ${command}: ${sequence}`);

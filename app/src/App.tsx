@@ -22,6 +22,10 @@ import {
   type ApplicationCommandLineSession,
 } from "./components/ApplicationCommandLine";
 import {
+  ApplicationCommandPicker,
+  type ApplicationCommandPickerSession,
+} from "./components/ApplicationCommandPicker";
+import {
   ApplicationNoteSearch,
   type ApplicationNoteSearchSession,
 } from "./components/ApplicationNoteSearch";
@@ -93,6 +97,14 @@ import {
   validateApplicationKeyConfig,
   type ApplicationKeyConfig,
 } from "./core/application-key-config";
+import {
+  isLeaderActiveCommand,
+  leaderShortcutForCommand,
+  leaderShortcutMessage,
+  resolveLeaderShortcut,
+  type LeaderActiveCommandId,
+  type LeaderShortcutResolution,
+} from "./core/leader-shortcuts";
 import {
   createDefaultDesktopWindowPort,
   type DesktopWindowPort,
@@ -218,6 +230,8 @@ export function App({
     useState<WorkspaceSearchSession | null>(null);
   const [commandLine, setCommandLine] =
     useState<ApplicationCommandLineSession | null>(null);
+  const [commandPicker, setCommandPicker] =
+    useState<ApplicationCommandPickerSession | null>(null);
   const [noteSearch, setNoteSearch] =
     useState<ApplicationNoteSearchSession | null>(null);
   const [blockTypePicker, setBlockTypePicker] =
@@ -481,6 +495,7 @@ export function App({
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setNoteSearch(null);
+      setCommandPicker(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
@@ -493,6 +508,7 @@ export function App({
     (session: WorkspaceSearchSession): void => {
       clearEditorFocusRequests();
       setCommandLine(null);
+      setCommandPicker(null);
       setNoteSearch(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
@@ -507,6 +523,7 @@ export function App({
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
+      setCommandPicker(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
@@ -520,6 +537,7 @@ export function App({
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
+      setCommandPicker(null);
       setNoteSearch(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
@@ -533,6 +551,7 @@ export function App({
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
+      setCommandPicker(null);
       setNoteSearch(null);
       setBlockTypePicker(null);
       setTableActionPicker(null);
@@ -546,10 +565,25 @@ export function App({
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
+      setCommandPicker(null);
       setNoteSearch(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
+  const openCommandPicker = useCallback(
+    (session: ApplicationCommandPickerSession): void => {
+      clearEditorFocusRequests();
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setInlineFormatPicker(null);
+      setTableActionPicker(null);
+      setCommandPicker(session);
     },
     [clearEditorFocusRequests],
   );
@@ -1117,6 +1151,14 @@ export function App({
         ?.focus();
       return;
     }
+    if (commandPicker) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>(
+          "input[aria-label='Memoka Commandを検索']",
+        )
+        ?.focus();
+      return;
+    }
     if (commandLine) {
       appRoot.current
         ?.querySelector<HTMLInputElement>("input[aria-label='Memoka Command']")
@@ -1175,6 +1217,7 @@ export function App({
       setOutlineFocusRequest((current) => current + 1);
     }
   }, [
+    commandPicker,
     commandLine,
     fontPicker,
     noteSearch,
@@ -1429,9 +1472,11 @@ export function App({
               ? "table-action-picker"
               : noteSearch
                 ? "note-search"
-                : commandLine
-                  ? "command-line"
-                  : null;
+                : commandPicker
+                  ? "command-picker"
+                  : commandLine
+                    ? "command-line"
+                    : null;
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1612,13 +1657,45 @@ export function App({
     setCommandMessage(`workspace.search.${target}.${scope} · application`);
   };
 
-  const executeSidebarCommand = (
-    command: SidebarCommandId,
+  const openNoteSearchFromApplication = (restoreFocus: () => void): void => {
+    const adapter = editorAdapters.current.get(effectiveTargetWindowId);
+    const origin = adapter?.captureNoteSearchOrigin() ?? null;
+    if (!adapter || !origin || targetWindow?.noteId === null) {
+      setCommandMessage("Note Search · 検索対象のNoteがありません");
+      queueMicrotask(restoreFocus);
+      return;
+    }
+    openNoteSearch({
+      windowId: effectiveTargetWindowId,
+      origin,
+      applyDestination: (destination, detail) =>
+        applyNavigationDestinationToWindow(
+          effectiveTargetWindowId,
+          destination,
+          detail,
+        ),
+      requestInputMethodDeactivation: () =>
+        adapter.requestInputMethodDeactivation(),
+      restoreFocus,
+      focusResult: () => requestEditorFocus(effectiveTargetWindowId),
+    });
+    setCommandMessage("note.search · application");
+  };
+
+  const executeLeaderCommand = (
+    command: LeaderActiveCommandId,
     restoreFocus: () => void,
-    sidebarSide: "left" | "right",
   ): void => {
-    if (command === "application.command_line") {
-      openCommandLine({ restoreFocus });
+    if (command === "application.command_picker") {
+      openCommandPicker({ restoreFocus });
+    } else if (command === "note.search") {
+      openNoteSearchFromApplication(restoreFocus);
+    } else if (command === "context.action_picker") {
+      const shortcut = leaderShortcutForCommand(command);
+      setCommandMessage(
+        `${keyConfig.leaderKey}${shortcut.key} · ${shortcut.label} · この画面では利用できません`,
+      );
+      queueMicrotask(restoreFocus);
     } else if (
       command === "workspace.search_title" ||
       command === "workspace.search_body" ||
@@ -1629,11 +1706,20 @@ export function App({
         command === "workspace.search_body" ? "body" : "title",
         command === "workspace.search_buffers" ? "buffers" : "workspace",
       );
-    } else if (
-      command === "utility.toggle-tree" ||
-      command === "utility.toggle-outline"
-    ) {
+    } else {
       executeVimApplicationCommand(command);
+    }
+  };
+
+  const executeSidebarCommand = (
+    command: SidebarCommandId,
+    restoreFocus: () => void,
+    sidebarSide: "left" | "right",
+  ): void => {
+    if (isLeaderActiveCommand(command)) {
+      executeLeaderCommand(command, restoreFocus);
+    } else if (command === "application.command_line") {
+      openCommandLine({ restoreFocus });
     } else if (command === "sidebar.close") {
       void closeSidebar(sidebarSide);
     } else {
@@ -1706,6 +1792,13 @@ export function App({
       setCommandMessage(`pending:sidebar:${resolution.action.prefix}`);
     } else if (resolution.action.kind === "cancel") {
       setCommandMessage("sidebar sequence cancelled");
+    } else if (resolution.action.kind === "leader-shortcut") {
+      setCommandMessage(
+        leaderShortcutMessage(
+          resolution.action.resolution,
+          keyConfig.leaderKey,
+        ),
+      );
     } else if (resolution.action.kind === "execute") {
       executeSidebarCommand(
         resolution.action.command,
@@ -2052,8 +2145,12 @@ export function App({
           }
           onFocus={() => reconcileEditorDomFocus(windowState.windowId)}
           onCommandLine={openCommandLine}
-          onWorkspaceSearch={openWorkspaceSearchFromApplication}
-          onApplicationCommand={executeVimApplicationCommand}
+          onLeaderCommand={executeLeaderCommand}
+          onLeaderResolution={(resolution) =>
+            setCommandMessage(
+              leaderShortcutMessage(resolution, keyConfig.leaderKey),
+            )
+          }
           onWindowCommand={executeVimWindowCommand}
           keyConfig={keyConfig}
         />
@@ -2093,6 +2190,7 @@ export function App({
         onMessage={setCommandMessage}
         onNoteSearch={openNoteSearch}
         onCommandLine={openCommandLine}
+        onCommandPicker={openCommandPicker}
         onApplicationCommand={executeVimApplicationCommand}
         onWindowCommand={executeVimWindowCommand}
         keyConfig={keyConfig}
@@ -2353,6 +2451,21 @@ export function App({
           onMessage={setCommandMessage}
           focused
         />
+      ) : commandPicker ? (
+        <ApplicationCommandPicker
+          session={commandPicker}
+          onSelect={(command) => {
+            const restoreFocus = commandPicker.restoreFocus;
+            setCommandPicker(null);
+            openCommandLine({
+              restoreFocus,
+              initialValue: `${command.name}${command.argument === "optional" ? " " : ""}`,
+            });
+            setCommandMessage(`:${command.name} · Command-lineへ転記`);
+          }}
+          onClose={() => setCommandPicker(null)}
+          focused
+        />
       ) : commandLine ? (
         <ApplicationCommandLine
           session={commandLine}
@@ -2520,8 +2633,8 @@ function EmptyEditorWindow({
   onPointerFocusIntent,
   onFocus,
   onCommandLine,
-  onWorkspaceSearch,
-  onApplicationCommand,
+  onLeaderCommand,
+  onLeaderResolution,
   onWindowCommand,
   keyConfig,
 }: {
@@ -2533,12 +2646,13 @@ function EmptyEditorWindow({
   onPointerFocusIntent: () => void;
   onFocus: () => void;
   onCommandLine: (session: ApplicationCommandLineSession) => void;
-  onWorkspaceSearch: (
+  onLeaderCommand: (
+    command: LeaderActiveCommandId,
     restoreFocus: () => void,
-    scope: WorkspaceSearchScope,
-    target?: WorkspaceSearchTarget,
   ) => void;
-  onApplicationCommand: (command: VimApplicationCommand) => void;
+  onLeaderResolution: (
+    resolution: Exclude<LeaderShortcutResolution, { kind: "execute" }>,
+  ) => void;
   onWindowCommand: (
     windowId: string,
     command: VimWindowCommand,
@@ -2623,25 +2737,12 @@ function EmptyEditorWindow({
     }
     if (prefix === "leader") {
       setPrefix("");
-      if (event.key === "f") {
-        event.preventDefault();
-        onWorkspaceSearch(() => root.current?.focus(), "title");
-        return;
-      }
-      if (event.key === "g") {
-        event.preventDefault();
-        onWorkspaceSearch(() => root.current?.focus(), "body");
-        return;
-      }
-      if (event.key === "b") {
-        event.preventDefault();
-        onWorkspaceSearch(() => root.current?.focus(), "title", "buffers");
-        return;
-      }
-      const command = EMPTY_WINDOW_LEADER_COMMANDS[event.key];
-      if (command) {
-        event.preventDefault();
-        onApplicationCommand(command);
+      event.preventDefault();
+      const resolution = resolveLeaderShortcut(event.key, "empty-window");
+      if (resolution.kind === "execute") {
+        onLeaderCommand(resolution.command, () => root.current?.focus());
+      } else {
+        onLeaderResolution(resolution);
       }
       return;
     }
@@ -2710,13 +2811,6 @@ const EMPTY_WINDOW_MODIFIER_ONLY_KEYS = new Set([
 const EMPTY_WINDOW_MODIFIER_ONLY_CODE =
   /^(?:Alt|Control|Meta|Shift)(?:Left|Right)$/u;
 
-const EMPTY_WINDOW_LEADER_COMMANDS: Readonly<
-  Record<string, VimApplicationCommand>
-> = {
-  t: "utility.toggle-tree",
-  o: "utility.toggle-outline",
-};
-
 function EditorWindow({
   runtime,
   attachmentRepository,
@@ -2738,6 +2832,7 @@ function EditorWindow({
   onMessage,
   onNoteSearch,
   onCommandLine,
+  onCommandPicker,
   onApplicationCommand,
   onWindowCommand,
   keyConfig,
@@ -2763,6 +2858,7 @@ function EditorWindow({
   onMessage: (message: string) => void;
   onNoteSearch: (session: ApplicationNoteSearchSession) => void;
   onCommandLine: (session: ApplicationCommandLineSession) => void;
+  onCommandPicker: (session: ApplicationCommandPickerSession) => void;
   onApplicationCommand: (command: VimApplicationCommand) => void;
   onWindowCommand: (
     windowId: string,
@@ -2874,6 +2970,10 @@ function EditorWindow({
         onCommandLine({
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
+      onCommandPicker: () =>
+        onCommandPicker({
+          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+        }),
       onApplicationCommand,
       onWindowCommand: (command) => {
         void onWindowCommand(windowId, command);
@@ -2910,6 +3010,7 @@ function EditorWindow({
     onMessage,
     onNoteSearch,
     onCommandLine,
+    onCommandPicker,
     onApplicationCommand,
     onWindowCommand,
     keyConfig,

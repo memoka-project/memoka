@@ -19,6 +19,7 @@ export interface ApplicationNoteSearchSession {
   ) => string | null;
   readonly requestInputMethodDeactivation: () => void;
   readonly restoreFocus: () => void;
+  readonly focusResult?: () => void;
 }
 
 export function ApplicationNoteSearch({
@@ -72,7 +73,7 @@ export function ApplicationNoteSearch({
       if (message) onMessage(message);
       session.requestInputMethodDeactivation();
       onClose();
-      requestAnimationFrame(session.restoreFocus);
+      requestAnimationFrame(session.focusResult ?? session.restoreFocus);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

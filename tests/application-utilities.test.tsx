@@ -13,6 +13,10 @@ import {
   type ApplicationCommandLineSession,
 } from "../app/src/components/ApplicationCommandLine";
 import {
+  ApplicationCommandPicker,
+  type ApplicationCommandPickerSession,
+} from "../app/src/components/ApplicationCommandPicker";
+import {
   ApplicationNoteSearch,
   type ApplicationNoteSearchSession,
 } from "../app/src/components/ApplicationNoteSearch";
@@ -733,6 +737,34 @@ describe("Memoka Application utilities", () => {
     view.unmount();
   });
 
+  it("opens Command Picker with Leader c and transfers the selected command", async () => {
+    const view = render(<App />);
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    enterNormal(editor);
+    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: "c", code: "KeyC" });
+    const picker = await screen.findByRole("combobox", {
+      name: "Memoka Commandを検索",
+    });
+    fireEvent.change(picker, { target: { value: "version" } });
+    fireEvent.keyDown(picker, { key: "Enter", code: "Enter" });
+    const commandLine = await screen.findByRole("textbox", {
+      name: "Memoka Command",
+    });
+    expect((commandLine as HTMLInputElement).value).toBe("version");
+    expect(document.activeElement).toBe(commandLine);
+    fireEvent.keyDown(commandLine, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(editor));
+    view.unmount();
+  });
+
   it("routes application-wide commands while a Sidebar utility owns focus", async () => {
     const view = render(<App />);
     let tree = await screen.findByRole("tree", { name: "ノートツリー" });
@@ -767,6 +799,22 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(tree), {
       timeout: 3_000,
     });
+
+    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: "s", code: "KeyS" });
+    const noteSearch = await screen.findByRole("textbox", {
+      name: "ノート内を検索",
+    });
+    expect(document.activeElement).toBe(noteSearch);
+    fireEvent.keyDown(noteSearch, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(tree), {
+      timeout: 3_000,
+    });
+
+    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: "C", code: "KeyC", shiftKey: true });
+    await screen.findByText(/Config \/ Settings · 予約済み/);
+    expect(document.activeElement).toBe(tree);
 
     const selectedTreeItem = tree.querySelector<HTMLElement>(
       '[role="treeitem"][aria-selected="true"]',
@@ -1019,6 +1067,19 @@ describe("Memoka Application utilities", () => {
       emptyWindow.querySelector(".empty-editor-window__body")?.textContent,
     ).toBe("");
 
+    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: "c", code: "KeyC" });
+    const emptyCommandPicker = await screen.findByRole("combobox", {
+      name: "Memoka Commandを検索",
+    });
+    fireEvent.keyDown(emptyCommandPicker, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
+
+    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: "s", code: "KeyS" });
+    await screen.findByText(/Note Search · この画面では利用できません/);
+    expect(document.activeElement).toBe(emptyWindow);
+
     tree.focus();
     fireEvent.keyDown(tree, { key: "Enter" });
     await waitFor(() => {
@@ -1091,6 +1152,47 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+  });
+
+  it("filters Command Picker entries and hands the selected canonical command to Command-line", async () => {
+    const restoreFocus = vi.fn();
+    const session: ApplicationCommandPickerSession = { restoreFocus };
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ApplicationCommandPicker
+        session={session}
+        onSelect={onSelect}
+        onClose={onClose}
+      />,
+    );
+    const input = screen.getByRole("combobox", {
+      name: "Memoka Commandを検索",
+    });
+    fireEvent.change(input, { target: { value: "colo Nightfox" } });
+    expect(screen.getByRole("option").textContent).toContain(":colorscheme");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "colorscheme", argument: "optional" }),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("starts Command-line from a picker-provided value", () => {
+    render(
+      <ApplicationCommandLine
+        session={{ restoreFocus: vi.fn(), initialValue: "colorscheme " }}
+        onExecute={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Memoka Command",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("colorscheme ");
   });
 
   it("opens the shared application input surface with / and restores Editor focus on cancel", async () => {

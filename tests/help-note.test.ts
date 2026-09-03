@@ -71,6 +71,11 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("現在Focusから親へ1階層戻ります");
     expect(helpText).toContain("whichwrap有効時は行端から前後論理行へ移動");
     expect(helpText).toContain("全block共通で制御");
+    expect(helpText).toContain("<Leader>C");
+    expect(helpText).toContain("Config / Settings");
+    expect(helpText).toContain("予約済み（未実装）");
+    expect(helpText).toContain(",cは共通検索ペイン");
+    expect(helpText).toContain("/または,s");
     expect(helpText).toContain("Image Block stub、Attachment Fileを選べます");
     expect(helpText).toContain("Attachment Fileまたは:attach");
     expect(helpText).toContain("取り消すと「/」は本文に残ります");

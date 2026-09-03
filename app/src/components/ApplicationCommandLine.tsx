@@ -10,6 +10,7 @@ import {
 
 export interface ApplicationCommandLineSession {
   readonly restoreFocus: () => void;
+  readonly initialValue?: string;
 }
 
 export function ApplicationCommandLine({
@@ -28,10 +29,15 @@ export function ApplicationCommandLine({
   focused?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(session.initialValue ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    const target = input.current;
+    target?.focus();
+    if (target)
+      target.setSelectionRange(target.value.length, target.value.length);
+  }, []);
 
   const close = (): void => {
     onClose();

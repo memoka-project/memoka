@@ -168,6 +168,7 @@ export interface TiptapEditorAdapterOptions {
     | (EditorNavigationResult & NoteSearchNavigationStatus)
     | Promise<EditorNavigationResult & NoteSearchNavigationStatus>;
   onCommandLine?: () => void;
+  onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
   onWindowCommand?: (command: VimWindowCommand) => void;
   onSectionFocus?: (
@@ -312,6 +313,7 @@ export class TiptapEditorAdapter {
         : undefined,
       onMessage: options.onMessage,
       onCommandLine: options.onCommandLine,
+      onCommandPicker: options.onCommandPicker,
       onApplicationCommand: options.onApplicationCommand,
       onWindowCommand: options.onWindowCommand,
       onSectionFocus: (direction, currentSectionId) => {
@@ -668,6 +670,11 @@ export class TiptapEditorAdapter {
     const document = this.handle.current;
     if (document.kind !== "note" || this.currentEditor.isDestroyed) return null;
     return saveStableEditorPosition(document, this.currentEditor.view);
+  }
+
+  captureNoteSearchOrigin(): NoteSearchOrigin | null {
+    if (this.currentEditor.isDestroyed) return null;
+    return this.noteSearchOrigin(this.currentEditor.state.selection.head);
   }
 
   acceptInternalLinkCandidate(noteId: string): boolean {

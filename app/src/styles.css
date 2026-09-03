@@ -1855,12 +1855,14 @@ textarea {
   text-underline-offset: 3px;
 }
 
-.table-action-picker__row {
+.table-action-picker__row,
+.command-picker__row {
   display: grid;
   gap: 3px;
 }
 
-.table-action-picker__row > strong {
+.table-action-picker__row > strong,
+.command-picker__row > strong {
   overflow: hidden;
   color: var(--memoka-color-text);
   font-size: 13px;
@@ -1868,7 +1870,8 @@ textarea {
   white-space: nowrap;
 }
 
-.table-action-picker__row > span {
+.table-action-picker__row > span,
+.command-picker__row > span {
   overflow: hidden;
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
@@ -1876,17 +1879,20 @@ textarea {
   white-space: nowrap;
 }
 
-.table-action-picker__preview {
+.table-action-picker__preview,
+.command-picker__preview {
   padding: 28px;
 }
 
-.table-action-picker__preview-content {
+.table-action-picker__preview-content,
+.command-picker__preview-content {
   align-self: center;
   color: var(--memoka-color-text-muted);
   line-height: 1.6;
 }
 
-.table-action-picker__preview-content > strong {
+.table-action-picker__preview-content > strong,
+.command-picker__preview-content > strong {
   color: var(--memoka-color-text-strong);
   font-size: 18px;
 }
