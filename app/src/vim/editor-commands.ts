@@ -25,10 +25,13 @@ import {
 } from "./caret-geometry";
 import type { VimCommand, VimMode, VimOperator } from "./input";
 import { classifyVimWordCharacters } from "./word-semantics";
+import {
+  DEFAULT_APPLICATION_KEY_CONFIG,
+  type ApplicationKeyConfig,
+} from "../core/application-key-config";
 import { createUuidV7 } from "../core/ids";
 import { BODY_CHUNK_NODE } from "../core/section-model";
 import {
-  moveNormalTableCharacter,
   moveNormalTableCell,
   moveNormalTableRow,
   pasteTableCellsIntoTable,
@@ -731,14 +734,29 @@ function clampCursorInLines(lines: VimLogicalLine[], position: number): number {
   return blockSemantics.nearestCursorPosition(line, position);
 }
 
-function exclusiveCursorEnd(lines: VimLogicalLine[], position: number): number {
+function exclusiveCursorEnd(
+  view: Pick<VimEditorView, "state">,
+  lines: VimLogicalLine[],
+  position: number,
+): number {
   if (lines.length === 0) return position;
   const line = lines[blockSemantics.currentLineIndex(lines, position)];
   const cursor = blockSemantics.nearestCursorPosition(line, position);
   const index = line.cursorPositions.indexOf(cursor);
-  return index >= 0
-    ? (line.cursorPositions[index + 1] ?? line.to)
-    : Math.min(cursor + 1, line.to);
+  const next = index >= 0 ? line.cursorPositions[index + 1] : undefined;
+  if (next !== undefined) return next;
+
+  // A TableRow's logical `to` is its final descendant cursor rather than the
+  // textblock's insertion boundary. Resolve the inline node at the cursor so
+  // Visual Char can still include the final character of the rightmost Cell.
+  const adjacent = view.state.doc.resolve(cursor).nodeAfter;
+  if (
+    adjacent?.isText ||
+    (adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf))
+  ) {
+    return exclusiveCharacterPosition(view, cursor);
+  }
+  return line.to;
 }
 
 function cursorEndingAt(lines: VimLogicalLine[], boundary: number): number {
@@ -787,11 +805,11 @@ function visualCharSelection(
     ? TextSelection.create(
         view.state.doc,
         anchor,
-        exclusiveCursorEnd(lines, cursor),
+        exclusiveCursorEnd(view, lines, cursor),
       )
     : TextSelection.create(
         view.state.doc,
-        exclusiveCursorEnd(lines, anchor),
+        exclusiveCursorEnd(view, lines, anchor),
         cursor,
       );
 }
@@ -2360,35 +2378,45 @@ function moveCharacter(
   direction: -1 | 1,
   mode: VimMode,
   count = 1,
+  whichwrap = true,
 ): boolean {
-  if (mode === "normal") {
-    const moved = moveNormalTableCharacter(view, direction, count);
-    if (moved !== null) return moved;
-  }
   const lines = blockSemantics.logicalLines(view);
   if (lines.length === 0) return false;
   const head =
     mode === "visual-char"
       ? visualCharEndpoints(view, lines).cursor
       : selectionCursor(view);
-  const line = lines[blockSemantics.currentLineIndex(lines, head)];
+  let lineIndex = blockSemantics.currentLineIndex(lines, head);
+  let line = lines[lineIndex];
+  if (!line) return false;
   let next: number;
   if (mode === "normal" || mode === "visual-char") {
-    const normalizedHead = blockSemantics.nearestCursorPosition(line, head);
-    const currentIndex = Math.max(
-      0,
-      line.cursorPositions.indexOf(normalizedHead),
-    );
-    next =
-      line.cursorPositions[
-        Math.max(
-          0,
-          Math.min(
-            currentIndex + direction * normalizedCount(count),
-            line.cursorPositions.length - 1,
-          ),
-        )
-      ] ?? normalizedHead;
+    next = blockSemantics.nearestCursorPosition(line, head);
+    let currentIndex = Math.max(0, line.cursorPositions.indexOf(next));
+    let remaining = normalizedCount(count);
+    while (remaining > 0) {
+      const lineEndIndex = line.cursorPositions.length - 1;
+      const distanceToBoundary =
+        direction > 0 ? lineEndIndex - currentIndex : currentIndex;
+      if (remaining <= distanceToBoundary) {
+        currentIndex += direction * remaining;
+        next = line.cursorPositions[currentIndex] ?? next;
+        break;
+      }
+      if (distanceToBoundary > 0) {
+        currentIndex = direction > 0 ? lineEndIndex : 0;
+        next = line.cursorPositions[currentIndex] ?? next;
+        remaining -= distanceToBoundary;
+      }
+      if (!whichwrap) break;
+      const adjacentLine = lines[lineIndex + direction];
+      if (!adjacentLine) break;
+      lineIndex += direction;
+      line = adjacentLine;
+      currentIndex = direction > 0 ? 0 : line.cursorPositions.length - 1;
+      next = line.cursorPositions[currentIndex] ?? line.from;
+      remaining -= 1;
+    }
   } else {
     const normalizedHead = Math.max(line.from, Math.min(head, line.to));
     next = normalizedHead;
@@ -5017,6 +5045,7 @@ type EditorVimCommandHandler = (
   register: VimRegister | null,
   count: number,
   countExplicit: boolean,
+  keyConfig: ApplicationKeyConfig,
 ) => EditorVimResult;
 
 const editorVimCommandHandlers: Partial<
@@ -5036,12 +5065,19 @@ const editorVimCommandHandlers: Partial<
     joinLogicalLine(view, true, count),
   "character.delete": (view, _mode, _register, count) =>
     deleteCurrentCharacter(view, count),
-  "cursor.left": (view, mode, _register, count) => ({
-    handled: moveCharacter(view, -1, mode, count),
+  "cursor.left": (view, mode, _register, count, _countExplicit, keyConfig) => ({
+    handled: moveCharacter(view, -1, mode, count, keyConfig.whichwrap ?? true),
     detail: "cursor:left",
   }),
-  "cursor.right": (view, mode, _register, count) => ({
-    handled: moveCharacter(view, 1, mode, count),
+  "cursor.right": (
+    view,
+    mode,
+    _register,
+    count,
+    _countExplicit,
+    keyConfig,
+  ) => ({
+    handled: moveCharacter(view, 1, mode, count, keyConfig.whichwrap ?? true),
     detail: "cursor:right",
   }),
   "cursor.logical-up": (view, mode, _register, count) => ({
@@ -5248,9 +5284,17 @@ export function runEditorVimCommand(
   register: VimRegister | null,
   count = 1,
   countExplicit = false,
+  keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
 ): EditorVimResult {
   const handler = editorVimCommandHandlers[command];
   return handler
-    ? handler(view, mode, register, normalizedCount(count), countExplicit)
+    ? handler(
+        view,
+        mode,
+        register,
+        normalizedCount(count),
+        countExplicit,
+        keyConfig,
+      )
     : { handled: false, detail: `unhandled:${command}` };
 }

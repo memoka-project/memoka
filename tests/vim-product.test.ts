@@ -2,6 +2,7 @@ import type { Editor } from "@tiptap/core";
 import type { UndoManager } from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { createUuidV7 } from "../app/src/core/ids";
+import { mergeApplicationKeyConfig } from "../app/src/core/application-key-config";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import {
@@ -987,6 +988,124 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       register: "text: ab",
     });
     expect(editor.state.selection.from).toBe(initialCursor - 1);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("applies whichwrap to Normal and Visual Char across every logical-line kind", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "alpha" }] },
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "bravo" },
+            { type: "hardBreak" },
+            { type: "text", text: "charlie" },
+          ],
+        },
+        {
+          type: "bulletList",
+          content: ["delta", "echo"].map((text) => ({
+            type: "listItem",
+            content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+          })),
+        },
+        {
+          type: "codeBlock",
+          content: [{ type: "text", text: "foxtrot\ngolf" }],
+        },
+        { type: "paragraph", content: [{ type: "text", text: "hotel" }] },
+      ],
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    const transitions = [
+      ["alpha", "bravo"],
+      ["bravo", "charlie"],
+      ["charlie", "delta"],
+      ["delta", "echo"],
+      ["echo", "foxtrot"],
+      ["foxtrot", "golf"],
+      ["golf", "hotel"],
+    ] as const;
+    for (const [from, to] of transitions) {
+      editor.commands.setTextSelection(
+        textPosition(editor, from) + from.length - 1,
+      );
+      press(editor, "l");
+      expect(editor.state.selection.head).toBe(textPosition(editor, to));
+    }
+
+    editor.commands.setTextSelection(textPosition(editor, "hotel"));
+    press(editor, "h");
+    expect(editor.state.selection.head).toBe(
+      textPosition(editor, "golf") + "golf".length - 1,
+    );
+
+    editor.commands.setTextSelection(
+      textPosition(editor, "alpha") + "alpha".length - 1,
+    );
+    press(editor, "v");
+    press(editor, "l");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "\n",
+      ),
+    ).toBe("a\nb");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps Normal and Visual Char inside a logical line when whichwrap is disabled", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      keyConfig: mergeApplicationKeyConfig({ whichwrap: false }),
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "alpha" }] },
+        { type: "paragraph", content: [{ type: "text", text: "bravo" }] },
+      ],
+    });
+    const alphaEnd = textPosition(editor, "alpha") + "alpha".length - 1;
+    const bravoStart = textPosition(editor, "bravo");
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    editor.commands.setTextSelection(alphaEnd);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(alphaEnd);
+    editor.commands.setTextSelection(bravoStart);
+    press(editor, "h");
+    expect(editor.state.selection.head).toBe(bravoStart);
+
+    editor.commands.setTextSelection(alphaEnd);
+    press(editor, "v");
+    const selectionBefore = {
+      from: editor.state.selection.from,
+      to: editor.state.selection.to,
+    };
+    press(editor, "l");
+    expect({
+      from: editor.state.selection.from,
+      to: editor.state.selection.to,
+    }).toEqual(selectionBefore);
 
     adapter.destroy();
     runtime.destroy();

@@ -203,38 +203,6 @@ function setTextCursor(view: VimEditorView, position: number): void {
   view.focus();
 }
 
-export function moveNormalTableCharacter(
-  view: VimEditorView,
-  direction: -1 | 1,
-  count: number,
-): boolean | null {
-  const context = tableContextAtPosition(view);
-  if (!context) return null;
-  const positions = cellCursorPositions(
-    view,
-    context.cellPosition,
-    context.cell,
-  );
-  const cursor = view.state.selection.head;
-  const nearest = positions.reduce(
-    (best, candidate) =>
-      Math.abs(candidate - cursor) < Math.abs(best - cursor) ? candidate : best,
-    positions[0] ?? cursor,
-  );
-  const currentIndex = Math.max(0, positions.indexOf(nearest));
-  const nextIndex = Math.max(
-    0,
-    Math.min(
-      currentIndex + direction * normalizedCount(count),
-      positions.length - 1,
-    ),
-  );
-  const next = positions[nextIndex] ?? cursor;
-  if (next === cursor) return false;
-  setTextCursor(view, next);
-  return true;
-}
-
 export function moveNormalTableRow(
   view: VimEditorView,
   direction: -1 | 1,

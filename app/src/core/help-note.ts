@@ -182,7 +182,7 @@ export function createMemokaHelpSectionSnapshot(
             [
               "Normal",
               "h / l、j / k",
-              "現在Cell内を左右移動／同じ列の前後行へ移動",
+              "左右は論理行内を行優先順でCellをまたぎ、whichwrap有効時は行端から前後論理行へ移動／上下は同じ列の前後行へ移動",
             ],
             [
               "Normal",
@@ -291,7 +291,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Table操作キーはapplication config directoryのconfig.tomlで変更できます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
+            "Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Table操作キーはapplication config directoryのconfig.tomlで変更できます。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "color-theme",

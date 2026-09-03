@@ -33,12 +33,14 @@ describe("application key configuration", () => {
   it("merges partial TOML-shaped overrides over the complete defaults", () => {
     const config = mergeApplicationKeyConfig({
       leaderKey: ";",
+      whichwrap: false,
       sharedNavigationBindings: { "cursor.logical-up": ["q"] },
       treeBindings: { "note.create_child": ["C"] },
       inlineFormatBindings: { "selection.format": ["M"] },
       tableBindings: { "table.action_picker": ["Leader x"] },
     });
     expect(config.leaderKey).toBe(";");
+    expect(config.whichwrap).toBe(false);
     expect(config.sharedNavigationBindings?.["cursor.logical-up"]).toEqual([
       "q",
     ]);
@@ -199,5 +201,8 @@ describe("application key configuration", () => {
         }),
       ),
     ).toThrow("Ambiguous visual-char key bindings");
+    expect(() =>
+      mergeApplicationKeyConfig({ whichwrap: "yes" as never }),
+    ).toThrow("whichwrap must be a boolean");
   });
 });

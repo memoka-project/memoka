@@ -8,6 +8,10 @@ import {
 } from "./editor-commands";
 import type { VimCommand, VimMode, VimOperator } from "./input";
 import type { TableActionRepeat } from "../core/table-actions";
+import {
+  DEFAULT_APPLICATION_KEY_CONFIG,
+  type ApplicationKeyConfig,
+} from "../core/application-key-config";
 
 export interface VimRepeatDescriptor {
   command: VimCommand;
@@ -102,6 +106,7 @@ export function replayVimRepeat(
   register: VimRegister | null,
   count: number,
   countExplicit: boolean,
+  keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
 ): EditorVimResult {
   const effectiveCount = countExplicit ? count : descriptor.count;
   if (descriptor.operator) {
@@ -122,5 +127,6 @@ export function replayVimRepeat(
     register,
     effectiveCount,
     countExplicit || descriptor.countExplicit,
+    keyConfig,
   );
 }

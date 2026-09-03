@@ -60,8 +60,15 @@ struct ApplicationConfigFile {
     font_family: Option<String>,
     zoom_percent: Option<u16>,
     leader: Option<String>,
+    vim: Option<VimConfigFile>,
     keymap: Option<KeymapConfigFile>,
     shutdown: Option<ShutdownConfigFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VimConfigFile {
+    whichwrap: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,6 +90,7 @@ struct ShutdownConfigFile {
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationKeyConfigOverride {
     leader_key: Option<String>,
+    whichwrap: Option<bool>,
     shared_navigation_bindings: Option<BTreeMap<String, Vec<String>>>,
     tree_bindings: Option<BTreeMap<String, Vec<String>>>,
     inline_format_bindings: Option<BTreeMap<String, Vec<String>>>,
@@ -202,6 +210,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         config_path,
         config: Some(ApplicationKeyConfigOverride {
             leader_key: parsed.leader,
+            whichwrap: parsed.vim.and_then(|value| value.whichwrap),
             shared_navigation_bindings: keymap
                 .as_ref()
                 .and_then(|value| value.shared_navigation.clone()),
@@ -358,6 +367,9 @@ theme = "duskfox"
 font_family = 'Noto Sans CJK JP, sans-serif'
 zoom_percent = 120
 
+[vim]
+whichwrap = false
+
 [keymap.shared_navigation]
 "cursor.logical-up" = ["w"]
 
@@ -382,6 +394,7 @@ wait_for_mirror = false
         assert_eq!(loaded.theme, ApplicationTheme::Duskfox);
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
+        assert_eq!(config.whichwrap, Some(false));
         assert_eq!(
             config
                 .shared_navigation_bindings

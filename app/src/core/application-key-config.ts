@@ -42,6 +42,8 @@ export type TableCommandId = (typeof TABLE_COMMAND_IDS)[number];
 
 export interface ApplicationKeyConfig {
   readonly leaderKey: string;
+  /** Let Normal/Visual h and l continue across logical-line boundaries. */
+  readonly whichwrap?: boolean;
   readonly sharedNavigationBindings?: Readonly<
     Record<SharedNavigationCommandId, readonly string[]>
   >;
@@ -56,6 +58,7 @@ export interface ApplicationKeyConfig {
 
 export interface PartialApplicationKeyConfig {
   readonly leaderKey?: string;
+  readonly whichwrap?: boolean;
   readonly sharedNavigationBindings?: Readonly<
     Partial<Record<SharedNavigationCommandId, readonly string[]>>
   >;
@@ -73,6 +76,7 @@ export interface PartialApplicationKeyConfig {
 export const DEFAULT_APPLICATION_KEY_CONFIG: ApplicationKeyConfig =
   Object.freeze({
     leaderKey: ",",
+    whichwrap: true,
     sharedNavigationBindings: Object.freeze({
       "cursor.left": ["h"],
       "cursor.right": ["l"],
@@ -114,6 +118,8 @@ export function mergeApplicationKeyConfig(
 ): ApplicationKeyConfig {
   const config: ApplicationKeyConfig = {
     leaderKey: partial.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey,
+    whichwrap:
+      partial.whichwrap ?? DEFAULT_APPLICATION_KEY_CONFIG.whichwrap ?? true,
     sharedNavigationBindings: mergeBindings(
       DEFAULT_APPLICATION_KEY_CONFIG.sharedNavigationBindings!,
       partial.sharedNavigationBindings,
@@ -154,6 +160,9 @@ export function validateApplicationKeyConfig(
 ): void {
   if (Array.from(config.leaderKey).length !== 1) {
     throw new Error("Leader key must be exactly one character");
+  }
+  if (config.whichwrap !== undefined && typeof config.whichwrap !== "boolean") {
+    throw new Error("whichwrap must be a boolean");
   }
   validateBindingRecord(
     config.sharedNavigationBindings ??

@@ -1473,6 +1473,7 @@ export class ProductVimSession {
                   currentRegister,
                   resolution.count,
                   resolution.countExplicit,
+                  this.options.keyConfig,
                 );
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
@@ -1823,6 +1824,7 @@ export class ProductVimSession {
             this.registerStore.read(view.state.schema),
             count,
             countExplicit,
+            this.options.keyConfig,
           );
     if (
       result.handled &&

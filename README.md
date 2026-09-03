@@ -143,9 +143,16 @@ theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
 font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
 zoom_percent = 110 # 50〜200、10%刻み
 
+[vim]
+whichwrap = true # Normal/Visual Charのh/lで前後の論理行へ移動
+
 [shutdown]
 wait_for_mirror = false
 ```
+
+`whichwrap`は全blockで共通です。`false`にすると`h/l`は現在の論理行端で停止します。Tableでは
+同じ論理行に属するCell間は引き続き移動できますが、前後のTable行やTable外へは移動しません。
+既定値は`true`です。
 
 終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
 次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。

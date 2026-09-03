@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { UndoManager } from "yjs";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { mergeApplicationKeyConfig } from "../app/src/core/application-key-config";
 import type { TableActionPickerRequest } from "../app/src/editor/tiptap-adapter";
+import { visualCharCursor } from "../app/src/vim/editor-commands";
 import { moveVisualBlockHeadToPosition } from "../app/src/vim/table-editing";
 
 function press(
@@ -133,7 +135,7 @@ describe("keyboard-first Table editing", () => {
     root.remove();
   });
 
-  it("keeps h/l cell-local, lets word motions cross cells, and selects rectangular cells with Ctrl-v", async () => {
+  it("moves h/l across Cells, lets word motions cross Cells, and selects rectangular Cells with Ctrl-v", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");
     document.body.append(root);
@@ -146,10 +148,11 @@ describe("keyboard-first Table editing", () => {
     const a2Start = positionOf(editor, "A2");
     editor.commands.setTextSelection(a2Start);
     press(editor, "h");
-    expect(editor.state.selection.head).toBe(a2Start);
+    expect(editor.state.selection.head).toBe(positionOf(editor, "A1") + 1);
     editor.commands.setTextSelection(a2Start + 1);
     press(editor, "l");
-    expect(editor.state.selection.head).toBe(a2Start + 1);
+    expect(editor.state.selection.head).toBe(positionOf(editor, "A3"));
+    editor.commands.setTextSelection(a2Start + 1);
     press(editor, "w");
     expect(currentCellText(editor)).toBe("A3");
     press(editor, "b");
@@ -204,6 +207,136 @@ describe("keyboard-first Table editing", () => {
     expect(adapter.vimSnapshot.mode).toBe("normal");
     expect(adapter.vimSnapshot.register).toContain("Table 2×2");
     expect(currentCellText(editor)).toBe("A2");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("moves Normal h/l between Table edges and adjacent logical lines", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "before" }],
+        },
+        tableFixture().content[0]!,
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "after" }],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(positionOf(editor, "H1"));
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    press(editor, "h");
+    expect(editor.state.selection.head).toBe(
+      positionOf(editor, "before") + "before".length - 1,
+    );
+
+    editor.commands.setTextSelection(positionOf(editor, "B3") + 1);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "after"));
+
+    editor.commands.setTextSelection(positionOf(editor, "B3") + 1);
+    press(editor, "3");
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "after") + 2);
+
+    editor.commands.setTextSelection(positionOf(editor, "H3") + 1);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "A1"));
+
+    editor.commands.setTextSelection(positionOf(editor, "A2") + 1);
+    press(editor, "2");
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "A3") + 1);
+
+    editor.commands.setTextSelection(positionOf(editor, "H3") + 1);
+    press(editor, "v");
+    press(editor, "l");
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(positionOf(editor, "A1"));
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps h/l within the current Table logical row when whichwrap is disabled", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      keyConfig: mergeApplicationKeyConfig({ whichwrap: false }),
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "before" }],
+        },
+        tableFixture().content[0]!,
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "after" }],
+        },
+      ],
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    const h1Start = positionOf(editor, "H1");
+    editor.commands.setTextSelection(h1Start);
+    press(editor, "h");
+    expect(editor.state.selection.head).toBe(h1Start);
+
+    editor.commands.setTextSelection(positionOf(editor, "H2") + 1);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "H3"));
+
+    const h3End = positionOf(editor, "H3") + 1;
+    editor.commands.setTextSelection(h3End);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(h3End);
+
+    const b3End = positionOf(editor, "B3") + 1;
+    editor.commands.setTextSelection(b3End);
+    press(editor, "l");
+    expect(editor.state.selection.head).toBe(b3End);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("includes the final character of a rightmost Table Cell in Visual Char", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(tableFixture());
+    const finalCharacter = positionOf(editor, "B3") + 1;
+    editor.commands.focus();
+    press(editor, "Escape");
+    editor.commands.setTextSelection(finalCharacter);
+
+    press(editor, "v");
+    expect(editor.state.selection.from).toBe(finalCharacter);
+    expect(editor.state.selection.to).toBe(finalCharacter + 1);
+    expect(
+      root.querySelector(".memoka-visual-char-selected")?.textContent,
+    ).toBe("3");
+    press(editor, "y");
+    expect(adapter.vimSnapshot.register).toBe("text: 3");
 
     adapter.destroy();
     runtime.destroy();
@@ -265,7 +398,7 @@ describe("keyboard-first Table editing", () => {
     root.remove();
   });
 
-  it("treats an empty Cell as a w/b/e motion stop", async () => {
+  it("treats an empty Cell as an h/l/w/b/e motion stop", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");
     document.body.append(root);
@@ -286,6 +419,14 @@ describe("keyboard-first Table editing", () => {
 
     editor.commands.setTextSelection(positionOf(editor, "A1") + 1);
     press(editor, "e");
+    expect(currentCellText(editor)).toBe("");
+
+    editor.commands.setTextSelection(positionOf(editor, "A1") + 1);
+    press(editor, "l");
+    expect(currentCellText(editor)).toBe("");
+    press(editor, "l");
+    expect(currentCellText(editor)).toBe("A3");
+    press(editor, "h");
     expect(currentCellText(editor)).toBe("");
 
     adapter.destroy();
