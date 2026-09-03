@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-## [0.1.3] - 2026-09-03
+## [0.1.4] - 2026-09-03
 
 - Section titleの日本語IME確定が本文へ移動または二重入力される問題を修正。
 - `:q` / `:qa`による終了操作を追加。
@@ -13,6 +13,11 @@
 - `h/l`の論理行wrapを設定可能にし、Leader shortcutの名前空間を整理。
 - Window分割時に同方向の既存Windowを含めて均等配置するよう変更。
 - 先頭10件のTabPageに`1`〜`9`、`0`を表示し、`t1`〜`t9` / `t0`による直接移動を追加。
+- AppImage生成pluginを上流のversioned ReleaseとSHA-256へ固定し、可変な`continuous` assetによるbuild失敗を解消。
+
+## [0.1.3] - 2026-09-03
+
+- AppImage生成pluginの上流asset更新によりRelease draftのbuildが失敗したため、GitHub Releaseは未公開。
 
 ## [0.1.2] - 2026-08-31
 
@@ -39,7 +44,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/memoka-project/memoka/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/memoka-project/memoka/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/memoka-project/memoka/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/memoka-project/memoka/compare/v0.1.0...v0.1.1
