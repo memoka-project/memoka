@@ -1216,6 +1216,9 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     press(editor, "l");
     expect(adapter.vimSnapshot.mode).toBe("visual-char");
     expect(visualCharCursor(editor.view)).toBe(textPosition(editor, "one") + 3);
+    expect(
+      root.querySelector(".memoka-visual-char-selected")?.textContent,
+    ).toBe("one ");
 
     adapter.destroy();
     runtime.destroy();

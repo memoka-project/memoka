@@ -52,7 +52,10 @@ import {
   measureVimBlockCaretGeometry,
   measureVimInsertCaretGeometry,
 } from "./caret-geometry";
-import { createVisualLineDecorations } from "./decorations";
+import {
+  createVisualCharDecorations,
+  createVisualLineDecorations,
+} from "./decorations";
 import {
   beginVisualBlock,
   captureTableActionSelection,
@@ -341,11 +344,13 @@ export class ProductVimSession {
         key: pluginKey,
         props: {
           decorations: (state) =>
-            this.mode === "visual-line" && this.visualLine
-              ? createVisualLineDecorations(state, this.visualLine)
-              : this.mode === "visual-block"
-                ? createVisualBlockDecorations(state)
-                : null,
+            this.mode === "visual-char"
+              ? createVisualCharDecorations(state)
+              : this.mode === "visual-line" && this.visualLine
+                ? createVisualLineDecorations(state, this.visualLine)
+                : this.mode === "visual-block"
+                  ? createVisualBlockDecorations(state)
+                  : null,
           handleClick: (view, position, event) =>
             this.handleClick(view, position, event),
           handleDOMEvents: {

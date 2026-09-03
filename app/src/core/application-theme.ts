@@ -76,6 +76,9 @@ export interface ApplicationThemeTokens {
   readonly selectionBorder: string;
   readonly selectionText: string;
   readonly selectionMuted: string;
+  readonly modeNormal: string;
+  readonly modeInsert: string;
+  readonly modeVisual: string;
   readonly caretNormal: string;
   readonly caretNormalFill: string;
   readonly caretVisual: string;
@@ -426,6 +429,9 @@ function semanticTokens(
     selectionBorder: palette.bg4,
     selectionText: palette.fg0,
     selectionMuted: alpha(palette.blue, 0.55),
+    modeNormal: palette.blue,
+    modeInsert: palette.green,
+    modeVisual: palette.magenta,
     caretNormal: palette.fg0,
     caretNormalFill: alpha(palette.blue, 0.48),
     caretVisual: palette.yellow,

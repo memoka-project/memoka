@@ -10,6 +10,19 @@ import {
   type VimVisualLineState,
 } from "./editor-commands";
 
+export function createVisualCharDecorations(
+  state: EditorState,
+): DecorationSet | null {
+  const { selection } = state;
+  if (selection.empty || selection.from >= selection.to) return null;
+  return DecorationSet.create(state.doc, [
+    Decoration.inline(selection.from, selection.to, {
+      class: "memoka-visual-char-selected",
+      "data-vim-visual-char": "selected",
+    }),
+  ]);
+}
+
 export function createVisualLineDecorations(
   state: EditorState,
   visualLine: VimVisualLineState | null,

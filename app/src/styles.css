@@ -772,6 +772,20 @@ textarea {
   z-index: 3;
 }
 
+.memoka-visual-char-selected {
+  background: var(--memoka-color-selection);
+}
+
+/*
+ * WebKitGTK composites native selection colors with the page, which makes a
+ * dark theme's highlight darker than the requested color. Visual Char is
+ * painted by a ProseMirror decoration above, so leave only that exact surface.
+ */
+.memoka-editor[data-vim-mode="visual-char"]::selection,
+.memoka-editor[data-vim-mode="visual-char"] *::selection {
+  background-color: transparent;
+}
+
 .memoka-editor[data-vim-mode] {
   caret-color: transparent;
 }
@@ -845,6 +859,10 @@ textarea {
 
 .memoka-editor :is(ul, ol) > li + li {
   margin-top: 0.25em;
+}
+
+.memoka-editor :is(ul, ol) > li::marker {
+  color: var(--memoka-color-markup-raw);
 }
 
 .memoka-section-header {
@@ -2092,10 +2110,24 @@ textarea {
 
 .window-mode {
   color: var(--memoka-color-text-inverse);
-  background: var(--memoka-color-focus);
+  background: var(--memoka-color-mode-normal);
   padding: 2px 5px;
   flex: 0 0 auto;
   white-space: nowrap;
+}
+
+.editor-window[data-vim-mode="insert"] .window-mode,
+.editor-window[data-vim-mode="replace"] .window-mode {
+  background: var(--memoka-color-mode-insert);
+}
+
+.editor-window:is(
+    [data-vim-mode="visual-char"],
+    [data-vim-mode="visual-line"],
+    [data-vim-mode="visual-block"]
+  )
+  .window-mode {
+  background: var(--memoka-color-mode-visual);
 }
 
 .window-title {

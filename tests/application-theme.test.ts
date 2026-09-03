@@ -74,6 +74,9 @@ describe("Memoka application themes", () => {
         markupHeading4: theme.palette.green,
         markupHeading5: theme.palette.cyan,
         markupHeading6: theme.palette.blue,
+        modeNormal: theme.palette.blue,
+        modeInsert: theme.palette.green,
+        modeVisual: theme.palette.magenta,
       });
     }
   });
@@ -128,6 +131,18 @@ describe("Memoka application themes", () => {
     expect(css).toContain("var(--memoka-color-markup-strong)");
     expect(css).toContain("var(--memoka-color-markup-link-reference)");
     expect(css).toContain("var(--memoka-color-markup-heading-6)");
+    expect(css).toContain("var(--memoka-color-mode-normal)");
+    expect(css).toContain("var(--memoka-color-mode-insert)");
+    expect(css).toContain("var(--memoka-color-mode-visual)");
+    expect(css).toMatch(
+      /\.memoka-visual-char-selected\s*\{[\s\S]*?background: var\(--memoka-color-selection\)/u,
+    );
+    expect(css).toMatch(
+      /data-vim-mode="visual-char"[\s\S]*?::selection[\s\S]*?background-color: transparent/u,
+    );
+    expect(css).toMatch(
+      /\.memoka-editor :is\(ul, ol\) > li::marker\s*\{[\s\S]*?var\(--memoka-color-markup-raw\)/u,
+    );
     expect(css).toMatch(
       /:root\[data-memoka-theme-appearance="light"\][\s\S]*?-webkit-font-smoothing: antialiased;/u,
     );
