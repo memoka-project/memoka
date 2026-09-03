@@ -17,6 +17,16 @@ import { sanitizeLinuxAppDir } from "./sanitize-linux-appdir.mjs";
 const root = dirname(
   fileURLToPath(new URL("../package.json", import.meta.url)),
 );
+const preparationSource = await readFile(
+  join(root, "scripts", "prepare-linux-appimage-tools.mjs"),
+  "utf8",
+);
+assert.doesNotMatch(preparationSource, /releases\/download\/continuous\//u);
+assert.match(
+  preparationSource,
+  /releases\/download\/1-alpha-20250213-1\/linuxdeploy-plugin-appimage-x86_64\.AppImage/u,
+);
+
 const fixtureRoot = await mkdtemp(join(tmpdir(), "memoka-appdir-test-"));
 const appDir = join(fixtureRoot, "Memoka.AppDir");
 try {

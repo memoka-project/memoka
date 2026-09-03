@@ -34,10 +34,12 @@ const wrapperSource = join(
   "linux-appimage",
   "output-plugin-wrapper.sh",
 );
+// The upstream `continuous` release is replaced in place. Use a versioned
+// release so the URL and checksum describe one immutable build input.
 const pluginUrl =
-  "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage";
+  "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-x86_64.AppImage";
 const expectedSha256 =
-  "a45d3e227bc7f397e9cf6bfa4c9507494efa2293357b6e86690a3de2ca992e79";
+  "992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3";
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
