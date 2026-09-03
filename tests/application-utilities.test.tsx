@@ -32,6 +32,7 @@ import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 import {
   APPLICATION_FONT_CSS_VARIABLE,
+  APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
   type ApplicationZoomPort,
 } from "../app/src/platform/application-appearance";
 import { DEFAULT_APPLICATION_FONT_FAMILY } from "../app/src/core/application-appearance";
@@ -102,10 +103,16 @@ describe("Memoka Application utilities", () => {
     const saveTheme = vi.fn(async () => {});
     const saveFontFamily = vi.fn(async () => {});
     const saveZoomPercent = vi.fn(async () => {});
+    const saveNoteMaxWidthPx = vi.fn(async () => {});
     const view = render(
       <App
         initialTheme="nightfox"
-        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
         showDebugLine={false}
       />,
     );
@@ -152,10 +159,16 @@ describe("Memoka Application utilities", () => {
     const saveTheme = vi.fn(async () => {});
     const saveFontFamily = vi.fn(async () => {});
     const saveZoomPercent = vi.fn(async () => {});
+    const saveNoteMaxWidthPx = vi.fn(async () => {});
     const view = render(
       <App
         initialFontFamily={DEFAULT_APPLICATION_FONT_FAMILY}
-        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
         showDebugLine={false}
       />,
     );
@@ -198,11 +211,17 @@ describe("Memoka Application utilities", () => {
     const saveTheme = vi.fn(async () => {});
     const saveFontFamily = vi.fn(async () => {});
     const saveZoomPercent = vi.fn(async () => {});
+    const saveNoteMaxWidthPx = vi.fn(async () => {});
     const setZoomPercent = vi.fn(async () => {});
     const applicationZoom: ApplicationZoomPort = { setZoomPercent };
     const view = render(
       <App
-        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
         applicationZoom={applicationZoom}
         showDebugLine={false}
       />,
@@ -238,10 +257,16 @@ describe("Memoka Application utilities", () => {
     const saveZoomPercent = vi.fn(async () => {
       throw new Error("config write failed");
     });
+    const saveNoteMaxWidthPx = vi.fn(async () => {});
     const setZoomPercent = vi.fn(async () => {});
     const view = render(
       <App
-        applicationConfig={{ saveTheme, saveFontFamily, saveZoomPercent }}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
         applicationZoom={{ setZoomPercent }}
         showDebugLine={false}
       />,
@@ -257,6 +282,114 @@ describe("Memoka Application utilities", () => {
     expect(
       screen.getByText(/zoom · 変更を保存できませんでした/),
     ).not.toBeNull();
+    view.unmount();
+  });
+
+  it("changes, disables, validates, and persists the note canvas width", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {});
+    const saveNoteMaxWidthPx = vi.fn(async () => {});
+    const view = render(
+      <App
+        initialNoteMaxWidthPx={1000}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
+        showDebugLine={false}
+      />,
+    );
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
+      ),
+    ).toBe("1000px");
+
+    let command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "note-width" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    expect(screen.getByText(":note-width · 1000px")).not.toBeNull();
+    expect(saveNoteMaxWidthPx).not.toHaveBeenCalled();
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "note-width 1200" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() => expect(saveNoteMaxWidthPx).toHaveBeenCalledWith(1200));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
+      ),
+    ).toBe("1200px");
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "note-width off" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() => expect(saveNoteMaxWidthPx).toHaveBeenCalledWith(0));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
+      ),
+    ).toBe("none");
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "note-width 319" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    expect(saveNoteMaxWidthPx).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/offまたは320〜4096/)).not.toBeNull();
+    view.unmount();
+  });
+
+  it("rolls the note canvas width back when config persistence fails", async () => {
+    const saveTheme = vi.fn(async () => {});
+    const saveFontFamily = vi.fn(async () => {});
+    const saveZoomPercent = vi.fn(async () => {});
+    const saveNoteMaxWidthPx = vi.fn(async () => {
+      throw new Error("config write failed");
+    });
+    const view = render(
+      <App
+        initialNoteMaxWidthPx={1000}
+        applicationConfig={{
+          saveTheme,
+          saveFontFamily,
+          saveZoomPercent,
+          saveNoteMaxWidthPx,
+        }}
+        showDebugLine={false}
+      />,
+    );
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "note-width 900" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(
+        document.documentElement.style.getPropertyValue(
+          APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
+        ),
+      ).toBe("1000px");
+      expect(
+        screen.getByText(/note-width · 変更を保存できませんでした/),
+      ).not.toBeNull();
+    });
+    expect(saveNoteMaxWidthPx).toHaveBeenCalledWith(900);
     view.unmount();
   });
 

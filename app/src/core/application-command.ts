@@ -26,6 +26,7 @@ export type ApplicationCommandId =
   | "application.colorscheme"
   | "application.font"
   | "application.zoom"
+  | "application.note_width"
   | "application.quit"
   | "application.help";
 
@@ -190,6 +191,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "zoom",
     aliases: [],
     description: "現在のZoom倍率を表示、または50〜200%の範囲で変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_width",
+    name: "note-width",
+    aliases: [],
+    description: "ノートの最大表示幅を表示、変更、または解除する",
     argument: "optional",
   },
   {

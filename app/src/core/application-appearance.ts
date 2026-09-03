@@ -5,6 +5,10 @@ export const DEFAULT_APPLICATION_ZOOM_PERCENT = 100;
 export const MIN_APPLICATION_ZOOM_PERCENT = 50;
 export const MAX_APPLICATION_ZOOM_PERCENT = 200;
 export const APPLICATION_ZOOM_STEP_PERCENT = 10;
+export const DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX = 1000;
+export const DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX = 0;
+export const MIN_APPLICATION_NOTE_MAX_WIDTH_PX = 320;
+export const MAX_APPLICATION_NOTE_MAX_WIDTH_PX = 4096;
 
 export interface ApplicationFontDefinition {
   readonly id: string;
@@ -73,6 +77,17 @@ export function normalizeApplicationZoomPercent(value: number): number | null {
     value >= MIN_APPLICATION_ZOOM_PERCENT &&
     value <= MAX_APPLICATION_ZOOM_PERCENT &&
     value % APPLICATION_ZOOM_STEP_PERCENT === 0
+    ? value
+    : null;
+}
+
+export function normalizeApplicationNoteMaxWidthPx(
+  value: number,
+): number | null {
+  return Number.isSafeInteger(value) &&
+    (value === DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX ||
+      (value >= MIN_APPLICATION_NOTE_MAX_WIDTH_PX &&
+        value <= MAX_APPLICATION_NOTE_MAX_WIDTH_PX))
     ? value
     : null;
 }

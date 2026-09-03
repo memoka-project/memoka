@@ -12,8 +12,10 @@ import {
 } from "../core/application-theme";
 import {
   DEFAULT_APPLICATION_FONT_FAMILY,
+  DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
   normalizeApplicationFontFamily,
+  normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
 } from "../core/application-appearance";
 import { validateVimKeyConfig } from "../vim/input";
@@ -24,6 +26,7 @@ interface ApplicationKeyConfigLoadWire {
   readonly theme: string;
   readonly fontFamily: string;
   readonly zoomPercent: number;
+  readonly noteMaxWidthPx: number;
   readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
@@ -34,6 +37,7 @@ export interface LoadedApplicationConfig {
   readonly theme: ApplicationThemeId;
   readonly fontFamily: string;
   readonly zoomPercent: number;
+  readonly noteMaxWidthPx: number;
   readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
@@ -42,6 +46,7 @@ export interface ApplicationConfigPort {
   readonly saveTheme: (theme: ApplicationThemeId) => Promise<void>;
   readonly saveFontFamily: (fontFamily: string) => Promise<void>;
   readonly saveZoomPercent: (zoomPercent: number) => Promise<void>;
+  readonly saveNoteMaxWidthPx: (noteMaxWidthPx: number) => Promise<void>;
 }
 
 export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
@@ -58,6 +63,10 @@ export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
       if (!isTauriRuntime()) return;
       await invoke("application_zoom_percent_save", { zoomPercent });
     },
+    saveNoteMaxWidthPx: async (noteMaxWidthPx) => {
+      if (!isTauriRuntime()) return;
+      await invoke("application_note_max_width_px_save", { noteMaxWidthPx });
+    },
   };
 }
 
@@ -69,6 +78,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+      noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       waitForMirrorOnExit: true,
       warning: null,
     };
@@ -87,6 +97,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+      noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       waitForMirrorOnExit: true,
       warning,
     };
@@ -99,6 +110,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+      noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       waitForMirrorOnExit: true,
       warning: loaded.warning,
     };
@@ -119,12 +131,19 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     if (zoomPercent === null) {
       throw new Error(`不正なZoom倍率です: ${loaded.zoomPercent}%`);
     }
+    const noteMaxWidthPx = normalizeApplicationNoteMaxWidthPx(
+      loaded.noteMaxWidthPx,
+    );
+    if (noteMaxWidthPx === null) {
+      throw new Error(`不正なノート最大幅です: ${loaded.noteMaxWidthPx}px`);
+    }
     return {
       config,
       configPath: loaded.configPath,
       theme,
       fontFamily,
       zoomPercent,
+      noteMaxWidthPx,
       waitForMirrorOnExit: loaded.waitForMirrorOnExit,
       warning: loaded.warning,
     };
@@ -137,6 +156,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+      noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       waitForMirrorOnExit: true,
       warning,
     };

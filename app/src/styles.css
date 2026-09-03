@@ -4,6 +4,7 @@
     "Segoe UI", sans-serif;
   --memoka-font-monospace:
     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --memoka-note-max-width: 1000px;
 
   font-family: var(--memoka-font-family);
   color: var(--memoka-color-text);
@@ -658,9 +659,10 @@ textarea {
 .editor-root {
   position: relative;
   width: 100%;
-  min-width: 100%;
-  max-width: 100%;
+  min-width: 0;
+  max-width: var(--memoka-note-max-width);
   min-height: 100%;
+  margin-inline: auto;
 }
 
 .memoka-editor-host {

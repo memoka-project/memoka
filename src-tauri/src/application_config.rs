@@ -13,6 +13,10 @@ const DEFAULT_APPLICATION_ZOOM_PERCENT: u16 = 100;
 const MIN_APPLICATION_ZOOM_PERCENT: u16 = 50;
 const MAX_APPLICATION_ZOOM_PERCENT: u16 = 200;
 const APPLICATION_ZOOM_STEP_PERCENT: u16 = 10;
+const DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 1000;
+const DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 0;
+const MIN_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 320;
+const MAX_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 4096;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -59,6 +63,7 @@ struct ApplicationConfigFile {
     theme: Option<ApplicationTheme>,
     font_family: Option<String>,
     zoom_percent: Option<u16>,
+    note_max_width_px: Option<u16>,
     leader: Option<String>,
     vim: Option<VimConfigFile>,
     keymap: Option<KeymapConfigFile>,
@@ -105,6 +110,7 @@ pub struct ApplicationKeyConfigLoadResult {
     theme: ApplicationTheme,
     font_family: String,
     zoom_percent: u16,
+    note_max_width_px: u16,
     wait_for_mirror_on_exit: bool,
     warning: Option<String>,
 }
@@ -120,6 +126,7 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 theme: DEFAULT_APPLICATION_THEME,
                 font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
                 zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+                note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
                 wait_for_mirror_on_exit: true,
                 warning: Some(format!(
                     "config.toml: 設定ディレクトリを取得できません: {error}"
@@ -161,6 +168,19 @@ pub fn application_zoom_percent_save(app: AppHandle, zoom_percent: u16) -> Resul
     save_application_zoom_percent(&directory.join("config.toml"), zoom_percent)
 }
 
+#[tauri::command]
+pub fn application_note_max_width_px_save(
+    app: AppHandle,
+    note_max_width_px: u16,
+) -> Result<(), String> {
+    validate_application_note_max_width_px(note_max_width_px)?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_application_note_max_width_px(&directory.join("config.toml"), note_max_width_px)
+}
+
 fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     let config_path = path.display().to_string();
     if !path.exists() {
@@ -170,6 +190,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             theme: DEFAULT_APPLICATION_THEME,
             font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
             zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+            note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
             wait_for_mirror_on_exit: true,
             warning: None,
         };
@@ -205,6 +226,12 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     if let Err(error) = validate_application_zoom_percent(zoom_percent) {
         return warning_result(path, error);
     }
+    let note_max_width_px = parsed
+        .note_max_width_px
+        .unwrap_or(DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX);
+    if let Err(error) = validate_application_note_max_width_px(note_max_width_px) {
+        return warning_result(path, error);
+    }
     let mut keymap = parsed.keymap;
     let ignored_table_action_picker = keymap
         .as_mut()
@@ -231,6 +258,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         theme,
         font_family,
         zoom_percent,
+        note_max_width_px,
         wait_for_mirror_on_exit,
         warning,
     }
@@ -251,6 +279,13 @@ fn save_application_font_family(path: &Path, font_family: &str) -> Result<(), St
 fn save_application_zoom_percent(path: &Path, zoom_percent: u16) -> Result<(), String> {
     update_application_config(path, |document| {
         document["zoom_percent"] = value(i64::from(zoom_percent));
+    })
+}
+
+fn save_application_note_max_width_px(path: &Path, note_max_width_px: u16) -> Result<(), String> {
+    validate_application_note_max_width_px(note_max_width_px)?;
+    update_application_config(path, |document| {
+        document["note_max_width_px"] = value(i64::from(note_max_width_px));
     })
 }
 
@@ -332,6 +367,17 @@ fn validate_application_zoom_percent(value: u16) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_application_note_max_width_px(value: u16) -> Result<(), String> {
+    if value != DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
+        && !(MIN_APPLICATION_NOTE_MAX_WIDTH_PX..=MAX_APPLICATION_NOTE_MAX_WIDTH_PX).contains(&value)
+    {
+        return Err(format!(
+            "note_max_width_pxは0、または{MIN_APPLICATION_NOTE_MAX_WIDTH_PX}〜{MAX_APPLICATION_NOTE_MAX_WIDTH_PX}の整数で指定してください"
+        ));
+    }
+    Ok(())
+}
+
 fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult {
     ApplicationKeyConfigLoadResult {
         config_path: path.display().to_string(),
@@ -339,6 +385,7 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
         theme: DEFAULT_APPLICATION_THEME,
         font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
         zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
+        note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
         wait_for_mirror_on_exit: true,
         warning: Some(format!(
             "{}: {detail}; 既定設定を使用します",
@@ -350,8 +397,9 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_ZOOM_PERCENT,
-        load_application_key_config, save_application_font_family, save_application_theme,
+        ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+        DEFAULT_APPLICATION_ZOOM_PERCENT, load_application_key_config,
+        save_application_font_family, save_application_note_max_width_px, save_application_theme,
         save_application_zoom_percent,
     };
     use std::fs;
@@ -366,6 +414,10 @@ mod tests {
         assert_eq!(absent.theme, ApplicationTheme::Nightfox);
         assert_eq!(absent.font_family, DEFAULT_APPLICATION_FONT_FAMILY);
         assert_eq!(absent.zoom_percent, DEFAULT_APPLICATION_ZOOM_PERCENT);
+        assert_eq!(
+            absent.note_max_width_px,
+            DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX
+        );
         assert!(absent.warning.is_none());
         assert!(!missing.exists());
 
@@ -376,6 +428,7 @@ leader = ";"
 theme = "duskfox"
 font_family = 'Noto Sans CJK JP, sans-serif'
 zoom_percent = 120
+note_max_width_px = 960
 
 [vim]
 whichwrap = false
@@ -404,6 +457,7 @@ wait_for_mirror = false
         assert_eq!(loaded.theme, ApplicationTheme::Duskfox);
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
+        assert_eq!(loaded.note_max_width_px, 960);
         assert_eq!(config.whichwrap, Some(false));
         assert_eq!(
             config
@@ -453,6 +507,7 @@ wait_for_mirror = false
         save_application_theme(&path, ApplicationTheme::Dayfox).expect("save theme");
         save_application_font_family(&path, "Noto Serif CJK JP, serif").expect("save font family");
         save_application_zoom_percent(&path, 130).expect("save zoom");
+        save_application_note_max_width_px(&path, 880).expect("save note width");
         let updated = fs::read_to_string(&path).expect("read updated config");
         assert!(updated.contains("# personal config"));
         assert!(updated.contains("leader = \";\""));
@@ -460,10 +515,12 @@ wait_for_mirror = false
         assert!(updated.contains("theme = \"dayfox\""));
         assert!(updated.contains("font_family = \"Noto Serif CJK JP, serif\""));
         assert!(updated.contains("zoom_percent = 130"));
+        assert!(updated.contains("note_max_width_px = 880"));
         let loaded = load_application_key_config(&path);
         assert_eq!(loaded.theme, ApplicationTheme::Dayfox);
         assert_eq!(loaded.font_family, "Noto Serif CJK JP, serif");
         assert_eq!(loaded.zoom_percent, 130);
+        assert_eq!(loaded.note_max_width_px, 880);
         assert!(!loaded.wait_for_mirror_on_exit);
     }
 
@@ -497,7 +554,7 @@ wait_for_mirror = false
     }
 
     #[test]
-    fn rejects_invalid_font_and_zoom_settings() {
+    fn rejects_invalid_appearance_settings_and_accepts_unlimited_note_width() {
         let directory = tempdir().expect("tempdir");
         let path = directory.path().join("config.toml");
         fs::write(&path, "font_family = \"sans-serif; color: red\"\n").expect("write invalid font");
@@ -519,5 +576,20 @@ wait_for_mirror = false
                 .expect("zoom warning")
                 .contains("zoom_percent")
         );
+
+        fs::write(&path, "note_max_width_px = 319\n").expect("write invalid note width");
+        let invalid_note_width = load_application_key_config(&path);
+        assert!(invalid_note_width.config.is_none());
+        assert!(
+            invalid_note_width
+                .warning
+                .expect("note width warning")
+                .contains("note_max_width_px")
+        );
+
+        fs::write(&path, "note_max_width_px = 0\n").expect("write unlimited note width");
+        let unlimited_note_width = load_application_key_config(&path);
+        assert_eq!(unlimited_note_width.note_max_width_px, 0);
+        assert!(unlimited_note_width.warning.is_none());
     }
 }

@@ -9,6 +9,7 @@ import {
 import { applyApplicationTheme } from "./platform/application-theme";
 import {
   applyApplicationFont,
+  applyApplicationNoteMaxWidth,
   createDefaultApplicationZoomPort,
 } from "./platform/application-appearance";
 import "./styles.css";
@@ -23,11 +24,13 @@ void loadApplicationConfig().then(
     theme,
     fontFamily,
     zoomPercent,
+    noteMaxWidthPx,
     waitForMirrorOnExit,
     warning,
   }) => {
     applyApplicationTheme(document.documentElement, theme);
     applyApplicationFont(document.documentElement, fontFamily);
+    applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
     let appliedZoomPercent = zoomPercent;
     let startupWarning = warning;
     try {
@@ -44,6 +47,7 @@ void loadApplicationConfig().then(
         initialTheme={theme}
         initialFontFamily={fontFamily}
         initialZoomPercent={appliedZoomPercent}
+        initialNoteMaxWidthPx={noteMaxWidthPx}
         keyConfig={config}
         keyConfigWarning={startupWarning}
         waitForMirrorOnExit={waitForMirrorOnExit}

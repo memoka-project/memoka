@@ -1,9 +1,13 @@
 import {
+  DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX,
+  normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationFontFamily,
   normalizeApplicationZoomPercent,
 } from "../core/application-appearance";
 
 export const APPLICATION_FONT_CSS_VARIABLE = "--memoka-font-family";
+export const APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE =
+  "--memoka-note-max-width";
 
 export interface ApplicationZoomPort {
   readonly setZoomPercent: (zoomPercent: number) => Promise<void>;
@@ -17,6 +21,22 @@ export function applyApplicationFont(
   if (!normalized) throw new Error(`不正なfont-familyです: ${fontFamily}`);
   target.style.setProperty(APPLICATION_FONT_CSS_VARIABLE, normalized);
   target.style.fontFamily = normalized;
+}
+
+export function applyApplicationNoteMaxWidth(
+  target: HTMLElement,
+  noteMaxWidthPx: number,
+): void {
+  const normalized = normalizeApplicationNoteMaxWidthPx(noteMaxWidthPx);
+  if (normalized === null) {
+    throw new Error(`不正なノート最大幅です: ${noteMaxWidthPx}px`);
+  }
+  target.style.setProperty(
+    APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
+    normalized === DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
+      ? "none"
+      : `${normalized}px`,
+  );
 }
 
 export function refreshApplicationLayout(): void {

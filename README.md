@@ -136,12 +136,14 @@ corepack pnpm tauri:build
 `:font`はプリセットまたは任意のCSS `font-family`をライブプレビューして選択します。通常のUIと本文へ
 適用され、コード、行番号、Command-line、デバッグ情報は等幅フォントを維持します。Zoomは
 `Ctrl+=` / `Ctrl++`、`Ctrl+-`、`Ctrl+0`で変更・リセットでき、`:zoom 120`のような直接指定もできます。
-フォントとZoomもWorkspaceには依存しません。
+ノートの最大表示幅は`:note-width 1200`のようにCSS pxで指定できます。既定は`1000`で、
+`:note-width off`または`0`で上限を解除します。フォント、Zoom、ノート幅はWorkspaceには依存しません。
 
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
 font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
 zoom_percent = 110 # 50〜200、10%刻み
+note_max_width_px = 1000 # 320〜4096、0は上限なし
 
 [vim]
 whichwrap = true # Normal/Visual Charのh/lで前後の論理行へ移動
@@ -153,6 +155,10 @@ wait_for_mirror = false
 `whichwrap`は全blockで共通です。`false`にすると`h/l`は現在の論理行端で停止します。Tableでは
 同じ論理行に属するCell間は引き続き移動できますが、前後のTable行やTable外へは移動しません。
 既定値は`true`です。
+
+`note_max_width_px`は行番号gutter、本文padding、すべてのblockを含むノートキャンバス全体の
+最大幅です。Windowがそれより広いときは中央寄せになり、狭いときはWindow幅に追従します。
+`:note-width`だけを実行すると現在値を表示します。表とコードブロックの水平スクロールは従来どおりです。
 
 終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
 次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。

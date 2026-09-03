@@ -72,8 +72,13 @@ import {
 import {
   APPLICATION_ZOOM_STEP_PERCENT,
   DEFAULT_APPLICATION_FONT_FAMILY,
+  DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
+  DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX,
+  MAX_APPLICATION_NOTE_MAX_WIDTH_PX,
+  MIN_APPLICATION_NOTE_MAX_WIDTH_PX,
   clampApplicationZoomPercent,
+  normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
 } from "./core/application-appearance";
 import type { TiptapEditorAdapter } from "./editor/tiptap-adapter";
@@ -139,6 +144,7 @@ import {
 import { applyApplicationTheme } from "./platform/application-theme";
 import {
   applyApplicationFont,
+  applyApplicationNoteMaxWidth,
   createDefaultApplicationZoomPort,
   refreshApplicationLayout,
   type ApplicationZoomPort,
@@ -148,6 +154,7 @@ export interface AppProps {
   initialTheme?: ApplicationThemeId;
   initialFontFamily?: string;
   initialZoomPercent?: number;
+  initialNoteMaxWidthPx?: number;
   applicationConfig?: ApplicationConfigPort;
   applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
@@ -168,6 +175,7 @@ export function App({
   initialTheme = DEFAULT_APPLICATION_THEME_ID,
   initialFontFamily = DEFAULT_APPLICATION_FONT_FAMILY,
   initialZoomPercent = DEFAULT_APPLICATION_ZOOM_PERCENT,
+  initialNoteMaxWidthPx = DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   applicationConfig: applicationConfigOverride,
   applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
@@ -193,6 +201,7 @@ export function App({
   const [themeId, setThemeId] = useState<ApplicationThemeId>(initialTheme);
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
   const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
+  const [noteMaxWidthPx, setNoteMaxWidthPx] = useState(initialNoteMaxWidthPx);
   const [defaultApplicationZoom] = useState(createDefaultApplicationZoomPort);
   const applicationZoom = applicationZoomOverride ?? defaultApplicationZoom;
   const [defaultDesktopWindow] = useState(createDefaultDesktopWindowPort);
@@ -268,6 +277,9 @@ export function App({
   const zoomPercentRef = useRef(initialZoomPercent);
   const persistedZoomPercent = useRef(initialZoomPercent);
   const zoomRequestGeneration = useRef(0);
+  const noteMaxWidthPxRef = useRef(initialNoteMaxWidthPx);
+  const persistedNoteMaxWidthPx = useRef(initialNoteMaxWidthPx);
+  const noteMaxWidthRequestGeneration = useRef(0);
   const appRoot = useRef<HTMLElement>(null);
   const applicationActiveRef = useRef(true);
   const requestedEditorFocus = useRef<string | null>(null);
@@ -287,6 +299,10 @@ export function App({
     applyApplicationFont(document.documentElement, fontFamily);
     refreshApplicationLayout();
   }, [fontFamily]);
+  useLayoutEffect(() => {
+    applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
+    refreshApplicationLayout();
+  }, [noteMaxWidthPx]);
 
   const changeApplicationZoom = useCallback(
     async (requestedZoomPercent: number): Promise<void> => {
@@ -331,6 +347,43 @@ export function App({
       }
     },
     [applicationConfig, applicationZoom],
+  );
+
+  const changeApplicationNoteMaxWidth = useCallback(
+    async (requestedNoteMaxWidthPx: number): Promise<void> => {
+      const requested = normalizeApplicationNoteMaxWidthPx(
+        requestedNoteMaxWidthPx,
+      );
+      if (requested === null) {
+        setCommandMessage(
+          `:note-width · offまたは${MIN_APPLICATION_NOTE_MAX_WIDTH_PX}〜${MAX_APPLICATION_NOTE_MAX_WIDTH_PX}の整数で指定してください: ${requestedNoteMaxWidthPx}`,
+        );
+        return;
+      }
+      if (requested === noteMaxWidthPxRef.current) {
+        setCommandMessage(`:note-width · ${noteMaxWidthLabel(requested)}`);
+        return;
+      }
+
+      const generation = ++noteMaxWidthRequestGeneration.current;
+      noteMaxWidthPxRef.current = requested;
+      setNoteMaxWidthPx(requested);
+      setCommandMessage(`:note-width · ${noteMaxWidthLabel(requested)}`);
+      try {
+        await applicationConfig.saveNoteMaxWidthPx(requested);
+        if (generation !== noteMaxWidthRequestGeneration.current) return;
+        persistedNoteMaxWidthPx.current = requested;
+      } catch (cause) {
+        if (generation !== noteMaxWidthRequestGeneration.current) return;
+        const fallback = persistedNoteMaxWidthPx.current;
+        noteMaxWidthPxRef.current = fallback;
+        setNoteMaxWidthPx(fallback);
+        setCommandMessage(
+          `:note-width · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig],
   );
 
   useEffect(() => {
@@ -2081,6 +2134,35 @@ export function App({
         queueMicrotask(restoreFocus);
         return;
       }
+      case "application.note_width": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(
+            `:note-width · ${noteMaxWidthLabel(noteMaxWidthPx)}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const parsed =
+          argument.toLocaleLowerCase() === "off"
+            ? DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
+            : /^\d+$/u.test(argument)
+              ? Number(argument)
+              : Number.NaN;
+        const requested = normalizeApplicationNoteMaxWidthPx(parsed);
+        if (requested === null) {
+          setCommandMessage(
+            `:note-width · offまたは${MIN_APPLICATION_NOTE_MAX_WIDTH_PX}〜${MAX_APPLICATION_NOTE_MAX_WIDTH_PX}の整数で指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeApplicationNoteMaxWidth(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
       case "application.quit":
         void requestApplicationShutdown();
         return;
@@ -3193,6 +3275,12 @@ function EditorWindow({
       </div>
     </article>
   );
+}
+
+function noteMaxWidthLabel(noteMaxWidthPx: number): string {
+  return noteMaxWidthPx === DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
+    ? "off"
+    : `${noteMaxWidthPx}px`;
 }
 
 function applicationZoomShortcutTarget(
