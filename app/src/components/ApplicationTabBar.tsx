@@ -5,6 +5,7 @@ import {
   type BufferState,
   type TabPageState,
 } from "../core/application-state";
+import { tabShortcutKeyAtIndex } from "../core/tab-shortcuts";
 import type { DesktopWindowPort } from "../platform/desktop-window";
 import {
   ApplicationWindowControls,
@@ -33,15 +34,19 @@ export function ApplicationTabBar({
     <nav className="application-tab-bar" aria-label="タブページ">
       <div className="application-tab-strip">
         <div className="application-tab-list" role="tablist">
-          {state.tabs.map((tab) => {
+          {state.tabs.map((tab, index) => {
             const active = tab.id === state.activeTabId;
             const windowCount = listTabWindowIds(state, tab.id).length;
             const label = tabLabel(tab, state, notes);
+            const shortcutKey = tabShortcutKeyAtIndex(index);
             return (
               <div
                 key={tab.id}
                 className={`application-tab${active ? " application-tab--active" : ""}`}
                 data-tab-id={tab.id}
+                data-tab-shortcut={
+                  shortcutKey === null ? undefined : `t${shortcutKey}`
+                }
               >
                 <button
                   type="button"
@@ -49,9 +54,12 @@ export function ApplicationTabBar({
                   role="tab"
                   aria-selected={active}
                   tabIndex={active ? 0 : -1}
-                  title={`${label} · ${windowCount} Window`}
+                  title={`${shortcutKey === null ? "" : `t${shortcutKey} · `}${label} · ${windowCount} Window`}
                   onClick={() => onSwitch(tab.id)}
                 >
+                  {shortcutKey !== null && (
+                    <span className="application-tab-index">{shortcutKey}</span>
+                  )}
                   <span className="application-tab-title">{label}</span>
                   {windowCount > 1 && (
                     <span className="application-tab-window-count">

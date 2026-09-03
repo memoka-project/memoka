@@ -156,6 +156,8 @@ textarea {
 
 .application-tab-bar {
   --application-tab-create-width: 38px;
+  --application-tab-default-width: 240px;
+  --application-tab-maximum-width: 280px;
   --application-window-control-width: 46px;
   --application-window-minimum-drag-width: calc(
     var(--application-window-control-width) +
@@ -190,9 +192,10 @@ textarea {
 
 .application-tab {
   display: flex;
-  flex: 0 1 240px;
+  flex: 0 1 var(--application-tab-default-width);
+  width: var(--application-tab-default-width);
   min-width: 0;
-  max-width: 280px;
+  max-width: var(--application-tab-maximum-width);
   overflow: hidden;
   border-right: 1px solid var(--memoka-color-border);
   color: var(--memoka-color-text-subtle);
@@ -237,6 +240,14 @@ textarea {
   color: var(--memoka-color-text-subtle);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 10px;
+}
+
+.application-tab-index {
+  flex: 0 0 auto;
+  color: var(--memoka-color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .application-tab-title {

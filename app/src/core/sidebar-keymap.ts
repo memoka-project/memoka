@@ -9,6 +9,11 @@ import {
   type LeaderActiveCommandId,
   type LeaderShortcutResolution,
 } from "./leader-shortcuts";
+import {
+  TAB_DIRECT_COMMAND_IDS,
+  TAB_SHORTCUT_KEYS,
+  type TabDirectCommandId,
+} from "./tab-shortcuts";
 
 export type SidebarCommandId =
   | LeaderActiveCommandId
@@ -21,7 +26,8 @@ export type SidebarCommandId =
   | "tab.create"
   | "tab.close"
   | "tab.next"
-  | "tab.previous";
+  | "tab.previous"
+  | TabDirectCommandId;
 
 export const SIDEBAR_COMMAND_IDS: readonly SidebarCommandId[] = [
   "application.command_line",
@@ -42,6 +48,7 @@ export const SIDEBAR_COMMAND_IDS: readonly SidebarCommandId[] = [
   "tab.close",
   "tab.next",
   "tab.previous",
+  ...TAB_DIRECT_COMMAND_IDS,
 ];
 
 export const sidebarKeymap = new DeclarativeKeymap<
@@ -109,6 +116,11 @@ export const sidebarKeymap = new DeclarativeKeymap<
       sequence: "td",
       command: "tab.close",
     },
+    ...TAB_SHORTCUT_KEYS.map((key) => ({
+      context: "sidebar.normal" as const,
+      sequence: `t${key}`,
+      command: `tab.select-${key}` as TabDirectCommandId,
+    })),
   ],
   SIDEBAR_COMMAND_IDS,
 );

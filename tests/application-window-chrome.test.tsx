@@ -1,10 +1,17 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../app/src/App";
+import { ApplicationTabBar } from "../app/src/components/ApplicationTabBar";
 import {
   ApplicationWindowControls,
   ApplicationWindowDragRegion,
 } from "../app/src/components/ApplicationWindowChrome";
+import {
+  createApplicationWindowState,
+  createTabPage,
+} from "../app/src/core/application-state";
 import type { DesktopWindowPort } from "../app/src/platform/desktop-window";
 
 function createDesktopWindowFixture() {
@@ -44,7 +51,11 @@ describe("custom application window chrome", () => {
     await screen.findByRole("button", { name: "Memokaを最小化" });
     fireEvent.click(screen.getByRole("button", { name: "新しいTabPage" }));
     await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(2));
-    expect(view.container.querySelector(".application-tab-index")).toBeNull();
+    expect(
+      [...view.container.querySelectorAll(".application-tab-index")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["1", "2"]);
 
     const tabClose = screen.getAllByRole("button", {
       name: /のTabPageを閉じる$/,
@@ -64,6 +75,53 @@ describe("custom application window chrome", () => {
     await waitFor(() => expect(fixture.port.close).toHaveBeenCalledOnce());
     view.unmount();
     expect(fixture.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("numbers only the first ten tabs and keeps the compact preferred width", () => {
+    let state = createApplicationWindowState({
+      applicationWindowId: "application-window-1",
+      tabId: "tab-1",
+      windowId: "window-1",
+    });
+    for (let index = 2; index <= 11; index += 1) {
+      state = createTabPage(state, {
+        tabId: `tab-${index}`,
+        windowId: `window-${index}`,
+      });
+    }
+    const view = render(
+      <ApplicationTabBar
+        state={state}
+        notes={[]}
+        onSwitch={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        desktopWindow={null}
+        onWindowControlError={vi.fn()}
+      />,
+    );
+
+    expect(
+      [...view.container.querySelectorAll(".application-tab-index")].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]);
+    const tabs = [
+      ...view.container.querySelectorAll<HTMLElement>(".application-tab"),
+    ];
+    expect(tabs[0]?.dataset.tabShortcut).toBe("t1");
+    expect(tabs[9]?.dataset.tabShortcut).toBe("t0");
+    expect(tabs[10]?.dataset.tabShortcut).toBeUndefined();
+
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(/--application-tab-default-width:\s*240px;/u);
+    expect(css).toMatch(/--application-tab-maximum-width:\s*280px;/u);
+    expect(css).toMatch(
+      /\.application-tab\s*\{[^}]*flex:\s*0 1 var\(--application-tab-default-width\);[^}]*width:\s*var\(--application-tab-default-width\);[^}]*min-width:\s*0;[^}]*max-width:\s*var\(--application-tab-maximum-width\);/su,
+    );
   });
 
   it("tracks maximize changes reported by the native window", async () => {

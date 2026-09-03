@@ -255,6 +255,7 @@ export function createMemokaHelpSectionSnapshot(
             [",t / ,o", "Tree・Outlineをトグル"],
             [",f / ,g / ,b", "Sectionタイトル・本文・読み込み済みBufferを検索"],
             ["gt / gT、tn / tp", "次・前のTabPageへ循環移動"],
+            ["t1〜t9 / t0", "1〜10番目のTabPageへ直接移動"],
             ["tc / td", "空のTabPageを作成／現在TabPageを閉じる"],
           ],
         ),

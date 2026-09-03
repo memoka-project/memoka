@@ -90,6 +90,12 @@ import {
   type LeftSidebarUtility,
   type SplitNode,
 } from "./core/application-state";
+import {
+  isTabDirectCommand,
+  tabDirectCommandForKey,
+  tabIndexForDirectCommand,
+  tabShortcutKeyAtIndex,
+} from "./core/tab-shortcuts";
 import type { VimApplicationCommand, VimWindowCommand } from "./vim/input";
 import { validateVimKeyConfig } from "./vim/input";
 import {
@@ -763,6 +769,20 @@ export function App({
               )
             ).windowId;
             break;
+          default: {
+            if (!isTabDirectCommand(command)) break;
+            const tabIndex = tabIndexForDirectCommand(command);
+            const applicationWindow = runtime.snapshot().applicationWindow;
+            const tab = applicationWindow.tabs[tabIndex];
+            if (!tab) {
+              const shortcutKey = tabShortcutKeyAtIndex(tabIndex);
+              throw new Error(
+                `t${shortcutKey ?? "?"} · ${tabIndex + 1}番目のTabPageはありません`,
+              );
+            }
+            targetWindowId = (await runtime.switchEditorTab(tab.id)).windowId;
+            break;
+          }
         }
         requestEditorFocus(targetWindowId);
         setCommandMessage(`${command} · ${targetWindowId}`);
@@ -2810,7 +2830,9 @@ function EmptyEditorWindow({
       return;
     }
     if (prefix === "tab") {
-      const command = EMPTY_WINDOW_TAB_COMMANDS[event.key];
+      const command =
+        EMPTY_WINDOW_TAB_COMMANDS[event.key] ??
+        tabDirectCommandForKey(event.key);
       setPrefix("");
       if (!command) return;
       event.preventDefault();

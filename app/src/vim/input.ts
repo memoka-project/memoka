@@ -11,6 +11,11 @@ import {
   resolveLeaderShortcut,
   type LeaderShortcutResolution,
 } from "../core/leader-shortcuts";
+import {
+  TAB_DIRECT_COMMAND_IDS,
+  TAB_SHORTCUT_KEYS,
+  type TabDirectCommandId,
+} from "../core/tab-shortcuts";
 
 export type VimMode =
   | "normal"
@@ -74,6 +79,7 @@ export const VIM_COMMANDS = [
   "tab.close",
   "tab.next",
   "tab.previous",
+  ...TAB_DIRECT_COMMAND_IDS,
   "motion.line-start",
   "motion.line-end",
   "motion.word-forward",
@@ -205,6 +211,13 @@ function modeBindings(
   }));
 }
 
+const defaultTabDirectBindings = Object.fromEntries(
+  TAB_SHORTCUT_KEYS.map((key) => [
+    `t${key}`,
+    `tab.select-${key}` as TabDirectCommandId,
+  ]),
+) as Readonly<Record<string, TabDirectCommandId>>;
+
 export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
   VimMode,
   VimCommand
@@ -237,6 +250,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     tn: "tab.next",
     tp: "tab.previous",
     td: "tab.close",
+    ...defaultTabDirectBindings,
     G: "cursor.document-end",
     "Ctrl+o": "navigation.jump-back",
     "Ctrl+i": "navigation.jump-forward",
@@ -1039,6 +1053,7 @@ const vimWindowCommands = new Set<VimCommand>([
   "tab.close",
   "tab.next",
   "tab.previous",
+  ...TAB_DIRECT_COMMAND_IDS,
 ]);
 
 export type VimWindowCommand =
@@ -1053,7 +1068,8 @@ export type VimWindowCommand =
   | "tab.create"
   | "tab.close"
   | "tab.next"
-  | "tab.previous";
+  | "tab.previous"
+  | TabDirectCommandId;
 
 export function isVimWindowCommand(
   command: VimCommand,

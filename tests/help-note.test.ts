@@ -57,6 +57,7 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("最初に覚える");
     expect(helpText).toContain("[count]j/k");
     expect(helpText).toContain("左右Sidebarを閉じる");
+    expect(helpText).toContain("t1〜t9 / t0");
     expect(helpText).toContain("Enter / Tabは無効");
     expect(helpText).toContain("Ctrl-t / Ctrl-d");
     expect(helpText).toContain("Root表示中はNoteDoc全体");

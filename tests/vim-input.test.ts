@@ -403,6 +403,9 @@ describe("Memoka Vim input grammar", () => {
       ["n", "tab.next"],
       ["p", "tab.previous"],
       ["d", "tab.close"],
+      ["1", "tab.select-1"],
+      ["9", "tab.select-9"],
+      ["0", "tab.select-0"],
     ] as const) {
       expect(
         advanceVimInput(tab.state, "normal", key, noteContext),

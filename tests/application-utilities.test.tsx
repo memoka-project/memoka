@@ -691,7 +691,33 @@ describe("Memoka Application utilities", () => {
       return empty;
     });
     fireEvent.keyDown(createdByTc, { key: "t", code: "KeyT" });
-    fireEvent.keyDown(createdByTc, { key: "d", code: "KeyD" });
+    fireEvent.keyDown(createdByTc, { key: "1", code: "Digit1" });
+    const firstTabEditorByNumber = await waitFor(() => {
+      expect(screen.getAllByRole("tab")[0]?.getAttribute("aria-selected")).toBe(
+        "true",
+      );
+      const editor = document.activeElement as HTMLElement;
+      if (!editor.classList.contains("memoka-editor")) {
+        throw new Error("t1 did not focus the first TabPage Editor");
+      }
+      return editor;
+    });
+    fireEvent.keyDown(firstTabEditorByNumber, { key: "t", code: "KeyT" });
+    fireEvent.keyDown(firstTabEditorByNumber, { key: "3", code: "Digit3" });
+    const returnedByT3 = await waitFor(() => {
+      expect(screen.getAllByRole("tab")[2]?.getAttribute("aria-selected")).toBe(
+        "true",
+      );
+      const empty = view.container.querySelector<HTMLElement>(
+        ".empty-editor-window",
+      );
+      if (!empty || document.activeElement !== empty) {
+        throw new Error("t3 did not focus the third TabPage Window");
+      }
+      return empty;
+    });
+    fireEvent.keyDown(returnedByT3, { key: "t", code: "KeyT" });
+    fireEvent.keyDown(returnedByT3, { key: "d", code: "KeyD" });
     const returnedAfterTd = await waitFor(() => {
       expect(screen.getAllByRole("tab")).toHaveLength(2);
       const empty = view.container.querySelector<HTMLElement>(
