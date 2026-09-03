@@ -25,6 +25,8 @@ import {
   validateApplicationWindowState,
   windowInDirection,
   type ApplicationWindowState,
+  type SplitDirection,
+  type SplitNode,
 } from "../app/src/core/application-state";
 import { createWindowViewState } from "../app/src/core/window-state";
 
@@ -38,6 +40,28 @@ function initialState(): ApplicationWindowState {
     windowId: "window-1",
     buffer: createNoteBuffer(NOTE_A),
   });
+}
+
+function windowSpansOnAxis(
+  node: SplitNode,
+  direction: SplitDirection,
+  start = 0,
+  end = 1,
+  spans = new Map<string, number>(),
+): Map<string, number> {
+  if (node.type === "leaf") {
+    spans.set(node.windowId, end - start);
+    return spans;
+  }
+  if (node.direction !== direction) {
+    windowSpansOnAxis(node.first, direction, start, end, spans);
+    windowSpansOnAxis(node.second, direction, start, end, spans);
+    return spans;
+  }
+  const boundary = start + (end - start) * node.ratio;
+  windowSpansOnAxis(node.first, direction, start, boundary, spans);
+  windowSpansOnAxis(node.second, direction, boundary, end, spans);
+  return spans;
 }
 
 describe("Memoka Application Window pure state", () => {
@@ -195,6 +219,94 @@ describe("Memoka Application Window pure state", () => {
       area: "window",
       windowId: "window-3",
     });
+  });
+
+  it.each(["vertical", "horizontal"] as const)(
+    "equalizes existing %s panes whenever another Window is split",
+    (direction) => {
+      let state = splitWindow(initialState(), {
+        targetWindowId: "window-1",
+        newWindowId: "window-2",
+        splitId: "split-1",
+        direction,
+      });
+      state = splitWindow(state, {
+        targetWindowId: "window-2",
+        newWindowId: "window-3",
+        splitId: "split-2",
+        direction,
+      });
+
+      let spans = windowSpansOnAxis(state.tabs[0]!.root, direction);
+      for (const windowId of ["window-1", "window-2", "window-3"]) {
+        expect(spans.get(windowId)).toBeCloseTo(1 / 3);
+      }
+
+      state = splitWindow(state, {
+        targetWindowId: "window-1",
+        newWindowId: "window-4",
+        splitId: "split-3",
+        direction,
+        placement: "before",
+      });
+
+      expect(listTabWindowIds(state)).toEqual([
+        "window-4",
+        "window-1",
+        "window-2",
+        "window-3",
+      ]);
+      spans = windowSpansOnAxis(state.tabs[0]!.root, direction);
+      for (const windowId of ["window-1", "window-2", "window-3", "window-4"]) {
+        expect(spans.get(windowId)).toBeCloseTo(1 / 4);
+      }
+      expect(() => validateApplicationWindowState(state)).not.toThrow();
+    },
+  );
+
+  it("does not equalize across an orthogonal split boundary", () => {
+    let state = splitWindow(initialState(), {
+      targetWindowId: "window-1",
+      newWindowId: "window-2",
+      splitId: "split-1",
+      direction: "vertical",
+    });
+    state = splitWindow(state, {
+      targetWindowId: "window-1",
+      newWindowId: "window-3",
+      splitId: "split-2",
+      direction: "horizontal",
+    });
+    const root = state.tabs[0]!.root;
+    if (root.type !== "split") throw new Error("Expected split root");
+    root.ratio = 0.4;
+
+    state = splitWindow(state, {
+      targetWindowId: "window-1",
+      newWindowId: "window-4",
+      splitId: "split-3",
+      direction: "vertical",
+    });
+
+    const nextRoot = state.tabs[0]!.root;
+    expect(nextRoot).toMatchObject({
+      type: "split",
+      id: "split-1",
+      direction: "vertical",
+      ratio: 0.4,
+      first: {
+        type: "split",
+        id: "split-2",
+        direction: "horizontal",
+        first: {
+          type: "split",
+          id: "split-3",
+          direction: "vertical",
+          ratio: 0.5,
+        },
+      },
+    });
+    expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
 
   it("finds directional neighbours from split geometry without consulting DOM order", () => {

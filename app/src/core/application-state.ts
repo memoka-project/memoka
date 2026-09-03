@@ -304,7 +304,11 @@ export function splitWindow(
     first: input.placement === "before" ? newLeaf : targetLeaf,
     second: input.placement === "before" ? targetLeaf : newLeaf,
   };
-  tab.root = replaceWindowLeaf(tab.root, input.targetWindowId, replacement);
+  tab.root = rebalanceSplitComponentContainingSplit(
+    replaceWindowLeaf(tab.root, input.targetWindowId, replacement),
+    input.splitId,
+    input.direction,
+  );
   tab.activeWindowId = input.newWindowId;
   next.windows[input.newWindowId] = {
     id: input.newWindowId,
@@ -1171,6 +1175,73 @@ function replaceWindowLeaf(
     first: replaceWindowLeaf(node.first, targetWindowId, replacement),
     second: replaceWindowLeaf(node.second, targetWindowId, replacement),
   };
+}
+
+interface SplitRebalanceResult {
+  node: SplitNode;
+  connected: boolean;
+}
+
+/**
+ * Equalize only the maximal same-direction split component created around the
+ * target Window. An orthogonal split is a layout boundary: a vertical group
+ * nested in one row must not resize an unrelated vertical group above it.
+ */
+function rebalanceSplitComponentContainingSplit(
+  node: SplitNode,
+  targetSplitId: string,
+  direction: SplitDirection,
+): SplitNode {
+  const visit = (current: SplitNode): SplitRebalanceResult => {
+    if (current.type === "leaf") {
+      return { node: current, connected: false };
+    }
+
+    const first = visit(current.first);
+    const second = visit(current.second);
+    const connected =
+      current.id === targetSplitId ||
+      (current.direction === direction &&
+        (first.connected || second.connected));
+    const next: SplitNode = {
+      ...current,
+      first: first.node,
+      second: second.node,
+    };
+    return {
+      node: connected
+        ? equalizeSameDirectionSplitComponent(next, direction)
+        : next,
+      connected,
+    };
+  };
+
+  return visit(node).node;
+}
+
+function equalizeSameDirectionSplitComponent(
+  node: SplitNode,
+  direction: SplitDirection,
+): SplitNode {
+  if (node.type !== "split" || node.direction !== direction) return node;
+  const firstPaneCount = sameDirectionPaneCount(node.first, direction);
+  const secondPaneCount = sameDirectionPaneCount(node.second, direction);
+  return {
+    ...node,
+    ratio: firstPaneCount / (firstPaneCount + secondPaneCount),
+    first: equalizeSameDirectionSplitComponent(node.first, direction),
+    second: equalizeSameDirectionSplitComponent(node.second, direction),
+  };
+}
+
+function sameDirectionPaneCount(
+  node: SplitNode,
+  direction: SplitDirection,
+): number {
+  return node.type === "split" && node.direction === direction
+    ? sameDirectionPaneCount(node.first, direction) +
+        sameDirectionPaneCount(node.second, direction)
+    : 1;
 }
 
 function removeWindowLeaf(
