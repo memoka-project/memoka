@@ -419,8 +419,6 @@ interface BodyChunkViewportState {
   readonly decorations: DecorationSet;
 }
 
-const MAX_ACTIVE_BODY_CHUNKS = 6;
-const MAX_VIEWPORT_BODY_CHUNKS = 3;
 const BODY_CHUNK_VIEWPORT_MARGIN_PX = 640;
 const bodyChunkViewportKey = new PluginKey<BodyChunkViewportState>(
   "memokaBodyChunkViewport",
@@ -460,6 +458,7 @@ function bodyChunkViewportState(
   visibleChunkIds: readonly string[],
 ): BodyChunkViewportState {
   const entries = bodyChunkEntries(state.doc);
+  const entryIds = new Set(entries.map((entry) => entry.chunkId));
   const required = new Set<string>();
   const headIndex = nearestBodyChunkIndex(entries, state.selection.head);
   const anchorIndex = nearestBodyChunkIndex(entries, state.selection.anchor);
@@ -468,10 +467,7 @@ function bodyChunkViewportState(
     if (entry) required.add(entry.chunkId);
   }
   for (const chunkId of visibleChunkIds) {
-    if (required.size >= MAX_ACTIVE_BODY_CHUNKS) break;
-    if (entries.some((entry) => entry.chunkId === chunkId)) {
-      required.add(chunkId);
-    }
+    if (entryIds.has(chunkId)) required.add(chunkId);
   }
   const decorations: Decoration[] = [];
   for (const entry of entries) {
@@ -502,7 +498,9 @@ function bodyChunkIsActive(
 
 class BodyChunkViewportRegistry {
   readonly #elements = new Map<HTMLElement, string>();
-  readonly #visible = new Set<HTMLElement>();
+  readonly #elementsByChunkId = new Map<string, Set<HTMLElement>>();
+  readonly #intersecting = new Set<HTMLElement>();
+  readonly #visibleChunkIds = new Set<string>();
   #view: EditorView | null = null;
   #observer: IntersectionObserver | null = null;
   #frame: number | null = null;
@@ -518,14 +516,22 @@ class BodyChunkViewportRegistry {
         for (const entry of entries) {
           const element = entry.target;
           if (!(element instanceof HTMLElement)) continue;
-          if (!this.#elements.has(element)) continue;
+          const chunkId = this.#elements.get(element);
+          if (!chunkId) continue;
           if (entry.isIntersecting) {
-            if (!this.#visible.has(element)) {
-              this.#visible.add(element);
+            this.#intersecting.add(element);
+            if (!this.#visibleChunkIds.has(chunkId)) {
+              this.#visibleChunkIds.add(chunkId);
               visibilityChanged = true;
             }
-          } else if (this.#visible.delete(element)) {
-            visibilityChanged = true;
+          } else {
+            this.#intersecting.delete(element);
+            if (
+              !this.#hasIntersectingElement(chunkId) &&
+              this.#visibleChunkIds.delete(chunkId)
+            ) {
+              visibilityChanged = true;
+            }
           }
         }
         if (visibilityChanged) this.#schedule();
@@ -542,17 +548,26 @@ class BodyChunkViewportRegistry {
 
   register(element: HTMLElement, chunkId: string): () => void {
     this.#elements.set(element, chunkId);
+    const chunkElements = this.#elementsByChunkId.get(chunkId) ?? new Set();
+    chunkElements.add(element);
+    this.#elementsByChunkId.set(chunkId, chunkElements);
     this.#observer?.observe(element);
     return () => {
       this.#observer?.unobserve(element);
       this.#elements.delete(element);
-      this.#visible.delete(element);
+      chunkElements.delete(element);
+      if (chunkElements.size === 0) this.#elementsByChunkId.delete(chunkId);
+      this.#intersecting.delete(element);
       // Decoration changes replace a BodyChunk NodeView. The old visible DOM
       // is destroyed before IntersectionObserver reports the replacement.
       // Publishing in that gap would briefly remove the chunk from the
       // viewport set and alternate active/static rendering every frame. A
       // real viewport exit is reported by IntersectionObserver; document
       // removal is already filtered by bodyChunkViewportState.
+      queueMicrotask(() => {
+        if (this.#hasRegisteredElement(chunkId)) return;
+        if (this.#visibleChunkIds.delete(chunkId)) this.#schedule();
+      });
     };
   }
 
@@ -560,8 +575,20 @@ class BodyChunkViewportRegistry {
     if (this.#frame !== null) cancelAnimationFrame(this.#frame);
     this.#observer?.disconnect();
     this.#elements.clear();
-    this.#visible.clear();
+    this.#elementsByChunkId.clear();
+    this.#intersecting.clear();
+    this.#visibleChunkIds.clear();
     this.#view = null;
+  }
+
+  #hasRegisteredElement(chunkId: string): boolean {
+    return this.#elementsByChunkId.has(chunkId);
+  }
+
+  #hasIntersectingElement(chunkId: string): boolean {
+    return [...this.#intersecting].some(
+      (element) => this.#elements.get(element) === chunkId,
+    );
   }
 
   #schedule(): void {
@@ -575,63 +602,11 @@ class BodyChunkViewportRegistry {
   #publish(): void {
     const view = this.#view;
     if (!view || view.isDestroyed) return;
-    const viewport =
-      view.dom
-        .closest<HTMLElement>(".editor-scroll")
-        ?.getBoundingClientRect() ?? view.dom.getBoundingClientRect();
-    const previousVisibleIds = new Set(
-      this.#lastVisibleIds ? this.#lastVisibleIds.split("\u0000") : [],
-    );
-    const visibleChunkIds = [...this.#visible]
-      .filter((element) => this.#elements.has(element))
-      .map((element) => {
-        const id = this.#elements.get(element)!;
-        const rect = element.getBoundingClientRect();
-        const overlap = Math.max(
-          0,
-          Math.min(rect.bottom, viewport.bottom) -
-            Math.max(rect.top, viewport.top),
-        );
-        const distance =
-          overlap > 0
-            ? 0
-            : rect.bottom <= viewport.top
-              ? viewport.top - rect.bottom
-              : Math.max(0, rect.top - viewport.bottom);
-        return {
-          element,
-          id,
-          overlap,
-          distance,
-          wasVisible: previousVisibleIds.has(id),
-        };
-      })
-      .sort((left, right) => {
-        const leftInViewport = left.overlap > 0;
-        const rightInViewport = right.overlap > 0;
-        if (leftInViewport !== rightInViewport) {
-          return leftInViewport ? -1 : 1;
-        }
-        if (leftInViewport && left.wasVisible !== right.wasVisible) {
-          return left.wasVisible ? -1 : 1;
-        }
-        if (leftInViewport && left.overlap !== right.overlap) {
-          return right.overlap - left.overlap;
-        }
-        if (left.distance !== right.distance) {
-          return left.distance - right.distance;
-        }
-        if (left.wasVisible !== right.wasVisible) {
-          return left.wasVisible ? -1 : 1;
-        }
-        const relation = left.element.compareDocumentPosition(right.element);
-        if (relation & globalThis.Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-        if (relation & globalThis.Node.DOCUMENT_POSITION_PRECEDING) return 1;
-        return left.id.localeCompare(right.id);
-      })
-      .slice(0, MAX_VIEWPORT_BODY_CHUNKS)
-      .map(({ id }) => id)
-      .filter((chunkId, index, values) => values.indexOf(chunkId) === index);
+    // Every chunk reported inside the viewport margin must stay richly
+    // rendered. Capping this set lets a screen containing several short
+    // Sections expose the plain-text virtualization preview. Sorting makes
+    // the set comparison stable without forcing synchronous layout reads.
+    const visibleChunkIds = [...this.#visibleChunkIds].sort();
     const serialized = visibleChunkIds.join("\u0000");
     if (serialized === this.#lastVisibleIds) return;
     this.#lastVisibleIds = serialized;

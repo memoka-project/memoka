@@ -81,6 +81,91 @@ afterEach(() => {
 });
 
 describe("Vim logical-line gutter virtualization", () => {
+  it("keeps every BodyChunk inside the viewport margin richly rendered", async () => {
+    globalThis.IntersectionObserver =
+      ControlledIntersectionObserver as unknown as typeof IntersectionObserver;
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "Visible chunks",
+    });
+    const scroll = document.createElement("div");
+    scroll.className = "editor-scroll";
+    const root = document.createElement("div");
+    scroll.append(root);
+    document.body.append(scroll);
+    const attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+      scrollElement: scroll,
+    });
+    const chunkIds = Array.from({ length: 9 }, () => createUuidV7());
+    const blockIds = Array.from({ length: 9 }, () => createUuidV7());
+
+    try {
+      attached.editor.commands.setContent({
+        type: "section",
+        content: [
+          {
+            type: "sectionHeader",
+            attrs: { sectionId: runtime.noteId, tags: "[]" },
+            content: [{ type: "text", text: "Visible chunks" }],
+          },
+          {
+            type: "sectionBody",
+            content: chunkIds.map((chunkId, index) => ({
+              type: "bodyChunk",
+              attrs: { chunkId },
+              content: [
+                {
+                  type: "paragraph",
+                  attrs: { blockId: blockIds[index] },
+                  content: [{ type: "text", text: `chunk ${index}` }],
+                },
+              ],
+            })),
+          },
+          { type: "sectionChildren" },
+        ],
+      });
+      attached.editor.commands.setTextSelection(
+        blockPosition(attached.editor, blockIds[0]!) + 1,
+      );
+
+      const viewportObserver = ControlledIntersectionObserver.instances.find(
+        (observer) => observer.rootMargin === "640px 0px",
+      );
+      if (!viewportObserver) throw new Error("Expected BodyChunk observer");
+
+      // More than the former three-chunk viewport cap can be visible when a
+      // note contains several short Sections. None of them may fall back to
+      // the unformatted static preview while it is on screen.
+      for (const [offset, chunkId] of chunkIds.slice(2, 8).entries()) {
+        const chunk = root.querySelector<HTMLElement>(
+          `[data-body-chunk-id="${chunkId}"]`,
+        );
+        if (!chunk) throw new Error(`Expected BodyChunk ${chunkId}`);
+        vi.spyOn(chunk, "getBoundingClientRect").mockReturnValue(
+          new DOMRect(0, 80 + offset * 50, 800, 40),
+        );
+        viewportObserver.trigger(chunk);
+      }
+      await nextFrame();
+
+      for (const chunkId of chunkIds.slice(2, 8)) {
+        expect(
+          root.querySelector<HTMLElement>(`[data-body-chunk-id="${chunkId}"]`)
+            ?.dataset.bodyChunkVirtualized,
+        ).toBe("false");
+      }
+      expect(
+        root.querySelector<HTMLElement>(`[data-body-chunk-id="${chunkIds[8]}"]`)
+          ?.dataset.bodyChunkVirtualized,
+      ).toBe("true");
+    } finally {
+      attached.adapter.destroy();
+      runtime.destroy();
+      scroll.remove();
+    }
+  });
+
   it("reconnects line markers when a visible BodyChunk is remounted", async () => {
     globalThis.IntersectionObserver =
       ControlledIntersectionObserver as unknown as typeof IntersectionObserver;
