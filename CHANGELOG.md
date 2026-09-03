@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-03
+
+- Section titleの日本語IME確定が本文へ移動または二重入力される問題を修正。
+- `:q` / `:qa`による終了操作を追加。
+- Nightfox系color theme、構文要素の配色、mode表示、Visual選択、List markerの視認性を整備。
+- application全体のfontとzoom、中央寄せするNote最大幅を設定できるようにし、和欧混植とTableを含む文字表示を調整。
+- `h/l`の論理行wrapを設定可能にし、Leader shortcutの名前空間を整理。
+- Window分割時に同方向の既存Windowを含めて均等配置するよう変更。
+- 先頭10件のTabPageに`1`〜`9`、`0`を表示し、`t1`〜`t9` / `t0`による直接移動を追加。
+
 ## [0.1.2] - 2026-08-31
 
 - GFM Table向けのVisual Block、Cell移動、行列操作、alignment変更、Undo、`.` repeatを含むkeyboard-first編集を追加。
@@ -29,7 +39,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/memoka-project/memoka/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/memoka-project/memoka/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/memoka-project/memoka/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/memoka-project/memoka/releases/tag/v0.1.0
