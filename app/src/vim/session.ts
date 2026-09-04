@@ -33,6 +33,7 @@ import {
   runEditorInsertBoundaryDelete,
   runEditorInsertBackspace,
   runEditorInsertEnter,
+  runEditorListDepthShift,
   runEditorReplaceCharacter,
   runEditorReplaceText,
   runEditorTab,
@@ -1464,6 +1465,39 @@ export class ProductVimSession {
     if (command === "section.demote" || command === "section.promote") {
       event.preventDefault();
       const direction = command === "section.demote" ? "deeper" : "shallower";
+      const depthUndoManager = findUndoManager(view);
+      depthUndoManager?.stopCapturing();
+      // Preserve the established Section behavior when a mixed Visual range
+      // contains both a Section Header and ListItems. List depth applies when
+      // the range has no Section target.
+      const visualSectionRequest =
+        this.mode === "visual-line"
+          ? sectionDepthShiftSelection(
+              view,
+              this.mode,
+              resolution.count,
+              this.visualLine,
+            )
+          : null;
+      const listResult = visualSectionRequest
+        ? null
+        : runEditorListDepthShift(
+            view,
+            direction,
+            this.mode,
+            resolution.count,
+            this.mode === "visual-line" ? this.visualLine : null,
+          );
+      if (listResult) {
+        depthUndoManager?.stopCapturing();
+        if (this.mode === "visual-line") {
+          this.changeMode(view, "normal");
+        }
+        this.action = `${listResult.detail}:${listResult.handled ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
       const paragraphMode =
         this.mode === "insert" || this.mode === "normal" ? this.mode : null;
       if (paragraphMode === "insert") {
@@ -1512,12 +1546,14 @@ export class ProductVimSession {
           return true;
         }
       }
-      const request = sectionDepthShiftSelection(
-        view,
-        this.mode,
-        resolution.count,
-        this.mode === "visual-line" ? this.visualLine : null,
-      );
+      const request =
+        visualSectionRequest ??
+        sectionDepthShiftSelection(
+          view,
+          this.mode,
+          resolution.count,
+          this.mode === "visual-line" ? this.visualLine : null,
+        );
       if (!request) {
         this.action = `${command}:boundary`;
         this.emit();

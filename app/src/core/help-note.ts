@@ -285,13 +285,13 @@ export function createMemokaHelpSectionSnapshot(
             ],
             [
               rich(code("Ctrl-t")),
-              "Sectionを1段深くする",
-              "SectionタイトルではNormalの >>、直接本文Paragraphでは子Section化",
+              "Section / ListItemを1段深くする",
+              "SectionタイトルではNormalの >>、ListItemではindent、直接本文Paragraphでは子Section化",
             ],
             [
               rich(code("Ctrl-d")),
-              "Sectionを1段浅くする",
-              "SectionタイトルではNormalの <<、直接本文Paragraphでは兄弟Section化",
+              "Section / ListItemを1段浅くする",
+              "SectionタイトルではNormalの <<、ListItemではoutdent、直接本文Paragraphでは兄弟Section化",
             ],
             [
               rich(code("Ctrl-Enter")),
@@ -484,9 +484,9 @@ export function createMemokaHelpSectionSnapshot(
               "現在Sectionを展開／再帰展開／折り畳み／再帰折り畳み／切替／再帰切替",
             ],
             [
-              "Section階層",
+              "Section / List階層",
               rich(code(">> / <<"), "、Visual Lineの ", code("> / <")),
-              "Sectionタイトルを1段降格／昇格。直接本文ParagraphではSectionへ変換",
+              "SectionタイトルまたはListItemを1段降格／昇格。直接本文ParagraphではSectionへ変換",
             ],
           ],
         ),
@@ -609,7 +609,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "section-depth",
-            "Sectionタイトル上でNormalの>> / <<、InsertのCtrl-t / Ctrl-d、Visual Lineの> / <を使うと、表示順を変えずに階層を1段変更します。直接本文Paragraph上のNormal >> / <<とInsert Ctrl-t / Ctrl-dは、そのParagraphを子／兄弟Sectionへ変換します。",
+            "SectionタイトルまたはListItem上でNormalの>> / <<、InsertのCtrl-t / Ctrl-d、Visual Lineの> / <を使うと、表示順を変えず、適用できる選択行の階層を1段変更します。ListItemの親行をddまたはVisual Lineのdで削除しても、未選択の子Itemは削除せず同じ表示位置へ昇格します。直接本文Paragraph上のNormal >> / <<とInsert Ctrl-t / Ctrl-dは、そのParagraphを子／兄弟Sectionへ変換します。",
           ),
           listItem(
             "links",

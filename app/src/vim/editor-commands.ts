@@ -44,6 +44,13 @@ import {
   tableFromCellsRegister,
   type VimTableCellsRegister,
 } from "./table-editing";
+import {
+  deleteSelectedListItems,
+  listContainsSelectedItems,
+  selectedListItemsHaveUnselectedDescendants,
+  shiftSelectedListItemDepth,
+  type ListDepthDirection,
+} from "./list-structure";
 
 export type VimEditorView = Pick<
   EditorView,
@@ -113,6 +120,21 @@ export interface SectionParagraphConversionSelection {
   readonly caretOffset: number;
   readonly paragraphOffset: number;
   readonly caretPosition: number;
+}
+
+interface ListItemSelectionTarget {
+  readonly itemIds: ReadonlySet<string>;
+  readonly caretPosition: number;
+}
+
+interface PositionedListNode {
+  readonly position: number;
+  readonly node: ProseMirrorNode;
+}
+
+interface TextPositionBookmark {
+  readonly blockId: string;
+  readonly offset: number;
 }
 
 export interface EditorVimResult {
@@ -1796,6 +1818,219 @@ export function sectionParagraphConversionSelection(
   };
 }
 
+function listItemIdAtUnit(
+  view: Pick<VimEditorView, "state">,
+  unit: VimStructuralUnit | undefined,
+): string | null {
+  if (!unit || unit.kind !== "list-item") return null;
+  const item = view.state.doc.nodeAt(unit.from);
+  if (!item || !blockSemantics.hasBehavior(item.type.name, "list-item")) {
+    return null;
+  }
+  const blockId = item.attrs.blockId;
+  return typeof blockId === "string" && blockId ? blockId : null;
+}
+
+function listItemSelectionTarget(
+  view: VimEditorView,
+  mode: VimMode,
+  count: number,
+  visualLine: VimVisualLineState | null,
+): ListItemSelectionTarget | null {
+  const units = blockSemantics.visualLineUnits(view);
+  if (units.length === 0) return null;
+
+  let targetUnits: readonly VimStructuralUnit[];
+  let caretPosition: number;
+  if (mode === "visual-line" && visualLine) {
+    const first = Math.min(visualLine.anchorUnit, visualLine.headUnit);
+    const last = Math.max(visualLine.anchorUnit, visualLine.headUnit);
+    targetUnits = units.slice(first, last + 1);
+    caretPosition = visualLine.cursor;
+  } else {
+    const cursor = selectionCursor(view);
+    const currentIndex = blockSemantics.currentStructuralUnitIndex(
+      units,
+      cursor,
+    );
+    if (listItemIdAtUnit(view, units[currentIndex]) === null) return null;
+    targetUnits = units.slice(
+      currentIndex,
+      currentIndex + normalizedCount(count),
+    );
+    caretPosition = cursor;
+  }
+
+  const itemIds = new Set<string>();
+  for (const unit of targetUnits) {
+    const itemId = listItemIdAtUnit(view, unit);
+    if (itemId) itemIds.add(itemId);
+  }
+  return itemIds.size > 0 ? { itemIds, caretPosition } : null;
+}
+
+function selectedListRoots(
+  doc: ProseMirrorNode,
+  selectedItemIds: ReadonlySet<string>,
+): PositionedListNode[] {
+  const roots: PositionedListNode[] = [];
+  doc.descendants((node, position) => {
+    if (
+      (node.type.name === "bulletList" || node.type.name === "orderedList") &&
+      listContainsSelectedItems(node, selectedItemIds)
+    ) {
+      roots.push({ position, node });
+      return false;
+    }
+    return true;
+  });
+  return roots;
+}
+
+function captureTextPositionBookmark(
+  doc: ProseMirrorNode,
+  position: number,
+): TextPositionBookmark | null {
+  const bounded = Math.max(0, Math.min(position, doc.content.size));
+  const $position = doc.resolve(bounded);
+  for (let depth = $position.depth; depth > 0; depth -= 1) {
+    const node = $position.node(depth);
+    const blockId = node.attrs.blockId;
+    if (node.isTextblock && typeof blockId === "string" && blockId) {
+      return {
+        blockId,
+        offset: Math.max(
+          0,
+          Math.min(bounded - $position.start(depth), node.content.size),
+        ),
+      };
+    }
+  }
+  return null;
+}
+
+function resolveTextPositionBookmark(
+  doc: ProseMirrorNode,
+  bookmark: TextPositionBookmark | null,
+): number | null {
+  if (!bookmark) return null;
+  let result: number | null = null;
+  doc.descendants((node, position) => {
+    if (
+      result === null &&
+      node.isTextblock &&
+      node.attrs.blockId === bookmark.blockId
+    ) {
+      result = position + 1 + Math.min(bookmark.offset, node.content.size);
+      return false;
+    }
+    return result === null;
+  });
+  return result;
+}
+
+/** Applies Section-style depth keys to ListItems in document order. */
+export function runEditorListDepthShift(
+  view: VimEditorView,
+  direction: ListDepthDirection,
+  mode: VimMode,
+  count: number,
+  visualLine: VimVisualLineState | null,
+): EditorVimResult | null {
+  const target = listItemSelectionTarget(view, mode, count, visualLine);
+  if (!target) return null;
+  const detail = direction === "deeper" ? "list:indent" : "list:outdent";
+
+  // Keep the common single-row operation local. The schema-list commands
+  // touch only the affected siblings instead of replacing a potentially
+  // large outer List. Multi-row selections use the deterministic planner
+  // below so boundary rows can be skipped independently.
+  if (target.itemIds.size === 1) {
+    const units = blockSemantics.visualLineUnits(view);
+    const currentIndex = blockSemantics.currentStructuralUnitIndex(
+      units,
+      target.caretPosition,
+    );
+    const currentItemId = listItemIdAtUnit(view, units[currentIndex]);
+    const listItemType = blockSemantics.nearestAncestorType(view, "list-item");
+    if (currentItemId && target.itemIds.has(currentItemId) && listItemType) {
+      let listItemAncestorCount = 0;
+      const { $from } = view.state.selection;
+      for (let depth = $from.depth; depth > 0; depth -= 1) {
+        if (
+          blockSemantics.hasBehavior($from.node(depth).type.name, "list-item")
+        ) {
+          listItemAncestorCount += 1;
+        }
+      }
+      const handled =
+        direction === "shallower" && listItemAncestorCount < 2
+          ? false
+          : (direction === "deeper" ? sinkListItem : liftListItem)(
+              listItemType,
+            )(view.state, view.dispatch);
+      view.focus();
+      return { handled, detail };
+    }
+  }
+
+  const roots = selectedListRoots(view.state.doc, target.itemIds);
+  const bookmark = captureTextPositionBookmark(
+    view.state.doc,
+    target.caretPosition,
+  );
+  const transaction = view.state.tr;
+  let changed = false;
+  for (const root of [...roots].sort(
+    (left, right) => right.position - left.position,
+  )) {
+    const transformed = shiftSelectedListItemDepth(
+      root.node,
+      target.itemIds,
+      direction,
+    );
+    if (!transformed.changed || !transformed.node) continue;
+    transaction.replaceWith(
+      root.position,
+      root.position + root.node.nodeSize,
+      transformed.node,
+    );
+    changed = true;
+  }
+
+  if (!changed) {
+    view.focus();
+    return {
+      handled: false,
+      detail,
+    };
+  }
+
+  const bookmarkedPosition = resolveTextPositionBookmark(
+    transaction.doc,
+    bookmark,
+  );
+  const fallbackPosition = transaction.mapping.map(target.caretPosition, -1);
+  const caretPosition = Math.max(
+    0,
+    Math.min(
+      bookmarkedPosition ?? fallbackPosition,
+      transaction.doc.content.size,
+    ),
+  );
+  transaction.setSelection(
+    bookmarkedPosition === null
+      ? Selection.near(transaction.doc.resolve(caretPosition), 1)
+      : TextSelection.create(transaction.doc, caretPosition),
+  );
+  view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+  view.focus();
+  return {
+    handled: true,
+    detail,
+  };
+}
+
 /** Resolves Vim depth commands to Section Header IDs inside this mounted view. */
 export function sectionDepthShiftSelection(
   view: VimEditorView,
@@ -2554,6 +2789,111 @@ function deleteStructuralLine(
   );
 }
 
+function deleteSelectedListRowsPreservingDescendants(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+  register: VimRegister | null,
+  yanked: VimRegister | null,
+): EditorVimResult | null {
+  const units = blockSemantics.visualLineUnits(view);
+  const first = Math.min(visualLine.anchorUnit, visualLine.headUnit);
+  const last = Math.max(visualLine.anchorUnit, visualLine.headUnit);
+  const selectedUnits = units.slice(first, last + 1);
+  if (selectedUnits.length === 0) return null;
+
+  const selectedItemIds = new Set<string>();
+  for (const unit of selectedUnits) {
+    const itemId = listItemIdAtUnit(view, unit);
+    if (itemId) selectedItemIds.add(itemId);
+  }
+  if (selectedItemIds.size === 0) return null;
+  const roots = selectedListRoots(view.state.doc, selectedItemIds);
+  if (
+    !roots.some(({ node }) =>
+      selectedListItemsHaveUnselectedDescendants(node, selectedItemIds),
+    )
+  ) {
+    return null;
+  }
+
+  const transaction = view.state.tr;
+  let changed = false;
+  try {
+    const rootRanges = roots.map((root) => ({
+      from: root.position,
+      to: root.position + root.node.nodeSize,
+    }));
+    const nonListRanges = selectedUnits
+      .filter(
+        (unit) =>
+          unit.kind !== "list-item" &&
+          !rootRanges.some(
+            (range) => unit.from >= range.from && unit.to <= range.to,
+          ),
+      )
+      .map((unit) => ({ from: unit.from, to: unit.to }));
+    const operations: Array<
+      | { readonly kind: "list"; readonly root: PositionedListNode }
+      | { readonly kind: "delete"; readonly from: number; readonly to: number }
+    > = [
+      ...roots.map((root) => ({ kind: "list" as const, root })),
+      ...nonListRanges.map((range) => ({
+        kind: "delete" as const,
+        ...range,
+      })),
+    ];
+    operations.sort((left, right) => {
+      const leftPosition =
+        left.kind === "list" ? left.root.position : left.from;
+      const rightPosition =
+        right.kind === "list" ? right.root.position : right.from;
+      return rightPosition - leftPosition;
+    });
+
+    for (const operation of operations) {
+      if (operation.kind === "delete") {
+        transaction.deleteRange(operation.from, operation.to);
+        changed = true;
+        continue;
+      }
+      const { root } = operation;
+      const transformed = deleteSelectedListItems(root.node, selectedItemIds);
+      if (!transformed.changed) continue;
+      if (transformed.node) {
+        transaction.replaceWith(
+          root.position,
+          root.position + root.node.nodeSize,
+          transformed.node,
+        );
+      } else {
+        transaction.deleteRange(
+          root.position,
+          root.position + root.node.nodeSize,
+        );
+      }
+      changed = true;
+    }
+    if (!changed) return null;
+    const cursor = Math.max(
+      0,
+      Math.min(selectedUnits[0]!.from, transaction.doc.content.size),
+    );
+    transaction.setSelection(
+      Selection.near(transaction.doc.resolve(cursor), 1),
+    );
+    view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+    view.focus();
+    return {
+      handled: true,
+      detail: "structure:delete",
+      register: yanked ?? register ?? undefined,
+      nextMode: "normal",
+    };
+  } catch {
+    return null;
+  }
+}
+
 function deleteVisualLine(
   view: VimEditorView,
   visualLine: VimVisualLineState,
@@ -2603,13 +2943,23 @@ function deleteVisualLine(
     }
   }
   const units = blockSemantics.visualLineUnits(view);
+  const yanked = visualLineRegister(view, visualLine);
+  if (nextMode === "normal") {
+    const preserved = deleteSelectedListRowsPreservingDescendants(
+      view,
+      visualLine,
+      register,
+      yanked,
+    );
+    if (preserved) return preserved;
+  }
   return deleteLineUnits(
     view,
     visualLine,
     register,
     nextMode,
     units,
-    registerForUnits(view, visualLine, units),
+    yanked,
     expandDeletionToValidStructure,
   );
 }

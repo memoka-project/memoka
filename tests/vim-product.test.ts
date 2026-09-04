@@ -4628,6 +4628,320 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     root.remove();
   });
 
+  it("deletes only selected ListItem rows and promotes unselected descendants", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-09-05T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "before item" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "parent item" }],
+                },
+                {
+                  type: "bulletList",
+                  content: [
+                    {
+                      type: "listItem",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "first child" }],
+                        },
+                      ],
+                    },
+                    {
+                      type: "listItem",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "second child" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "after item" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "parent item"));
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    await runtime.flush();
+
+    const listText = () => {
+      const list = editor.state.doc.firstChild;
+      return Array.from(
+        { length: list?.childCount ?? 0 },
+        (_, index) => list?.child(index).textContent,
+      );
+    };
+    expect(listText()).toEqual([
+      "before item",
+      "first child",
+      "second child",
+      "after item",
+    ]);
+    expect(adapter.vimSnapshot.register).toBe("ListItem: parent item");
+
+    press(editor, "u");
+    await runtime.flush();
+    expect(listText()).toEqual([
+      "before item",
+      "parent itemfirst childsecond child",
+      "after item",
+    ]);
+
+    editor.commands.setTextSelection(textPosition(editor, "parent item"));
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "d");
+    await runtime.flush();
+    expect(listText()).toEqual(["before item", "second child", "after item"]);
+    expect(adapter.vimSnapshot.register).toBe(
+      "ListItem: parent item first child",
+    );
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "intro paragraph" }],
+        },
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "mixed parent" }],
+                },
+                {
+                  type: "bulletList",
+                  content: ["mixed first", "mixed second"].map((text) => ({
+                    type: "listItem",
+                    content: [
+                      {
+                        type: "paragraph",
+                        content: [{ type: "text", text }],
+                      },
+                    ],
+                  })),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "intro paragraph"));
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "d");
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.type.name).toBe("bulletList");
+    expect(editor.state.doc.firstChild?.childCount).toBe(2);
+    expect(editor.state.doc.firstChild?.child(0).textContent).toBe(
+      "mixed first",
+    );
+    expect(editor.state.doc.firstChild?.child(1).textContent).toBe(
+      "mixed second",
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("changes ListItem depth with Normal, Visual Line, and Insert keys", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-09-05T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const flatList = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: ["first", "second", "third", "fourth"].map((text) => ({
+            type: "listItem",
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text }],
+              },
+            ],
+          })),
+        },
+      ],
+    };
+    editor.commands.setContent(flatList);
+    editor.commands.setTextSelection(textPosition(editor, "second"));
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    press(editor, ">");
+    press(editor, ">");
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.childCount).toBe(3);
+    expect(editor.state.doc.firstChild?.firstChild?.textContent).toBe(
+      "firstsecond",
+    );
+    expect(adapter.vimSnapshot.action).toBe("list:indent:changed");
+
+    press(editor, "<");
+    press(editor, "<");
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.childCount).toBe(4);
+    expect(editor.state.doc.firstChild?.child(1).textContent).toBe("second");
+    expect(adapter.vimSnapshot.action).toBe("list:outdent:changed");
+
+    press(editor, "i");
+    press(editor, "t", { ctrlKey: true });
+    await runtime.flush();
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+    expect(editor.state.doc.firstChild?.childCount).toBe(3);
+    press(editor, "d", { ctrlKey: true });
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.childCount).toBe(4);
+    expect(editor.state.doc.firstChild?.child(1).textContent).toBe("second");
+
+    press(editor, "Escape");
+    editor.commands.setTextSelection(textPosition(editor, "second"));
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, ">");
+    await runtime.flush();
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+    const outer = editor.state.doc.firstChild;
+    expect(outer?.childCount).toBe(2);
+    expect(outer?.firstChild?.textContent).toBe("firstsecondthird");
+    expect(outer?.child(1).textContent).toBe("fourth");
+
+    editor.commands.setTextSelection(textPosition(editor, "second"));
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "<");
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.childCount).toBe(4);
+    expect(
+      Array.from(
+        { length: editor.state.doc.firstChild?.childCount ?? 0 },
+        (_, index) => editor.state.doc.firstChild?.child(index).textContent,
+      ),
+    ).toEqual(["first", "second", "third", "fourth"]);
+
+    editor.commands.setTextSelection(textPosition(editor, "first"));
+    press(editor, "2");
+    press(editor, ">");
+    press(editor, ">");
+    await runtime.flush();
+    expect(editor.state.doc.firstChild?.childCount).toBe(3);
+    expect(editor.state.doc.firstChild?.firstChild?.textContent).toBe(
+      "firstsecond",
+    );
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "parent" }],
+                },
+                {
+                  type: "bulletList",
+                  content: ["earlier child", "lifted child", "later child"].map(
+                    (text) => ({
+                      type: "listItem",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text }],
+                        },
+                      ],
+                    }),
+                  ),
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "after" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "lifted child"));
+    press(editor, "<");
+    press(editor, "<");
+    await runtime.flush();
+    const reordered = editor.state.doc.firstChild;
+    expect(reordered?.childCount).toBe(3);
+    expect(reordered?.child(0).firstChild?.textContent).toBe("parent");
+    expect(reordered?.child(0).child(1).textContent).toBe("earlier child");
+    expect(reordered?.child(1).firstChild?.textContent).toBe("lifted child");
+    expect(reordered?.child(1).child(1).textContent).toBe("later child");
+    expect(reordered?.child(2).textContent).toBe("after");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it("preserves a numbered-list container while yanking and putting a ListItem", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
