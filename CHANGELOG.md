@@ -6,7 +6,7 @@
 
 ## [0.1.6] - 2026-09-05
 
-- 空のNote／Section title表示を深さに応じたplaceholder色へ整え、Sectionを同階層へ貼り付ける構造操作を修正。
+- 空のNote／Section title表示を深さに応じたplaceholder色へ整え、巨大Noteではtitle用走査をSection構造だけに限定。Sectionを同階層へ貼り付ける構造操作も修正。
 - 行番号の表示下限、Section／List／Code Block／Tableの共通indent幅、Replace modeの表示を設定可能にし、layout guideを整理。
 - Normal modeの`W` / `B` / `E`と、単語motionを含む設定可能な`whichwrap`を追加。
 - Obsidian形式の`==highlight==`とGitHub／Obsidian Alertの貼り付け、編集、表示に対応。

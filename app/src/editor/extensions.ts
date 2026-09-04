@@ -66,6 +66,7 @@ import {
 import { SectionTitleCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
 import {
+  deriveEditorSectionFoldEntries,
   SectionFolding,
   sectionFoldCollapsedSectionIds,
 } from "./section-folding";
@@ -1878,12 +1879,12 @@ function sectionTitlePlaceholders(noteId: string): Extension {
           props: {
             decorations(state) {
               const decorations: Decoration[] = [];
-              state.doc.descendants((node, position) => {
-                if (node.type.name !== SECTION_HEADER_NODE) return true;
-                if (node.content.size === 0) {
-                  const rootTitle = node.attrs.sectionId === noteId;
+              for (const entry of deriveEditorSectionFoldEntries(state.doc)) {
+                const header = state.doc.nodeAt(entry.headerFrom);
+                if (header?.content.size === 0) {
+                  const rootTitle = entry.sectionId === noteId;
                   decorations.push(
-                    Decoration.node(position, position + node.nodeSize, {
+                    Decoration.node(entry.headerFrom, entry.headerTo, {
                       [rootTitle
                         ? "data-note-title-placeholder"
                         : "data-section-title-placeholder"]: rootTitle
@@ -1892,8 +1893,7 @@ function sectionTitlePlaceholders(noteId: string): Extension {
                     }),
                   );
                 }
-                return false;
-              });
+              }
               return decorations.length > 0
                 ? DecorationSet.create(state.doc, decorations)
                 : DecorationSet.empty;
