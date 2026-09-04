@@ -321,6 +321,38 @@ export function segmentVimWordCharacters(
   return result;
 }
 
+/**
+ * Classifies cursor characters into Vim WORD units.
+ *
+ * Unlike the configurable lowercase word semantics, a WORD is simply one
+ * consecutive run of non-whitespace characters. Caller-provided structural
+ * boundaries still split runs so separate Cells and inline structures do not
+ * accidentally become one WORD merely because their document positions are
+ * adjacent in the flattened cursor model.
+ */
+export function segmentVimWORDCharacters(
+  characters: readonly string[],
+  hardBoundaryBefore: readonly boolean[] = [],
+): Array<VimWordSegment | null> {
+  const result: Array<VimWordSegment | null> = Array.from(
+    { length: characters.length },
+    () => null,
+  );
+  let group = -1;
+  let insideWord = false;
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] ?? "";
+    if (!character || WHITESPACE.test(character)) {
+      insideWord = false;
+      continue;
+    }
+    if (!insideWord || hardBoundaryBefore[index]) group += 1;
+    result[index] = `WORD:${group}`;
+    insideWord = true;
+  }
+  return result;
+}
+
 const JAPANESE_TYPOGRAPHIC_EDGE =
   /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}、。，．・：；？！…‥〜～「」『』（）［］｛｝〈〉《》【】〔〕〖〗〘〙〚〛]/u;
 

@@ -316,7 +316,7 @@ export function createMemokaHelpSectionSnapshot(
             code("d / y / c + motion"),
             "と",
             code("iw / aw"),
-            "は同じ単語境界を使います。既定のfineはBudouX文節を基礎に、長い文節を最大10書記素程度の均等な単位へ細分化し、文字種境界と禁則を優先します。budouxは文節をそのまま使い、unicodeは従来の漢字・ひらがな・カタカナ・英数字classを使います。明示的な空白とblock・Cellなどの構造境界は常に分割します。日本語を含まない文字列、および8,192 UTF-16 code unitを超える単一論理行ではUnicode class分類へフォールバックします。",
+            "は同じ単語境界を使います。既定のfineはBudouX文節を基礎に、長い文節を最大10書記素程度の均等な単位へ細分化し、文字種境界と禁則を優先します。budouxは文節をそのまま使い、unicodeは従来の漢字・ひらがな・カタカナ・英数字classを使います。明示的な空白とblock・Cellなどの構造境界は常に分割します。日本語を含まない文字列、および8,192 UTF-16 code unitを超える単一論理行ではUnicode class分類へフォールバックします。大文字のW / B / Eはこの設定に関係なく、空白で区切られたVimのWORDを使います。",
           ),
         ),
         paragraph(
@@ -391,6 +391,11 @@ export function createMemokaHelpSectionSnapshot(
               "単語移動",
               rich(code("w / b / e")),
               "次・前・末尾の単語境界へ移動。日本語の分類はInsert mode章を参照",
+            ],
+            [
+              "WORD移動",
+              rich(code("W / B / E")),
+              "空白で区切られたWORDの次・前・末尾へ移動。論理行端越えはwhichwrapで設定",
             ],
             ["行内移動", rich(code("0 / $")), "論理行の先頭・末尾へ移動"],
             [
@@ -517,8 +522,8 @@ export function createMemokaHelpSectionSnapshot(
             ],
             [
               "Normal",
-              "w / b / e",
-              "同じ行のword境界を移動。空Cellも1つの停止位置",
+              "w / b / e、W / B / E",
+              "word／空白区切りWORDを移動。Cell境界と空Cellも1つの停止位置。whichwrap有効時は前後行へ続く",
             ],
             [
               "Normal",
@@ -634,7 +639,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[japanese]のword_segmentationはfine / budoux / unicode、line_break_segmentationはfine / budoux / nativeから選びます。:word-segmentationと:line-break-segmentationでも現在値の確認と即時変更・保存ができます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_px、行番号を省略するWindow幅はline_number_min_width_px、SectionとListで共通のインデント幅はindent_width_pxで指定します。不正な設定は全体を無効にして既定値へ戻します。",
+            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormalのh/l/w/b/e/W/B/EとVisual Charのh/l/w/b/eが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[japanese]のword_segmentationはfine / budoux / unicode、line_break_segmentationはfine / budoux / nativeから選びます。:word-segmentationと:line-break-segmentationでも現在値の確認と即時変更・保存ができます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_px、行番号を省略するWindow幅はline_number_min_width_px、SectionとListで共通のインデント幅はindent_width_pxで指定します。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "color-theme",

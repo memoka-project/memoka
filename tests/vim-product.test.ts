@@ -1107,6 +1107,28 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       );
       press(editor, "l");
       expect(editor.state.selection.head).toBe(textPosition(editor, to));
+
+      for (const key of ["w", "W"]) {
+        editor.commands.setTextSelection(
+          textPosition(editor, from) + from.length - 1,
+        );
+        press(editor, key);
+        expect(editor.state.selection.head).toBe(textPosition(editor, to));
+      }
+      for (const key of ["e", "E"]) {
+        editor.commands.setTextSelection(
+          textPosition(editor, from) + from.length - 1,
+        );
+        press(editor, key);
+        expect(editor.state.selection.head).toBe(
+          textPosition(editor, to) + to.length - 1,
+        );
+      }
+      for (const key of ["b", "B"]) {
+        editor.commands.setTextSelection(textPosition(editor, to));
+        press(editor, key);
+        expect(editor.state.selection.head).toBe(textPosition(editor, from));
+      }
     }
 
     editor.commands.setTextSelection(textPosition(editor, "hotel"));
@@ -1159,6 +1181,17 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     press(editor, "h");
     expect(editor.state.selection.head).toBe(bravoStart);
 
+    for (const key of ["w", "e", "W", "E"]) {
+      editor.commands.setTextSelection(alphaEnd);
+      press(editor, key);
+      expect(editor.state.selection.head).toBe(alphaEnd);
+    }
+    for (const key of ["b", "B"]) {
+      editor.commands.setTextSelection(bravoStart);
+      press(editor, key);
+      expect(editor.state.selection.head).toBe(bravoStart);
+    }
+
     editor.commands.setTextSelection(alphaEnd);
     press(editor, "v");
     const selectionBefore = {
@@ -1170,6 +1203,70 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       from: editor.state.selection.from,
       to: editor.state.selection.to,
     }).toEqual(selectionBefore);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("moves by Vim WORD units and wraps word motions across logical lines", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: ["alpha,beta", "charlie delta"].map((text) => ({
+        type: "paragraph",
+        content: [{ type: "text", text }],
+      })),
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    const alphaStart = textPosition(editor, "alpha");
+    const betaStart = textPosition(editor, "beta");
+    const betaEnd = betaStart + "beta".length - 1;
+    const charlieStart = textPosition(editor, "charlie");
+    const charlieEnd = charlieStart + "charlie".length - 1;
+
+    editor.commands.setTextSelection(alphaStart);
+    press(editor, "w");
+    expect(editor.state.selection.head).toBe(betaStart);
+
+    editor.commands.setTextSelection(alphaStart);
+    press(editor, "W");
+    expect(editor.state.selection.head).toBe(charlieStart);
+    press(editor, "B");
+    expect(editor.state.selection.head).toBe(alphaStart);
+
+    editor.commands.setTextSelection(alphaStart);
+    press(editor, "E");
+    expect(editor.state.selection.head).toBe(betaEnd);
+    press(editor, "E");
+    expect(editor.state.selection.head).toBe(charlieEnd);
+
+    editor.commands.setTextSelection(betaEnd);
+    press(editor, "w");
+    expect(editor.state.selection.head).toBe(charlieStart);
+    press(editor, "b");
+    expect(editor.state.selection.head).toBe(betaStart);
+
+    editor.commands.setTextSelection(betaEnd);
+    press(editor, "e");
+    expect(editor.state.selection.head).toBe(charlieEnd);
+
+    editor.commands.setTextSelection(betaEnd);
+    press(editor, "v");
+    press(editor, "w");
+    expect(visualCharCursor(editor.view)).toBe(charlieStart);
+
+    press(editor, "Escape");
+    editor.commands.setContent("<p>alpha,beta gamma</p>");
+    editor.commands.setTextSelection(textPosition(editor, "alpha"));
+    press(editor, "d");
+    press(editor, "W");
+    expect(editor.getText()).toBe("gamma");
 
     adapter.destroy();
     runtime.destroy();

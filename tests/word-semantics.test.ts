@@ -4,6 +4,7 @@ import {
   MAX_BUDOUX_TEXT_LENGTH,
   japanesePhraseBoundaries,
   normalizedJoinSeparator,
+  segmentVimWORDCharacters,
   segmentVimWordCharacters,
 } from "../app/src/vim/word-semantics";
 import {
@@ -24,6 +25,13 @@ function starts(values: readonly (string | null)[]): number[] {
   return values.flatMap((value, index) =>
     value !== null && value !== values[index - 1] ? [index] : [],
   );
+}
+
+function WORDSegments(
+  value: string,
+  hardBoundaryBefore: readonly boolean[] = [],
+) {
+  return segmentVimWORDCharacters(Array.from(value), hardBoundaryBefore);
 }
 
 describe("Japanese text semantics", () => {
@@ -72,6 +80,17 @@ describe("Japanese text semantics", () => {
 
     const divided = segments("日本語文章", [false, false, false, true]);
     expect(divided[2]).not.toBe(divided[3]);
+  });
+
+  it("treats each non-whitespace run as one Vim WORD", () => {
+    expect(starts(WORDSegments("日本語,alpha beta"))).toEqual([0, 10]);
+    expect(new Set(WORDSegments("日本語,alpha")).size).toBe(1);
+
+    const divided = WORDSegments(
+      "日本語,alpha beta",
+      Array.from("日本語,alpha beta").map((_, index) => index === 4),
+    );
+    expect(starts(divided)).toEqual([0, 4, 10]);
   });
 
   it("retains Unicode-class words for non-Japanese and oversized text", () => {

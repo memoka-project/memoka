@@ -132,6 +132,7 @@ describe("Memoka Vim input grammar", () => {
     ["2dw", "delete", "motion.word-forward", 2],
     ["d2w", "delete", "motion.word-forward", 2],
     ["2d3w", "delete", "motion.word-forward", 6],
+    ["2dW", "delete", "motion.big-word-forward", 2],
     ["d2iw", "delete", "text-object.inner-word", 2],
     ["2d3aw", "delete", "text-object.around-word", 6],
     ["d2ap", "delete", "text-object.around-paragraph", 2],
@@ -168,6 +169,13 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("normal", "w", noteContext)).toBe("motion.word-forward");
     expect(resolveKey("normal", "b", noteContext)).toBe("motion.word-backward");
     expect(resolveKey("normal", "e", noteContext)).toBe("motion.word-end");
+    expect(resolveKey("normal", "W", noteContext)).toBe(
+      "motion.big-word-forward",
+    );
+    expect(resolveKey("normal", "B", noteContext)).toBe(
+      "motion.big-word-backward",
+    );
+    expect(resolveKey("normal", "E", noteContext)).toBe("motion.big-word-end");
   });
 
   it("maps gv in Normal and every Visual mode without taking Insert input", () => {
@@ -654,6 +662,9 @@ describe("Memoka Vim input grammar", () => {
   it.each([
     ["d", "delete", "w", "motion.word-forward"],
     ["y", "yank", "e", "motion.word-end"],
+    ["d", "delete", "W", "motion.big-word-forward"],
+    ["y", "yank", "E", "motion.big-word-end"],
+    ["c", "change", "B", "motion.big-word-backward"],
     ["c", "change", "$", "motion.line-end"],
     ["d", "delete", "j", "cursor.logical-down"],
     ["y", "yank", "k", "cursor.logical-up"],

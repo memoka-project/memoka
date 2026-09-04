@@ -89,6 +89,9 @@ export const VIM_COMMANDS = [
   "motion.word-forward",
   "motion.word-backward",
   "motion.word-end",
+  "motion.big-word-forward",
+  "motion.big-word-backward",
+  "motion.big-word-end",
   "text-object.inner-word",
   "text-object.around-word",
   "text-object.inner-paragraph",
@@ -280,6 +283,9 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     w: "motion.word-forward",
     b: "motion.word-backward",
     e: "motion.word-end",
+    W: "motion.big-word-forward",
+    B: "motion.big-word-backward",
+    E: "motion.big-word-end",
     d: "operator.delete",
     y: "operator.yank",
     c: "operator.change",
@@ -419,6 +425,9 @@ const operatorMotions: Partial<Record<string, VimCommand>> = {
   w: "motion.word-forward",
   b: "motion.word-backward",
   e: "motion.word-end",
+  W: "motion.big-word-forward",
+  B: "motion.big-word-backward",
+  E: "motion.big-word-end",
 };
 
 const modifierOnlyKeys = new Set([

@@ -151,7 +151,7 @@ line_number_min_width_px = 480 # 240〜4096、0は狭いWindowでも常に表示
 indent_width_px = 24 # 16〜64、SectionとListに共通の1階層の幅
 
 [vim]
-whichwrap = true # Normal/Visual Charのh/lで前後の論理行へ移動
+whichwrap = true # h/l/w/b/e/W/B/Eで前後の論理行へ移動
 
 [japanese]
 word_segmentation = "fine" # fine/budoux/unicode
@@ -161,9 +161,9 @@ line_break_segmentation = "fine" # fine/budoux/native
 wait_for_mirror = false
 ```
 
-`whichwrap`は全blockで共通です。`false`にすると`h/l`は現在の論理行端で停止します。Tableでは
-同じ論理行に属するCell間は引き続き移動できますが、前後のTable行やTable外へは移動しません。
-既定値は`true`です。
+`whichwrap`は全blockで共通です。`false`にするとNormalの`h/l/w/b/e/W/B/E`とVisual Charの
+`h/l/w/b/e`は現在の論理行端で停止します。Tableでは同じ論理行に属するCell間は引き続き
+移動できますが、前後のTable行やTable外へは移動しません。既定値は`true`です。
 
 `note_max_width_px`は行番号gutter、本文padding、すべてのblockを含むノートキャンバス全体の
 最大幅です。Windowがそれより広いときは中央寄せになり、狭いときはWindow幅に追従します。

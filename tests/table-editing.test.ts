@@ -254,6 +254,14 @@ describe("keyboard-first Table editing", () => {
     press(editor, "l");
     expect(editor.state.selection.head).toBe(positionOf(editor, "A1"));
 
+    editor.commands.setTextSelection(positionOf(editor, "H3") + 1);
+    press(editor, "W");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "A1"));
+
+    editor.commands.setTextSelection(positionOf(editor, "A1"));
+    press(editor, "B");
+    expect(editor.state.selection.head).toBe(positionOf(editor, "H3"));
+
     editor.commands.setTextSelection(positionOf(editor, "A2") + 1);
     press(editor, "2");
     press(editor, "l");
@@ -306,6 +314,9 @@ describe("keyboard-first Table editing", () => {
     const h3End = positionOf(editor, "H3") + 1;
     editor.commands.setTextSelection(h3End);
     press(editor, "l");
+    expect(editor.state.selection.head).toBe(h3End);
+    editor.commands.setTextSelection(h3End);
+    press(editor, "W");
     expect(editor.state.selection.head).toBe(h3End);
 
     const b3End = positionOf(editor, "B3") + 1;
