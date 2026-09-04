@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-04
+
+- 巨大Noteで表示範囲のrich textが素のtextへ切り替わる問題を修正。
+- Insert modeの`Ctrl-c` / `Ctrl-h` / `Ctrl-j` / `Ctrl-m` / `Ctrl-u` / `Ctrl-w`と、Section深さを変更する`Ctrl-t` / `Ctrl-d`を追加。
+- Paragraph上の`>>` / `<<`によるSection化・昇格と、直前のVisual選択を復元する`gv`を追加。
+- 日本語の禁則処理と`w` / `b` / `e`の分割粒度を、表示用・操作用に個別設定できるよう変更。
+- Normal modeでIMEがONのまま押された最初のcommand keyを保持し、IMEをOFFにしてからVim commandとして処理するnative連携を追加。
+
 ## [0.1.4] - 2026-09-03
 
 - Section titleの日本語IME確定が本文へ移動または二重入力される問題を修正。
@@ -44,7 +52,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/memoka-project/memoka/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/memoka-project/memoka/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/memoka-project/memoka/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/memoka-project/memoka/compare/v0.1.1...v0.1.2
