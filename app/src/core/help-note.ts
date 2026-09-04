@@ -234,6 +234,7 @@ export function createMemokaHelpSectionSnapshot(
               "を優先します。",
               code("Esc / Ctrl-c"),
               "はまず変換を終了し、その後の入力でNormal modeへ戻ります。",
+              "Normal modeでIMEがONのままコマンドキーを押した場合は、IMEを自動的にOFFにして、その同じキーをNormal commandとして処理します。",
             ),
           ),
           listItem(

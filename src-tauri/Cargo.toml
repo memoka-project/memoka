@@ -48,6 +48,7 @@ yrs = "0.27.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gdk = "0.18.2"
+gio = "0.18.4"
 gtk = "0.18.2"
 webkit2gtk = "=2.0.2"
 

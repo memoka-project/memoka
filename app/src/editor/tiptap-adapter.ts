@@ -20,7 +20,11 @@ import {
   type EditorNavigationRequest,
   type EditorNavigationResult,
 } from "../core/editor-navigation";
-import { requestImeOff } from "../core/ime-platform";
+import {
+  createNormalModeImeGuard,
+  requestImeOff,
+  type NormalModeImeGuardHandle,
+} from "../core/ime-platform";
 import {
   resolveVisibleStableEditorPosition,
   saveStableEditorPosition,
@@ -138,6 +142,7 @@ export interface TiptapEditorAdapterOptions {
   restoreScrollOnAttach?: boolean;
   requestImeOff?: () =>
     VimImeDeactivationResult | Promise<VimImeDeactivationResult>;
+  setNormalModeImeGuardActive?: (active: boolean) => void;
   readPreferredClipboard?: () =>
     | PreferredClipboardFormats
     | null
@@ -258,6 +263,7 @@ export class TiptapEditorAdapter {
   private readonly scrollElement: HTMLElement;
   private readonly unsubscribe: () => void;
   private readonly vimSession: ProductVimSession;
+  private readonly normalModeImeGuard: NormalModeImeGuardHandle | null;
   private readonly clipboard = new BrowserVimClipboard();
   private readonly readExplicitClipboard: NonNullable<
     TiptapEditorAdapterOptions["readExplicitClipboard"]
@@ -302,6 +308,9 @@ export class TiptapEditorAdapter {
       options.readExplicitClipboard ??
       ((format) => this.clipboard.readExplicit(format));
     const externalLinkPort = createDefaultExternalLinkPort();
+    this.normalModeImeGuard = options.setNormalModeImeGuardActive
+      ? null
+      : createNormalModeImeGuard();
     this.vimSession = new ProductVimSession({
       initialMode: options.getWindowState?.().mode ?? "insert",
       getRootNoteId: () => {
@@ -340,6 +349,9 @@ export class TiptapEditorAdapter {
       },
       onSnapshot: options.onVimSnapshot,
       onRequestImeOff: options.requestImeOff ?? requestImeOff,
+      onNormalModeImeGuardChange:
+        options.setNormalModeImeGuardActive ??
+        this.normalModeImeGuard?.setActive.bind(this.normalModeImeGuard),
       onYank: (register) => this.writeYankToClipboard(register),
       onPasteRead: readPreferredClipboard,
       onPasteFiles: async (files) => {
@@ -841,6 +853,7 @@ export class TiptapEditorAdapter {
     this.vimSession.preserveVisualSelection();
     this.currentEditor.destroy();
     this.vimSession.destroy();
+    this.normalModeImeGuard?.destroy();
     this.element.removeEventListener(
       "keydown",
       this.handleInternalLinkKeyDown,

@@ -169,6 +169,7 @@ export interface ProductVimSessionOptions {
   onSnapshot?: (snapshot: VimSessionSnapshot) => void;
   onRequestImeOff?: () =>
     VimImeDeactivationResult | Promise<VimImeDeactivationResult>;
+  onNormalModeImeGuardChange?: (active: boolean) => void;
   onYank?: (
     register: VimRegister,
   ) => VimClipboardWriteResult | Promise<VimClipboardWriteResult>;
@@ -302,6 +303,7 @@ export class ProductVimSession {
   private imeOff: VimImeOffStatus = "idle";
   private imeOffDetail = "not-requested";
   private imeRequestGeneration = 0;
+  private normalModeImeGuardActive: boolean | null = null;
   private visualLine: VimVisualLineState | null = null;
   private input: VimInputState = createVimInputState();
   private view: EditorView | null = null;
@@ -505,12 +507,14 @@ export class ProductVimSession {
       applyModeSelection(this.view, this.mode, undefined, false);
     }
     this.scheduleCaretRefresh(this.view);
+    this.updateNormalModeImeGuard();
     this.emit();
   }
 
   setFocusSurfaceActive(active: boolean): void {
     if (this.focusSurfaceActive === active) return;
     this.focusSurfaceActive = active;
+    this.updateNormalModeImeGuard();
     if (!active) {
       this.clearFocusCaretRefresh();
       this.hideCaret();
@@ -527,6 +531,7 @@ export class ProductVimSession {
     this.navigationGeneration += 1;
     this.navigationInFlight = false;
     this.imeRequestGeneration += 1;
+    this.disableNormalModeImeGuard();
     this.unsubscribeRegister();
     this.unbind(this.view);
     this.gutter?.destroy();
@@ -562,11 +567,13 @@ export class ProductVimSession {
     window.addEventListener("resize", this.handleLayoutChange);
     window.addEventListener("scroll", this.handleLayoutChange, true);
     window.addEventListener("focus", this.handleWindowFocus);
+    this.updateNormalModeImeGuard();
     this.scheduleCaretRefresh(view);
   }
 
   private unbind(view: EditorView | null): void {
     if (!view) return;
+    if (this.view === view) this.disableNormalModeImeGuard();
     this.clearFocusCaretRefresh();
     if (this.view === view) this.finishChangeUndoCapture();
     view.dom.removeEventListener("focus", this.handleFocus);
@@ -615,6 +622,7 @@ export class ProductVimSession {
 
   private readonly handleFocus = (): void => {
     hideRenderedVimCarets();
+    this.updateNormalModeImeGuard();
     this.handleLayoutChange();
     if (this.view) this.schedulePostFocusCaretRefresh(this.view);
   };
@@ -624,6 +632,7 @@ export class ProductVimSession {
     // Hide it synchronously so a newly focused Window never leaves the old
     // Window's caret visible until the next animation frame.
     this.clearFocusCaretRefresh();
+    this.updateNormalModeImeGuard(false);
     this.hideCaret();
     this.handleLayoutChange();
   };
@@ -1134,6 +1143,41 @@ export class ProductVimSession {
       ) {
         this.cancelLargePlainTextPaste();
       }
+      return true;
+    }
+    const recoveredImeKey =
+      this.mode === "normal" && !this.composing
+        ? normalModeKeyFromImeEvent(event)
+        : null;
+    if (recoveredImeKey) {
+      event.preventDefault();
+      const replayView = view;
+      this.action = `ime:normal-key:${recoveredImeKey}:deactivating`;
+      this.requestImeOff(() => {
+        if (
+          replayView !== this.view ||
+          replayView.isDestroyed ||
+          this.mode !== "normal" ||
+          !this.focusSurfaceActive
+        ) {
+          return;
+        }
+        this.setComposing(false);
+        this.handleKeyDown(
+          replayView,
+          new KeyboardEvent("keydown", {
+            key: recoveredImeKey,
+            code: event.code,
+            ctrlKey: event.ctrlKey,
+            shiftKey: event.shiftKey,
+            altKey: event.altKey,
+            metaKey: event.metaKey,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      this.emit();
       return true;
     }
     const isComposing = event.isComposing || this.composing;
@@ -2040,6 +2084,7 @@ export class ProductVimSession {
     this.visualLine = null;
     applyNativeCaretMode(view.dom, "normal");
     applyModeSelection(view, "normal", position, focus);
+    this.updateNormalModeImeGuard();
     this.refreshVisualLineDecorations(view);
     this.action = detail;
     if (previousMode !== "normal") this.options.onModeChange?.("normal");
@@ -2144,6 +2189,7 @@ export class ProductVimSession {
     this.visualLine = null;
     applyNativeCaretMode(view.dom, this.mode);
     applyModeSelection(view, this.mode, position);
+    this.updateNormalModeImeGuard();
     const manager = findUndoManager(view);
     if (beforeCursor !== undefined && manager) {
       recordVimCursorHistory(manager, beforeCursor, position);
@@ -2501,10 +2547,12 @@ export class ProductVimSession {
       this.mode = previousMode;
       this.visualLine = previousVisualLine;
       applyNativeCaretMode(view.dom, previousMode);
+      this.updateNormalModeImeGuard();
       return false;
     }
 
     this.input = createVimInputState();
+    this.updateNormalModeImeGuard();
     this.clipboardReadGeneration += 1;
     this.refreshVisualLineDecorations(view);
     if (previousMode !== resolved.mode) {
@@ -2602,6 +2650,8 @@ export class ProductVimSession {
       this.visualLine = null;
       applyModeSelection(view, nextMode, cursor);
     }
+
+    this.updateNormalModeImeGuard();
 
     this.action = `mode:${nextMode}`;
     if (nextMode === "normal") this.requestImeOff();
@@ -2704,7 +2754,26 @@ export class ProductVimSession {
     this.emit();
   }
 
-  private requestImeOff(): void {
+  private updateNormalModeImeGuard(forceActive?: boolean): void {
+    const active =
+      forceActive ??
+      (this.mode === "normal" &&
+        this.focusSurfaceActive &&
+        this.view !== null &&
+        !this.view.isDestroyed &&
+        this.view.hasFocus());
+    if (this.normalModeImeGuardActive === active) return;
+    this.normalModeImeGuardActive = active;
+    this.options.onNormalModeImeGuardChange?.(active);
+  }
+
+  private disableNormalModeImeGuard(): void {
+    if (this.normalModeImeGuardActive === false) return;
+    this.normalModeImeGuardActive = false;
+    this.options.onNormalModeImeGuardChange?.(false);
+  }
+
+  private requestImeOff(onInactive?: () => void): void {
     const requester = this.options.onRequestImeOff;
     const generation = ++this.imeRequestGeneration;
     if (!requester) {
@@ -2723,7 +2792,11 @@ export class ProductVimSession {
       return;
     }
     void Promise.resolve(pending).then(
-      (result) => this.finishImeOff(generation, result),
+      (result) => {
+        const current = generation === this.imeRequestGeneration;
+        this.finishImeOff(generation, result);
+        if (current && result.inactive) onInactive?.();
+      },
       (error) => this.finishImeOff(generation, null, error),
     );
   }
@@ -3064,6 +3137,17 @@ function eventSequence(event: KeyboardEvent): string {
     return `Ctrl+${key}`;
   }
   return event.key;
+}
+
+function normalModeKeyFromImeEvent(event: KeyboardEvent): string | null {
+  if (event.isComposing || !["Process", "Unidentified"].includes(event.key)) {
+    return null;
+  }
+  const letter = event.code.match(/^Key([A-Z])$/u)?.[1];
+  if (letter) return event.shiftKey ? letter : letter.toLowerCase();
+  const digit = event.code.match(/^Digit([0-9])$/u)?.[1];
+  if (digit && !event.shiftKey) return digit;
+  return null;
 }
 
 function isTabKey(event: KeyboardEvent): boolean {

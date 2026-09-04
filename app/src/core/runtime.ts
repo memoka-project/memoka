@@ -1898,6 +1898,7 @@ export class CoreRuntime {
       | "readPreferredClipboard"
       | "readExplicitClipboard"
       | "requestImeOff"
+      | "setNormalModeImeGuardActive"
       | "openExternalLink"
       | "attachmentRepository"
       | "onMessage"
@@ -1942,6 +1943,7 @@ export class CoreRuntime {
       onCaretSectionChange: options.onCaretSectionChange,
       onCaretExternalLinkChange: options.onCaretExternalLinkChange,
       requestImeOff: options.requestImeOff,
+      setNormalModeImeGuardActive: options.setNormalModeImeGuardActive,
       readPreferredClipboard: options.readPreferredClipboard,
       readExplicitClipboard: options.readExplicitClipboard,
       scrollElement: options.scrollElement,
@@ -2037,6 +2039,7 @@ export class CoreRuntime {
       | "readPreferredClipboard"
       | "readExplicitClipboard"
       | "requestImeOff"
+      | "setNormalModeImeGuardActive"
       | "openExternalLink"
       | "attachmentRepository"
       | "onMessage"

@@ -1,6 +1,7 @@
 use serde::Serialize;
 #[cfg(target_os = "linux")]
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 mod application_config;
@@ -27,6 +28,44 @@ struct InputMethodEnvironment {
     stable_route: bool,
     gtk_im_module: Option<String>,
     detail: String,
+}
+
+#[derive(Clone, Default)]
+struct NormalModeImeGuardState {
+    value: Arc<Mutex<NormalModeImeGuardValue>>,
+}
+
+#[derive(Default)]
+struct NormalModeImeGuardValue {
+    generation: u64,
+    active: bool,
+}
+
+impl NormalModeImeGuardState {
+    fn update(&self, generation: u64, active: bool) {
+        let mut value = self.value.lock().unwrap_or_else(|error| error.into_inner());
+        if generation < value.generation {
+            return;
+        }
+        value.generation = generation;
+        value.active = active;
+    }
+
+    fn active(&self) -> bool {
+        self.value
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .active
+    }
+}
+
+#[tauri::command]
+fn set_normal_mode_ime_guard(
+    active: bool,
+    generation: u64,
+    state: tauri::State<'_, NormalModeImeGuardState>,
+) {
+    state.update(generation, active);
 }
 
 #[tauri::command]
@@ -203,14 +242,19 @@ fn linux_input_method_environment(gtk_im_module: Option<String>) -> InputMethodE
 }
 
 #[cfg(target_os = "linux")]
-fn enable_linux_input_method_preedit(app: &tauri::App) -> tauri::Result<()> {
+fn enable_linux_input_method_support(app: &tauri::App) -> tauri::Result<()> {
+    use gtk::prelude::WidgetExt;
+    use std::{cell::RefCell, rc::Rc, time::Duration};
     use webkit2gtk::{InputMethodContextExt, WebViewExt};
 
     let Some(window) = app.get_webview_window("main") else {
         return Ok(());
     };
-    window.with_webview(|webview| {
-        if let Some(input_context) = webview.inner().input_method_context() {
+    let guard = app.state::<NormalModeImeGuardState>().inner().clone();
+    window.with_webview(move |webview| {
+        let webview = webview.inner();
+        let input_context = webview.input_method_context();
+        if let Some(input_context) = input_context.as_ref() {
             // Wry disables WebKitGTK preedit by default so Fcitx can draw the
             // composing text in its candidate window. That fallback is not
             // reliable in native-Wayland AppImages: composition is accepted,
@@ -219,7 +263,111 @@ fn enable_linux_input_method_preedit(app: &tauri::App) -> tauri::Result<()> {
             // preedit range in the document like the development runtime.
             input_context.set_enable_preedit(true);
         }
+
+        // WebKitGTK reports the first key handled by an active IME as
+        // `Unidentified`, so the editor cannot recover whether the user typed
+        // `i`, `u`, `g`, and so on. Observe the untranslated GDK event before
+        // WebKit's class handler. While the focused editor is in Normal mode,
+        // hold the event, deactivate Fcitx, then put the exact same event back
+        // on the GTK queue. This preserves the user's keyboard layout and lets
+        // WebKit deliver the original key as an ordinary Vim command.
+        let controller = Rc::new(RefCell::new(None::<gio::DBusProxy>));
+        let replayed = Rc::new(RefCell::new(None::<(u32, u16, u32)>));
+        webview.connect_key_press_event(move |_webview, event| {
+            let signature = (event.time(), event.hardware_keycode(), *event.keyval());
+            if replayed.borrow().as_ref() == Some(&signature) {
+                *replayed.borrow_mut() = None;
+                return gtk::glib::Propagation::Proceed;
+            }
+            if event.is_modifier() || !guard.active() {
+                return gtk::glib::Propagation::Proceed;
+            }
+
+            let proxy = {
+                let mut slot = controller.borrow_mut();
+                if slot.is_none() {
+                    *slot = linux_fcitx_controller_proxy().ok();
+                }
+                slot.clone()
+            };
+            let Some(proxy) = proxy else {
+                return gtk::glib::Propagation::Proceed;
+            };
+            let state = match linux_fcitx_state(&proxy) {
+                Ok(state) => state,
+                Err(()) => {
+                    *controller.borrow_mut() = None;
+                    return gtk::glib::Propagation::Proceed;
+                }
+            };
+            if state != 2 {
+                return gtk::glib::Propagation::Proceed;
+            }
+            if linux_fcitx_deactivate(&proxy).is_err() {
+                *controller.borrow_mut() = None;
+                return gtk::glib::Propagation::Proceed;
+            }
+
+            if let Some(input_context) = input_context.as_ref() {
+                input_context.reset();
+            }
+            let replay_event = event.clone();
+            let replayed = Rc::clone(&replayed);
+            gtk::glib::timeout_add_local_once(Duration::from_millis(1), move || {
+                *replayed.borrow_mut() = Some(signature);
+                replay_event.put();
+            });
+            gtk::glib::Propagation::Stop
+        });
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_fcitx_controller_proxy() -> Result<gio::DBusProxy, ()> {
+    gio::DBusProxy::for_bus_sync(
+        gio::BusType::Session,
+        gio::DBusProxyFlags::DO_NOT_LOAD_PROPERTIES | gio::DBusProxyFlags::DO_NOT_AUTO_START,
+        None,
+        "org.fcitx.Fcitx5",
+        "/controller",
+        "org.fcitx.Fcitx.Controller1",
+        gio::Cancellable::NONE,
+    )
+    .map_err(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_fcitx_state(proxy: &gio::DBusProxy) -> Result<i32, ()> {
+    use gio::prelude::DBusProxyExt;
+
+    proxy
+        .call_sync(
+            "State",
+            None,
+            gio::DBusCallFlags::NONE,
+            25,
+            gio::Cancellable::NONE,
+        )
+        .map_err(|_| ())?
+        .get::<(i32,)>()
+        .map(|(state,)| state)
+        .ok_or(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_fcitx_deactivate(proxy: &gio::DBusProxy) -> Result<(), ()> {
+    use gio::prelude::DBusProxyExt;
+
+    proxy
+        .call_sync(
+            "Deactivate",
+            None,
+            gio::DBusCallFlags::NONE,
+            25,
+            gio::Cancellable::NONE,
+        )
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -277,9 +425,10 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
+        .manage(NormalModeImeGuardState::default())
         .setup(|app| {
             #[cfg(target_os = "linux")]
-            enable_linux_input_method_preedit(app)?;
+            enable_linux_input_method_support(app)?;
             log::info!(target: "memoka::event", "event=application-started");
             Ok(())
         })
@@ -290,6 +439,7 @@ pub fn run() {
         });
     let builder = builder.invoke_handler(tauri::generate_handler![
         deactivate_input_method,
+        set_normal_mode_ime_guard,
         input_method_environment,
         application_config::application_key_config_load,
         application_config::application_theme_save,
@@ -336,7 +486,20 @@ pub fn run() {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{classify_fcitx_deactivation, linux_input_method_environment};
+    use super::{
+        NormalModeImeGuardState, classify_fcitx_deactivation, linux_input_method_environment,
+    };
+
+    #[test]
+    fn keeps_the_newest_normal_mode_ime_guard_update() {
+        let state = NormalModeImeGuardState::default();
+        state.update(2, true);
+        state.update(1, false);
+        assert!(state.active());
+
+        state.update(3, false);
+        assert!(!state.active());
+    }
 
     #[test]
     fn reports_a_successful_fcitx_deactivation() {

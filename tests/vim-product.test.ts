@@ -614,6 +614,65 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     reopened.destroy();
   });
 
+  it("arms the native IME guard only for the focused Normal editor", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const setGuard = vi.fn();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      setNormalModeImeGuardActive: setGuard,
+    });
+    editor.commands.focus();
+    setGuard.mockClear();
+
+    press(editor, "Escape");
+    expect(setGuard).toHaveBeenLastCalledWith(true);
+    press(editor, "i");
+    expect(setGuard).toHaveBeenLastCalledWith(false);
+    press(editor, "Escape");
+    expect(setGuard).toHaveBeenLastCalledWith(true);
+
+    adapter.setFocusSurfaceActive(false);
+    expect(setGuard).toHaveBeenLastCalledWith(false);
+    adapter.setFocusSurfaceActive(true);
+    expect(setGuard).toHaveBeenLastCalledWith(true);
+
+    adapter.destroy();
+    expect(setGuard).toHaveBeenLastCalledWith(false);
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("replays a recoverable IME-processed Normal key after deactivation", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const requestImeOff = vi.fn(() =>
+      Promise.resolve({
+        supported: true,
+        inactive: true,
+        detail: "test-inactive",
+      }),
+    );
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      requestImeOff,
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+    await vi.waitFor(() => expect(adapter.vimSnapshot.imeOff).toBe("inactive"));
+    requestImeOff.mockClear();
+
+    const processed = press(editor, "Unidentified", { code: "KeyI" });
+    expect(processed.defaultPrevented).toBe(true);
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+    await vi.waitFor(() => expect(adapter.vimSnapshot.mode).toBe("insert"));
+    expect(requestImeOff).toHaveBeenCalledTimes(1);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it.each([
     [
       "unsupported adapter",

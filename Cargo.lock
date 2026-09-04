@@ -2196,6 +2196,7 @@ name = "memoka-desktop"
 version = "0.1.4"
 dependencies = [
  "gdk",
+ "gio",
  "gtk",
  "log",
  "rusqlite",
