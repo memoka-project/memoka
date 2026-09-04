@@ -5,6 +5,12 @@
   --memoka-font-monospace:
     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --memoka-note-max-width: 1000px;
+  --memoka-line-number-gutter-width: 58px;
+  --memoka-indent-width: 24px;
+  --memoka-indent-guide-offset: 12px;
+  --memoka-list-marker-text-offset: 1.2em;
+  --memoka-ordered-list-text-gap: 0.5em;
+  --memoka-list-inline-shift: 0.375em;
 
   font-family: var(--memoka-font-family);
   color: var(--memoka-color-text);
@@ -33,7 +39,7 @@ body,
 
 body {
   margin: 0;
-  min-width: 800px;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   background:
@@ -686,7 +692,11 @@ textarea {
   min-width: 0;
   max-width: 100%;
   min-height: 100%;
-  padding: 38px 42px 120px 74px;
+  padding: 38px 42px 120px
+    calc(
+      var(--memoka-line-number-gutter-width) + var(--memoka-indent-width) -
+        var(--memoka-indent-guide-offset)
+    );
   outline: none;
   color: var(--memoka-color-text);
   font-family: var(--memoka-font-family);
@@ -700,6 +710,14 @@ textarea {
   line-height: 1.65;
   caret-color: transparent;
   text-autospace: normal;
+}
+
+.editor-window[data-line-numbers-hidden="true"] .memoka-editor {
+  padding-left: 42px;
+}
+
+.editor-window[data-line-numbers-hidden="true"] .memoka-logical-line-gutter {
+  display: none;
 }
 
 /*
@@ -775,7 +793,7 @@ textarea {
   top: 0;
   bottom: 0;
   left: 0;
-  width: 58px;
+  width: var(--memoka-line-number-gutter-width);
   border-right: 1px solid var(--memoka-color-border-subtle);
   pointer-events: none;
   user-select: none;
@@ -874,6 +892,17 @@ textarea {
   animation: none;
 }
 
+.memoka-vim-caret--replace {
+  border: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(100% - 2px),
+    var(--memoka-color-danger) calc(100% - 2px),
+    var(--memoka-color-danger) 100%
+  );
+  box-shadow: none;
+}
+
 .memoka-editor p,
 .memoka-editor h1,
 .memoka-editor h2,
@@ -885,16 +914,93 @@ textarea {
   margin-bottom: 0;
 }
 
+.memoka-editor :is(ul, ol) {
+  list-style: none;
+  margin-inline-start: calc(-1 * var(--memoka-list-inline-shift));
+  padding-inline-start: calc(
+    var(--memoka-indent-guide-offset) + var(--memoka-list-marker-text-offset)
+  );
+}
+
+/*
+ * Keep list nesting on the same configurable grid as Sections without using
+ * the full indent step as the marker-to-text gap. A Section body already
+ * begins half a step beyond its guide, so the marker advances the remaining
+ * half step to the next grid line. The text then starts at a stable typographic
+ * offset. Nested lists compensate for that offset so each additional marker
+ * and text position still advances by exactly --memoka-indent-width.
+ */
+.memoka-editor :is(ul, ol) :is(ul, ol) {
+  margin-inline-start: calc(
+    var(--memoka-indent-width) - var(--memoka-indent-guide-offset) -
+      var(--memoka-list-marker-text-offset)
+  );
+}
+
+.memoka-editor :is(ul, ol) > li {
+  position: relative;
+}
+
+.memoka-editor :is(ul, ol) > li::before {
+  position: absolute;
+  inset-inline-start: calc(-1 * var(--memoka-list-marker-text-offset));
+  color: var(--memoka-color-markup-raw);
+  pointer-events: none;
+}
+
+.memoka-editor ul > li::before {
+  content: "";
+  inset-block-start: calc(0.825em - 0.24em);
+  width: 0.48em;
+  height: 0.48em;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.memoka-editor ul[data-memoka-bullet-marker="2"] > li::before {
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+.memoka-editor ul[data-memoka-bullet-marker="3"] > li::before {
+  border-radius: 0;
+}
+
+.memoka-editor ul[data-memoka-bullet-marker="4"] > li::before {
+  border: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+}
+
+.memoka-editor ul[data-memoka-bullet-marker="5"] > li::before {
+  border-radius: 0;
+  transform: rotate(45deg) scale(0.82);
+}
+
+.memoka-editor ul[data-memoka-bullet-marker="6"] > li::before {
+  border: 1px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  transform: rotate(45deg) scale(0.82);
+}
+
+.memoka-editor ol > li::before {
+  content: counter(list-item) ".";
+  inset-inline-start: calc(-1 * var(--memoka-ordered-list-text-gap));
+  width: max-content;
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+  text-align: end;
+  transform: translateX(-100%);
+  white-space: nowrap;
+}
+
 .memoka-editor :is(ul, ol) > li > p + p {
   margin-top: 0.8em;
 }
 
 .memoka-editor :is(ul, ol) > li + li {
   margin-top: 0.25em;
-}
-
-.memoka-editor :is(ul, ol) > li::marker {
-  color: var(--memoka-color-markup-raw);
 }
 
 .memoka-section-header {
@@ -1063,8 +1169,10 @@ textarea {
  */
 .memoka-section > .memoka-section-body,
 .memoka-section > .memoka-section-children {
-  margin-left: 6px;
-  padding-left: 16px;
+  margin-left: var(--memoka-indent-guide-offset);
+  padding-left: calc(
+    var(--memoka-indent-width) - var(--memoka-indent-guide-offset) - 1px
+  );
 }
 
 .memoka-section > .memoka-section-body,
@@ -1208,6 +1316,8 @@ textarea {
 }
 
 .memoka-editor pre {
+  max-width: calc(100% - var(--memoka-indent-guide-offset));
+  margin-left: var(--memoka-indent-guide-offset);
   padding: 14px 16px;
   overflow-x: auto;
   border: 1px solid var(--memoka-color-border);
@@ -2069,8 +2179,8 @@ textarea {
 }
 
 .memoka-editor .tableWrapper {
-  max-width: 100%;
-  margin: 20px 0;
+  max-width: calc(100% - var(--memoka-indent-guide-offset));
+  margin: 20px 0 20px var(--memoka-indent-guide-offset);
   overflow-x: auto;
 }
 
@@ -2134,7 +2244,7 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--memoka-color-selection-border);
 }
 
-.memoka-editor li.memoka-visual-line-selected::marker {
+.memoka-editor li.memoka-visual-line-selected::before {
   color: var(--memoka-color-selection-text);
 }
 
@@ -2165,9 +2275,12 @@ textarea {
   white-space: nowrap;
 }
 
-.editor-window[data-vim-mode="insert"] .window-mode,
-.editor-window[data-vim-mode="replace"] .window-mode {
+.editor-window[data-vim-mode="insert"] .window-mode {
   background: var(--memoka-color-mode-insert);
+}
+
+.editor-window[data-vim-mode="replace"] .window-mode {
+  background: var(--memoka-color-danger);
 }
 
 .editor-window:is(

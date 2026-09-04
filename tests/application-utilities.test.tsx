@@ -32,6 +32,9 @@ import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 import {
   APPLICATION_FONT_CSS_VARIABLE,
+  APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
+  APPLICATION_INDENT_WIDTH_CSS_VARIABLE,
+  APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
   APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE,
   type ApplicationZoomPort,
 } from "../app/src/platform/application-appearance";
@@ -99,6 +102,8 @@ function openCommandLine(editor: HTMLElement): HTMLInputElement {
 
 function japaneseSegmentationConfigSavers() {
   return {
+    saveLineNumberMinWidthPx: vi.fn(async () => {}),
+    saveIndentWidthPx: vi.fn(async () => {}),
     saveJapaneseWordSegmentation: vi.fn(async () => {}),
     saveJapaneseLineBreakSegmentation: vi.fn(async () => {}),
   };
@@ -407,6 +412,92 @@ describe("Memoka Application utilities", () => {
     view.unmount();
   });
 
+  it("changes and persists the line-number threshold and shared indentation width", async () => {
+    const saveLineNumberMinWidthPx = vi.fn(async () => {});
+    const saveIndentWidthPx = vi.fn(async () => {});
+    const nativeGetBoundingClientRect =
+      HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("editor-window")
+          ? new DOMRect(0, 0, 400, 600)
+          : nativeGetBoundingClientRect.call(this);
+      },
+    );
+    const view = render(
+      <App
+        initialLineNumberMinWidthPx={480}
+        initialIndentWidthPx={24}
+        applicationConfig={{
+          saveTheme: vi.fn(async () => {}),
+          saveFontFamily: vi.fn(async () => {}),
+          saveZoomPercent: vi.fn(async () => {}),
+          saveNoteMaxWidthPx: vi.fn(async () => {}),
+          ...japaneseSegmentationConfigSavers(),
+          saveLineNumberMinWidthPx,
+          saveIndentWidthPx,
+        }}
+        showDebugLine={false}
+      />,
+    );
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".memoka-editor[contenteditable='true']",
+      );
+      if (!mounted) throw new Error("Editor was not mounted");
+      return mounted;
+    });
+    const editorWindow = editor.closest<HTMLElement>(".editor-window");
+    expect(editorWindow?.dataset.lineNumbersHidden).toBe("true");
+
+    let command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "line-number-min-width 560" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() =>
+      expect(saveLineNumberMinWidthPx).toHaveBeenCalledWith(560),
+    );
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "line-number-min-width off" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() =>
+      expect(saveLineNumberMinWidthPx).toHaveBeenCalledWith(0),
+    );
+    expect(editorWindow?.dataset.lineNumbersHidden).toBe("false");
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "indent-width 28" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() => expect(saveIndentWidthPx).toHaveBeenCalledWith(28));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_INDENT_WIDTH_CSS_VARIABLE,
+      ),
+    ).toBe("28px");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
+      ),
+    ).toBe("14px");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
+      ),
+    ).toBe("0.4375em");
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "indent-width 12" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    expect(saveIndentWidthPx).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/16〜64/)).not.toBeNull();
+    view.unmount();
+  });
+
   it("changes Japanese operation and display segmentation independently", async () => {
     const saveJapaneseWordSegmentation = vi.fn(async () => {});
     const saveJapaneseLineBreakSegmentation = vi.fn(async (mode: string) => {
@@ -421,6 +512,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily: vi.fn(async () => {}),
           saveZoomPercent: vi.fn(async () => {}),
           saveNoteMaxWidthPx: vi.fn(async () => {}),
+          ...japaneseSegmentationConfigSavers(),
           saveJapaneseWordSegmentation,
           saveJapaneseLineBreakSegmentation,
         }}

@@ -17,6 +17,13 @@ const DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 1000;
 const DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 0;
 const MIN_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 320;
 const MAX_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 4096;
+const DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX: u16 = 480;
+const DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX: u16 = 0;
+const MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX: u16 = 240;
+const MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX: u16 = 4096;
+const DEFAULT_APPLICATION_INDENT_WIDTH_PX: u16 = 24;
+const MIN_APPLICATION_INDENT_WIDTH_PX: u16 = 16;
+const MAX_APPLICATION_INDENT_WIDTH_PX: u16 = 64;
 
 const DEFAULT_JAPANESE_WORD_SEGMENTATION: JapaneseWordSegmentation = JapaneseWordSegmentation::Fine;
 const DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION: JapaneseLineBreakSegmentation =
@@ -122,6 +129,8 @@ struct ApplicationConfigFile {
     font_family: Option<String>,
     zoom_percent: Option<u16>,
     note_max_width_px: Option<u16>,
+    line_number_min_width_px: Option<u16>,
+    indent_width_px: Option<u16>,
     leader: Option<String>,
     vim: Option<VimConfigFile>,
     keymap: Option<KeymapConfigFile>,
@@ -177,6 +186,8 @@ pub struct ApplicationKeyConfigLoadResult {
     font_family: String,
     zoom_percent: u16,
     note_max_width_px: u16,
+    line_number_min_width_px: u16,
+    indent_width_px: u16,
     japanese_word_segmentation: JapaneseWordSegmentation,
     japanese_line_break_segmentation: JapaneseLineBreakSegmentation,
     wait_for_mirror_on_exit: bool,
@@ -195,6 +206,8 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
                 zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
                 note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+                line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+                indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
                 japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
                 japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
                 wait_for_mirror_on_exit: true,
@@ -252,6 +265,35 @@ pub fn application_note_max_width_px_save(
 }
 
 #[tauri::command]
+pub fn application_line_number_min_width_px_save(
+    app: AppHandle,
+    line_number_min_width_px: u16,
+) -> Result<(), String> {
+    validate_application_line_number_min_width_px(line_number_min_width_px)?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_application_line_number_min_width_px(
+        &directory.join("config.toml"),
+        line_number_min_width_px,
+    )
+}
+
+#[tauri::command]
+pub fn application_indent_width_px_save(
+    app: AppHandle,
+    indent_width_px: u16,
+) -> Result<(), String> {
+    validate_application_indent_width_px(indent_width_px)?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_application_indent_width_px(&directory.join("config.toml"), indent_width_px)
+}
+
+#[tauri::command]
 pub fn application_japanese_word_segmentation_save(
     app: AppHandle,
     mode: String,
@@ -290,6 +332,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
             zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
             note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+            line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+            indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
             japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
             japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
             wait_for_mirror_on_exit: true,
@@ -333,6 +377,18 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     if let Err(error) = validate_application_note_max_width_px(note_max_width_px) {
         return warning_result(path, error);
     }
+    let line_number_min_width_px = parsed
+        .line_number_min_width_px
+        .unwrap_or(DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX);
+    if let Err(error) = validate_application_line_number_min_width_px(line_number_min_width_px) {
+        return warning_result(path, error);
+    }
+    let indent_width_px = parsed
+        .indent_width_px
+        .unwrap_or(DEFAULT_APPLICATION_INDENT_WIDTH_PX);
+    if let Err(error) = validate_application_indent_width_px(indent_width_px) {
+        return warning_result(path, error);
+    }
     let japanese_word_segmentation = parsed
         .japanese
         .as_ref()
@@ -370,6 +426,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         font_family,
         zoom_percent,
         note_max_width_px,
+        line_number_min_width_px,
+        indent_width_px,
         japanese_word_segmentation,
         japanese_line_break_segmentation,
         wait_for_mirror_on_exit,
@@ -399,6 +457,23 @@ fn save_application_note_max_width_px(path: &Path, note_max_width_px: u16) -> Re
     validate_application_note_max_width_px(note_max_width_px)?;
     update_application_config(path, |document| {
         document["note_max_width_px"] = value(i64::from(note_max_width_px));
+    })
+}
+
+fn save_application_line_number_min_width_px(
+    path: &Path,
+    line_number_min_width_px: u16,
+) -> Result<(), String> {
+    validate_application_line_number_min_width_px(line_number_min_width_px)?;
+    update_application_config(path, |document| {
+        document["line_number_min_width_px"] = value(i64::from(line_number_min_width_px));
+    })
+}
+
+fn save_application_indent_width_px(path: &Path, indent_width_px: u16) -> Result<(), String> {
+    validate_application_indent_width_px(indent_width_px)?;
+    update_application_config(path, |document| {
+        document["indent_width_px"] = value(i64::from(indent_width_px));
     })
 }
 
@@ -509,6 +584,27 @@ fn validate_application_note_max_width_px(value: u16) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_application_line_number_min_width_px(value: u16) -> Result<(), String> {
+    if value != DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX
+        && !(MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX..=MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX)
+            .contains(&value)
+    {
+        return Err(format!(
+            "line_number_min_width_pxは0、または{MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}〜{MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}の整数で指定してください"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_application_indent_width_px(value: u16) -> Result<(), String> {
+    if !(MIN_APPLICATION_INDENT_WIDTH_PX..=MAX_APPLICATION_INDENT_WIDTH_PX).contains(&value) {
+        return Err(format!(
+            "indent_width_pxは{MIN_APPLICATION_INDENT_WIDTH_PX}〜{MAX_APPLICATION_INDENT_WIDTH_PX}の整数で指定してください"
+        ));
+    }
+    Ok(())
+}
+
 fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult {
     ApplicationKeyConfigLoadResult {
         config_path: path.display().to_string(),
@@ -517,6 +613,8 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
         font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
         zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
         note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+        line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+        indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
         japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
         japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
         wait_for_mirror_on_exit: true,
@@ -530,10 +628,12 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
 #[cfg(test)]
 mod tests {
     use super::{
-        ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+        ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_INDENT_WIDTH_PX,
+        DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
         DEFAULT_APPLICATION_ZOOM_PERCENT, DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
         DEFAULT_JAPANESE_WORD_SEGMENTATION, JapaneseLineBreakSegmentation,
         JapaneseWordSegmentation, load_application_key_config, save_application_font_family,
+        save_application_indent_width_px, save_application_line_number_min_width_px,
         save_application_note_max_width_px, save_application_theme, save_application_zoom_percent,
         save_japanese_line_break_segmentation, save_japanese_word_segmentation,
     };
@@ -554,6 +654,11 @@ mod tests {
             DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX
         );
         assert_eq!(
+            absent.line_number_min_width_px,
+            DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX
+        );
+        assert_eq!(absent.indent_width_px, DEFAULT_APPLICATION_INDENT_WIDTH_PX);
+        assert_eq!(
             absent.japanese_word_segmentation,
             DEFAULT_JAPANESE_WORD_SEGMENTATION
         );
@@ -572,6 +677,8 @@ theme = "duskfox"
 font_family = 'Noto Sans CJK JP, sans-serif'
 zoom_percent = 120
 note_max_width_px = 960
+line_number_min_width_px = 520
+indent_width_px = 28
 
 [vim]
 whichwrap = false
@@ -605,6 +712,8 @@ wait_for_mirror = false
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
         assert_eq!(loaded.note_max_width_px, 960);
+        assert_eq!(loaded.line_number_min_width_px, 520);
+        assert_eq!(loaded.indent_width_px, 28);
         assert_eq!(
             loaded.japanese_word_segmentation,
             JapaneseWordSegmentation::Budoux
@@ -663,6 +772,9 @@ wait_for_mirror = false
         save_application_font_family(&path, "Noto Serif CJK JP, serif").expect("save font family");
         save_application_zoom_percent(&path, 130).expect("save zoom");
         save_application_note_max_width_px(&path, 880).expect("save note width");
+        save_application_line_number_min_width_px(&path, 540)
+            .expect("save line-number minimum width");
+        save_application_indent_width_px(&path, 26).expect("save indent width");
         save_japanese_word_segmentation(&path, JapaneseWordSegmentation::Unicode)
             .expect("save word segmentation");
         save_japanese_line_break_segmentation(&path, JapaneseLineBreakSegmentation::Budoux)
@@ -675,6 +787,8 @@ wait_for_mirror = false
         assert!(updated.contains("font_family = \"Noto Serif CJK JP, serif\""));
         assert!(updated.contains("zoom_percent = 130"));
         assert!(updated.contains("note_max_width_px = 880"));
+        assert!(updated.contains("line_number_min_width_px = 540"));
+        assert!(updated.contains("indent_width_px = 26"));
         assert!(updated.contains("word_segmentation = \"unicode\""));
         assert!(updated.contains("line_break_segmentation = \"budoux\""));
         let loaded = load_application_key_config(&path);
@@ -682,6 +796,8 @@ wait_for_mirror = false
         assert_eq!(loaded.font_family, "Noto Serif CJK JP, serif");
         assert_eq!(loaded.zoom_percent, 130);
         assert_eq!(loaded.note_max_width_px, 880);
+        assert_eq!(loaded.line_number_min_width_px, 540);
+        assert_eq!(loaded.indent_width_px, 26);
         assert_eq!(
             loaded.japanese_word_segmentation,
             JapaneseWordSegmentation::Unicode
@@ -760,6 +876,33 @@ wait_for_mirror = false
         let unlimited_note_width = load_application_key_config(&path);
         assert_eq!(unlimited_note_width.note_max_width_px, 0);
         assert!(unlimited_note_width.warning.is_none());
+
+        fs::write(&path, "line_number_min_width_px = 239\n")
+            .expect("write invalid line-number minimum width");
+        let invalid_line_number_width = load_application_key_config(&path);
+        assert!(invalid_line_number_width.config.is_none());
+        assert!(
+            invalid_line_number_width
+                .warning
+                .expect("line-number width warning")
+                .contains("line_number_min_width_px")
+        );
+
+        fs::write(&path, "line_number_min_width_px = 0\n")
+            .expect("write disabled line-number minimum width");
+        let disabled_line_number_width = load_application_key_config(&path);
+        assert_eq!(disabled_line_number_width.line_number_min_width_px, 0);
+        assert!(disabled_line_number_width.warning.is_none());
+
+        fs::write(&path, "indent_width_px = 15\n").expect("write invalid indent width");
+        let invalid_indent_width = load_application_key_config(&path);
+        assert!(invalid_indent_width.config.is_none());
+        assert!(
+            invalid_indent_width
+                .warning
+                .expect("indent width warning")
+                .contains("indent_width_px")
+        );
 
         fs::write(&path, "[japanese]\nword_segmentation = \"unknown\"\n")
             .expect("write invalid Japanese segmentation");

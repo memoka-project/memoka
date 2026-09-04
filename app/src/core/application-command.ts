@@ -27,6 +27,8 @@ export type ApplicationCommandId =
   | "application.font"
   | "application.zoom"
   | "application.note_width"
+  | "application.line_number_min_width"
+  | "application.indent_width"
   | "application.japanese_word_segmentation"
   | "application.japanese_line_break_segmentation"
   | "application.quit"
@@ -200,6 +202,20 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "note-width",
     aliases: [],
     description: "ノートの最大表示幅を表示、変更、または解除する",
+    argument: "optional",
+  },
+  {
+    id: "application.line_number_min_width",
+    name: "line-number-min-width",
+    aliases: [],
+    description: "行番号を表示するWindowの最小幅を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.indent_width",
+    name: "indent-width",
+    aliases: [],
+    description: "SectionとListに共通のインデント幅を表示・変更する",
     argument: "optional",
   },
   {

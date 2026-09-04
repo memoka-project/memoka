@@ -1,4 +1,5 @@
 import {
+  normalizeApplicationIndentWidthPx,
   DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationFontFamily,
@@ -8,6 +9,11 @@ import {
 export const APPLICATION_FONT_CSS_VARIABLE = "--memoka-font-family";
 export const APPLICATION_NOTE_MAX_WIDTH_CSS_VARIABLE =
   "--memoka-note-max-width";
+export const APPLICATION_INDENT_WIDTH_CSS_VARIABLE = "--memoka-indent-width";
+export const APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE =
+  "--memoka-indent-guide-offset";
+export const APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE =
+  "--memoka-list-inline-shift";
 
 export interface ApplicationZoomPort {
   readonly setZoomPercent: (zoomPercent: number) => Promise<void>;
@@ -36,6 +42,28 @@ export function applyApplicationNoteMaxWidth(
     normalized === DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
       ? "none"
       : `${normalized}px`,
+  );
+}
+
+export function applyApplicationIndentWidth(
+  target: HTMLElement,
+  indentWidthPx: number,
+): void {
+  const normalized = normalizeApplicationIndentWidthPx(indentWidthPx);
+  if (normalized === null) {
+    throw new Error(`不正なインデント幅です: ${indentWidthPx}px`);
+  }
+  target.style.setProperty(
+    APPLICATION_INDENT_WIDTH_CSS_VARIABLE,
+    `${normalized}px`,
+  );
+  target.style.setProperty(
+    APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
+    `${normalized / 2}px`,
+  );
+  target.style.setProperty(
+    APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
+    `${normalized / 64}em`,
   );
 }
 

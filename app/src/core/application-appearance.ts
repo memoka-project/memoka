@@ -9,6 +9,13 @@ export const DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX = 1000;
 export const DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX = 0;
 export const MIN_APPLICATION_NOTE_MAX_WIDTH_PX = 320;
 export const MAX_APPLICATION_NOTE_MAX_WIDTH_PX = 4096;
+export const DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX = 480;
+export const DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX = 0;
+export const MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX = 240;
+export const MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX = 4096;
+export const DEFAULT_APPLICATION_INDENT_WIDTH_PX = 24;
+export const MIN_APPLICATION_INDENT_WIDTH_PX = 16;
+export const MAX_APPLICATION_INDENT_WIDTH_PX = 64;
 
 export interface ApplicationFontDefinition {
   readonly id: string;
@@ -90,6 +97,39 @@ export function normalizeApplicationNoteMaxWidthPx(
         value <= MAX_APPLICATION_NOTE_MAX_WIDTH_PX))
     ? value
     : null;
+}
+
+export function normalizeApplicationLineNumberMinWidthPx(
+  value: number,
+): number | null {
+  return Number.isSafeInteger(value) &&
+    (value === DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX ||
+      (value >= MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX &&
+        value <= MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX))
+    ? value
+    : null;
+}
+
+export function normalizeApplicationIndentWidthPx(
+  value: number,
+): number | null {
+  return Number.isSafeInteger(value) &&
+    value >= MIN_APPLICATION_INDENT_WIDTH_PX &&
+    value <= MAX_APPLICATION_INDENT_WIDTH_PX
+    ? value
+    : null;
+}
+
+export function shouldHideApplicationLineNumbers(
+  windowWidthPx: number,
+  minimumWidthPx: number,
+): boolean {
+  return (
+    Number.isFinite(windowWidthPx) &&
+    windowWidthPx > 0 &&
+    minimumWidthPx !== DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX &&
+    windowWidthPx < minimumWidthPx
+  );
 }
 
 export function clampApplicationZoomPercent(value: number): number {

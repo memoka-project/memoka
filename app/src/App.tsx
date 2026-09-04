@@ -72,14 +72,24 @@ import {
 import {
   APPLICATION_ZOOM_STEP_PERCENT,
   DEFAULT_APPLICATION_FONT_FAMILY,
+  DEFAULT_APPLICATION_INDENT_WIDTH_PX,
+  DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
   DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX,
+  DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+  MAX_APPLICATION_INDENT_WIDTH_PX,
+  MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   MAX_APPLICATION_NOTE_MAX_WIDTH_PX,
+  MIN_APPLICATION_INDENT_WIDTH_PX,
+  MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   MIN_APPLICATION_NOTE_MAX_WIDTH_PX,
   clampApplicationZoomPercent,
+  normalizeApplicationIndentWidthPx,
+  normalizeApplicationLineNumberMinWidthPx,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
+  shouldHideApplicationLineNumbers,
 } from "./core/application-appearance";
 import {
   DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
@@ -158,6 +168,7 @@ import {
 } from "./platform/application-config";
 import { applyApplicationTheme } from "./platform/application-theme";
 import {
+  applyApplicationIndentWidth,
   applyApplicationFont,
   applyApplicationNoteMaxWidth,
   createDefaultApplicationZoomPort,
@@ -170,6 +181,8 @@ export interface AppProps {
   initialFontFamily?: string;
   initialZoomPercent?: number;
   initialNoteMaxWidthPx?: number;
+  initialLineNumberMinWidthPx?: number;
+  initialIndentWidthPx?: number;
   initialJapaneseWordSegmentation?: JapaneseWordSegmentationMode;
   initialJapaneseLineBreakSegmentation?: JapaneseLineBreakSegmentationMode;
   applicationConfig?: ApplicationConfigPort;
@@ -193,6 +206,8 @@ export function App({
   initialFontFamily = DEFAULT_APPLICATION_FONT_FAMILY,
   initialZoomPercent = DEFAULT_APPLICATION_ZOOM_PERCENT,
   initialNoteMaxWidthPx = DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+  initialLineNumberMinWidthPx = DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+  initialIndentWidthPx = DEFAULT_APPLICATION_INDENT_WIDTH_PX,
   initialJapaneseWordSegmentation = DEFAULT_JAPANESE_WORD_SEGMENTATION,
   initialJapaneseLineBreakSegmentation = DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
   applicationConfig: applicationConfigOverride,
@@ -221,6 +236,10 @@ export function App({
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
   const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
   const [noteMaxWidthPx, setNoteMaxWidthPx] = useState(initialNoteMaxWidthPx);
+  const [lineNumberMinWidthPx, setLineNumberMinWidthPx] = useState(
+    initialLineNumberMinWidthPx,
+  );
+  const [indentWidthPx, setIndentWidthPx] = useState(initialIndentWidthPx);
   const [japaneseWordSegmentation, setJapaneseWordSegmentation] = useState(
     initialJapaneseWordSegmentation,
   );
@@ -304,6 +323,12 @@ export function App({
   const noteMaxWidthPxRef = useRef(initialNoteMaxWidthPx);
   const persistedNoteMaxWidthPx = useRef(initialNoteMaxWidthPx);
   const noteMaxWidthRequestGeneration = useRef(0);
+  const lineNumberMinWidthPxRef = useRef(initialLineNumberMinWidthPx);
+  const persistedLineNumberMinWidthPx = useRef(initialLineNumberMinWidthPx);
+  const lineNumberMinWidthRequestGeneration = useRef(0);
+  const indentWidthPxRef = useRef(initialIndentWidthPx);
+  const persistedIndentWidthPx = useRef(initialIndentWidthPx);
+  const indentWidthRequestGeneration = useRef(0);
   const japaneseWordSegmentationRef = useRef(initialJapaneseWordSegmentation);
   const persistedJapaneseWordSegmentation = useRef(
     initialJapaneseWordSegmentation,
@@ -339,6 +364,10 @@ export function App({
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
     refreshApplicationLayout();
   }, [noteMaxWidthPx]);
+  useLayoutEffect(() => {
+    applyApplicationIndentWidth(document.documentElement, indentWidthPx);
+    refreshApplicationLayout();
+  }, [indentWidthPx]);
   useLayoutEffect(() => {
     japaneseWordSegmentationRef.current = japaneseWordSegmentation;
     japaneseLineBreakSegmentationRef.current = japaneseLineBreakSegmentation;
@@ -424,6 +453,84 @@ export function App({
         setNoteMaxWidthPx(fallback);
         setCommandMessage(
           `:note-width · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig],
+  );
+
+  const changeApplicationLineNumberMinWidth = useCallback(
+    async (requestedLineNumberMinWidthPx: number): Promise<void> => {
+      const requested = normalizeApplicationLineNumberMinWidthPx(
+        requestedLineNumberMinWidthPx,
+      );
+      if (requested === null) {
+        setCommandMessage(
+          `:line-number-min-width · offまたは${MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}〜${MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}の整数で指定してください: ${requestedLineNumberMinWidthPx}`,
+        );
+        return;
+      }
+      if (requested === lineNumberMinWidthPxRef.current) {
+        setCommandMessage(
+          `:line-number-min-width · ${lineNumberMinWidthLabel(requested)}`,
+        );
+        return;
+      }
+
+      const generation = ++lineNumberMinWidthRequestGeneration.current;
+      lineNumberMinWidthPxRef.current = requested;
+      setLineNumberMinWidthPx(requested);
+      setCommandMessage(
+        `:line-number-min-width · ${lineNumberMinWidthLabel(requested)}`,
+      );
+      try {
+        await applicationConfig.saveLineNumberMinWidthPx(requested);
+        if (generation !== lineNumberMinWidthRequestGeneration.current) return;
+        persistedLineNumberMinWidthPx.current = requested;
+      } catch (cause) {
+        if (generation !== lineNumberMinWidthRequestGeneration.current) return;
+        const fallback = persistedLineNumberMinWidthPx.current;
+        lineNumberMinWidthPxRef.current = fallback;
+        setLineNumberMinWidthPx(fallback);
+        setCommandMessage(
+          `:line-number-min-width · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig],
+  );
+
+  const changeApplicationIndentWidth = useCallback(
+    async (requestedIndentWidthPx: number): Promise<void> => {
+      const requested = normalizeApplicationIndentWidthPx(
+        requestedIndentWidthPx,
+      );
+      if (requested === null) {
+        setCommandMessage(
+          `:indent-width · ${MIN_APPLICATION_INDENT_WIDTH_PX}〜${MAX_APPLICATION_INDENT_WIDTH_PX}の整数で指定してください: ${requestedIndentWidthPx}`,
+        );
+        return;
+      }
+      if (requested === indentWidthPxRef.current) {
+        setCommandMessage(`:indent-width · ${requested}px`);
+        return;
+      }
+
+      const generation = ++indentWidthRequestGeneration.current;
+      indentWidthPxRef.current = requested;
+      setIndentWidthPx(requested);
+      setCommandMessage(`:indent-width · ${requested}px`);
+      try {
+        await applicationConfig.saveIndentWidthPx(requested);
+        if (generation !== indentWidthRequestGeneration.current) return;
+        persistedIndentWidthPx.current = requested;
+      } catch (cause) {
+        if (generation !== indentWidthRequestGeneration.current) return;
+        const fallback = persistedIndentWidthPx.current;
+        indentWidthPxRef.current = fallback;
+        setIndentWidthPx(fallback);
+        setCommandMessage(
+          `:indent-width · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
         );
       }
     },
@@ -2304,6 +2411,57 @@ export function App({
         queueMicrotask(restoreFocus);
         return;
       }
+      case "application.line_number_min_width": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(
+            `:line-number-min-width · ${lineNumberMinWidthLabel(lineNumberMinWidthPx)}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const parsed =
+          argument.toLocaleLowerCase() === "off"
+            ? DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX
+            : /^\d+$/u.test(argument)
+              ? Number(argument)
+              : Number.NaN;
+        const requested = normalizeApplicationLineNumberMinWidthPx(parsed);
+        if (requested === null) {
+          setCommandMessage(
+            `:line-number-min-width · offまたは${MIN_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}〜${MAX_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX}の整数で指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeApplicationLineNumberMinWidth(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
+      case "application.indent_width": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(`:indent-width · ${indentWidthPx}px`);
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const parsed = /^\d+$/u.test(argument) ? Number(argument) : Number.NaN;
+        const requested = normalizeApplicationIndentWidthPx(parsed);
+        if (requested === null) {
+          setCommandMessage(
+            `:indent-width · ${MIN_APPLICATION_INDENT_WIDTH_PX}〜${MAX_APPLICATION_INDENT_WIDTH_PX}の整数で指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeApplicationIndentWidth(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
       case "application.japanese_word_segmentation": {
         const restoreFocus =
           session?.restoreFocus ??
@@ -2461,6 +2619,7 @@ export function App({
         onApplicationCommand={executeVimApplicationCommand}
         onWindowCommand={executeVimWindowCommand}
         keyConfig={keyConfig}
+        lineNumberMinWidthPx={lineNumberMinWidthPx}
         onAdapterChange={registerEditorAdapter}
       />
     );
@@ -3105,6 +3264,7 @@ function EditorWindow({
   onApplicationCommand,
   onWindowCommand,
   keyConfig,
+  lineNumberMinWidthPx,
   onAdapterChange,
 }: {
   runtime: CoreRuntime;
@@ -3134,11 +3294,13 @@ function EditorWindow({
     command: VimWindowCommand,
   ) => Promise<void>;
   keyConfig: ApplicationKeyConfig;
+  lineNumberMinWidthPx: number;
   onAdapterChange: (
     windowId: string,
     adapter: TiptapEditorAdapter | null,
   ) => void;
 }) {
+  const editorWindow = useRef<HTMLElement>(null);
   const editorScroll = useRef<HTMLDivElement>(null);
   const editorRoot = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<TiptapEditorAdapter | null>(null);
@@ -3157,6 +3319,24 @@ function EditorWindow({
     focusedSectionId: string;
     sectionId: string;
   } | null>(null);
+
+  useLayoutEffect(() => {
+    const element = editorWindow.current;
+    if (!element) return;
+    const update = (width: number): void => {
+      element.dataset.lineNumbersHidden = String(
+        shouldHideApplicationLineNumbers(width, lineNumberMinWidthPx),
+      );
+    };
+    update(element.getBoundingClientRect().width);
+    if (typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries.find((candidate) => candidate.target === element);
+      update(entry?.contentRect.width ?? element.getBoundingClientRect().width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [lineNumberMinWidthPx]);
 
   useEffect(() => {
     if (!editorRoot.current || !editorScroll.current) return;
@@ -3369,6 +3549,7 @@ function EditorWindow({
 
   return (
     <article
+      ref={editorWindow}
       className={`editor-window focus-surface${focused ? " focus-surface--focused" : ""}`}
       data-window-id={windowId}
       data-note-id={noteId}
@@ -3468,6 +3649,12 @@ function noteMaxWidthLabel(noteMaxWidthPx: number): string {
   return noteMaxWidthPx === DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX
     ? "off"
     : `${noteMaxWidthPx}px`;
+}
+
+function lineNumberMinWidthLabel(lineNumberMinWidthPx: number): string {
+  return lineNumberMinWidthPx === DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX
+    ? "off"
+    : `${lineNumberMinWidthPx}px`;
 }
 
 function applicationZoomShortcutTarget(

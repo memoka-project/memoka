@@ -138,13 +138,17 @@ corepack pnpm tauri:build
 `Ctrl+=` / `Ctrl++`、`Ctrl+-`、`Ctrl+0`で変更・リセットでき、`:zoom 120`のような直接指定もできます。
 ノートの最大表示幅は`:note-width 1200`のようにCSS pxで指定できます。既定は`1000`で、
 `:note-width off`または`0`で上限を解除します。フォント、Zoom、ノート幅はWorkspaceには依存しません。
-日本語のword操作と表示上の改行方法も独立してアプリケーション全体へ設定できます。
+行番号を省略するWindow幅は`:line-number-min-width 480`、Section、List、行番号境界から最初の
+Section縦線までの間隔に共通するインデント幅は`:indent-width 24`のように指定します。日本語のword操作と表示上の改行方法も独立して
+アプリケーション全体へ設定できます。
 
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
 font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
 zoom_percent = 110 # 50〜200、10%刻み
 note_max_width_px = 1000 # 320〜4096、0は上限なし
+line_number_min_width_px = 480 # 240〜4096、0は狭いWindowでも常に表示
+indent_width_px = 24 # 16〜64、SectionとListに共通の1階層の幅
 
 [vim]
 whichwrap = true # Normal/Visual Charのh/lで前後の論理行へ移動
@@ -164,6 +168,14 @@ wait_for_mirror = false
 `note_max_width_px`は行番号gutter、本文padding、すべてのblockを含むノートキャンバス全体の
 最大幅です。Windowがそれより広いときは中央寄せになり、狭いときはWindow幅に追従します。
 `:note-width`だけを実行すると現在値を表示します。表とコードブロックの水平スクロールは従来どおりです。
+
+`line_number_min_width_px`より狭いEditor Windowでは行番号gutterを省略して本文領域を広げます。
+`:line-number-min-width off`または`0`で幅による省略を無効にできます。`indent_width_px`はSectionの
+1階層、Listのネスト、List marker、Table、Code Blockを同じ表示グリッドへ揃える設定です。List markerの
+左端は行番号境界または所属Section縦線の次のグリッド線を基準に配置します。Bullet ListとNumbered Listの
+本文位置は共通で、markerから本文までの間隔はインデント設定に連動しない固定の文字幅です。List全体の左方向への
+微調整はインデント幅に比例し、32pxのとき0.5emです。ネストごとに1段ずつ進みます。
+どちらのCommandも引数なしで現在値を表示します。
 
 `:word-segmentation`は`w/b/e`、word operator、`iw/aw`、Insertの`Ctrl-w`で使う日本語境界を変更します。
 `:line-break-segmentation`は本文と本文検索プレビューの表示上の改行候補だけを変更します。既定の`fine`は

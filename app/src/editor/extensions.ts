@@ -77,6 +77,74 @@ const ComposableInlineCode = Code.extend({
   excludes: "",
 });
 
+const MEMOKA_BULLET_MARKER_STYLE_COUNT = 6;
+
+export function bulletMarkerStyleForDepth(depth: number): number {
+  const normalizedDepth = Number.isSafeInteger(depth) && depth > 0 ? depth : 1;
+  return ((normalizedDepth - 1) % MEMOKA_BULLET_MARKER_STYLE_COUNT) + 1;
+}
+
+const BulletListMarkers = Extension.create({
+  name: "memokaBulletListMarkers",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          nodeViews: {
+            bulletList: (node, view, getPos) => {
+              const element = view.dom.ownerDocument.createElement("ul");
+              let destroyed = false;
+              const refreshMarkerStyle = (): void => {
+                if (destroyed) return;
+                let position: number | undefined;
+                try {
+                  position = getPos();
+                } catch {
+                  return;
+                }
+                if (typeof position !== "number") return;
+                const $position = view.state.doc.resolve(position);
+                let depth = 1;
+                for (
+                  let ancestorDepth = 0;
+                  ancestorDepth <= $position.depth;
+                  ancestorDepth += 1
+                ) {
+                  const name = $position.node(ancestorDepth).type.name;
+                  if (name === "bulletList" || name === "orderedList") {
+                    depth += 1;
+                  }
+                }
+                element.dataset.memokaBulletMarker = String(
+                  bulletMarkerStyleForDepth(depth),
+                );
+              };
+              queueMicrotask(refreshMarkerStyle);
+              return {
+                dom: element,
+                contentDOM: element,
+                update: (nextNode) => {
+                  if (nextNode.type !== node.type) return false;
+                  node = nextNode;
+                  queueMicrotask(refreshMarkerStyle);
+                  return true;
+                },
+                ignoreMutation: (mutation) =>
+                  mutation.type === "attributes" &&
+                  mutation.target === element &&
+                  mutation.attributeName === "data-memoka-bullet-marker",
+                destroy: () => {
+                  destroyed = true;
+                },
+              };
+            },
+          },
+        },
+      }),
+    ];
+  },
+});
+
 const MemokaExternalLink = Link.extend({
   renderHTML({ HTMLAttributes }) {
     const href =
@@ -2067,6 +2135,7 @@ export function productEditorExtensions(
     SectionIdentity,
     ...(!options.directBodyOnly ? [BodyChunkViewport, BodyChunking] : []),
     JapaneseLineBreaking,
+    BulletListMarkers,
     BlockIdentity,
     AttachmentIdentity,
     TableShortcuts,

@@ -446,6 +446,8 @@ pub fn run() {
         application_config::application_font_family_save,
         application_config::application_zoom_percent_save,
         application_config::application_note_max_width_px_save,
+        application_config::application_line_number_min_width_px_save,
+        application_config::application_indent_width_px_save,
         application_config::application_japanese_word_segmentation_save,
         application_config::application_japanese_line_break_segmentation_save,
         clipboard::clipboard_write_rich,

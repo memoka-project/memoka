@@ -12,9 +12,13 @@ import {
 } from "../core/application-theme";
 import {
   DEFAULT_APPLICATION_FONT_FAMILY,
+  DEFAULT_APPLICATION_INDENT_WIDTH_PX,
+  DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
   normalizeApplicationFontFamily,
+  normalizeApplicationIndentWidthPx,
+  normalizeApplicationLineNumberMinWidthPx,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
 } from "../core/application-appearance";
@@ -35,6 +39,8 @@ interface ApplicationKeyConfigLoadWire {
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
+  readonly lineNumberMinWidthPx: number;
+  readonly indentWidthPx: number;
   readonly japaneseWordSegmentation: string;
   readonly japaneseLineBreakSegmentation: string;
   readonly waitForMirrorOnExit: boolean;
@@ -48,6 +54,8 @@ export interface LoadedApplicationConfig {
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
+  readonly lineNumberMinWidthPx: number;
+  readonly indentWidthPx: number;
   readonly japaneseWordSegmentation: JapaneseWordSegmentationMode;
   readonly japaneseLineBreakSegmentation: JapaneseLineBreakSegmentationMode;
   readonly waitForMirrorOnExit: boolean;
@@ -59,6 +67,10 @@ export interface ApplicationConfigPort {
   readonly saveFontFamily: (fontFamily: string) => Promise<void>;
   readonly saveZoomPercent: (zoomPercent: number) => Promise<void>;
   readonly saveNoteMaxWidthPx: (noteMaxWidthPx: number) => Promise<void>;
+  readonly saveLineNumberMinWidthPx: (
+    lineNumberMinWidthPx: number,
+  ) => Promise<void>;
+  readonly saveIndentWidthPx: (indentWidthPx: number) => Promise<void>;
   readonly saveJapaneseWordSegmentation: (
     mode: JapaneseWordSegmentationMode,
   ) => Promise<void>;
@@ -85,6 +97,16 @@ export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
       if (!isTauriRuntime()) return;
       await invoke("application_note_max_width_px_save", { noteMaxWidthPx });
     },
+    saveLineNumberMinWidthPx: async (lineNumberMinWidthPx) => {
+      if (!isTauriRuntime()) return;
+      await invoke("application_line_number_min_width_px_save", {
+        lineNumberMinWidthPx,
+      });
+    },
+    saveIndentWidthPx: async (indentWidthPx) => {
+      if (!isTauriRuntime()) return;
+      await invoke("application_indent_width_px_save", { indentWidthPx });
+    },
     saveJapaneseWordSegmentation: async (mode) => {
       if (!isTauriRuntime()) return;
       await invoke("application_japanese_word_segmentation_save", { mode });
@@ -107,6 +129,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+      indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
@@ -128,6 +152,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+      indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
@@ -143,6 +169,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+      indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
@@ -171,6 +199,20 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     if (noteMaxWidthPx === null) {
       throw new Error(`不正なノート最大幅です: ${loaded.noteMaxWidthPx}px`);
     }
+    const lineNumberMinWidthPx = normalizeApplicationLineNumberMinWidthPx(
+      loaded.lineNumberMinWidthPx,
+    );
+    if (lineNumberMinWidthPx === null) {
+      throw new Error(
+        `不正な行番号表示の最小幅です: ${loaded.lineNumberMinWidthPx}px`,
+      );
+    }
+    const indentWidthPx = normalizeApplicationIndentWidthPx(
+      loaded.indentWidthPx,
+    );
+    if (indentWidthPx === null) {
+      throw new Error(`不正なインデント幅です: ${loaded.indentWidthPx}px`);
+    }
     const japaneseWordSegmentation = normalizeJapaneseWordSegmentationMode(
       loaded.japaneseWordSegmentation,
     );
@@ -195,6 +237,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily,
       zoomPercent,
       noteMaxWidthPx,
+      lineNumberMinWidthPx,
+      indentWidthPx,
       japaneseWordSegmentation,
       japaneseLineBreakSegmentation,
       waitForMirrorOnExit: loaded.waitForMirrorOnExit,
@@ -210,6 +254,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
+      indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,

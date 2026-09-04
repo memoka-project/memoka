@@ -1278,6 +1278,9 @@ export class ProductVimSession {
           ? `pending:count:${resolution.count}`
           : resolution.action.detail;
       this.emit();
+      if (resolution.state.pending?.kind === "replace-character") {
+        this.scheduleCaretRefresh(view);
+      }
       return true;
     }
 
@@ -2997,6 +3000,9 @@ export class ProductVimSession {
     const caret = this.caret ?? this.createCaret();
     hideRenderedVimCarets(caret);
     const caretNodeName = view.state.doc.nodeAt(geometry.cursor)?.type.name;
+    const replaceCaret =
+      this.mode === "replace" ||
+      this.input.pending?.kind === "replace-character";
     caret.className =
       this.mode === "insert"
         ? "memoka-vim-caret memoka-vim-caret--insert"
@@ -3004,7 +3010,7 @@ export class ProductVimSession {
             caretNodeName === "horizontalRule"
               ? " memoka-vim-caret--horizontal-rule"
               : ""
-          }`;
+          }${replaceCaret ? " memoka-vim-caret--replace" : ""}`;
     caret.dataset.mode = this.mode;
     caret.dataset.cursor = String(geometry.cursor);
     if (caretNodeName) {

@@ -8,6 +8,7 @@ import {
 } from "./platform/application-config";
 import { applyApplicationTheme } from "./platform/application-theme";
 import {
+  applyApplicationIndentWidth,
   applyApplicationFont,
   applyApplicationNoteMaxWidth,
   createDefaultApplicationZoomPort,
@@ -26,6 +27,8 @@ void loadApplicationConfig().then(
     fontFamily,
     zoomPercent,
     noteMaxWidthPx,
+    lineNumberMinWidthPx,
+    indentWidthPx,
     japaneseWordSegmentation,
     japaneseLineBreakSegmentation,
     waitForMirrorOnExit,
@@ -34,6 +37,7 @@ void loadApplicationConfig().then(
     applyApplicationTheme(document.documentElement, theme);
     applyApplicationFont(document.documentElement, fontFamily);
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
+    applyApplicationIndentWidth(document.documentElement, indentWidthPx);
     setJapaneseSegmentationConfiguration({
       wordSegmentation: japaneseWordSegmentation,
       lineBreakSegmentation: japaneseLineBreakSegmentation,
@@ -55,6 +59,8 @@ void loadApplicationConfig().then(
         initialFontFamily={fontFamily}
         initialZoomPercent={appliedZoomPercent}
         initialNoteMaxWidthPx={noteMaxWidthPx}
+        initialLineNumberMinWidthPx={lineNumberMinWidthPx}
+        initialIndentWidthPx={indentWidthPx}
         initialJapaneseWordSegmentation={japaneseWordSegmentation}
         initialJapaneseLineBreakSegmentation={japaneseLineBreakSegmentation}
         keyConfig={config}

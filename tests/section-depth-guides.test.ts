@@ -2,15 +2,63 @@ import { Editor } from "@tiptap/core";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createNoteDocument } from "../app/src/core/documents";
+import { createNoteDocument, type NoteBlock } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
   createSectionXml,
   insertChildSection,
 } from "../app/src/core/section-model";
-import { productEditorExtensions } from "../app/src/editor/extensions";
+import {
+  bulletMarkerStyleForDepth,
+  productEditorExtensions,
+} from "../app/src/editor/extensions";
 
 describe("Section depth guides", () => {
+  it("cycles the six Bullet List marker shapes by nesting depth", () => {
+    expect(
+      Array.from({ length: 13 }, (_, index) =>
+        bulletMarkerStyleForDepth(index + 1),
+      ),
+    ).toEqual([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 1]);
+  });
+
+  it("annotates nested Bullet List DOM without persisting presentation depth", async () => {
+    const nestedBulletList = (depth: number): NoteBlock => ({
+      type: "bulletList",
+      blockId: createUuidV7(),
+      children: [
+        {
+          type: "listItem",
+          blockId: createUuidV7(),
+          children: [
+            {
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: `Depth ${depth}` }],
+            },
+            ...(depth < 7 ? [nestedBulletList(depth + 1)] : []),
+          ],
+        },
+      ],
+    });
+    const note = createNoteDocument(createUuidV7(), [nestedBulletList(1)]);
+    const editor = new Editor({ extensions: productEditorExtensions(note) });
+
+    try {
+      await Promise.resolve();
+      expect(
+        [
+          ...editor.view.dom.querySelectorAll<HTMLElement>(
+            "ul[data-memoka-bullet-marker]",
+          ),
+        ].map((list) => list.dataset.memokaBulletMarker),
+      ).toEqual(["1", "2", "3", "4", "5", "6", "1"]);
+    } finally {
+      editor.destroy();
+      note.doc.destroy();
+    }
+  });
+
   it("continues a non-Root Section guide through its body and child Sections", () => {
     const style = document.createElement("style");
     style.textContent = readFileSync(
@@ -38,8 +86,12 @@ describe("Section depth guides", () => {
     expect(style.textContent).toContain(
       "border-left: 1px solid var(--memoka-color-border-subtle)",
     );
-    expect(style.textContent).toContain("margin-left: 6px");
-    expect(style.textContent).toContain("padding-left: 16px");
+    expect(style.textContent).toContain(
+      "margin-left: var(--memoka-indent-guide-offset)",
+    );
+    expect(style.textContent).toContain(
+      "var(--memoka-indent-width) - var(--memoka-indent-guide-offset) - 1px",
+    );
 
     style.remove();
   });

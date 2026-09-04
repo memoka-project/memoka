@@ -426,7 +426,7 @@ export function createMemokaHelpSectionSnapshot(
             [
               "文字置換",
               rich(code("[count]r{char} / R")),
-              "文字を置換／Replace modeへ移動",
+              "文字を置換／Replace modeへ移動。rの文字待機中とReplace modeではcaretが下線になり、REPLACE表示は赤系になります",
             ],
             [
               "行連結",
@@ -634,7 +634,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[japanese]のword_segmentationはfine / budoux / unicode、line_break_segmentationはfine / budoux / nativeから選びます。:word-segmentationと:line-break-segmentationでも現在値の確認と即時変更・保存ができます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_pxで指定し、0で上限を解除できます。不正な設定は全体を無効にして既定値へ戻します。",
+            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[japanese]のword_segmentationはfine / budoux / unicode、line_break_segmentationはfine / budoux / nativeから選びます。:word-segmentationと:line-break-segmentationでも現在値の確認と即時変更・保存ができます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_px、行番号を省略するWindow幅はline_number_min_width_px、SectionとListで共通のインデント幅はindent_width_pxで指定します。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "color-theme",
@@ -642,7 +642,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "appearance",
-            "フォントは:fontの共通検索ペインでプリセットまたは任意のCSS font-familyをライブプレビューして選択します。通常UIと本文へ適用し、コード、行番号、Command-line、デバッグ情報は等幅のままです。Ctrl+= / Ctrl++で10%拡大、Ctrl+-で10%縮小、Ctrl+0で100%へ戻せます。:zoomは現在値、:zoom 120は指定値を適用します。Zoomは50〜200%の10%刻みです。ノートキャンバスは既定で最大1000 CSS pxとし、広いWindow内で中央寄せにします。:note-widthで現在値を表示し、:note-width 1200で変更、:note-width offで上限を解除できます。フォント、Zoom、ノート幅はconfig.tomlへ保存され、Workspaceを切り替えても共通です。",
+            "フォントは:fontの共通検索ペインでプリセットまたは任意のCSS font-familyをライブプレビューして選択します。通常UIと本文へ適用し、コード、行番号、Command-line、デバッグ情報は等幅のままです。Ctrl+= / Ctrl++で10%拡大、Ctrl+-で10%縮小、Ctrl+0で100%へ戻せます。:zoomは現在値、:zoom 120は指定値を適用します。Zoomは50〜200%の10%刻みです。ノートキャンバスは既定で最大1000 CSS pxとし、広いWindow内で中央寄せにします。:note-widthで現在値を表示し、:note-width 1200で変更、:note-width offで上限を解除できます。行番号は既定で480 CSS px未満のWindowから省略し、:line-number-min-widthで確認・変更、offで常時表示にできます。:indent-widthはSection、List、Table、Code Blockに共通の表示インデントと、行番号境界から最初のSection縦線までの間隔を16〜64 CSS pxで変更します。List markerは行番号境界または所属Section縦線の次のグリッド線を基準に配置し、Bullet ListとNumbered Listの本文位置を揃えます。markerから本文までの間隔はインデント設定に連動しない固定幅です。List全体の左方向への微調整はインデント幅に比例し、32pxのとき0.5emです。ネストごとに1段進みます。これらはconfig.tomlへ保存され、Workspaceを切り替えても共通です。",
           ),
           listItem(
             "portable-data",

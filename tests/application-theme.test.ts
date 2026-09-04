@@ -141,7 +141,7 @@ describe("Memoka application themes", () => {
       /data-vim-mode="visual-char"[\s\S]*?::selection[\s\S]*?background-color: transparent/u,
     );
     expect(css).toMatch(
-      /\.memoka-editor :is\(ul, ol\) > li::marker\s*\{[\s\S]*?var\(--memoka-color-markup-raw\)/u,
+      /\.memoka-editor :is\(ul, ol\) > li::before\s*\{[\s\S]*?var\(--memoka-color-markup-raw\)/u,
     );
     expect(css).toMatch(
       /:root\[data-memoka-theme-appearance="light"\][\s\S]*?-webkit-font-smoothing: antialiased;/u,

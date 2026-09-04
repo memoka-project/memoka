@@ -2806,6 +2806,15 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     editor.commands.setTextSelection(textPosition(editor, "abc") + 1);
     press(editor, "r");
     expect(adapter.vimSnapshot.action).toBe("pending:replace-character");
+    const caret = await vi.waitFor(() => {
+      const candidate = [
+        ...document.querySelectorAll<HTMLElement>(".memoka-vim-caret"),
+      ].find((element) => element.style.display === "block");
+      if (!candidate?.classList.contains("memoka-vim-caret--replace")) {
+        throw new Error("Replace caret did not render");
+      }
+      return candidate;
+    });
     press(editor, "X");
     await runtime.flush();
     expect(editor.getText()).toBe("aXc");
@@ -2821,6 +2830,9 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     editor.commands.setTextSelection(textPosition(editor, "abc") + 1);
     press(editor, "R");
     expect(adapter.vimSnapshot.mode).toBe("replace");
+    await vi.waitFor(() =>
+      expect(caret.classList.contains("memoka-vim-caret--replace")).toBe(true),
+    );
     await runtime.flush();
     expect(runtime.windows.get("window-1")?.mode).toBe("replace");
     const first = beforeInput(editor, "X");

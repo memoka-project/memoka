@@ -88,6 +88,18 @@ describe("Memoka Application Command-line", () => {
       command: { id: "application.note_width" },
       argument: "off",
     });
+    expect(parseApplicationCommand(":line-number-min-width 520")).toMatchObject(
+      {
+        kind: "command",
+        command: { id: "application.line_number_min_width" },
+        argument: "520",
+      },
+    );
+    expect(parseApplicationCommand(":indent-width 28")).toMatchObject({
+      kind: "command",
+      command: { id: "application.indent_width" },
+      argument: "28",
+    });
     expect(parseApplicationCommand(":word-segmentation fine")).toMatchObject({
       kind: "command",
       command: { id: "application.japanese_word_segmentation" },
@@ -116,7 +128,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: notes",
     });
     expect(applicationCommandHelp()).toBe(
-      ":tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 
