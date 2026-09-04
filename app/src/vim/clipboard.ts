@@ -14,6 +14,7 @@ import {
 import { sanitizeExternalHtml } from "../editor/html-paste";
 import { normalizeExternalLink } from "../core/external-links";
 import { createUuidV7 } from "../core/ids";
+import { markdownAlertMarker } from "../core/markdown-alert";
 import { defaultVimBlockSemantics } from "./block-semantics";
 import type { VimRegister } from "./editor-commands";
 
@@ -325,12 +326,16 @@ function nodeMarkdown(
   }
   if (node.type.name === "blockquote") {
     const blocks: string[] = [];
+    const alertMarker = markdownAlertMarker(node.attrs);
     node.forEach((child) => {
       const markdown = nodeMarkdown(child, "", resolveInternalLinkTitle);
       blocks.push(markdown.replace(/\n+$/u, ""));
     });
-    const quoted = blocks
-      .join("\n\n")
+    const body = blocks.join("\n\n");
+    const content = alertMarker
+      ? `${alertMarker}${body ? `\n${body}` : ""}`
+      : body;
+    const quoted = content
       .split("\n")
       .map((line) => `${indentation}>${line ? ` ${line}` : ""}`)
       .join("\n");

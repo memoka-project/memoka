@@ -114,10 +114,16 @@ describe("Memoka inline formatting", () => {
     }
   });
 
-  it("composes bold, italic, strike, code and a safe external link", () => {
+  it("composes bold, italic, strike, code, highlight and a safe external link", () => {
     withEditor((editor) => {
       editor.commands.setContent("<p>formatted</p>");
-      for (const format of ["bold", "italic", "strike", "code"] as const) {
+      for (const format of [
+        "bold",
+        "italic",
+        "strike",
+        "code",
+        "highlight",
+      ] as const) {
         expect(apply(editor, { kind: "apply", format })).toMatchObject({
           changed: true,
         });
@@ -129,6 +135,7 @@ describe("Memoka inline formatting", () => {
       expect(text?.marks.map(({ type }) => type.name).sort()).toEqual([
         "bold",
         "code",
+        "highlight",
         "italic",
         "link",
         "strike",
@@ -146,6 +153,29 @@ describe("Memoka inline formatting", () => {
         changed: false,
         reason: "no-op",
       });
+    });
+  });
+
+  it("removes an imported Markdown highlight with all-format clear", () => {
+    withEditor((editor) => {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                marks: [{ type: "highlight" }, { type: "bold" }],
+                text: "highlighted",
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(apply(editor, { kind: "clear" })).toMatchObject({ changed: true });
+      expect(editor.state.doc.firstChild?.firstChild?.marks).toHaveLength(0);
     });
   });
 

@@ -8,7 +8,14 @@ import type {
 } from "../core/inline-formats";
 import { normalizeExternalLink } from "../core/external-links";
 
-const SUPPORTED_MARKS = ["italic", "bold", "strike", "code", "link"] as const;
+const SUPPORTED_MARKS = [
+  "italic",
+  "bold",
+  "strike",
+  "code",
+  "link",
+  "highlight",
+] as const;
 const DISALLOWED_BLOCKS = new Set([
   "sectionHeader",
   "codeBlock",

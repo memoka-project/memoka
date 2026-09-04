@@ -27,7 +27,7 @@ describe("Memoka Block Type picker", () => {
       name: "ブロックタイプを検索",
     });
     expect(document.activeElement).toBe(input);
-    expect(screen.getAllByRole("option")).toHaveLength(8);
+    expect(screen.getAllByRole("option")).toHaveLength(9);
     expect(screen.getAllByRole("option").at(-1)?.textContent).toContain(
       "Paragraph",
     );
@@ -150,8 +150,49 @@ describe("Memoka Block Type picker", () => {
     fireEvent.keyDown(grid, { key: "Enter" });
 
     expect(transform).toHaveBeenCalledWith("table", {
-      rows: 3,
-      columns: 3,
+      tableDimensions: { rows: 3, columns: 3 },
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+  });
+
+  it("chooses an Alert type in a second shared search pane", async () => {
+    const transform = vi.fn(() => ({
+      changed: true as const,
+      target: "alert" as const,
+      selection: "text" as const,
+    }));
+    const onClose = vi.fn();
+    const restoreFocus = vi.fn();
+    render(
+      <BlockTypePicker
+        session={{
+          windowId: "window-1",
+          blockId: "block-1",
+          transform,
+          restoreFocus,
+        }}
+        onClose={onClose}
+        onMessage={vi.fn()}
+      />,
+    );
+    const blockTypeInput = screen.getByRole("combobox", {
+      name: "ブロックタイプを検索",
+    });
+    fireEvent.change(blockTypeInput, { target: { value: "callout" } });
+    fireEvent.keyDown(blockTypeInput, { key: "Enter" });
+
+    const alertTypeInput = screen.getByRole("combobox", {
+      name: "Alert typeを検索",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(alertTypeInput));
+    expect(screen.getAllByRole("option")).toHaveLength(15);
+    fireEvent.change(alertTypeInput, { target: { value: "注意 warning" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    fireEvent.keyDown(alertTypeInput, { key: "Enter" });
+
+    expect(transform).toHaveBeenCalledWith("alert", {
+      alert: { type: "warning", title: null, fold: null },
     });
     expect(onClose).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));

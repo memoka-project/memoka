@@ -110,6 +110,15 @@ corepack pnpm tauri:build
 復旧CLIも必要な場合は`corepack pnpm cli:build`を実行します。出力は
 `target\release\memoka-cli.exe`です。
 
+## Markdown互換
+
+明示Markdown貼り付け、空Note titleへの文書貼り付け、Clipboard、可搬mirrorではCommonMark / GFMに加え、
+Obsidianの`==highlight==`とGitHub / Obsidian形式のAlert（Callout）を扱います。GitHubの
+`NOTE` / `TIP` / `IMPORTANT` / `WARNING` / `CAUTION`、Obsidianの標準typeとcustom type、custom title、
+`[!type]+` / `[!type]-`の折り畳み指定を保持します。Alert本文は編集できるようMemoka上では常に展開します。
+`==highlight==`はVisual-charで選択して`m`から新しく設定でき、AlertはInsert modeの空Paragraphで`/`を
+入力してtypeを選ぶことでも作成できます。
+
 ## 開発
 
 必要な環境はNode.js、Corepack、Rust、Tauri 2のLinuxまたはWindows向け依存パッケージです。

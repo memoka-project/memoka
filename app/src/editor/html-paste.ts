@@ -1,4 +1,8 @@
 import { isSafeExternalLink } from "../core/external-links";
+import {
+  normalizeMarkdownAlertFold,
+  normalizeMarkdownAlertType,
+} from "../core/markdown-alert";
 
 const BLOCKED_ELEMENTS = [
   "audio",
@@ -29,6 +33,11 @@ const BLOCKED_ELEMENTS = [
 
 const SAFE_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   a: new Set(["href", "title"]),
+  blockquote: new Set([
+    "data-memoka-alert-type",
+    "data-memoka-alert-title",
+    "data-memoka-alert-fold",
+  ]),
   code: new Set(["class"]),
   ol: new Set(["start"]),
   td: new Set(["colspan", "rowspan"]),
@@ -59,6 +68,10 @@ export function sanitizeExternalHtml(html: string): string {
         !allowed.has(name) ||
         (name === "href" && !isSafeExternalLink(attribute.value)) ||
         (name === "class" && !SAFE_CODE_CLASS.test(attribute.value.trim())) ||
+        (name === "data-memoka-alert-type" &&
+          !normalizeMarkdownAlertType(attribute.value)) ||
+        (name === "data-memoka-alert-fold" &&
+          !normalizeMarkdownAlertFold(attribute.value)) ||
         ((name === "start" || name === "colspan" || name === "rowspan") &&
           !SAFE_INTEGER.test(attribute.value.trim()))
       ) {

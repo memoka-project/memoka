@@ -619,6 +619,149 @@ describe("Memoka explicit Markdown paste parser", () => {
     });
   });
 
+  it("imports Obsidian highlights without treating code or escaped delimiters as marks", () => {
+    withEditor((editor) => {
+      const parsed = parseMarkdownPaste(
+        [
+          "==plain== **==bold==** ==[linked](https://example.com)== ==`code`==",
+          "",
+          "`==literal code==` \\=\\=literal\\=\\=",
+          "",
+          "[[01900000-0000-7000-8000-0000000000aa|literal == link]]",
+        ].join("\n"),
+        editor.schema,
+      );
+      const textMarks = new Map<string, string[]>();
+      parsed?.slice.content.forEach((node) => {
+        node.descendants((child) => {
+          if (child.isText) {
+            textMarks.set(
+              child.text ?? "",
+              child.marks.map(({ type }) => type.name).sort(),
+            );
+          }
+        });
+      });
+
+      expect(textMarks.get("plain")).toEqual(["highlight"]);
+      expect(textMarks.get("bold")).toEqual(["bold", "highlight"]);
+      expect(textMarks.get("linked")).toEqual(["highlight", "link"]);
+      expect(textMarks.get("code")).toEqual(["code", "highlight"]);
+      expect(textMarks.get("==literal code==")).toEqual(["code"]);
+      expect(
+        [...textMarks].find(([text]) => text.includes("==literal=="))?.[1],
+      ).toEqual([]);
+      const internalLink = parsed?.slice.content.lastChild?.firstChild;
+      expect(internalLink?.type.name).toBe("internalSectionLink");
+      expect(internalLink?.textContent).toBe("literal == link");
+    });
+  });
+
+  it("removes highlight delimiters from an imported Note title", () => {
+    withEditor((editor) => {
+      const parsed = parseMarkdownNote(
+        "# ==Highlighted title==\n\nBody with ==highlight==.",
+        editor.schema,
+        "01900000-0000-7000-8000-000000000001",
+      );
+
+      expect(parsed?.title).toBe("Highlighted title");
+      const bodyMarks: string[] = [];
+      parsed?.root.child(1).descendants((node) => {
+        if (node.isText)
+          bodyMarks.push(...node.marks.map(({ type }) => type.name));
+      });
+      expect(bodyMarks).toContain("highlight");
+
+      const literal = parseMarkdownNote(
+        "# `==literal title==`\n\nbody",
+        editor.schema,
+        "01900000-0000-7000-8000-000000000001",
+      );
+      expect(literal?.title).toBe("==literal title==");
+
+      const escaped = parseMarkdownNote(
+        "# Literal \\=\\=title\\=\\=\n\nbody",
+        editor.schema,
+        "01900000-0000-7000-8000-000000000001",
+      );
+      expect(escaped?.title).toBe("Literal ==title==");
+    });
+  });
+
+  it("imports GitHub and Obsidian alert markers as typed blockquotes", () => {
+    withEditor((editor) => {
+      const parsed = parseMarkdownPaste(
+        [
+          "> [!NOTE]",
+          "> GitHub note",
+          "",
+          "> [!warning] Custom warning",
+          "> **Watch this.**",
+          "",
+          "> [!faq]- Folded answer",
+          "> - first",
+          "> - second",
+          "",
+          "> [!release-status]+ Custom type",
+          "> nested body",
+          "",
+          "> [!tip] Title only",
+        ].join("\n"),
+        editor.schema,
+      );
+
+      expect(parsed?.sourceBlockCount).toBe(0);
+      expect(parsed?.slice.content.toJSON()).toMatchObject([
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "note",
+            alertTitle: null,
+            alertFold: null,
+          },
+          content: [{ type: "paragraph", content: [{ text: "GitHub note" }] }],
+        },
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "warning",
+            alertTitle: "Custom warning",
+            alertFold: null,
+          },
+          content: [{ type: "paragraph" }],
+        },
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "faq",
+            alertTitle: "Folded answer",
+            alertFold: "collapsed",
+          },
+          content: [{ type: "bulletList" }],
+        },
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "release-status",
+            alertTitle: "Custom type",
+            alertFold: "expanded",
+          },
+          content: [{ type: "paragraph", content: [{ text: "nested body" }] }],
+        },
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "tip",
+            alertTitle: "Title only",
+            alertFold: null,
+          },
+          content: [{ type: "paragraph" }],
+        },
+      ]);
+    });
+  });
+
   it("does not silently merge list kinds at the same indentation", () => {
     withEditor((editor) => {
       const parsed = parseMarkdownPaste(

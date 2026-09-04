@@ -213,6 +213,8 @@ function formatExample(
       return <s>{value}</s>;
     case "code":
       return <code>{value}</code>;
+    case "highlight":
+      return <mark data-memoka-highlight="true">{value}</mark>;
     case "link":
       return <a>{value}</a>;
     case "clear":

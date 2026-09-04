@@ -3380,8 +3380,8 @@ function EditorWindow({
         onBlockTypePicker({
           windowId,
           blockId,
-          transform: (target, tableDimensions) =>
-            adapter.transformBlock(blockId, target, true, tableDimensions),
+          transform: (target, options) =>
+            adapter.transformBlock(blockId, target, true, options),
           attach: () =>
             adapter.chooseAttachmentFiles({ blockId, consumeSlash: true }),
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),

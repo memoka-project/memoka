@@ -4,9 +4,15 @@ import type { EditorView } from "@tiptap/pm/view";
 import { createUuidV7 } from "../core/ids";
 import { BODY_CHUNK_NODE, SECTION_BODY_NODE } from "../core/section-model";
 import type {
+  BlockTransformOptions,
   BlockTransformTarget,
   TableDimensions,
 } from "../core/block-types";
+import {
+  normalizeMarkdownAlertFold,
+  normalizeMarkdownAlertTitle,
+  normalizeMarkdownAlertType,
+} from "../core/markdown-alert";
 
 export interface BlockTransformCommand {
   readonly name: "block.transform";
@@ -15,7 +21,7 @@ export interface BlockTransformCommand {
     readonly target: BlockTransformTarget;
     /** The slash picker may consume the otherwise empty Paragraph's `/`. */
     readonly consumeSlash?: boolean;
-    readonly tableDimensions?: TableDimensions;
+    readonly options?: BlockTransformOptions;
   };
 }
 
@@ -63,7 +69,7 @@ export function runBlockTransformCommand(
     source.node,
     command.payload.target,
     command.payload.consumeSlash === true,
-    command.payload.tableDimensions,
+    command.payload.options,
   );
   if ("reason" in replacement) return replacement;
 
@@ -96,7 +102,7 @@ function createReplacement(
   source: ProseMirrorNode,
   target: BlockTransformTarget,
   consumeSlash: boolean,
-  tableDimensions?: TableDimensions,
+  options?: BlockTransformOptions,
 ):
   | { readonly node: ProseMirrorNode; readonly selection: "text" | "node" }
   | Extract<BlockTransformResult, { changed: false }> {
@@ -195,10 +201,36 @@ function createReplacement(
     if (!consumeSlash && (sourceType !== "paragraph" || source.content.size)) {
       return { changed: false, reason: "unsupported" };
     }
-    const table = createEmptyTable(schema, blockId, tableDimensions);
+    const table = createEmptyTable(schema, blockId, options?.tableDimensions);
     return table
       ? { node: table, selection: "text" }
       : { changed: false, reason: "unsupported" };
+  }
+  if (target === "alert") {
+    const blockquote = schema.nodes.blockquote;
+    const paragraph = schema.nodes.paragraph;
+    const alertType = normalizeMarkdownAlertType(
+      options?.alert?.type ?? "note",
+    );
+    if (!blockquote || !paragraph || !alertType) {
+      return { changed: false, reason: "unsupported" };
+    }
+    const paragraphContent =
+      sourceType === "paragraph" && !consumeSlash
+        ? source.content
+        : paragraphInlineContent(schema, plainText);
+    return {
+      node: blockquote.create(
+        {
+          blockId,
+          alertType,
+          alertTitle: normalizeMarkdownAlertTitle(options?.alert?.title),
+          alertFold: normalizeMarkdownAlertFold(options?.alert?.fold),
+        },
+        paragraph.create({ blockId: createUuidV7() }, paragraphContent),
+      ),
+      selection: "text",
+    };
   }
   if (target === "image") {
     if (!consumeSlash && (sourceType !== "paragraph" || source.content.size)) {

@@ -770,6 +770,14 @@ textarea {
   text-decoration-color: currentColor;
 }
 
+:is(.memoka-editor, .workspace-search-preview-document)
+  mark[data-memoka-highlight="true"],
+.inline-format-picker__example mark[data-memoka-highlight="true"] {
+  color: inherit;
+  background: var(--memoka-color-search-match-surface);
+  box-shadow: inset 0 -1px var(--memoka-color-search-match-border);
+}
+
 .memoka-logical-line-number {
   position: absolute;
   right: 10px;
@@ -1206,6 +1214,85 @@ textarea {
 
 .memoka-editor blockquote > :last-child {
   margin-bottom: 0;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote[data-memoka-alert-type] {
+  --memoka-alert-color: var(--memoka-color-info);
+  --memoka-alert-surface: var(--memoka-color-surface-raised);
+
+  margin: 0.4em 0 1em;
+  padding: 0.65em 0.8em 0.7em 14px;
+  border-left: 3px solid var(--memoka-alert-color);
+  border-radius: 0 5px 5px 0;
+  color: var(--memoka-color-text);
+  background: var(--memoka-alert-surface);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote[data-memoka-alert-type]::before {
+  display: block;
+  margin-bottom: 0.35em;
+  color: var(--memoka-alert-color);
+  content: "◆ " attr(data-memoka-alert-label);
+  font-weight: 700;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote:is(
+    [data-memoka-alert-type="abstract"],
+    [data-memoka-alert-type="summary"],
+    [data-memoka-alert-type="tldr"],
+    [data-memoka-alert-type="important"],
+    [data-memoka-alert-type="example"]
+  ) {
+  --memoka-alert-color: var(--memoka-color-markup-link-reference);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote:is(
+    [data-memoka-alert-type="tip"],
+    [data-memoka-alert-type="hint"],
+    [data-memoka-alert-type="success"],
+    [data-memoka-alert-type="check"],
+    [data-memoka-alert-type="done"]
+  ) {
+  --memoka-alert-color: var(--memoka-color-success);
+  --memoka-alert-surface: var(--memoka-color-success-surface);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote:is(
+    [data-memoka-alert-type="question"],
+    [data-memoka-alert-type="help"],
+    [data-memoka-alert-type="faq"],
+    [data-memoka-alert-type="warning"],
+    [data-memoka-alert-type="attention"]
+  ) {
+  --memoka-alert-color: var(--memoka-color-warning);
+  --memoka-alert-surface: var(--memoka-color-warning-surface);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote:is(
+    [data-memoka-alert-type="failure"],
+    [data-memoka-alert-type="fail"],
+    [data-memoka-alert-type="missing"],
+    [data-memoka-alert-type="danger"],
+    [data-memoka-alert-type="error"],
+    [data-memoka-alert-type="bug"],
+    [data-memoka-alert-type="caution"]
+  ) {
+  --memoka-alert-color: var(--memoka-color-danger);
+  --memoka-alert-surface: var(--memoka-color-danger-surface);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote:is(
+    [data-memoka-alert-type="quote"],
+    [data-memoka-alert-type="cite"]
+  ) {
+  --memoka-alert-color: var(--memoka-color-quote);
 }
 
 .memoka-editor hr {

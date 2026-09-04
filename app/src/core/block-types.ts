@@ -1,4 +1,5 @@
 import { normalizeWorkspaceSearchText } from "./workspace-search";
+import type { MarkdownAlert } from "./markdown-alert";
 
 export const BLOCK_TRANSFORM_TARGETS = [
   "paragraph",
@@ -8,6 +9,7 @@ export const BLOCK_TRANSFORM_TARGETS = [
   "table",
   "sourceBlock",
   "image",
+  "alert",
 ] as const;
 
 export type BlockTransformTarget = (typeof BLOCK_TRANSFORM_TARGETS)[number];
@@ -15,6 +17,11 @@ export type BlockTransformTarget = (typeof BLOCK_TRANSFORM_TARGETS)[number];
 export interface TableDimensions {
   readonly rows: number;
   readonly columns: number;
+}
+
+export interface BlockTransformOptions {
+  readonly tableDimensions?: TableDimensions;
+  readonly alert?: MarkdownAlert;
 }
 
 export type BlockTypePickerTarget = BlockTransformTarget | "attachment";
@@ -73,6 +80,13 @@ export const BLOCK_TYPE_CATALOG: readonly BlockTypeCatalogEntry[] = [
     aliases: ["source", "markdown", "raw", "ソース", "マークダウン"],
     description: "Markdownソースをそのまま扱うブロックに変更します。",
     example: "**Markdown source**",
+  },
+  {
+    id: "alert",
+    name: "Alert",
+    aliases: ["alert", "callout", "admonition", "警告", "注記", "コールアウト"],
+    description: "typeを選んでGitHub / Obsidian形式のAlertを作成します。",
+    example: "> [!NOTE]\n> 補足情報",
   },
   {
     id: "image",

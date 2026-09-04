@@ -15,6 +15,10 @@ import {
   normalizeExternalLink,
 } from "../core/external-links";
 import { inlineMarkdownText } from "../core/inline-markdown";
+import {
+  parseMarkdownAlertMarker,
+  type MarkdownAlert,
+} from "../core/markdown-alert";
 
 export interface ParsedMarkdownPaste {
   slice: Slice;
@@ -69,6 +73,7 @@ interface ParsedTable {
 interface ParsedBlockquote {
   end: number;
   lines: string[];
+  alert: MarkdownAlert | null;
 }
 
 const UUID_V7 =
@@ -84,6 +89,8 @@ const TASK_LIST_LINE = /^ *[-+*][ \t]+\[[ xX]\][ \t]+/u;
 const THEMATIC_BREAK = /^ {0,3}(([-_*])(?:[ \t]*\2){2,})[ \t]*$/u;
 const TABLE_DELIMITER = /^ {0,3}\|? *:?-{3,}:? *(?:\| *:?-{3,}:? *)+\|? *$/u;
 const INLINE_PARSE_PREFIX = "memoka-inline-prefix:";
+const HIGHLIGHT_OPEN = "\uE000";
+const HIGHLIGHT_CLOSE = "\uE001";
 const inlineMarkdownParser = unified().use(remarkParse).use(remarkGfm);
 
 interface MarkdownAstNode {
@@ -157,16 +164,31 @@ export function parseMarkdownPaste(
 
     const blockquote = parsedBlockquoteRange(lines, index);
     if (blockquote) {
-      const parsed = parseMarkdownPaste(blockquote.lines.join("\n"), schema);
+      const quoteMarkdown = blockquote.lines.join("\n");
+      const parsed = quoteMarkdown.trim()
+        ? parseMarkdownPaste(quoteMarkdown, schema)
+        : null;
+      const emptyAlertParagraph =
+        blockquote.alert && !parsed
+          ? schema.nodes.paragraph?.create({ blockId: createUuidV7() })
+          : null;
+      const content =
+        parsed?.slice.content ??
+        (emptyAlertParagraph ? Fragment.from(emptyAlertParagraph) : null);
       const node =
-        parsed &&
+        content &&
         schema.nodes.blockquote?.createChecked(
-          { blockId: createUuidV7() },
-          parsed.slice.content,
+          {
+            blockId: createUuidV7(),
+            alertType: blockquote.alert?.type ?? null,
+            alertTitle: blockquote.alert?.title ?? null,
+            alertFold: blockquote.alert?.fold ?? null,
+          },
+          content,
         );
-      if (node && parsed) {
+      if (node) {
         nodes.push(node);
-        sourceBlockCount += parsed.sourceBlockCount;
+        sourceBlockCount += parsed?.sourceBlockCount ?? 0;
       } else if (!appendSource(index, blockquote.end)) {
         return null;
       }
@@ -356,7 +378,7 @@ export function parseMarkdownNote(
     if (segment.trim() && !parsedBody) return null;
     sourceBlockCount += parsedBody?.sourceBlockCount ?? 0;
     blockCount += parsedBody?.slice.content.childCount ?? 0;
-    const title = markdownHeadingText(heading);
+    const title = markdownHeadingText(heading, schema, normalized);
     if (!title) return null;
     drafts.push({
       markdownDepth: heading.depth ?? 1,
@@ -437,7 +459,27 @@ function normalizeMarkdown(markdown: string): string {
   return markdown.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n");
 }
 
-function markdownHeadingText(node: MarkdownAstNode): string {
+function markdownHeadingText(
+  node: MarkdownAstNode,
+  schema: Schema,
+  source: string,
+): string {
+  const children = node.children ?? [];
+  const inlineStart = children[0]?.position?.start.offset;
+  const inlineEnd = children.at(-1)?.position?.end.offset;
+  if (typeof inlineStart === "number" && typeof inlineEnd === "number") {
+    const inline = parseInlineMarkdown(
+      source.slice(inlineStart, inlineEnd),
+      schema,
+    );
+    if (inline) {
+      return inline
+        .map((child) => child.textContent)
+        .join("")
+        .replaceAll(/\s+/gu, " ")
+        .trim();
+    }
+  }
   const collect = (current: MarkdownAstNode): string => {
     if (current.type === "text" || current.type === "inlineCode") {
       return current.value ?? "";
@@ -446,7 +488,9 @@ function markdownHeadingText(node: MarkdownAstNode): string {
     if (current.type === "break") return " ";
     return (current.children ?? []).map(collect).join("");
   };
-  return collect(node).replaceAll(/\s+/gu, " ").trim();
+  return stripMarkdownHighlightSyntax(collect(node))
+    .replaceAll(/\s+/gu, " ")
+    .trim();
 }
 
 function nextBlankLine(lines: string[], start: number): number {
@@ -523,7 +567,12 @@ function parsedBlockquoteRange(
     content.push(line);
     index += 1;
   }
-  return { end: index, lines: content };
+  const alert = parseMarkdownAlertMarker(content[0] ?? "");
+  return {
+    end: index,
+    lines: alert ? content.slice(1) : content,
+    alert,
+  };
 }
 
 function fenceOpening(
@@ -779,8 +828,9 @@ function parseInlineMarkdown(
   value: string,
   schema: Schema,
 ): ProseMirrorNode[] | null {
+  const highlighted = markdownWithHighlightSentinels(value);
   const tree = inlineMarkdownParser.parse(
-    `${INLINE_PARSE_PREFIX}${value}`,
+    `${INLINE_PARSE_PREFIX}${highlighted}`,
   ) as MarkdownAstNode;
   const paragraph = tree.children?.[0];
   if (
@@ -791,6 +841,15 @@ function parseInlineMarkdown(
     return null;
   }
   let prefixPending = true;
+  let highlightActive = false;
+  const highlight = schema.marks.highlight;
+  if (highlighted !== value && !highlight) return null;
+  const activeMarks = (marks: readonly Mark[]): readonly Mark[] =>
+    highlightActive && highlight
+      ? marks.some(({ type }) => type === highlight)
+        ? marks
+        : [...marks, highlight.create()]
+      : marks;
   const translate = (
     node: MarkdownAstNode,
     marks: readonly Mark[],
@@ -802,14 +861,42 @@ function parseInlineMarkdown(
         text = text.slice(INLINE_PARSE_PREFIX.length);
         prefixPending = false;
       }
-      return inlineTextNodes(text, schema, marks);
+      const result: ProseMirrorNode[] = [];
+      let start = 0;
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (character !== HIGHLIGHT_OPEN && character !== HIGHLIGHT_CLOSE) {
+          continue;
+        }
+        if (index > start) {
+          const translated = inlineTextNodes(
+            text.slice(start, index),
+            schema,
+            activeMarks(marks),
+          );
+          if (!translated) return null;
+          result.push(...translated);
+        }
+        highlightActive = character === HIGHLIGHT_OPEN;
+        start = index + 1;
+      }
+      if (start < text.length) {
+        const translated = inlineTextNodes(
+          text.slice(start),
+          schema,
+          activeMarks(marks),
+        );
+        if (!translated) return null;
+        result.push(...translated);
+      }
+      return result;
     }
     if (node.type === "inlineCode") {
       const code = schema.marks.code;
       if (!code) return null;
       prefixPending = false;
       return node.value
-        ? [schema.text(node.value, [...marks, code.create()])]
+        ? [schema.text(node.value, [...activeMarks(marks), code.create()])]
         : [];
     }
     if (node.type === "break") {
@@ -852,7 +939,128 @@ function parseInlineMarkdown(
     if (!translated) return null;
     result.push(...translated);
   }
-  return prefixPending ? null : result;
+  return prefixPending || highlightActive ? null : result;
+}
+
+function markdownWithHighlightSentinels(value: string): string {
+  const paired = pairedHighlightDelimiters(value);
+  if (paired.size === 0) return value;
+  let result = "";
+  let index = 0;
+  while (index < value.length) {
+    const marker = paired.get(index);
+    if (marker) {
+      result += marker;
+      index += 2;
+      continue;
+    }
+    result += value[index] ?? "";
+    index += 1;
+  }
+  return result;
+}
+
+function stripMarkdownHighlightSyntax(value: string): string {
+  const paired = pairedHighlightDelimiters(value);
+  if (paired.size === 0) return value;
+  let result = "";
+  let index = 0;
+  while (index < value.length) {
+    if (paired.has(index)) {
+      index += 2;
+      continue;
+    }
+    result += value[index] ?? "";
+    index += 1;
+  }
+  return result;
+}
+
+function pairedHighlightDelimiters(value: string): ReadonlyMap<number, string> {
+  const candidates = highlightDelimiterOffsets(value);
+  const paired = new Map<number, string>();
+  let opening: number | null = null;
+  for (const offset of candidates) {
+    if (opening === null) {
+      opening = offset;
+      continue;
+    }
+    const content = value.slice(opening + 2, offset);
+    if (content.length > 0 && /\S/u.test(content)) {
+      paired.set(opening, HIGHLIGHT_OPEN);
+      paired.set(offset, HIGHLIGHT_CLOSE);
+      opening = null;
+    } else {
+      opening = offset;
+    }
+  }
+  return paired;
+}
+
+/** Locate unescaped `==` pairs outside code spans and link destinations. */
+function highlightDelimiterOffsets(value: string): number[] {
+  const result: number[] = [];
+  let codeFenceLength = 0;
+  let linkDestinationDepth = 0;
+  let index = 0;
+  while (index < value.length) {
+    const character = value[index] ?? "";
+    if (character === "\\") {
+      index += Math.min(2, value.length - index);
+      continue;
+    }
+    if (linkDestinationDepth > 0) {
+      if (character === "(") linkDestinationDepth += 1;
+      if (character === ")") linkDestinationDepth -= 1;
+      index += 1;
+      continue;
+    }
+    if (codeFenceLength > 0) {
+      if (character === "`") {
+        let runLength = 1;
+        while (value[index + runLength] === "`") runLength += 1;
+        if (runLength === codeFenceLength) codeFenceLength = 0;
+        index += runLength;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "`") {
+      let runLength = 1;
+      while (value[index + runLength] === "`") runLength += 1;
+      codeFenceLength = runLength;
+      index += runLength;
+      continue;
+    }
+    if (character === "[" && value[index + 1] === "[") {
+      const end = value.indexOf("]]", index + 2);
+      if (end >= 0) {
+        index = end + 2;
+        continue;
+      }
+    }
+    if (character === "]" && value[index + 1] === "(") {
+      linkDestinationDepth = 1;
+      index += 2;
+      continue;
+    }
+    if (character === "<") {
+      const end = value.indexOf(">", index + 1);
+      const target = end >= 0 ? value.slice(index + 1, end) : "";
+      if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:|[^ <>@]+@[^ <>@]+$)/u.test(target)) {
+        index = end + 1;
+        continue;
+      }
+    }
+    if (character === "=" && value[index + 1] === "=") {
+      result.push(index);
+      index += 2;
+      continue;
+    }
+    index += 1;
+  }
+  return result;
 }
 
 function inlineTextNodes(

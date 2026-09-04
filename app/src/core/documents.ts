@@ -175,6 +175,9 @@ export type NoteBlock =
   | {
       type: "blockquote";
       blockId: string;
+      alertType?: string;
+      alertTitle?: string;
+      alertFold?: "expanded" | "collapsed";
       children: NoteBlock[];
     }
   | {
@@ -1130,9 +1133,15 @@ export function blockToYXml(block: NoteBlock): Y.XmlElement {
       break;
     case "bulletList":
     case "listItem":
-    case "blockquote":
     case "table":
     case "tableRow":
+      element.insert(0, block.children.map(blockToYXml));
+      break;
+    case "blockquote":
+      if (block.alertType) element.setAttribute("alertType", block.alertType);
+      if (block.alertTitle)
+        element.setAttribute("alertTitle", block.alertTitle);
+      if (block.alertFold) element.setAttribute("alertFold", block.alertFold);
       element.insert(0, block.children.map(blockToYXml));
       break;
     case "horizontalRule":

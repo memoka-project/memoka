@@ -13,7 +13,7 @@ export function inlineMarkdownText(
   const code = marks.some(({ name }) => name === "code");
   let value = code
     ? renderInlineCode(text)
-    : text.replaceAll(/([\\`*_[\]~<>!])/gu, "\\$1");
+    : text.replaceAll(/([\\`*_[\]~<>!])/gu, "\\$1").replaceAll("==", "\\=\\=");
   if (marks.some(({ name }) => name === "strike")) value = `~~${value}~~`;
   if (marks.some(({ name }) => name === "italic")) value = `_${value}_`;
   if (marks.some(({ name }) => name === "bold")) value = `**${value}**`;
@@ -22,6 +22,7 @@ export function inlineMarkdownText(
   if (link && isSafeExternalLink(target)) {
     value = `[${value}](${target.replaceAll(/([\\()])/gu, "\\$1")})`;
   }
+  if (marks.some(({ name }) => name === "highlight")) value = `==${value}==`;
   return value;
 }
 

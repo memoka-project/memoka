@@ -466,7 +466,7 @@ export function createMemokaHelpSectionSnapshot(
             [
               "文字装飾",
               rich(code("v"), "で選択 → ", code("m")),
-              "共通検索ペインから斜体・太字・打ち消し・コード・外部リンク・全解除を適用",
+              "共通検索ペインから斜体・太字・打ち消し・コード・ハイライト・外部リンク・全解除を適用",
             ],
             [
               "外部リンク・添付を開く",
@@ -596,7 +596,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "block-type-picker",
-            "直接本文の空ParagraphでInsert modeから「/」を入力すると、共通検索ペインでParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Image Block stub、Attachment Fileを選べます。Tableは続く10×10グリッドでh/j/k/lまたは矢印を使って行列数を選び、Enterで作成します。Esc / Ctrl-cで取り消すと「/」は本文に残ります。確定後のuは最初に「/」へ戻り、もう一度uを押すと「/」も戻します。",
+            "直接本文の空ParagraphでInsert modeから「/」を入力すると、共通検索ペインでParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Alert、Image Block stub、Attachment Fileを選べます。Tableは続く10×10グリッドでh/j/k/lまたは矢印を使って行列数を選びます。Alertは続く共通検索ペインからGitHub / Obsidian互換のtypeを選びます。Enterで作成し、Esc / Ctrl-cで取り消すと「/」は本文に残ります。確定後のuは最初に「/」へ戻り、もう一度uを押すと「/」も戻します。",
           ),
           listItem(
             "attachments",
@@ -612,7 +612,23 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "inline-format",
-            "文字装飾はParagraph、ListItem、Table Cell内の文字へ適用できます。同じ装飾の再適用はtoggleではなく変更なしとなり、「全装飾を解除」で対応markをまとめて外します。確定は1 Undo単位、Esc / Ctrl-cはVisual選択を保って取消します。",
+            "文字装飾はParagraph、ListItem、Table Cell内の文字へ適用できます。Visual-charで選択してmを押し、斜体、太字、打ち消し、コード、ハイライト、リンクから選びます。同じ装飾の再適用はtoggleではなく変更なしとなり、「全装飾を解除」で対応markをまとめて外します。確定は1 Undo単位、Esc / Ctrl-cはVisual選択を保って取消します。",
+          ),
+          listItem(
+            "markdown-extensions",
+            rich(
+              "明示Markdown貼り付け、空Noteへの文書貼り付け、Clipboard、mirrorではObsidianの",
+              code("==highlight=="),
+              "を文字highlightとして往復します。Alert / Calloutは引用の先頭行へ",
+              code("> [!NOTE]"),
+              "のように書きます。GitHubのNOTE / TIP / IMPORTANT / WARNING / CAUTION、Obsidian標準のabstract / summary / tldr / info / todo / hint / success / check / done / question / help / faq / attention / failure / fail / missing / danger / error / bug / example / quote / cite、および英数字・ハイフン・underscoreからなるcustom typeを受理します。",
+              code("[!warning] Custom title"),
+              "のタイトルと",
+              code("[!faq]-"),
+              "／",
+              code("[!note]+"),
+              "の折り畳み指定はMarkdownへ保持しますが、Memoka上では本文を編集できるよう常に展開表示します。",
+            ),
           ),
           listItem(
             "visual-reselect",

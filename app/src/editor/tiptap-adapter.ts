@@ -83,8 +83,8 @@ import {
 } from "./internal-link-completion";
 import type { InternalLinkCandidate } from "../core/internal-link-candidates";
 import type {
+  BlockTransformOptions,
   BlockTransformTarget,
-  TableDimensions,
 } from "../core/block-types";
 import type { InlineFormatAction } from "../core/inline-formats";
 import type { TableActionId } from "../core/table-actions";
@@ -509,7 +509,7 @@ export class TiptapEditorAdapter {
     blockId: string,
     target: BlockTransformTarget,
     consumeSlash = false,
-    tableDimensions?: TableDimensions,
+    options?: BlockTransformOptions,
   ): BlockTransformResult {
     if (this.currentEditor.isDestroyed) {
       return { changed: false, reason: "missing" };
@@ -521,7 +521,7 @@ export class TiptapEditorAdapter {
     this.vimSession.prepareExternalMutationUndoBoundary();
     const result = runBlockTransformCommand(this.currentEditor.view, {
       name: "block.transform",
-      payload: { blockId, target, consumeSlash, tableDimensions },
+      payload: { blockId, target, consumeSlash, options },
     });
     document.undoManager.stopCapturing();
     if (result.changed && result.selection === "node") {

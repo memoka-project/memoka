@@ -969,6 +969,70 @@ describe("Memoka structured Clipboard", () => {
     note.doc.destroy();
   });
 
+  it("round-trips highlighted text and typed alerts through Markdown and HTML Clipboard", () => {
+    const note = createNoteDocument("01900000-0000-7000-8000-000000000001");
+    const editor = new Editor({
+      extensions: productEditorExtensions(note, { directBodyOnly: true }),
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          attrs: {
+            alertType: "warning",
+            alertTitle: "Custom warning",
+            alertFold: "collapsed",
+          },
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  marks: [{ type: "bold" }, { type: "highlight" }],
+                  text: "marked",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const register: VimRegister = {
+      kind: "structure",
+      text: editor.getText(),
+      structureKind: "block",
+      nodeNames: ["blockquote", "paragraph"],
+      slice: editor.state.doc.slice(0, editor.state.doc.content.size),
+    };
+
+    const formats = encodeVimClipboard(register, editor.schema);
+    expect(formats[MARKDOWN_CLIPBOARD_MIME]).toBe(
+      "> [!WARNING]- Custom warning\n> ==**marked**==",
+    );
+    expect(formats["text/html"]).toContain('data-memoka-alert-type="warning"');
+    expect(formats["text/html"]).toContain('data-memoka-highlight="true"');
+
+    const decoded = registerFromMarkdown(
+      formats[MARKDOWN_CLIPBOARD_MIME],
+      editor.schema,
+    );
+    const blockquote = decoded?.slice?.content.firstChild;
+    expect(blockquote?.attrs).toMatchObject({
+      alertType: "warning",
+      alertTitle: "Custom warning",
+      alertFold: "collapsed",
+    });
+    const marked = blockquote?.firstChild?.firstChild;
+    expect(marked?.marks.map(({ type }) => type.name).sort()).toEqual([
+      "bold",
+      "highlight",
+    ]);
+    editor.destroy();
+    note.doc.destroy();
+  });
+
   it("round-trips numbered and mixed nested lists through explicit Markdown", () => {
     const note = createNoteDocument("01900000-0000-7000-8000-000000000001");
     const editor = new Editor({
@@ -1472,6 +1536,10 @@ describe("Memoka structured Clipboard", () => {
             },
           ],
         },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "literal ==delimiter==" }],
+        },
       ],
     });
     const register: VimRegister = {
@@ -1482,9 +1550,16 @@ describe("Memoka structured Clipboard", () => {
       slice: editor.state.doc.slice(0, editor.state.doc.content.size),
     };
 
-    expect(
-      encodeVimClipboard(register, editor.schema)[MARKDOWN_CLIPBOARD_MIME],
-    ).toBe("\\# literal \\*stars\\*\n\n\\- item-shaped\n\n``code`span``");
+    const markdown = encodeVimClipboard(register, editor.schema)[
+      MARKDOWN_CLIPBOARD_MIME
+    ];
+    expect(markdown).toBe(
+      "\\# literal \\*stars\\*\n\n\\- item-shaped\n\n``code`span``\n\nliteral \\=\\=delimiter\\=\\=",
+    );
+    const restored = registerFromMarkdown(markdown, editor.schema);
+    const literal = restored?.slice?.content.lastChild?.firstChild;
+    expect(literal?.text).toBe("literal ==delimiter==");
+    expect(literal?.marks).toHaveLength(0);
     editor.destroy();
     note.doc.destroy();
   });

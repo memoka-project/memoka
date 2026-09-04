@@ -3,6 +3,7 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
 import { describe, expect, it, vi } from "vitest";
 import { createUuidV7 } from "../app/src/core/ids";
+import type { BlockTransformOptions } from "../app/src/core/block-types";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import { sectionBodyBlocks } from "../app/src/core/section-model";
@@ -74,9 +75,9 @@ function transform(
   blockId: string,
   target: Parameters<TiptapEditorAdapter["transformBlock"]>[1],
   consumeSlash = false,
-  tableDimensions?: Parameters<TiptapEditorAdapter["transformBlock"]>[3],
+  options?: BlockTransformOptions,
 ) {
-  return adapter.transformBlock(blockId, target, consumeSlash, tableDimensions);
+  return adapter.transformBlock(blockId, target, consumeSlash, options);
 }
 
 function press(editor: Editor, key: string): KeyboardEvent {
@@ -220,8 +221,10 @@ describe("Memoka block.transform", () => {
     );
     expect(
       transform(adapter, blockId, "table", true, {
-        rows: 2,
-        columns: 4,
+        tableDimensions: {
+          rows: 2,
+          columns: 4,
+        },
       }),
     ).toMatchObject({ changed: true });
     const table = nodeByBlockId(editor, blockId);
@@ -229,6 +232,38 @@ describe("Memoka block.transform", () => {
     expect(table.child(0).childCount).toBe(4);
     expect(table.child(0).child(0).type.name).toBe("tableHeader");
     expect(table.child(1).child(0).type.name).toBe("tableCell");
+    destroy();
+  });
+
+  it("creates a typed Alert from the slash Paragraph in one block transform", async () => {
+    const { adapter, destroy, editor } = await editorHarness();
+    const blockId = createUuidV7();
+    editor.commands.setContent(
+      directBodyContent([
+        {
+          type: "paragraph",
+          attrs: { blockId },
+          content: [{ type: "text", text: "/" }],
+        },
+      ]),
+    );
+
+    expect(
+      transform(adapter, blockId, "alert", true, {
+        alert: { type: "warning", title: null, fold: null },
+      }),
+    ).toMatchObject({ changed: true, target: "alert", selection: "text" });
+    const alert = nodeByBlockId(editor, blockId);
+    expect(alert.type.name).toBe("blockquote");
+    expect(alert.attrs).toMatchObject({
+      alertType: "warning",
+      alertTitle: null,
+      alertFold: null,
+    });
+    expect(alert.childCount).toBe(1);
+    expect(alert.firstChild?.type.name).toBe("paragraph");
+    expect(alert.firstChild?.attrs.blockId).toMatch(/-7/u);
+    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     destroy();
   });
 

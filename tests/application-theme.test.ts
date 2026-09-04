@@ -135,6 +135,12 @@ describe("Memoka application themes", () => {
     expect(css).toContain("var(--memoka-color-mode-insert)");
     expect(css).toContain("var(--memoka-color-mode-visual)");
     expect(css).toMatch(
+      /mark\[data-memoka-highlight="true"\][\s\S]*?var\(--memoka-color-search-match-surface\)/u,
+    );
+    expect(css).toMatch(
+      /blockquote\[data-memoka-alert-type\][\s\S]*?var\(--memoka-color-info\)/u,
+    );
+    expect(css).toMatch(
       /\.memoka-visual-char-selected\s*\{[\s\S]*?background: var\(--memoka-color-selection\)/u,
     );
     expect(css).toMatch(

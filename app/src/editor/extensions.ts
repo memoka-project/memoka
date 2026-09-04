@@ -1,5 +1,6 @@
 import {
   Extension,
+  Mark,
   mergeAttributes,
   Node,
   type Editor,
@@ -33,6 +34,13 @@ import type {
   AttachmentRepository,
 } from "../core/attachments";
 import { isSafeExternalLink } from "../core/external-links";
+import {
+  markdownAlertLabel,
+  markdownAlertMarker,
+  normalizeMarkdownAlertFold,
+  normalizeMarkdownAlertTitle,
+  normalizeMarkdownAlertType,
+} from "../core/markdown-alert";
 import {
   markupHeadingLevelForSectionDepth,
   nextMarkupHeadingLevel,
@@ -75,6 +83,69 @@ export type EditorAttachmentRepository = Pick<
 
 const ComposableInlineCode = Code.extend({
   excludes: "",
+});
+
+const MarkdownHighlight = Mark.create({
+  name: "highlight",
+  excludes: "",
+  parseHTML() {
+    return [{ tag: "mark" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "mark",
+      mergeAttributes(HTMLAttributes, { "data-memoka-highlight": "true" }),
+      0,
+    ];
+  },
+});
+
+const MarkdownAlertAttributes = Extension.create({
+  name: "memokaMarkdownAlertAttributes",
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["blockquote"],
+        attributes: {
+          alertType: {
+            default: null,
+            parseHTML: (element) =>
+              normalizeMarkdownAlertType(
+                element.getAttribute("data-memoka-alert-type"),
+              ),
+            renderHTML: (attributes) => {
+              const type = normalizeMarkdownAlertType(attributes.alertType);
+              if (!type) return {};
+              const title = normalizeMarkdownAlertTitle(attributes.alertTitle);
+              const fold = normalizeMarkdownAlertFold(attributes.alertFold);
+              return {
+                "data-memoka-alert-type": type,
+                "data-memoka-alert-label": markdownAlertLabel(attributes),
+                ...(title ? { "data-memoka-alert-title": title } : {}),
+                ...(fold ? { "data-memoka-alert-fold": fold } : {}),
+              };
+            },
+          },
+          alertTitle: {
+            default: null,
+            parseHTML: (element) =>
+              normalizeMarkdownAlertTitle(
+                element.getAttribute("data-memoka-alert-title"),
+              ),
+            renderHTML: () => ({}),
+          },
+          alertFold: {
+            default: null,
+            parseHTML: (element) =>
+              normalizeMarkdownAlertFold(
+                element.getAttribute("data-memoka-alert-fold"),
+              ),
+            renderHTML: () => ({}),
+          },
+        },
+      },
+    ];
+  },
 });
 
 const MEMOKA_BULLET_MARKER_STYLE_COUNT = 6;
@@ -744,12 +815,17 @@ function staticBlockLines(node: ProseMirrorNode): string[] {
       return staticListLines(node);
     case "table":
       return staticTableLines(node);
-    case "blockquote":
-      return node.content.size === 0
-        ? [">"]
-        : node.content.content.flatMap((child) =>
-            staticBlockLines(child).map((line) => `> ${line}`),
-          );
+    case "blockquote": {
+      const alertMarker = markdownAlertMarker(node.attrs);
+      return [
+        ...(alertMarker ? [`> ${alertMarker}`] : []),
+        ...(node.content.size === 0
+          ? [">"]
+          : node.content.content.flatMap((child) =>
+              staticBlockLines(child).map((line) => `> ${line}`),
+            )),
+      ];
+    }
     case "horizontalRule":
       return ["────────────────"];
     case "image":
@@ -2085,7 +2161,9 @@ export function productEditorExtensions(
       undoRedo: false,
       trailingNode: false,
     }),
+    MarkdownAlertAttributes,
     ComposableInlineCode,
+    MarkdownHighlight,
     MemokaExternalLink.configure({
       autolink: false,
       defaultProtocol: "https",

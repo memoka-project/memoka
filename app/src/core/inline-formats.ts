@@ -5,6 +5,7 @@ export const INLINE_FORMAT_IDS = [
   "bold",
   "strike",
   "code",
+  "highlight",
   "link",
   "clear",
 ] as const;
@@ -54,6 +55,13 @@ export const INLINE_FORMAT_CATALOG: readonly InlineFormatCatalogEntry[] = [
     aliases: ["code", "inline code", "等幅", "インラインコード"],
     description: "選択した文字をインラインコードにします。",
     example: "inline_code()",
+  },
+  {
+    id: "highlight",
+    name: "ハイライト",
+    aliases: ["highlight", "mark", "marker", "蛍光ペン", "マーカー"],
+    description: "選択した文字へハイライトを付けます。",
+    example: "ハイライトしたテキスト",
   },
   {
     id: "link",

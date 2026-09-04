@@ -1,5 +1,6 @@
 import type { NoteDocument } from "./documents";
 import { inlineMarkdownText } from "./inline-markdown";
+import { markdownAlertMarker } from "./markdown-alert";
 import {
   BOOTSTRAP_ORIGIN,
   createNoteDocument,
@@ -392,10 +393,16 @@ function renderBlock(
     return `${renderInlineChildren(node, options)}\n\n`;
   if (node.type === "horizontalRule") return `${indentation}---\n\n`;
   if (node.type === "blockquote") {
-    const content = node.content
-      .map((child) => renderBlock(child, "", options))
-      .join("")
-      .replace(/\n+$/u, "");
+    const alertMarker = markdownAlertMarker(node.attrs);
+    const content = [
+      ...(alertMarker ? [alertMarker] : []),
+      node.content
+        .map((child) => renderBlock(child, "", options))
+        .join("")
+        .replace(/\n+$/u, ""),
+    ]
+      .filter((part) => part.length > 0)
+      .join("\n");
     const quoted = content
       .split("\n")
       .map((line) => `${indentation}>${line ? ` ${line}` : ""}`)
@@ -555,7 +562,10 @@ function attachmentTarget(value: string): string {
 }
 
 function escapeInline(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll(/[[\]_*`#]/gu, "\\$&");
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll(/[[\]_*`#]/gu, "\\$&")
+    .replaceAll("==", "\\=\\=");
 }
 
 function escapeTable(value: string): string {

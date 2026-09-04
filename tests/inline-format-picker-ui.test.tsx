@@ -26,13 +26,43 @@ describe("Memoka Inline Format picker", () => {
     );
     const input = screen.getByRole("combobox", { name: "文字装飾を検索" });
     expect(document.activeElement).toBe(input);
-    expect(screen.getAllByRole("option")).toHaveLength(6);
+    expect(screen.getAllByRole("option")).toHaveLength(7);
     fireEvent.change(input, { target: { value: "斜体 italic" } });
     expect(screen.getAllByRole("option")).toHaveLength(1);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(apply).toHaveBeenCalledWith({ kind: "apply", format: "italic" });
     expect(onClose).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+  });
+
+  it("applies Highlight from the Visual-char format catalog", () => {
+    const apply = vi.fn((action) => ({
+      changed: true as const,
+      from: 1,
+      action,
+    }));
+    render(
+      <InlineFormatPicker
+        session={{
+          windowId: "window-1",
+          selectedText: "重要",
+          existingHref: null,
+          apply,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+        onMessage={vi.fn()}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "文字装飾を検索" });
+    fireEvent.change(input, { target: { value: "蛍光ペン" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByText("重要").closest("mark")).not.toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(apply).toHaveBeenCalledWith({
+      kind: "apply",
+      format: "highlight",
+    });
   });
 
   it("collects and normalizes an external URL in a second pane", () => {

@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   filterBlockTypeCatalog,
+  type BlockTransformOptions,
   type BlockTransformTarget,
   type BlockTypeCatalogEntry,
   type TableDimensions,
 } from "../core/block-types";
+import {
+  filterMarkdownAlertTypeCatalog,
+  markdownAlertLabel,
+  type MarkdownAlert,
+  type MarkdownAlertTypeCatalogEntry,
+} from "../core/markdown-alert";
 import { workspaceSearchMatchRanges } from "../core/workspace-search";
 import type { BlockTransformResult } from "../vim/block-transform";
 import { SearchPane } from "./SearchPane";
@@ -14,7 +21,7 @@ export interface BlockTypePickerSession {
   readonly blockId: string;
   readonly transform: (
     target: BlockTransformTarget,
-    tableDimensions?: TableDimensions,
+    options?: BlockTransformOptions,
   ) => BlockTransformResult | null;
   readonly attach?: () => void;
   readonly restoreFocus: () => void;
@@ -32,7 +39,9 @@ export function BlockTypePicker({
   focused?: boolean;
 }) {
   const [query, setQuery] = useState("");
-  const [choosingTableSize, setChoosingTableSize] = useState(false);
+  const [phase, setPhase] = useState<"catalog" | "table-size" | "alert-type">(
+    "catalog",
+  );
   const entries = useMemo(() => filterBlockTypeCatalog(query), [query]);
 
   const accept = (entry: BlockTypeCatalogEntry): void => {
@@ -47,7 +56,11 @@ export function BlockTypePicker({
       return;
     }
     if (entry.id === "table") {
-      setChoosingTableSize(true);
+      setPhase("table-size");
+      return;
+    }
+    if (entry.id === "alert") {
+      setPhase("alert-type");
       return;
     }
     completeTransform(entry, session.transform(entry.id));
@@ -66,7 +79,7 @@ export function BlockTypePicker({
     onMessage(blockTransformFailureMessage(result));
   };
 
-  if (choosingTableSize) {
+  if (phase === "table-size") {
     const tableEntry = entries.find((entry) => entry.id === "table") ?? {
       id: "table" as const,
       name: "Table",
@@ -80,7 +93,34 @@ export function BlockTypePicker({
         blockId={session.blockId}
         focused={focused}
         onAccept={(dimensions) =>
-          completeTransform(tableEntry, session.transform("table", dimensions))
+          completeTransform(
+            tableEntry,
+            session.transform("table", { tableDimensions: dimensions }),
+          )
+        }
+        onClose={() => {
+          onClose();
+          queueMicrotask(session.restoreFocus);
+        }}
+      />
+    );
+  }
+
+  if (phase === "alert-type") {
+    const alertEntry = entries.find((entry) => entry.id === "alert") ?? {
+      id: "alert" as const,
+      name: "Alert",
+      aliases: [],
+      description: "typeを選んでAlertを作成します。",
+      example: "",
+    };
+    return (
+      <AlertTypePicker
+        windowId={session.windowId}
+        blockId={session.blockId}
+        focused={focused}
+        onAccept={(alert) =>
+          completeTransform(alertEntry, session.transform("alert", { alert }))
         }
         onClose={() => {
           onClose();
@@ -133,6 +173,82 @@ export function BlockTypePicker({
       }}
       idPrefix="block-type-picker"
     />
+  );
+}
+
+function AlertTypePicker({
+  windowId,
+  blockId,
+  focused,
+  onAccept,
+  onClose,
+}: {
+  windowId: string;
+  blockId: string;
+  focused: boolean;
+  onAccept: (alert: MarkdownAlert) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const entries = useMemo(() => filterMarkdownAlertTypeCatalog(query), [query]);
+  return (
+    <SearchPane
+      ariaLabel="Alert typeを選択"
+      inputAriaLabel="Alert typeを検索"
+      focusSurface="block-type-picker"
+      query={query}
+      onQueryChange={setQuery}
+      items={entries}
+      itemId={(entry) => entry.id}
+      renderItem={(entry, currentQuery) => (
+        <span className="block-type-picker__row">
+          <HighlightedBlockTypeName value={entry.name} query={currentQuery} />
+          <span className="block-type-picker__description">
+            {entry.description}
+          </span>
+        </span>
+      )}
+      renderPreview={(entry) => <AlertTypePreview entry={entry} />}
+      prompt="[!›"
+      countLabel={`${entries.length} types`}
+      onAccept={(entry) =>
+        onAccept({ type: entry.id, title: null, fold: null })
+      }
+      onClose={onClose}
+      restoreFocus={() => {}}
+      empty={<p className="workspace-search-empty">一致するtypeがありません</p>}
+      focused={focused}
+      className="block-type-picker alert-type-picker"
+      dataAttributes={{
+        "data-search-target": "alert-type",
+        "data-window-id": windowId,
+        "data-block-id": blockId,
+      }}
+      idPrefix="alert-type-picker"
+    />
+  );
+}
+
+function AlertTypePreview({
+  entry,
+}: {
+  entry: MarkdownAlertTypeCatalogEntry | null;
+}) {
+  return (
+    <div className="workspace-search-preview-pane block-type-picker__preview">
+      {entry && (
+        <div className="block-type-picker__preview-content workspace-search-preview-document">
+          <blockquote
+            data-memoka-alert-type={entry.id}
+            data-memoka-alert-label={markdownAlertLabel({
+              alertType: entry.id,
+            })}
+          >
+            <p>{entry.description}</p>
+          </blockquote>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -7,6 +7,7 @@ import {
 import { createUuidV7 } from "../app/src/core/ids";
 import {
   createSectionMarkdownBackup,
+  renderSectionMarkdown,
   restoreSectionMarkdownBackup,
   SECTION_MARKDOWN_BACKUP_SCHEMA_VERSION,
 } from "../app/src/core/section-markdown-backup";
@@ -35,6 +36,12 @@ function blockJson(block: NoteBlock): unknown {
 }
 
 describe("Memoka Section Markdown backup", () => {
+  it("escapes literal highlight delimiters in Section titles", () => {
+    expect(renderSectionMarkdown("Literal ==title==", [])).toBe(
+      "# Literal \\=\\=title\\=\\=\n\n",
+    );
+  });
+
   it("round-trips Section files, properties, structured bodies and links deterministically", () => {
     const ids = deterministicIds();
     const noteId = ids();
@@ -87,6 +94,7 @@ describe("Memoka Section Markdown backup", () => {
                     class: null,
                   },
                 },
+                { type: "highlight" },
               ],
               text: "formatted",
             },
@@ -101,6 +109,9 @@ describe("Memoka Section Markdown backup", () => {
         blockJson({
           type: "blockquote",
           blockId: blockquoteId,
+          alertType: "tip",
+          alertTitle: "Backup tip",
+          alertFold: "expanded",
           children: [
             {
               type: "paragraph",
@@ -176,8 +187,10 @@ describe("Memoka Section Markdown backup", () => {
     const childFile = first.files[`sections/${childId}.md`];
     expect(rootFile).toContain("# Backup Root");
     expect(rootFile).toContain(`[[${childId}|child]]`);
-    expect(rootFile).toContain("[**_~~`formatted`~~_**](https://example.com)");
-    expect(rootFile).toContain("> quoted backup");
+    expect(rootFile).toContain(
+      "==[**_~~`formatted`~~_**](https://example.com)==",
+    );
+    expect(rootFile).toContain("> [!TIP]+ Backup tip\n> quoted backup");
     expect(rootFile).toContain("\n---\n");
     expect(rootFile).not.toContain("child-only body");
     expect(childFile).toContain("child-only body");
