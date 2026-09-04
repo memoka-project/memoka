@@ -110,6 +110,7 @@ export const VIM_COMMANDS = [
   "selection.change",
   "selection.paste",
   "selection.format",
+  "selection.reselect",
   "context.action_picker",
   "table.next_cell",
   "table.previous_cell",
@@ -297,6 +298,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     v: "mode.visual-char",
     V: "mode.visual-line",
     "Ctrl+v": "mode.visual-block",
+    gv: "selection.reselect",
     Tab: "table.next_cell",
     "Shift+Tab": "table.previous_cell",
     u: "history.undo",
@@ -342,6 +344,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     p: "selection.paste",
     P: "selection.paste",
     m: "selection.format",
+    gv: "selection.reselect",
   }),
   ...modeBindings("visual-line", {
     Escape: "mode.normal",
@@ -364,6 +367,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "selection.change",
     p: "selection.paste",
     P: "selection.paste",
+    gv: "selection.reselect",
   }),
   ...modeBindings("visual-block", {
     Escape: "mode.normal",
@@ -382,6 +386,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "selection.change",
     p: "selection.paste",
     P: "selection.paste",
+    gv: "selection.reselect",
   }),
 ];
 

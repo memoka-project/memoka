@@ -309,6 +309,7 @@ export function restoreVisualBlockSelection(
   view: VimEditorView,
   anchor: number,
   head: number,
+  options: { scrollIntoView?: boolean; focus?: boolean } = {},
 ): boolean {
   try {
     const anchorContext = tableContextNearPosition(view, anchor);
@@ -321,8 +322,16 @@ export function restoreVisualBlockSelection(
     ) {
       return false;
     }
-    const selection = CellSelection.create(view.state.doc, anchor, head);
-    view.dispatch(view.state.tr.setSelection(selection));
+    const selection = CellSelection.create(
+      view.state.doc,
+      anchorContext.cellPosition,
+      headContext.cellPosition,
+    );
+    const transaction = view.state.tr.setSelection(selection);
+    view.dispatch(
+      options.scrollIntoView ? transaction.scrollIntoView() : transaction,
+    );
+    if (options.focus) view.focus();
     return true;
   } catch {
     return false;

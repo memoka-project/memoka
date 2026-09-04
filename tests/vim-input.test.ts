@@ -170,6 +170,32 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("normal", "e", noteContext)).toBe("motion.word-end");
   });
 
+  it("maps gv in Normal and every Visual mode without taking Insert input", () => {
+    for (const mode of [
+      "normal",
+      "visual-char",
+      "visual-line",
+      "visual-block",
+    ] as const) {
+      const prefix = advanceVimInput(
+        createVimInputState(),
+        mode,
+        "g",
+        noteContext,
+      );
+      expect(prefix.action).toEqual({ kind: "pending", detail: "pending:g" });
+      expect(
+        advanceVimInput(prefix.state, mode, "v", noteContext),
+      ).toMatchObject({
+        state: { pending: null, count: "" },
+        resolvedCommand: "selection.reselect",
+        count: 1,
+      });
+    }
+    expect(resolveKey("insert", "gv", noteContext)).toBeNull();
+    expect(resolveKey("replace", "gv", noteContext)).toBeNull();
+  });
+
   it("maps viewport and document motions with their Counts", () => {
     expect(resolveKey("normal", "Ctrl+f", noteContext)).toBe(
       "cursor.page-down",

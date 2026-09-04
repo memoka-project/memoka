@@ -2,9 +2,14 @@ import type { Editor } from "@tiptap/core";
 import type { UndoManager } from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { createUuidV7 } from "../app/src/core/ids";
+import { blockToYXml } from "../app/src/core/documents";
 import { mergeApplicationKeyConfig } from "../app/src/core/application-key-config";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import {
+  createSectionXml,
+  insertChildSection,
+} from "../app/src/core/section-model";
 import {
   clampVimBlockCursor,
   visualCharCursor,
@@ -5332,6 +5337,356 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     ).toEqual(originalIds);
 
     adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("reselects and exchanges CRDT-stable Visual Char selections with gv", async () => {
+    const onMessage = vi.fn();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-09-04T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      onMessage,
+    });
+    editor.commands.setContent("<p>zero alpha beta gamma</p>");
+    await runtime.flush();
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+    expect(onMessage).toHaveBeenLastCalledWith("直前のVisual選択はありません");
+
+    editor.commands.setTextSelection(textPosition(editor, "alpha"));
+    press(editor, "v");
+    press(editor, "2");
+    press(editor, "l");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "",
+      ),
+    ).toBe("alp");
+    press(editor, "y");
+
+    editor.commands.insertContentAt(
+      textPosition(editor, "zero") + 2,
+      "prefix ",
+    );
+    const beta = textPosition(editor, "beta");
+    editor.commands.setTextSelection(beta + 1);
+    press(editor, "v");
+    press(editor, "h");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "",
+      ),
+    ).toBe("be");
+
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "",
+      ),
+    ).toBe("alp");
+
+    press(editor, "g");
+    press(editor, "v");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "",
+      ),
+    ).toBe("be");
+    expect(visualCharCursor(editor.view)).toBe(beta);
+    expect(editor.state.selection.anchor).toBeGreaterThan(
+      editor.state.selection.head,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("exchanges Visual Line and Visual Char selections with gv", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-09-04T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: ["first", "second", "third"].map((text) => ({
+        type: "paragraph",
+        content: [{ type: "text", text }],
+      })),
+    });
+    await runtime.flush();
+    editor.commands.setTextSelection(textPosition(editor, "first"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "Escape");
+
+    editor.commands.setTextSelection(textPosition(editor, "third"));
+    press(editor, "v");
+    press(editor, "l");
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot.mode).toBe("visual-line");
+    expect(
+      [...root.querySelectorAll(".memoka-visual-line-selected")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["first", "second"]);
+
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(
+      editor.state.doc.textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        "",
+      ),
+    ).toBe("th");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("leaves mode and cursor unchanged when the previous Visual range was deleted", async () => {
+    const onMessage = vi.fn();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      onMessage,
+    });
+    editor.commands.setContent("<p>alpha beta gamma</p>");
+    await runtime.flush();
+    editor.commands.setTextSelection(textPosition(editor, "beta"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "v");
+    press(editor, "3");
+    press(editor, "l");
+    const deleted = {
+      from: editor.state.selection.from,
+      to: editor.state.selection.to,
+    };
+    press(editor, "Escape");
+    editor.commands.deleteRange(deleted);
+    const cursor = editor.state.selection.head;
+
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot).toMatchObject({
+      mode: "normal",
+      action: "selection:reselect:unavailable",
+    });
+    expect(editor.state.selection.head).toBe(cursor);
+    expect(onMessage).toHaveBeenLastCalledWith(
+      "直前のVisual選択は現在の表示範囲では復元できません",
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps Visual history for a Window reattach without sharing it with another Window", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    await addSecondWindow(runtime);
+    const firstRoot = document.createElement("div");
+    const secondRoot = document.createElement("div");
+    document.body.append(firstRoot, secondRoot);
+    let first = runtime.editorForTesting("window-1", firstRoot);
+    const second = runtime.editorForTesting("window-2", secondRoot);
+    first.editor.commands.setContent("<p>alpha beta</p>");
+    await runtime.flush();
+    first.editor.commands.setTextSelection(textPosition(first.editor, "alpha"));
+    first.editor.commands.focus();
+    press(first.editor, "Escape");
+    press(first.editor, "v");
+    press(first.editor, "l");
+    press(first.editor, "Escape");
+
+    second.editor.commands.focus();
+    press(second.editor, "Escape");
+    press(second.editor, "g");
+    press(second.editor, "v");
+    expect(second.adapter.vimSnapshot.action).toBe("selection:reselect:empty");
+
+    first.adapter.destroy();
+    first = runtime.editorForTesting("window-1", firstRoot);
+    first.editor.commands.focus();
+    press(first.editor, "g");
+    press(first.editor, "v");
+    expect(first.adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(
+      first.editor.state.doc.textBetween(
+        first.editor.state.selection.from,
+        first.editor.state.selection.to,
+        "",
+      ),
+    ).toBe("al");
+
+    first.adapter.destroy();
+    second.adapter.destroy();
+    runtime.destroy();
+    firstRoot.remove();
+    secondRoot.remove();
+  });
+
+  it("partitions one Window's Visual history by Note while switching buffers", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const sourceNoteId = runtime.noteId;
+    const root = document.createElement("div");
+    document.body.append(root);
+    let attached = runtime.editorForTesting("window-1", root);
+    attached.editor.commands.setContent("<p>source text</p>");
+    await runtime.flush();
+    attached.editor.commands.setTextSelection(
+      textPosition(attached.editor, "source"),
+    );
+    attached.editor.commands.focus();
+    press(attached.editor, "Escape");
+    press(attached.editor, "v");
+    press(attached.editor, "2");
+    press(attached.editor, "l");
+    press(attached.editor, "Escape");
+    attached.adapter.destroy();
+
+    const target = await runtime.createNoteAtEnd("window-1", "target");
+    expect(runtime.windows.get("window-1")?.noteId).toBe(target.noteId);
+    attached = runtime.editorForTesting("window-1", root);
+    attached.editor.commands.focus();
+    press(attached.editor, "Escape");
+    press(attached.editor, "g");
+    press(attached.editor, "v");
+    expect(attached.adapter.vimSnapshot.action).toBe(
+      "selection:reselect:empty",
+    );
+    attached.adapter.destroy();
+
+    await runtime.openNote("window-1", sourceNoteId);
+    attached = runtime.editorForTesting("window-1", root);
+    attached.editor.commands.focus();
+    press(attached.editor, "g");
+    press(attached.editor, "v");
+    expect(attached.adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(
+      attached.editor.state.doc.textBetween(
+        attached.editor.state.selection.from,
+        attached.editor.state.selection.to,
+        "",
+      ),
+    ).toBe("sou");
+
+    attached.adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("does not expand Focus to restore a Visual selection outside the mounted subtree", async () => {
+    const onMessage = vi.fn();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const note = runtime.getNoteHandle(runtime.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const firstSectionId = createUuidV7();
+    const secondSectionId = createUuidV7();
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(firstSectionId, "first", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: createUuidV7(),
+            content: [{ type: "text", text: "alpha child" }],
+          }),
+        ]),
+      );
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(secondSectionId, "second", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: createUuidV7(),
+            content: [{ type: "text", text: "beta child" }],
+          }),
+        ]),
+      );
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    let attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+      onMessage,
+    });
+    attached.editor.commands.setTextSelection(
+      textPosition(attached.editor, "alpha child"),
+    );
+    attached.editor.commands.focus();
+    press(attached.editor, "Escape");
+    press(attached.editor, "v");
+    press(attached.editor, "2");
+    press(attached.editor, "l");
+    press(attached.editor, "Escape");
+    attached.adapter.destroy();
+
+    await runtime.focusSection("window-1", note.noteId, secondSectionId);
+    attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+      onMessage,
+    });
+    attached.editor.commands.focus();
+    press(attached.editor, "g");
+    press(attached.editor, "v");
+    expect(attached.adapter.vimSnapshot.mode).toBe("normal");
+    expect(onMessage).toHaveBeenLastCalledWith(
+      "直前のVisual選択は現在の表示範囲では復元できません",
+    );
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      secondSectionId,
+    );
+    attached.adapter.destroy();
+
+    await runtime.focusSection("window-1", note.noteId, note.noteId);
+    attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+      onMessage,
+    });
+    attached.editor.commands.focus();
+    press(attached.editor, "g");
+    press(attached.editor, "v");
+    expect(attached.adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(
+      attached.editor.state.doc.textBetween(
+        attached.editor.state.selection.from,
+        attached.editor.state.selection.to,
+        "",
+      ),
+    ).toBe("alp");
+
+    attached.adapter.destroy();
     runtime.destroy();
     root.remove();
   });

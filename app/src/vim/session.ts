@@ -39,9 +39,12 @@ import {
   runEditorVimCommand,
   runEditorVimOperator,
   runVisualLineCommand,
+  restoreVisualCharSelection,
+  restoreVisualLineSelection,
   sectionDepthShiftSelection,
   sectionParagraphConversionSelection,
   visualCharCursor,
+  visualLineSelectionEndpoints,
   vimBlockCursorBeforeInsertCaret,
   vimRegisterLabel,
   type EditorVimResult,
@@ -121,6 +124,12 @@ import { runMarkdownNoteImport } from "./markdown-note-import";
 import { createUuidV7 } from "../core/ids";
 import { isLargePlainTextPaste } from "../editor/large-paste-protocol";
 import { prepareLargePlainTextPaste } from "../editor/large-plain-text-paste";
+import type { StableEditorPosition } from "../core/stable-position";
+import {
+  VimVisualSelectionStore,
+  type VimVisualMode,
+  type VimVisualSelectionSnapshot,
+} from "./visual-history";
 
 export interface VimSessionSnapshot {
   mode: VimMode;
@@ -153,6 +162,9 @@ export interface ProductVimSessionOptions {
   getRootNoteId?: () => string | null;
   registerStore?: VimRegisterStore;
   repeatStore?: VimRepeatStore;
+  visualSelectionStore?: VimVisualSelectionStore;
+  captureVisualPosition?: (position: number) => StableEditorPosition | null;
+  resolveVisualPosition?: (position: StableEditorPosition) => number | null;
   onModeChange?: (mode: VimMode) => void;
   onSnapshot?: (snapshot: VimSessionSnapshot) => void;
   onRequestImeOff?: () =>
@@ -260,7 +272,19 @@ interface ChangeUndoCapture {
   beforeTransaction: () => void;
 }
 
+interface ResolvedVisualSelection {
+  readonly mode: VimVisualMode;
+  readonly anchor: number;
+  readonly head: number;
+}
+
 const cursorHistoryKey = Symbol("memoka-cursor-history");
+
+function isVisualMode(mode: VimMode): mode is VimVisualMode {
+  return (
+    mode === "visual-char" || mode === "visual-line" || mode === "visual-block"
+  );
+}
 
 export class ProductVimSession {
   private mode: VimMode;
@@ -269,6 +293,7 @@ export class ProductVimSession {
   private readonly registerStore: VimRegisterStore;
   private readonly unsubscribeRegister: () => void;
   private readonly repeatStore: VimRepeatStore;
+  private readonly visualSelectionStore: VimVisualSelectionStore;
   private clipboard: VimSessionSnapshot["clipboard"] = "idle";
   private clipboardWriteGeneration = 0;
   private clipboardReadGeneration = 0;
@@ -291,11 +316,15 @@ export class ProductVimSession {
   private normalPutClipboardReadInFlight = false;
   private externalFileClipboardPaths: readonly string[] | null = null;
   private largePlainTextPasteAbort: AbortController | null = null;
+  private pendingExternalVisualSelection:
+    VimVisualSelectionSnapshot | null | undefined;
 
   constructor(private readonly options: ProductVimSessionOptions) {
     this.mode = options.initialMode;
     this.registerStore = options.registerStore ?? new VimRegisterStore();
     this.repeatStore = options.repeatStore ?? new VimRepeatStore();
+    this.visualSelectionStore =
+      options.visualSelectionStore ?? new VimVisualSelectionStore();
     this.unsubscribeRegister = this.registerStore.subscribe(() => {
       this.clipboardReadGeneration += 1;
       this.normalPutClipboardDirty = false;
@@ -1261,6 +1290,12 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "selection.reselect") {
+      event.preventDefault();
+      this.reselectPreviousVisualSelection(view);
+      return true;
+    }
+
     if (command === "history.undo" || command === "history.redo") {
       event.preventDefault();
       this.runHistory(view, command === "history.undo" ? "undo" : "redo");
@@ -1541,6 +1576,14 @@ export class ProductVimSession {
 
     if (command) {
       event.preventDefault();
+      const departingVisualSelection =
+        isVisualMode(this.mode) &&
+        (command === "selection.yank" ||
+          command === "selection.delete" ||
+          command === "selection.change" ||
+          command === "selection.paste")
+          ? this.captureVisualSelection(view)
+          : undefined;
       const currentRegister = this.registerStore.read(view.state.schema);
       const undoManager = findUndoManager(view);
       const cursorBeforeCommand =
@@ -1652,8 +1695,9 @@ export class ProductVimSession {
           cursorBeforeCommand,
         );
       }
-      if (result.nextMode) this.changeMode(view, result.nextMode);
-      else if (result.visualLine) this.refreshVisualLineDecorations(view);
+      if (result.nextMode) {
+        this.changeMode(view, result.nextMode, departingVisualSelection);
+      } else if (result.visualLine) this.refreshVisualLineDecorations(view);
       if (isolateUndo && !continuesIntoInsert) undoManager?.stopCapturing();
       if (repeatDescriptor) this.repeatStore.record(repeatDescriptor);
       this.action = `${result.detail}${resolution.count > 1 ? `:count:${resolution.count}` : ""}:${result.handled ? "changed" : "boundary"}`;
@@ -1988,6 +2032,7 @@ export class ProductVimSession {
     const view = this.view;
     if (!view || view.isDestroyed) return false;
     const previousMode = this.mode;
+    this.rememberDepartingVisualSelection(view);
     this.finishChangeUndoCapture();
     this.clipboardReadGeneration += 1;
     this.mode = "normal";
@@ -2013,14 +2058,25 @@ export class ProductVimSession {
         : visualCursor(view, this.mode);
   }
 
+  preserveVisualSelection(): void {
+    const view = this.view;
+    if (!view || view.isDestroyed) return;
+    this.rememberVisualSelection(this.captureVisualSelection(view));
+  }
+
   prepareExternalMutationUndoBoundary(): void {
     const view = this.view;
     if (!view || view.isDestroyed) return;
+    this.pendingExternalVisualSelection = this.captureVisualSelection(view);
     // Commands such as o/O and c keep their structural edit and subsequent
     // Insert input in one Vim change until Esc. A picker-confirmed mutation is
     // a separate command, so finish that capture before its Yjs transaction.
     this.finishChangeUndoCapture();
     findUndoManager(view)?.stopCapturing();
+  }
+
+  cancelExternalMutationUndoBoundary(): void {
+    this.pendingExternalVisualSelection = undefined;
   }
 
   completeExternalSelectionMutation(
@@ -2082,6 +2138,7 @@ export class ProductVimSession {
     const view = this.view;
     if (!view || view.isDestroyed) return false;
     const previousMode = this.mode;
+    this.rememberDepartingVisualSelection(view);
     this.mode = mode === "visual-line" ? "normal" : mode;
     this.input = createVimInputState();
     this.visualLine = null;
@@ -2322,8 +2379,189 @@ export class ProductVimSession {
     this.scheduleCaretRefresh(view);
   }
 
-  private changeMode(view: EditorView, nextMode: VimMode): void {
+  private captureVisualSelection(
+    view: EditorView,
+  ): VimVisualSelectionSnapshot | null {
+    if (!isVisualMode(this.mode)) return null;
+    const noteId = this.options.getRootNoteId?.();
+    const capture = this.options.captureVisualPosition;
+    if (!noteId || !capture) return null;
+
+    let endpoints: { anchor: number; head: number } | null = null;
+    if (this.mode === "visual-char") {
+      const selection = view.state.selection;
+      if (selection instanceof TextSelection && !selection.empty) {
+        endpoints = { anchor: selection.anchor, head: selection.head };
+      }
+    } else if (this.mode === "visual-line" && this.visualLine) {
+      endpoints = visualLineSelectionEndpoints(view, this.visualLine);
+    } else if (
+      this.mode === "visual-block" &&
+      view.state.selection instanceof CellSelection
+    ) {
+      endpoints = {
+        anchor: view.state.selection.$anchorCell.pos,
+        head: view.state.selection.$headCell.pos,
+      };
+    }
+    if (!endpoints) return null;
+
+    try {
+      const anchor = capture(endpoints.anchor);
+      const head = capture(endpoints.head);
+      if (
+        !anchor ||
+        !head ||
+        anchor.noteId !== noteId ||
+        head.noteId !== noteId
+      ) {
+        return null;
+      }
+      return { noteId, mode: this.mode, anchor, head };
+    } catch {
+      return null;
+    }
+  }
+
+  private rememberVisualSelection(
+    snapshot: VimVisualSelectionSnapshot | null,
+  ): void {
+    if (!snapshot) return;
+    this.visualSelectionStore.write(snapshot);
+  }
+
+  private rememberDepartingVisualSelection(
+    view: EditorView,
+    snapshot?: VimVisualSelectionSnapshot | null,
+  ): void {
+    const departing =
+      snapshot !== undefined
+        ? snapshot
+        : this.pendingExternalVisualSelection !== undefined
+          ? this.pendingExternalVisualSelection
+          : this.captureVisualSelection(view);
+    this.pendingExternalVisualSelection = undefined;
+    this.rememberVisualSelection(departing);
+  }
+
+  private resolveVisualSelection(
+    snapshot: VimVisualSelectionSnapshot,
+  ): ResolvedVisualSelection | null {
+    const currentNoteId = this.options.getRootNoteId?.();
+    const resolve = this.options.resolveVisualPosition;
+    if (!currentNoteId || currentNoteId !== snapshot.noteId || !resolve) {
+      return null;
+    }
+    try {
+      const anchor = resolve(snapshot.anchor);
+      const head = resolve(snapshot.head);
+      if (anchor === null || head === null) return null;
+      if (snapshot.mode === "visual-char" && anchor === head) return null;
+      return { mode: snapshot.mode, anchor, head };
+    } catch {
+      return null;
+    }
+  }
+
+  private applyResolvedVisualSelection(
+    view: EditorView,
+    resolved: ResolvedVisualSelection,
+  ): boolean {
     const previousMode = this.mode;
+    const previousVisualLine = this.visualLine;
+    this.mode = resolved.mode;
+    this.visualLine = null;
+    applyNativeCaretMode(view.dom, resolved.mode);
+
+    let applied = false;
+    if (resolved.mode === "visual-char") {
+      applied = restoreVisualCharSelection(
+        view,
+        resolved.anchor,
+        resolved.head,
+      );
+    } else if (resolved.mode === "visual-line") {
+      const visualLine = restoreVisualLineSelection(
+        view,
+        resolved.anchor,
+        resolved.head,
+      );
+      this.visualLine = visualLine;
+      applied = visualLine !== null;
+    } else {
+      applied = restoreVisualBlockSelection(
+        view,
+        resolved.anchor,
+        resolved.head,
+        { scrollIntoView: true, focus: true },
+      );
+    }
+
+    if (!applied) {
+      this.mode = previousMode;
+      this.visualLine = previousVisualLine;
+      applyNativeCaretMode(view.dom, previousMode);
+      return false;
+    }
+
+    this.input = createVimInputState();
+    this.clipboardReadGeneration += 1;
+    this.refreshVisualLineDecorations(view);
+    if (previousMode !== resolved.mode) {
+      this.options.onModeChange?.(resolved.mode);
+    }
+    return true;
+  }
+
+  private reselectPreviousVisualSelection(view: EditorView): void {
+    const noteId = this.options.getRootNoteId?.();
+    const previous = noteId ? this.visualSelectionStore.read(noteId) : null;
+    if (!previous) {
+      this.action = "selection:reselect:empty";
+      this.options.onMessage?.("直前のVisual選択はありません");
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return;
+    }
+
+    const current = isVisualMode(this.mode)
+      ? this.captureVisualSelection(view)
+      : null;
+    if (isVisualMode(this.mode) && !current) {
+      this.action = "selection:reselect:unavailable";
+      this.options.onMessage?.(
+        "直前のVisual選択は現在の表示範囲では復元できません",
+      );
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return;
+    }
+    const resolved = this.resolveVisualSelection(previous);
+    if (!resolved || !this.applyResolvedVisualSelection(view, resolved)) {
+      this.action = "selection:reselect:unavailable";
+      this.options.onMessage?.(
+        "直前のVisual選択は現在の表示範囲では復元できません",
+      );
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return;
+    }
+
+    if (current) this.visualSelectionStore.write(current);
+    this.action = `selection:reselect:${resolved.mode}:changed`;
+    this.emit();
+    this.scheduleCaretRefresh(view);
+  }
+
+  private changeMode(
+    view: EditorView,
+    nextMode: VimMode,
+    departingVisualSelection?: VimVisualSelectionSnapshot | null,
+  ): void {
+    const previousMode = this.mode;
+    if (isVisualMode(previousMode) && nextMode !== previousMode) {
+      this.rememberDepartingVisualSelection(view, departingVisualSelection);
+    }
     const visualBlockExitCursor =
       previousMode === "visual-block" ? visualBlockCursor(view) : undefined;
     const insertExitCursor =

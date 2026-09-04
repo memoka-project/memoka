@@ -105,6 +105,7 @@ import {
 } from "../editor/tiptap-adapter";
 import { VimRegisterStore } from "../vim/register-store";
 import { VimRepeatStore } from "../vim/repeat";
+import { VimVisualSelectionStore } from "../vim/visual-history";
 import {
   type EditorNavigationDestination,
   type EditorNavigationRequest,
@@ -317,6 +318,10 @@ export class CoreRuntime {
     { destination: EditorNavigationDestination; detail: string }
   >();
   private readonly repeatStores = new Map<string, VimRepeatStore>();
+  private readonly visualSelectionStores = new Map<
+    string,
+    VimVisualSelectionStore
+  >();
   private readonly noteSearchStates = new Map<string, WindowNoteSearchState>();
   private readonly noteSearchDocumentVersions = new WeakMap<
     Y.Doc,
@@ -1858,6 +1863,17 @@ export class CoreRuntime {
     return repeatStore;
   }
 
+  visualSelectionStoreFor(windowId: string): VimVisualSelectionStore {
+    if (!this.windows.has(windowId))
+      throw new Error(`Unknown window: ${windowId}`);
+    let store = this.visualSelectionStores.get(windowId);
+    if (!store) {
+      store = new VimVisualSelectionStore();
+      this.visualSelectionStores.set(windowId, store);
+    }
+    return store;
+  }
+
   attachEditor(
     windowId: string,
     element: HTMLElement,
@@ -1896,6 +1912,7 @@ export class CoreRuntime {
       directBodyOnly: options.directBodyOnly,
       registerStore: this.vimRegister,
       repeatStore: this.repeatStoreFor(windowId),
+      visualSelectionStore: this.visualSelectionStoreFor(windowId),
       getWindowState: () => this.requireContentWindowState(windowId),
       onSelectionUpdate: (editor, activeSectionId) => {
         const selection = editor.state.selection;
@@ -2097,6 +2114,7 @@ export class CoreRuntime {
     this.pendingNavigations.clear();
     this.pendingSectionIdentityRepairs.clear();
     this.repeatStores.clear();
+    this.visualSelectionStores.clear();
     this.noteSearchStates.clear();
     this.listeners.clear();
   }
@@ -3342,6 +3360,7 @@ export class CoreRuntime {
       this.jumpLists.delete(windowId);
       this.pendingNavigations.delete(windowId);
       this.repeatStores.delete(windowId);
+      this.visualSelectionStores.delete(windowId);
       this.noteSearchStates.delete(windowId);
     }
   }

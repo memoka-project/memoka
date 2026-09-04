@@ -2,6 +2,7 @@ import { createMappablePosition } from "@tiptap/extension-collaboration";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Selection, type EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
 import {
   initProseMirrorDoc,
@@ -298,4 +299,63 @@ export function resolveStableEditorPosition(
     position,
     source: "document-start",
   };
+}
+
+interface ActiveYSyncState {
+  readonly doc: Y.Doc;
+  readonly type: Y.XmlFragment;
+  readonly binding: {
+    readonly mapping: Parameters<typeof relativePositionToAbsolutePosition>[3];
+  };
+}
+
+/**
+ * Resolves only inside the fragment currently mounted by this Editor.
+ *
+ * Visual history must never jump to document-start or to a context match in an
+ * unrelated block. A Yjs Relative Position remains authoritative while the
+ * selected content survives; an exact Block ID is the only fallback.
+ */
+export function resolveVisibleStableEditorPosition(
+  note: NoteDocument,
+  view: Pick<EditorView, "state">,
+  saved: StableEditorPosition,
+): ResolvedStableEditorPosition | null {
+  if (saved.noteId !== note.noteId) return null;
+  const sync = ySyncPluginKey.getState(view.state) as
+    ActiveYSyncState | null | undefined;
+  if (!sync || sync.doc !== note.doc) return null;
+
+  try {
+    const relative = Y.decodeRelativePosition(saved.relative);
+    const position = relativePositionToAbsolutePosition(
+      sync.doc,
+      sync.type,
+      relative,
+      sync.binding.mapping,
+    );
+    if (
+      position !== null &&
+      position >= 0 &&
+      position <= view.state.doc.content.size
+    ) {
+      const block = blockAt(view.state, position);
+      return {
+        noteId: note.noteId,
+        blockId: block.blockId || saved.blockId,
+        position,
+        source: "relative",
+      };
+    }
+  } catch {
+    // A stale Relative Position may still resolve through its exact Block ID.
+  }
+
+  if (!saved.blockId) return null;
+  const original = blockCandidates(view.state).find(
+    ({ blockId }) => blockId === saved.blockId,
+  );
+  return original
+    ? fallbackFromCandidate(original, saved, "block-fallback")
+    : null;
 }

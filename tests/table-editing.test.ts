@@ -848,4 +848,56 @@ describe("keyboard-first Table editing", () => {
     runtime.destroy();
     root.remove();
   });
+
+  it("reselects and exchanges Table Visual Block rectangles with gv", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(tableFixture());
+    await runtime.flush();
+    editor.commands.setTextSelection(positionOf(editor, "A1"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "v", { ctrlKey: true, code: "KeyV" });
+    press(editor, "l");
+    press(editor, "j");
+    press(editor, "Escape");
+
+    editor.commands.setTextSelection(positionOf(editor, "H2"));
+    press(editor, "v", { ctrlKey: true, code: "KeyV" });
+    press(editor, "l");
+    press(editor, "g");
+    press(editor, "v");
+    expect(adapter.vimSnapshot.mode).toBe("visual-block");
+    let selection = editor.state.selection;
+    expect(selection).toBeInstanceOf(CellSelection);
+    if (!(selection instanceof CellSelection)) {
+      throw new Error("gv did not restore a CellSelection");
+    }
+    expect(
+      editor.state.doc.nodeAt(selection.$anchorCell.pos)?.textContent,
+    ).toBe("A1");
+    expect(editor.state.doc.nodeAt(selection.$headCell.pos)?.textContent).toBe(
+      "B2",
+    );
+
+    press(editor, "g");
+    press(editor, "v");
+    selection = editor.state.selection;
+    expect(selection).toBeInstanceOf(CellSelection);
+    if (!(selection instanceof CellSelection)) {
+      throw new Error("gv did not exchange the CellSelection");
+    }
+    expect(
+      editor.state.doc.nodeAt(selection.$anchorCell.pos)?.textContent,
+    ).toBe("H2");
+    expect(editor.state.doc.nodeAt(selection.$headCell.pos)?.textContent).toBe(
+      "H3",
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
 });

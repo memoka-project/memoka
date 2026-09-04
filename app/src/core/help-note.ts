@@ -216,6 +216,13 @@ export function createMemokaHelpSectionSnapshot(
                     ": 矩形Cell選択",
                   ),
                 ),
+                listItem(
+                  "mode-visual-reselect",
+                  rich(
+                    code("gv"),
+                    ": 直前のVisual選択を復元。Visual中は現在と直前の選択を交換",
+                  ),
+                ),
               ]),
             ],
           ),
@@ -434,7 +441,11 @@ export function createMemokaHelpSectionSnapshot(
               rich(code("iw / aw / ip / ap")),
               "operatorの対象を内側・周囲のwordまたはParagraphにする",
             ],
-            ["選択", rich(code("v / V")), "文字・論理行／Section構造を選択"],
+            [
+              "選択",
+              rich(code("v / V / Ctrl-v / gv")),
+              "文字・論理行／Section構造・Table矩形を選択し、直前のVisual選択を復元",
+            ],
             [
               "文字装飾",
               rich(code("v"), "で選択 → ", code("m")),
@@ -585,6 +596,17 @@ export function createMemokaHelpSectionSnapshot(
           listItem(
             "inline-format",
             "文字装飾はParagraph、ListItem、Table Cell内の文字へ適用できます。同じ装飾の再適用はtoggleではなく変更なしとなり、「全装飾を解除」で対応markをまとめて外します。確定は1 Undo単位、Esc / Ctrl-cはVisual選択を保って取消します。",
+          ),
+          listItem(
+            "visual-reselect",
+            rich(
+              code("gv"),
+              "は同じWindow・同じNoteで直前に使ったVisual Char、Visual Line、Visual Blockの範囲と向きを復元します。Visual中に実行すると現在の範囲と交換され、続けて",
+              code("gv"),
+              "を押して往復できます。編集で残った位置には追従しますが、削除済み、現在のFocused Section外、互換性のないTableになった範囲は復元せず通知します。履歴はアプリ終了時またはWindowを閉じた時に破棄され、Undoや",
+              code("."),
+              "の対象にはなりません。",
+            ),
           ),
           listItem(
             "search",

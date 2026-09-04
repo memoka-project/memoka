@@ -1082,6 +1082,37 @@ export function beginVisualChar(
   if (focus) view.focus();
 }
 
+export function restoreVisualCharSelection(
+  view: VimEditorView,
+  anchor: number,
+  head: number,
+): boolean {
+  if (
+    anchor === head ||
+    anchor < 0 ||
+    head < 0 ||
+    anchor > view.state.doc.content.size ||
+    head > view.state.doc.content.size
+  ) {
+    return false;
+  }
+  try {
+    const selection = TextSelection.between(
+      view.state.doc.resolve(anchor),
+      view.state.doc.resolve(head),
+      head >= anchor ? 1 : -1,
+    );
+    if (selection.empty) return false;
+    view.dispatch(
+      scrollWhenLayoutIsAvailable(view.state.tr.setSelection(selection)),
+    );
+    view.focus();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function visualCharCursor(view: Pick<VimEditorView, "state">): number {
   const lines = blockSemantics.logicalLines(view);
   return visualCharEndpoints(view, lines).cursor;
@@ -1262,6 +1293,45 @@ export function beginVisualLine(
   if (!visualLine) return null;
   applyVisualLineSelection(view, visualLine);
   return visualLine;
+}
+
+export function visualLineSelectionEndpoints(
+  view: Pick<VimEditorView, "state">,
+  visualLine: VimVisualLineState,
+): { anchor: number; head: number } | null {
+  const units = blockSemantics.visualLineUnits(view);
+  const anchor = units[visualLine.anchorUnit];
+  const head = units[visualLine.headUnit];
+  if (!anchor || !head) return null;
+  return { anchor: anchor.cursorFrom, head: visualLine.cursor };
+}
+
+export function restoreVisualLineSelection(
+  view: VimEditorView,
+  anchorPosition: number,
+  headPosition: number,
+): VimVisualLineState | null {
+  const units = blockSemantics.visualLineUnits(view);
+  if (units.length === 0) return null;
+  const anchorUnit = blockSemantics.currentStructuralUnitIndex(
+    units,
+    anchorPosition,
+  );
+  const headUnit = blockSemantics.currentStructuralUnitIndex(
+    units,
+    headPosition,
+  );
+  const head = units[headUnit];
+  if (!units[anchorUnit] || !head) return null;
+  const cursor = head.cursorPositions.reduce(
+    (nearest, candidate) =>
+      Math.abs(candidate - headPosition) < Math.abs(nearest - headPosition)
+        ? candidate
+        : nearest,
+    head.cursorFrom,
+  );
+  const visualLine = { anchorUnit, headUnit, cursor };
+  return applyVisualLineSelection(view, visualLine) ? visualLine : null;
 }
 
 function moveVisualLineCursor(

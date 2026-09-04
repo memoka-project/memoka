@@ -22,6 +22,7 @@ import {
 } from "../core/editor-navigation";
 import { requestImeOff } from "../core/ime-platform";
 import {
+  resolveVisibleStableEditorPosition,
   saveStableEditorPosition,
   type StableEditorPosition,
 } from "../core/stable-position";
@@ -48,6 +49,7 @@ import {
 } from "../vim/editor-commands";
 import type { VimRegisterStore } from "../vim/register-store";
 import type { VimRepeatStore } from "../vim/repeat";
+import type { VimVisualSelectionStore } from "../vim/visual-history";
 import type { VimWindowCommand } from "../vim/input";
 import type { VimApplicationCommand } from "../vim/input";
 import type { ApplicationKeyConfig } from "../core/application-key-config";
@@ -124,6 +126,7 @@ export interface TiptapEditorAdapterOptions {
   directBodyOnly?: boolean;
   registerStore?: VimRegisterStore;
   repeatStore?: VimRepeatStore;
+  visualSelectionStore?: VimVisualSelectionStore;
   onSelectionUpdate?: (editor: Editor, activeSectionId: string | null) => void;
   onCaretSectionChange?: (sectionId: string | null) => void;
   onCaretExternalLinkChange?: (href: string | null) => void;
@@ -307,6 +310,30 @@ export class TiptapEditorAdapter {
       },
       registerStore: options.registerStore,
       repeatStore: options.repeatStore,
+      visualSelectionStore: options.visualSelectionStore,
+      captureVisualPosition: (position) => {
+        const document = this.handle.current;
+        return document.kind === "note" && !this.currentEditor.isDestroyed
+          ? saveStableEditorPosition(
+              document,
+              this.currentEditor.view,
+              position,
+            )
+          : null;
+      },
+      resolveVisualPosition: (saved) => {
+        const document = this.handle.current;
+        if (document.kind !== "note" || this.currentEditor.isDestroyed) {
+          return null;
+        }
+        return (
+          resolveVisibleStableEditorPosition(
+            document,
+            this.currentEditor.view,
+            saved,
+          )?.position ?? null
+        );
+      },
       onModeChange: (mode) => {
         if (mode !== "insert") this.internalLinkCompletion?.close();
         options.onModeChange?.(mode);
@@ -467,6 +494,8 @@ export class TiptapEditorAdapter {
         `block.transform:${target}:changed`,
       );
       this.vimSession.requestInputMethodDeactivation();
+    } else {
+      this.vimSession.cancelExternalMutationUndoBoundary();
     }
     return result;
   }
@@ -514,6 +543,8 @@ export class TiptapEditorAdapter {
         "selection:format:no-op",
       );
       this.vimSession.requestInputMethodDeactivation();
+    } else {
+      this.vimSession.cancelExternalMutationUndoBoundary();
     }
     return result;
   }
@@ -555,6 +586,8 @@ export class TiptapEditorAdapter {
         `table.action:${action}:boundary`,
       );
       this.vimSession.requestInputMethodDeactivation();
+    } else {
+      this.vimSession.cancelExternalMutationUndoBoundary();
     }
     return result;
   }
@@ -805,6 +838,7 @@ export class TiptapEditorAdapter {
     this.unsubscribe();
     this.observeDocument(null);
     this.internalLinkCompletion?.destroy();
+    this.vimSession.preserveVisualSelection();
     this.currentEditor.destroy();
     this.vimSession.destroy();
     this.element.removeEventListener(
@@ -936,6 +970,7 @@ export class TiptapEditorAdapter {
     this.vimSession.prepareExternalMutationUndoBoundary();
     const result = insertAttachmentBlocks(editor.view, attachments, target);
     if (!result.changed) {
+      this.vimSession.cancelExternalMutationUndoBoundary();
       this.options.onMessage?.(
         result.reason === "stale"
           ? "添付先の「/」ブロックが変更されました"
