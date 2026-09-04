@@ -1712,6 +1712,64 @@ describe("Memoka Application utilities", () => {
     note.doc.destroy();
   });
 
+  it("projects Window-local Section folds into the Outline", () => {
+    const rootId = "01900000-0000-7000-8000-000000000070";
+    const parentId = "01900000-0000-7000-8000-000000000072";
+    const childId = "01900000-0000-7000-8000-000000000074";
+    const siblingId = "01900000-0000-7000-8000-000000000076";
+    const note = createOutlineNote(rootId, [
+      { sectionId: parentId, title: "Closed parent" },
+      {
+        sectionId: childId,
+        title: "Hidden child",
+        parentSectionId: parentId,
+      },
+      { sectionId: siblingId, title: "Visible sibling" },
+    ]);
+    const view = render(
+      <WorkspaceOutline
+        note={note}
+        collapsedSectionIds={[parentId]}
+        focusRequest={0}
+        onJump={async () => undefined}
+        onClose={() => undefined}
+        onFocus={() => undefined}
+        viewState={{ noteId: rootId, selectedSectionId: childId }}
+      />,
+    );
+
+    expect(screen.queryByText("Hidden child")).toBeNull();
+    expect(screen.getByText("Visible sibling")).toBeTruthy();
+    const parentRow = screen
+      .getByText("Closed parent")
+      .closest<HTMLElement>('[role="treeitem"]');
+    expect(parentRow?.getAttribute("aria-expanded")).toBe("false");
+    expect(parentRow?.getAttribute("aria-selected")).toBe("true");
+    expect(parentRow?.querySelector(".outline-fold-state")?.textContent).toBe(
+      "▸",
+    );
+    expect(view.container.querySelector(".outline-level")).toBeNull();
+
+    view.rerender(
+      <WorkspaceOutline
+        note={note}
+        collapsedSectionIds={[rootId]}
+        focusRequest={0}
+        onJump={async () => undefined}
+        onClose={() => undefined}
+        onFocus={() => undefined}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("tree", { name: "Sectionアウトライン" })
+        .querySelectorAll('[role="treeitem"]'),
+    ).toHaveLength(1);
+
+    view.unmount();
+    note.doc.destroy();
+  });
+
   it("cycles H1-H6 colors for deep Outline Section titles", () => {
     const noteId = createUuidV7();
     let parentSectionId = noteId;

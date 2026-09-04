@@ -536,14 +536,21 @@ textarea {
 
 .outline-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 5px;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 2px;
   align-items: center;
   min-height: 28px;
   padding: 4px 8px 4px calc(8px + var(--outline-level) * 12px);
   border-radius: 5px;
   color: var(--memoka-color-text-muted);
   cursor: default;
+}
+
+.outline-fold-state {
+  color: var(--memoka-markup-heading-color, var(--memoka-color-text-subtle));
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
 }
 
 .outline-row--selected {
@@ -554,12 +561,6 @@ textarea {
 .focus-surface--focused .outline-row--selected {
   color: var(--memoka-color-selection-text);
   background: var(--memoka-color-selection);
-}
-
-.outline-level {
-  color: var(--memoka-color-text-subtle);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 9px;
 }
 
 .outline-title {
@@ -1021,6 +1022,33 @@ textarea {
   line-height: 1.35;
 }
 
+.memoka-editor[data-section-folding="true"] .memoka-section-header::after {
+  position: absolute;
+  top: 0.28em;
+  left: -1.15em;
+  content: "▾";
+  color: var(--memoka-markup-heading-color, var(--memoka-color-text-subtle));
+  font-size: 0.62em;
+  line-height: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.memoka-editor[data-section-folding="true"]
+  .memoka-section-header[data-section-fold-state="collapsed"]::after {
+  content: "▸";
+  opacity: 0.9;
+}
+
+.memoka-editor[data-section-folding="true"]
+  .memoka-section-header[data-section-fold-state="collapsed"]
+  ~ .memoka-section-body,
+.memoka-editor[data-section-folding="true"]
+  .memoka-section-header[data-section-fold-state="collapsed"]
+  ~ .memoka-section-children {
+  display: none;
+}
+
 /* Editor and Outline share one cyclic H1-H6 color assignment. */
 :is(
   .memoka-editor,
@@ -1107,6 +1135,11 @@ textarea {
 
 .memoka-section .memoka-section-header {
   margin-top: 0.55em;
+}
+
+/* Non-Root Section titles align with their own direct body content. */
+.memoka-section > .memoka-section-header {
+  margin-inline-start: var(--memoka-indent-width);
 }
 
 .memoka-section-body,

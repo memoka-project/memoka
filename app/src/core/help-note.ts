@@ -479,6 +479,11 @@ export function createMemokaHelpSectionSnapshot(
               "caret方向へ1階層絞る／現在Focusから親へ1階層戻る",
             ],
             [
+              "Section折り畳み",
+              rich(code("zo / zO / zc / zC / za / zA")),
+              "現在Sectionを展開／再帰展開／折り畳み／再帰折り畳み／切替／再帰切替",
+            ],
+            [
               "Section階層",
               rich(code(">> / <<"), "、Visual Lineの ", code("> / <")),
               "Sectionタイトルを1段降格／昇格。直接本文ParagraphではSectionへ変換",
@@ -643,11 +648,11 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "search",
-            "/または,sで現在のFocused Section subtree内を部分一致検索し、n / Nで次・前の一致へ移動します。Root表示中はNoteDoc全体が対象です。,fでSectionタイトルとパンくず、,gで直接本文を検索します。Workspace検索の空白区切りはAND条件です。",
+            "/または,sで現在のFocused Section subtree内を部分一致検索し、n / Nで次・前の一致へ移動します。Root表示中はNoteDoc全体が対象です。折り畳んだ本文も検索対象となり、一致へ移動すると必要な祖先Sectionだけを自動展開します。,fでSectionタイトルとパンくず、,gで直接本文を検索します。Workspace検索の空白区切りはAND条件です。",
           ),
           listItem(
             "outline",
-            "Outlineはactive Windowで現在表示しているFocused Section subtreeだけを示し、Root表示中はNoteDoc全体を示します。Enterで選択Sectionのタイトル先頭へ移動し、Ctrl-o / Ctrl-iでJump Listを移動します。caretがあるSectionの祖先はWindow下端のステータスラインに表示され、breadcrumbのclickでもSectionへFocusせずタイトル先頭へ移動します。zfはcaret位置を保って1階層深く絞り、zFはcaretの深さに関係なく現在Focusから親へ1階層戻ります。",
+            "Outlineはactive Windowで現在表示しているFocused Section subtreeだけを示し、Root表示中はNoteDoc全体を示します。Editorで折り畳んだSectionの子孫はOutlineでも隠れ、▸ / ▾で状態を示します。Enterで選択Sectionのタイトル先頭へ移動し、Ctrl-o / Ctrl-iでJump Listを移動します。caretがあるSectionの祖先はWindow下端のステータスラインに表示され、breadcrumbのclickでもSectionへFocusせずタイトル先頭へ移動します。zfはcaret位置を保って1階層深く絞り、zFはcaretの深さに関係なく現在Focusから親へ1階層戻ります。Section折り畳みはWindowごとの表示状態であり、Note本文やUndo履歴には入りません。Rootも折り畳めます。折り畳み中はSectionタイトルだけを編集できます。",
           ),
           listItem(
             "trash",

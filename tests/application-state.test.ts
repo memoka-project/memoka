@@ -69,7 +69,7 @@ describe("Memoka Application Window pure state", () => {
     const state = initialState();
 
     expect(state).toMatchObject({
-      schemaVersion: 6,
+      schemaVersion: 7,
       applicationWindowId: "application-window-1",
       activeTabId: "tab-1",
       tabs: [
@@ -96,7 +96,12 @@ describe("Memoka Application Window pure state", () => {
     expect(state.windows["window-1"]).toMatchObject({
       id: "window-1",
       bufferId: `note:${NOTE_A}`,
-      view: { mode: "insert", selection: null, scrollTop: 0 },
+      view: {
+        mode: "insert",
+        selection: null,
+        scrollTop: 0,
+        collapsedSectionIds: [],
+      },
     });
     expect(state.buffers[`note:${NOTE_A}`]).toEqual(createNoteBuffer(NOTE_A));
     expect(() => validateApplicationWindowState(state)).not.toThrow();
@@ -121,11 +126,31 @@ describe("Memoka Application Window pure state", () => {
     const migrated = migrateApplicationWindowState(legacy);
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(6);
+    expect(state.schemaVersion).toBe(7);
     expect(state.tabs[0]?.leftSidebar).toMatchObject({
       utility: "tree",
       tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
     });
+    expect(() => validateApplicationWindowState(state)).not.toThrow();
+  });
+
+  it("migrates schema 6 Window state with every Section expanded", () => {
+    const legacy = structuredClone(initialState()) as unknown as {
+      schemaVersion: number;
+      windows: Record<
+        string,
+        { view: { collapsedSectionIds?: readonly string[] } }
+      >;
+    };
+    legacy.schemaVersion = 6;
+    delete legacy.windows["window-1"]!.view.collapsedSectionIds;
+
+    const migrated = migrateApplicationWindowState(legacy);
+
+    expect(migrated.changed).toBe(true);
+    const state = migrated.state as ApplicationWindowState;
+    expect(state.schemaVersion).toBe(7);
+    expect(state.windows["window-1"]!.view.collapsedSectionIds).toEqual([]);
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
 
@@ -167,6 +192,7 @@ describe("Memoka Application Window pure state", () => {
     state = updateWindowView(state, "window-1", {
       mode: "insert",
       scrollTop: 100,
+      collapsedSectionIds: [NOTE_A],
     });
     state = updateWindowView(state, "window-2", {
       mode: "normal",
@@ -206,10 +232,12 @@ describe("Memoka Application Window pure state", () => {
     expect(state.windows["window-1"].view).toMatchObject({
       mode: "insert",
       scrollTop: 100,
+      collapsedSectionIds: [NOTE_A],
     });
     expect(state.windows["window-2"].view).toMatchObject({
       mode: "normal",
       scrollTop: 900,
+      collapsedSectionIds: [],
     });
     expect(state.windows["window-3"].view).toMatchObject({
       mode: "normal",
@@ -744,11 +772,14 @@ describe("Memoka Application Window pure state", () => {
   });
 
   it("round-trips valid local state and rejects broken references", () => {
-    const state = splitWindow(initialState(), {
+    const split = splitWindow(initialState(), {
       targetWindowId: "window-1",
       newWindowId: "window-2",
       splitId: "split-1",
       direction: "vertical",
+    });
+    const state = updateWindowView(split, "window-1", {
+      collapsedSectionIds: [NOTE_A],
     });
     const restored = reloadApplicationWindowState(
       serializeApplicationWindowState(state),
@@ -814,6 +845,15 @@ describe("Memoka Application Window pure state", () => {
     staleFocus.focusOwner = { area: "window", windowId: "window-1" };
     expect(() => validateApplicationWindowState(staleFocus)).toThrow(
       "not the active window",
+    );
+
+    const duplicateFold = structuredClone(state);
+    duplicateFold.windows["window-1"]!.view.collapsedSectionIds = [
+      NOTE_A,
+      NOTE_A,
+    ];
+    expect(() => validateApplicationWindowState(duplicateFold)).toThrow(
+      "Duplicate collapsed Section ID",
     );
   });
 

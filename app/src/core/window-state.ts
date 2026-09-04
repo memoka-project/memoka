@@ -14,6 +14,8 @@ export interface WindowLocalViewState {
   scrollTop: number;
   /** null means the NoteDoc Root Section. */
   focusedSectionId: string | null;
+  /** Closed Sections in this Window only; IDs outside the mounted Focus are retained. */
+  collapsedSectionIds: string[];
 }
 
 export interface WindowViewState extends WindowLocalViewState {
@@ -29,6 +31,7 @@ export function createWindowLocalViewState(
     selection: null,
     scrollTop: 0,
     focusedSectionId: null,
+    collapsedSectionIds: [],
   };
 }
 
@@ -105,5 +108,19 @@ export function validateWindowLocalViewState(
       throw new Error("Window-local view requires focusedSectionId");
     }
     assertUuidV7(state.focusedSectionId, "focused Section ID");
+  }
+  if (!Array.isArray(state.collapsedSectionIds)) {
+    throw new Error("Window-local view requires collapsedSectionIds");
+  }
+  const collapsedSectionIds = new Set<string>();
+  for (const sectionId of state.collapsedSectionIds) {
+    if (typeof sectionId !== "string") {
+      throw new Error("Window-local collapsed Section IDs must be strings");
+    }
+    assertUuidV7(sectionId, "collapsed Section ID");
+    if (collapsedSectionIds.has(sectionId)) {
+      throw new Error(`Duplicate collapsed Section ID: ${sectionId}`);
+    }
+    collapsedSectionIds.add(sectionId);
   }
 }

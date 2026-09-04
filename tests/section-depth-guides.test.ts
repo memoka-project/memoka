@@ -69,20 +69,27 @@ describe("Section depth guides", () => {
 
     const rootBody = document.createElement("div");
     rootBody.className = "memoka-section-body";
+    const rootHeader = document.createElement("header");
+    rootHeader.className = "memoka-section-header";
     const section = document.createElement("section");
     section.className = "memoka-section";
+    const header = document.createElement("header");
+    header.className = "memoka-section-header";
     const body = document.createElement("div");
     body.className = "memoka-section-body";
     const children = document.createElement("div");
     children.className = "memoka-section-children";
-    section.append(body, children);
-    document.body.append(rootBody, section);
+    section.append(header, body, children);
+    document.body.append(rootHeader, rootBody, section);
 
     const guidedSelector =
       ".memoka-section > .memoka-section-body, .memoka-section > .memoka-section-children";
     expect(rootBody.matches(guidedSelector)).toBe(false);
     expect(body.matches(guidedSelector)).toBe(true);
     expect(children.matches(guidedSelector)).toBe(true);
+    const indentedHeaderSelector = ".memoka-section > .memoka-section-header";
+    expect(rootHeader.matches(indentedHeaderSelector)).toBe(false);
+    expect(header.matches(indentedHeaderSelector)).toBe(true);
     expect(style.textContent).toContain(
       "border-left: 1px solid var(--memoka-color-border-subtle)",
     );
@@ -91,6 +98,9 @@ describe("Section depth guides", () => {
     );
     expect(style.textContent).toContain(
       "var(--memoka-indent-width) - var(--memoka-indent-guide-offset) - 1px",
+    );
+    expect(style.textContent).toMatch(
+      /\.memoka-section\s*>\s*\.memoka-section-header\s*\{[^}]*margin-inline-start:\s*var\(--memoka-indent-width\)/su,
     );
 
     style.remove();

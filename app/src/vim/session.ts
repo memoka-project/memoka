@@ -130,6 +130,10 @@ import {
   type VimVisualMode,
   type VimVisualSelectionSnapshot,
 } from "./visual-history";
+import {
+  runSectionFoldCommand,
+  type SectionFoldAction,
+} from "../editor/section-folding";
 
 export interface VimSessionSnapshot {
   mode: VimMode;
@@ -210,6 +214,10 @@ export interface ProductVimSessionOptions {
   onSectionFocus?: (
     direction: "current" | "parent",
     currentSectionId: string,
+  ) => void;
+  onSectionFoldsChange?: (
+    collapsedSectionIds: readonly string[],
+    activeSectionId: string | null,
   ) => void;
   onSectionDepthShift?: (
     request: SectionDepthShiftSelection & {
@@ -1416,6 +1424,40 @@ export class ProductVimSession {
         ? `${command}:requested`
         : `${command}:unavailable`;
       this.emit();
+      return true;
+    }
+
+    if (
+      command === "section.fold-open" ||
+      command === "section.fold-open-recursive" ||
+      command === "section.fold-close" ||
+      command === "section.fold-close-recursive" ||
+      command === "section.fold-toggle" ||
+      command === "section.fold-toggle-recursive"
+    ) {
+      event.preventDefault();
+      const action: SectionFoldAction =
+        command === "section.fold-open"
+          ? "open"
+          : command === "section.fold-open-recursive"
+            ? "open-recursive"
+            : command === "section.fold-close"
+              ? "close"
+              : command === "section.fold-close-recursive"
+                ? "close-recursive"
+                : command === "section.fold-toggle"
+                  ? "toggle"
+                  : "toggle-recursive";
+      const result = runSectionFoldCommand(view, action);
+      if (result.changed) {
+        this.options.onSectionFoldsChange?.(
+          result.collapsedSectionIds,
+          result.targetSectionId,
+        );
+      }
+      this.action = `${result.detail}:${result.changed ? "changed" : "boundary"}`;
+      this.emit();
+      this.scheduleCaretRefresh(view);
       return true;
     }
 

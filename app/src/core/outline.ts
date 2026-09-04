@@ -29,3 +29,46 @@ export function deriveNoteOutline(
         : section.displayTitle,
   }));
 }
+
+/** Applies one Window's fold projection without changing the Note outline. */
+export function visibleNoteOutlineEntries(
+  entries: readonly NoteOutlineEntry[],
+  collapsedSectionIds: ReadonlySet<string>,
+): NoteOutlineEntry[] {
+  if (collapsedSectionIds.size === 0) return [...entries];
+  const visible: NoteOutlineEntry[] = [];
+  let hiddenBelowDepth: number | null = null;
+  for (const entry of entries) {
+    if (hiddenBelowDepth !== null) {
+      if (entry.depth > hiddenBelowDepth) continue;
+      hiddenBelowDepth = null;
+    }
+    visible.push(entry);
+    if (collapsedSectionIds.has(entry.sectionId)) {
+      hiddenBelowDepth = entry.depth;
+    }
+  }
+  return visible;
+}
+
+export function nearestVisibleOutlineSectionId(
+  entries: readonly NoteOutlineEntry[],
+  visibleEntries: readonly NoteOutlineEntry[],
+  requestedSectionId: string | null | undefined,
+): string {
+  const first = visibleEntries[0]?.sectionId ?? "";
+  if (!requestedSectionId) return first;
+  const visibleIds = new Set(visibleEntries.map(({ sectionId }) => sectionId));
+  const parents = new Map(
+    entries.map(({ sectionId, parentSectionId }) => [
+      sectionId,
+      parentSectionId,
+    ]),
+  );
+  let candidate: string | null = requestedSectionId;
+  while (candidate) {
+    if (visibleIds.has(candidate)) return candidate;
+    candidate = parents.get(candidate) ?? null;
+  }
+  return first;
+}

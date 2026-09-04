@@ -5,6 +5,10 @@ import type {
   Schema,
 } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
+import {
+  sectionFoldHiddenEntries,
+  sectionFoldStateSignature,
+} from "../editor/section-folding";
 
 export type VimLogicalLineKind = "block-atom" | "code-line" | "text-block";
 
@@ -379,13 +383,17 @@ export class VimBlockSemanticsRegistry {
     ProseMirrorNode,
     VimLogicalLineAnchor[]
   >();
+  readonly #visibleLogicalLinesByDocument = new WeakMap<
+    ProseMirrorNode,
+    { signature: string; lines: VimLogicalLine[] }
+  >();
   readonly #structuralUnitsByDocument = new WeakMap<
     ProseMirrorNode,
-    VimStructuralUnit[]
+    { signature: string; units: VimStructuralUnit[] }
   >();
   readonly #visualLineUnitsByDocument = new WeakMap<
     ProseMirrorNode,
-    VimStructuralUnit[]
+    { signature: string; units: VimStructuralUnit[] }
   >();
 
   constructor(
@@ -486,6 +494,38 @@ export class VimBlockSemanticsRegistry {
   }
 
   logicalLines(view: VimSemanticsView): VimLogicalLine[] {
+    const allLines = this.#allLogicalLines(view);
+    const signature = sectionFoldStateSignature(view.state);
+    if (!signature) return allLines;
+    const cached = this.#visibleLogicalLinesByDocument.get(view.state.doc);
+    if (cached?.signature === signature) return cached.lines;
+    const hidden = [...sectionFoldHiddenEntries(view.state)].sort(
+      (left, right) =>
+        left.hiddenFrom - right.hiddenFrom || right.hiddenTo - left.hiddenTo,
+    );
+    let hiddenIndex = 0;
+    const lines = allLines.filter((line) => {
+      while (
+        hiddenIndex < hidden.length &&
+        hidden[hiddenIndex]!.hiddenTo <= line.blockPosition
+      ) {
+        hiddenIndex += 1;
+      }
+      const entry = hidden[hiddenIndex];
+      return !(
+        entry &&
+        line.blockPosition >= entry.hiddenFrom &&
+        line.blockPosition < entry.hiddenTo
+      );
+    });
+    this.#visibleLogicalLinesByDocument.set(view.state.doc, {
+      signature,
+      lines,
+    });
+    return lines;
+  }
+
+  #allLogicalLines(view: VimSemanticsView): VimLogicalLine[] {
     const cached = this.#logicalLinesByDocument.get(view.state.doc);
     if (cached) return cached;
     const lines: VimLogicalLine[] = [];
@@ -743,8 +783,9 @@ export class VimBlockSemanticsRegistry {
     const cache = splitHardBreakLines
       ? this.#visualLineUnitsByDocument
       : this.#structuralUnitsByDocument;
+    const signature = sectionFoldStateSignature(view.state);
     const cached = cache.get(view.state.doc);
-    if (cached) return cached;
+    if (cached?.signature === signature) return cached.units;
     const units: VimStructuralUnit[] = [];
     const structuralByKey = new Map<string, VimStructuralUnit>();
     const logicalLines = this.logicalLines(view);
@@ -888,7 +929,7 @@ export class VimBlockSemanticsRegistry {
       units.push(unit);
     }
 
-    cache.set(view.state.doc, units);
+    cache.set(view.state.doc, { signature, units });
     return units;
   }
 

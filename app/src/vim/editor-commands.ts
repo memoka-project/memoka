@@ -36,6 +36,7 @@ import {
 } from "../core/application-key-config";
 import { createUuidV7 } from "../core/ids";
 import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
+import { sectionFoldCollapsedSectionIds } from "../editor/section-folding";
 import {
   moveNormalTableCell,
   moveNormalTableRow,
@@ -5300,6 +5301,12 @@ function openFromSectionTitle(
   if (!visualLine) return null;
   const target = sectionTitleTarget(view, visualLine);
   if (!target) return null;
+  if (sectionFoldCollapsedSectionIds(view.state).includes(target.sectionId)) {
+    return {
+      handled: false,
+      detail: `section:open-${direction}:folded`,
+    };
+  }
   const paragraphType = view.state.schema.nodes.paragraph;
   if (!paragraphType) return { handled: false, detail: "section:open" };
   try {

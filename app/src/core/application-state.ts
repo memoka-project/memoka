@@ -6,7 +6,7 @@ import {
   type WindowViewState as LegacyWindowViewState,
 } from "./window-state";
 
-export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 6;
+export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 7;
 
 export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
 
@@ -678,26 +678,26 @@ export function migrateApplicationWindowState(value: unknown): {
   state: unknown;
   changed: boolean;
 } {
-  if (
-    value &&
-    typeof value === "object" &&
-    (value as { schemaVersion?: unknown }).schemaVersion === 5
-  ) {
-    const state = structuredClone(value) as {
-      schemaVersion: number;
-      tabs?: Array<{
-        leftSidebar?: {
-          utility?: string;
-          notes?: { selectedNoteId?: string | null };
-          tree?: TreeSidebarViewState;
-        };
-      }>;
-      buffers?: Record<
-        string,
-        { id?: string; kind?: string; utility?: string }
-      >;
-    };
-    state.schemaVersion = APPLICATION_WINDOW_STATE_SCHEMA_VERSION;
+  if (!value || typeof value !== "object") {
+    return { state: value, changed: false };
+  }
+  const version = (value as { schemaVersion?: unknown }).schemaVersion;
+  if (version !== 5 && version !== 6) {
+    return { state: value, changed: false };
+  }
+  const state = structuredClone(value) as {
+    schemaVersion: number;
+    tabs?: Array<{
+      leftSidebar?: {
+        utility?: string;
+        notes?: { selectedNoteId?: string | null };
+        tree?: TreeSidebarViewState;
+      };
+    }>;
+    windows?: Record<string, { view?: { collapsedSectionIds?: string[] } }>;
+    buffers?: Record<string, { id?: string; kind?: string; utility?: string }>;
+  };
+  if (version === 5) {
     for (const tab of state.tabs ?? []) {
       const sidebar = tab.leftSidebar;
       if (!sidebar) continue;
@@ -717,9 +717,12 @@ export function migrateApplicationWindowState(value: unknown): {
         state.buffers["utility:tree"] = legacy;
       }
     }
-    return { state, changed: true };
   }
-  return { state: value, changed: false };
+  for (const window of Object.values(state.windows ?? {})) {
+    if (window.view) window.view.collapsedSectionIds = [];
+  }
+  state.schemaVersion = APPLICATION_WINDOW_STATE_SCHEMA_VERSION;
+  return { state, changed: true };
 }
 
 export function migrateLegacyWindowStates(input: {
@@ -1288,6 +1291,7 @@ function legacyView(state: LegacyWindowViewState): WindowLocalViewState {
     selection: state.selection ? { ...state.selection } : null,
     scrollTop: state.scrollTop,
     focusedSectionId: null,
+    collapsedSectionIds: [],
   };
 }
 

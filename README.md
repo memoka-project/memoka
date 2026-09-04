@@ -119,6 +119,10 @@ Obsidianの`==highlight==`とGitHub / Obsidian形式のAlert（Callout）を扱�
 `==highlight==`はVisual-charで選択して`m`から新しく設定でき、AlertはInsert modeの空Paragraphで`/`を
 入力してtypeを選ぶことでも作成できます。
 
+Section表示はNormal modeの`zo` / `zO`、`zc` / `zC`、`za` / `zA`で展開、折り畳み、toggleできます。
+この表示状態はWindowごとに保存され、Note本文やMarkdownには書き込みません。折り畳んだ本文も`/`検索の対象で、
+一致へ移動すると必要なSectionが自動展開されます。これは上記AlertのMarkdown折り畳み指定とは別の機能です。
+
 ## 開発
 
 必要な環境はNode.js、Corepack、Rust、Tauri 2のLinuxまたはWindows向け依存パッケージです。

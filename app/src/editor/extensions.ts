@@ -65,6 +65,10 @@ import {
 } from "./body-chunk-viewport-event";
 import { SectionTitleCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
+import {
+  SectionFolding,
+  sectionFoldCollapsedSectionIds,
+} from "./section-folding";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -2061,6 +2065,10 @@ const SectionEditing = Extension.create({
             const sectionDepth = $from.depth - 1;
             const section = $from.node(sectionDepth);
             const header = $from.parent;
+            const sectionId = String(header.attrs.sectionId ?? "");
+            if (sectionFoldCollapsedSectionIds(state).includes(sectionId)) {
+              return true;
+            }
             const headerType = state.schema.nodes[SECTION_HEADER_NODE];
             const bodyType = state.schema.nodes[SECTION_BODY_NODE];
             const paragraphType = state.schema.nodes.paragraph;
@@ -2139,6 +2147,8 @@ export function productEditorExtensions(
     /** Read-only transient views must never own or destroy NoteDoc history. */
     readOnly?: boolean;
     attachmentRepository?: EditorAttachmentRepository;
+    /** Window-local Section fold state; never persisted into the NoteDoc. */
+    collapsedSectionIds?: readonly string[];
   } = {},
 ) {
   const focusedSection = options.directBodyOnly
@@ -2183,6 +2193,13 @@ export function productEditorExtensions(
           SectionChildren,
         ]),
     ...(!options.directBodyOnly ? [sectionTitlePlaceholders(note.noteId)] : []),
+    ...(!options.directBodyOnly && !options.readOnly
+      ? [
+          SectionFolding.configure({
+            collapsedSectionIds: options.collapsedSectionIds ?? [],
+          }),
+        ]
+      : []),
     TableKit.configure({
       table: {
         resizable: false,

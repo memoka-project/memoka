@@ -144,6 +144,7 @@ export interface CoreCommandPayloads {
       mode?: VimMode;
       selection?: WindowSelection | null;
       scrollTop?: number;
+      collapsedSectionIds?: string[];
     };
     noteId?: string;
     activeSectionId?: string | null;

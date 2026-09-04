@@ -2594,6 +2594,7 @@ export function App({
         focusedSectionId={
           applicationWindowState?.view.focusedSectionId ?? windowState.noteId
         }
+        collapsedSectionIds={windowState.collapsedSectionIds}
         label={note ? noteDisplayTitle(note.title) : "Unknown note"}
         focused={focused}
         internalLinkLabelRevision={snapshot.internalLinkLabelRevision}
@@ -2706,6 +2707,7 @@ export function App({
             key={`${activeTabPage.id}:${outlineNoteId}`}
             note={outlineDocument}
             scopeSectionId={outlineScopeSectionId ?? undefined}
+            collapsedSectionIds={targetWindow?.collapsedSectionIds ?? []}
             viewState={rightSidebar.outline}
             onViewStateChange={(outline) => {
               void runtime
@@ -3245,6 +3247,7 @@ function EditorWindow({
   windowId,
   noteId,
   focusedSectionId,
+  collapsedSectionIds,
   label,
   focused,
   internalLinkLabelRevision,
@@ -3272,6 +3275,7 @@ function EditorWindow({
   windowId: string;
   noteId: string;
   focusedSectionId: string;
+  collapsedSectionIds: readonly string[];
   label: string;
   focused: boolean;
   internalLinkLabelRevision: number;
@@ -3499,6 +3503,10 @@ function EditorWindow({
     adapterRef.current?.refreshInternalLinkLabels();
     adapterRef.current?.refreshInternalLinkCompletion();
   }, [internalLinkLabelRevision]);
+
+  useLayoutEffect(() => {
+    adapterRef.current?.setCollapsedSectionIds(collapsedSectionIds);
+  }, [collapsedSectionIds]);
   const clipboard = vimSnapshot?.clipboard ?? "idle";
   const imeOff = vimSnapshot?.imeOff ?? "idle";
   const mode =

@@ -252,6 +252,7 @@ interface PendingWindowViewUpdate {
     mode?: WindowViewState["mode"];
     selection?: WindowViewState["selection"];
     scrollTop?: number;
+    collapsedSectionIds?: string[];
   };
   readonly activeSectionId?: string | null;
 }
@@ -1990,6 +1991,13 @@ export class CoreRuntime {
           if (!result.handled) this.reportError(new Error(result.detail));
         });
       },
+      onSectionFoldsChange: (collapsedSectionIds, activeSectionId) =>
+        this.persistWindowUpdate(
+          windowId,
+          { collapsedSectionIds: [...collapsedSectionIds] },
+          attachedNoteId,
+          activeSectionId,
+        ),
       onSectionDepthShift: (request) =>
         this.shiftSectionDepth(
           attachedNoteId,
@@ -3195,6 +3203,8 @@ export class CoreRuntime {
         return { windowId: previous.windowId };
       }
       const previousApplicationState = this.requireApplicationWindowState();
+      const previousView =
+        previousApplicationState.windows[envelope.payload.windowId]?.view;
       let next = updateWindowView(
         previousApplicationState,
         envelope.payload.windowId,
@@ -3223,7 +3233,14 @@ export class CoreRuntime {
         }
       }
       this.applicationWindowState = next;
-      if (outlineChanged) this.emit();
+      const foldsChanged =
+        envelope.payload.update.collapsedSectionIds !== undefined &&
+        JSON.stringify(previousView?.collapsedSectionIds ?? []) !==
+          JSON.stringify(
+            next.windows[envelope.payload.windowId]?.view.collapsedSectionIds ??
+              [],
+          );
+      if (outlineChanged || foldsChanged) this.emit();
       this.localStateQueue = this.localStateQueue
         .catch(() => undefined)
         .then(async () => {
@@ -4620,6 +4637,7 @@ export class CoreRuntime {
       mode?: WindowViewState["mode"];
       selection?: WindowViewState["selection"];
       scrollTop?: number;
+      collapsedSectionIds?: string[];
     },
     noteId: string,
     activeSectionId?: string | null,
@@ -4647,7 +4665,9 @@ export class CoreRuntime {
     const urgent =
       update.mode !== undefined ||
       update.scrollTop !== undefined ||
+      update.collapsedSectionIds !== undefined ||
       outlineChanged;
+    if (update.collapsedSectionIds !== undefined) this.emit();
     if (!urgent && this.windowViewUpdateFrame === null) {
       if (this.windowViewUpdateTimer !== null) {
         globalThis.clearTimeout(this.windowViewUpdateTimer);

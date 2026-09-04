@@ -112,6 +112,10 @@ import {
   type TableActionResult,
   type TableActionSelection,
 } from "../vim/table-editing";
+import {
+  revealSectionFoldsAtPosition,
+  setSectionFoldCollapsedSectionIds,
+} from "./section-folding";
 
 export interface BlockTypePickerRequest {
   readonly blockId: string;
@@ -188,6 +192,10 @@ export interface TiptapEditorAdapterOptions {
     direction: "current" | "parent",
     currentSectionId: string,
     origin: StableEditorPosition,
+  ) => void;
+  onSectionFoldsChange?: (
+    collapsedSectionIds: readonly string[],
+    activeSectionId: string | null,
   ) => void;
   onSectionDepthShift?: (
     request: SectionDepthShiftSelection & {
@@ -411,6 +419,8 @@ export class TiptapEditorAdapter {
           saveStableEditorPosition(document, this.currentEditor.view),
         );
       },
+      onSectionFoldsChange: (collapsedSectionIds, activeSectionId) =>
+        options.onSectionFoldsChange?.(collapsedSectionIds, activeSectionId),
       onSectionDepthShift: async (request) => {
         const pending: PendingSectionDepthShift = {
           request,
@@ -819,6 +829,11 @@ export class TiptapEditorAdapter {
     );
   }
 
+  setCollapsedSectionIds(sectionIds: readonly string[]): void {
+    if (this.currentEditor.isDestroyed) return;
+    setSectionFoldCollapsedSectionIds(this.currentEditor.view, sectionIds);
+  }
+
   applyNavigationDestination(
     destination: EditorNavigationDestination,
     detail: string,
@@ -841,6 +856,16 @@ export class TiptapEditorAdapter {
       resolved.source === "missing-search-fallback"
         ? `${detail}:missing-search-fallback`
         : detail;
+    const revealed = revealSectionFoldsAtPosition(
+      this.currentEditor.view,
+      resolved.position,
+    );
+    if (revealed.changed) {
+      this.options.onSectionFoldsChange?.(
+        revealed.collapsedSectionIds,
+        revealed.targetSectionId,
+      );
+    }
     const previousSuppression = this.suppressSelectionUpdate;
     if (options.notifySelection === false) {
       this.suppressSelectionUpdate = true;
@@ -930,6 +955,8 @@ export class TiptapEditorAdapter {
           focusedSectionId: focusedSectionId,
           directBodyOnly: this.options.directBodyOnly,
           attachmentRepository: this.options.attachmentRepository,
+          collapsedSectionIds:
+            this.options.getWindowState?.().collapsedSectionIds ?? [],
         }),
         blockTypeSlashTrigger({
           enabled: () => {

@@ -178,6 +178,27 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("normal", "E", noteContext)).toBe("motion.big-word-end");
   });
 
+  it("maps Section fold commands without claiming Normal Enter", () => {
+    for (const [keys, command] of [
+      ["zo", "section.fold-open"],
+      ["zO", "section.fold-open-recursive"],
+      ["zc", "section.fold-close"],
+      ["zC", "section.fold-close-recursive"],
+      ["za", "section.fold-toggle"],
+      ["zA", "section.fold-toggle-recursive"],
+    ] as const) {
+      let state = createVimInputState();
+      let resolution = advanceVimInput(state, "normal", keys[0]!, noteContext);
+      state = resolution.state;
+      resolution = advanceVimInput(state, "normal", keys[1]!, noteContext);
+      expect(resolution).toMatchObject({
+        sequence: keys,
+        resolvedCommand: command,
+      });
+    }
+    expect(resolveKey("normal", "Enter", noteContext)).toBeNull();
+  });
+
   it("maps gv in Normal and every Visual mode without taking Insert input", () => {
     for (const mode of [
       "normal",
@@ -755,6 +776,12 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("normal", "o", sidebarContext)).toBeNull();
     expect(resolveKey("normal", "O", sidebarContext)).toBeNull();
     expect(resolveKey("normal", "x", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "zo", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "zO", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "zc", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "zC", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "za", sidebarContext)).toBeNull();
+    expect(resolveKey("normal", "zA", sidebarContext)).toBeNull();
 
     const textObjectPending = advanceVimInput(
       pending.state,

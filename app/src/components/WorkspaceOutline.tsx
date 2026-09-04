@@ -10,7 +10,11 @@ import {
   outlineKeymap,
   type OutlineCommandId,
 } from "../core/outline-keymap";
-import { deriveNoteOutline } from "../core/outline";
+import {
+  deriveNoteOutline,
+  nearestVisibleOutlineSectionId,
+  visibleNoteOutlineEntries,
+} from "../core/outline";
 import { focusSurfaceFromPointer } from "./focus-surface";
 import type { OutlineSidebarViewState } from "../core/application-state";
 import { markupHeadingLevelForSectionDepth } from "../core/application-theme";
@@ -18,6 +22,7 @@ import { markupHeadingLevelForSectionDepth } from "../core/application-theme";
 export function WorkspaceOutline({
   note,
   scopeSectionId,
+  collapsedSectionIds = [],
   focusRequest,
   onJump,
   onClose,
@@ -29,6 +34,7 @@ export function WorkspaceOutline({
 }: {
   note: Parameters<typeof deriveNoteOutline>[0];
   scopeSectionId?: string;
+  collapsedSectionIds?: readonly string[];
   focusRequest: number;
   onJump: (sectionId: string) => Promise<void>;
   onClose: () => void;
@@ -40,12 +46,17 @@ export function WorkspaceOutline({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const selectedRowElement = useRef<HTMLDivElement>(null);
-  const entries = deriveNoteOutline(note, scopeSectionId);
+  const allEntries = deriveNoteOutline(note, scopeSectionId);
+  const collapsed = new Set(collapsedSectionIds);
+  const entries = visibleNoteOutlineEntries(allEntries, collapsed);
   const firstSectionId = entries[0]?.sectionId ?? "";
   const resolvedSectionId =
-    viewState?.noteId === note.noteId &&
-    entries.some(({ sectionId }) => sectionId === viewState.selectedSectionId)
-      ? (viewState.selectedSectionId ?? firstSectionId)
+    viewState?.noteId === note.noteId
+      ? nearestVisibleOutlineSectionId(
+          allEntries,
+          entries,
+          viewState.selectedSectionId,
+        )
       : firstSectionId;
   const [localSelection, setLocalSelection] = useState({
     externalSectionId: resolvedSectionId,
@@ -147,6 +158,7 @@ export function WorkspaceOutline({
       >
         {entries.map((entry) => {
           const selectedRow = entry.sectionId === selected?.sectionId;
+          const folded = collapsed.has(entry.sectionId);
           return (
             <div
               ref={selectedRow ? selectedRowElement : undefined}
@@ -156,6 +168,7 @@ export function WorkspaceOutline({
               role="treeitem"
               aria-level={entry.depth + 1}
               aria-selected={selectedRow}
+              aria-expanded={!folded}
               data-memoka-markup-heading={markupHeadingLevelForSectionDepth(
                 entry.noteDepth,
               )}
@@ -165,7 +178,9 @@ export function WorkspaceOutline({
                 void jump(entry.sectionId);
               }}
             >
-              <span className="outline-level">§{entry.depth}</span>
+              <span className="outline-fold-state" aria-hidden="true">
+                {folded ? "▸" : "▾"}
+              </span>
               <span className="outline-title">{entry.title}</span>
             </div>
           );

@@ -71,6 +71,11 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("Focused Section subtree");
     expect(helpText).toContain("zfはcaret位置を保って1階層深く");
     expect(helpText).toContain("現在Focusから親へ1階層戻ります");
+    expect(helpText).toContain("zo / zO / zc / zC / za / zA");
+    expect(helpText).toContain(
+      "一致へ移動すると必要な祖先Sectionだけを自動展開",
+    );
+    expect(helpText).toContain("Section折り畳みはWindowごとの表示状態");
     expect(helpText).toContain("whichwrap有効時は行端から前後論理行へ移動");
     expect(helpText).toContain("全block共通で制御");
     expect(helpText).toContain(":note-width 1200");
