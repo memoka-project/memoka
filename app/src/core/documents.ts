@@ -1,6 +1,7 @@
 import * as Y from "yjs";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { assertUuidV7, createUuidV7, isUuidV7 } from "./ids";
+import { yXmlTextVisibleText } from "./yxml-text";
 import {
   compareSiblingPositions,
   isCanonicalSiblingPosition,
@@ -9,19 +10,24 @@ import {
   applySectionSnapshot,
   applySectionHierarchySnapshot,
   BODY_CHUNK_NODE,
+  childSections,
   createBodyChunks,
   createSectionXml,
   createSectionFromSnapshot,
   deriveSectionCatalog,
   findSectionById,
+  findParentSection,
   sectionBodyBlocks,
   planSectionDepthShift,
   sectionBody,
+  sectionChildren,
+  sectionId,
   sectionSnapshot,
   sectionTitle,
   updateSectionProperties,
   updateSectionTitle,
   validateSectionTree,
+  replaceSectionBodySnapshot,
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
   SECTION_NODE,
@@ -225,6 +231,8 @@ export interface ListItemBlock {
 export const PERSISTENCE_LOAD_ORIGIN = "memoka:persistence-load";
 export const CORE_TRANSACTION_ORIGIN = "memoka:core-transaction";
 export const SECTION_DEPTH_SHIFT_ORIGIN = "memoka:section-depth-shift";
+export const SECTION_PARAGRAPH_CONVERSION_ORIGIN =
+  "memoka:section-paragraph-conversion";
 export const BOOTSTRAP_ORIGIN = "memoka:bootstrap";
 export const NOTE_TIMESTAMP_ORIGIN = "memoka:note-timestamp";
 export const SECTION_IDENTITY_REPAIR_ORIGIN = "memoka:section-identity-repair";
@@ -859,6 +867,122 @@ export function applyNoteSectionDepthShift(
   }, origin);
 }
 
+export interface NoteSectionFromParagraphResult {
+  readonly changed: boolean;
+  readonly createdSectionId: string | null;
+}
+
+function snapshotBlockIdentity(value: unknown): {
+  type: string;
+  blockId: string;
+} | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as {
+    type?: unknown;
+    attrs?: { blockId?: unknown };
+  };
+  return typeof record.type === "string" &&
+    typeof record.attrs?.blockId === "string"
+    ? { type: record.type, blockId: record.attrs.blockId }
+    : null;
+}
+
+/**
+ * Splits a Section at one direct body Paragraph and promotes that Paragraph's
+ * visible text to a plain Section title. The caller supplies the flattened
+ * title because only the mounted editor can resolve dynamic inline labels.
+ */
+export function createNoteSectionFromParagraph(
+  note: NoteDocument,
+  request: {
+    boundarySectionId: string;
+    sourceSectionId: string;
+    paragraphBlockId: string;
+    paragraphBodyIndex: number;
+    newSectionId: string;
+    title: string;
+    direction: SectionDepthShiftDirection;
+    updatedAt: string;
+  },
+  origin: unknown = SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+): NoteSectionFromParagraphResult {
+  const boundary = findSectionById(note.rootSection, request.boundarySectionId);
+  if (!boundary) {
+    throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
+  }
+  const source = findSectionById(boundary, request.sourceSectionId);
+  if (!source) {
+    throw new Error(
+      `Paragraph Section is outside the Focused Section: ${request.sourceSectionId}`,
+    );
+  }
+  const sourceSnapshot = sectionSnapshot(source);
+  const requestedParagraph = sourceSnapshot.body[request.paragraphBodyIndex];
+  const requestedIdentity = snapshotBlockIdentity(requestedParagraph);
+  const requestedIndexMatches =
+    requestedIdentity?.type === "paragraph" &&
+    requestedIdentity.blockId === request.paragraphBlockId;
+  const matchingIndexes = sourceSnapshot.body.flatMap((value, index) => {
+    const identity = snapshotBlockIdentity(value);
+    return identity?.type === "paragraph" &&
+      identity.blockId === request.paragraphBlockId
+      ? [index]
+      : [];
+  });
+  // Position disambiguates historical documents created while Enter could
+  // copy one blockId to both halves of a split Paragraph. If the document has
+  // moved since the request was captured, only a unique identity is safe.
+  const paragraphIndex = requestedIndexMatches
+    ? request.paragraphBodyIndex
+    : matchingIndexes.length === 1
+      ? matchingIndexes[0]!
+      : -1;
+  if (paragraphIndex < 0) {
+    return { changed: false, createdSectionId: null };
+  }
+
+  const parent = findParentSection(note.rootSection, request.sourceSectionId);
+  if (request.direction === "shallower" && (!parent || source === boundary)) {
+    return { changed: false, createdSectionId: null };
+  }
+  const parentIndex = parent
+    ? childSections(parent).findIndex(
+        (child) => sectionId(child) === request.sourceSectionId,
+      )
+    : -1;
+  if (request.direction === "shallower" && parentIndex < 0) {
+    throw new Error("Paragraph Section parent disappeared before conversion");
+  }
+
+  const prefix = sourceSnapshot.body.slice(0, paragraphIndex);
+  const suffix = sourceSnapshot.body.slice(paragraphIndex + 1);
+  const movedChildren =
+    request.direction === "shallower" ? sourceSnapshot.children : [];
+  const created = createSectionFromSnapshot({
+    sectionId: request.newSectionId,
+    title: request.title,
+    tags: [],
+    body: suffix,
+    children: movedChildren,
+  });
+
+  note.doc.transact(() => {
+    replaceSectionBodySnapshot(source, prefix);
+    if (request.direction === "deeper") {
+      sectionChildren(source).insert(0, [created]);
+    } else {
+      const sourceChildren = sectionChildren(source);
+      if (sourceChildren.length > 0) {
+        sourceChildren.delete(0, sourceChildren.length);
+      }
+      sectionChildren(parent!).insert(parentIndex + 1, [created]);
+    }
+    note.meta.set("updated_at", request.updatedAt);
+    validateSectionTree(note.rootSection, note.noteId);
+  }, origin);
+  return { changed: true, createdSectionId: request.newSectionId };
+}
+
 export function replaceFirstTextBlock(
   note: NoteDocument,
   text: string,
@@ -1101,7 +1225,11 @@ function noteDocumentFromParts(
     rootSection,
     undoManager: new Y.UndoManager(rootSection, {
       captureTimeout: 500,
-      trackedOrigins: new Set([ySyncPluginKey, SECTION_DEPTH_SHIFT_ORIGIN]),
+      trackedOrigins: new Set([
+        ySyncPluginKey,
+        SECTION_DEPTH_SHIFT_ORIGIN,
+        SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+      ]),
     }),
   } as Omit<NoteDocument, "body">;
   return Object.defineProperty(note, "body", {
@@ -1303,7 +1431,7 @@ function appendPlainText(
   parts: string[],
 ): void {
   if (value instanceof Y.XmlText) {
-    parts.push(value.toString());
+    parts.push(yXmlTextVisibleText(value));
     return;
   }
   if (value.nodeName === "attachment") {

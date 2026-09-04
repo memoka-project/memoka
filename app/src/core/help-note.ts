@@ -1,15 +1,30 @@
 import { APPLICATION_COMMANDS } from "./application-command";
 import { LEADER_SHORTCUT_CATALOG } from "./leader-shortcuts";
-import type {
-  ListItemBlock,
-  NoteBlock,
-  TableCellBlock,
-  TableRowBlock,
-} from "./documents";
 import { createUuidV7 } from "./ids";
 import type { SectionSnapshot } from "./section-model";
 
 export const MEMOKA_HELP_TITLE = "Memoka help";
+
+type HelpMark =
+  | { readonly type: "bold" | "italic" | "strike" | "code" }
+  | { readonly type: "link"; readonly attrs: { readonly href: string } };
+
+type HelpInline =
+  | {
+      readonly type: "text";
+      readonly text: string;
+      readonly marks?: readonly HelpMark[];
+    }
+  | {
+      readonly type: "internalSectionLink";
+      readonly attrs: { readonly targetSectionId: string };
+      readonly content: readonly [
+        { readonly type: "text"; readonly text: string },
+      ];
+    };
+
+type HelpRichText = string | readonly HelpInline[];
+type HelpNode = Readonly<Record<string, unknown>>;
 
 /**
  * Managed Help uses the same recursive Section model as user content. Stable
@@ -19,53 +34,76 @@ export function createMemokaHelpSectionSnapshot(
   noteId: string,
 ): SectionSnapshot {
   const id = (key: string): string => stableHelpId(noteId, key);
-  const paragraph = (key: string, text: string): NoteBlock => ({
+  const text = (value: string, ...marks: readonly HelpMark[]): HelpInline => ({
+    type: "text",
+    text: value,
+    ...(marks.length > 0 ? { marks } : {}),
+  });
+  const rich = (
+    ...parts: readonly (string | HelpInline | readonly HelpInline[])[]
+  ): readonly HelpInline[] =>
+    parts.flatMap((part) =>
+      typeof part === "string" ? (part ? [text(part)] : []) : part,
+    );
+  const bold = (value: string): HelpInline => text(value, { type: "bold" });
+  const italic = (value: string): HelpInline => text(value, { type: "italic" });
+  const code = (value: string): HelpInline => text(value, { type: "code" });
+  const externalLink = (label: string, href: string): HelpInline =>
+    text(label, { type: "link", attrs: { href } });
+  const helpLink = (key: string, label: string): HelpInline => ({
+    type: "internalSectionLink",
+    attrs: { targetSectionId: id(`section:${key}`) },
+    content: [{ type: "text", text: label }],
+  });
+  const inlineContent = (value: HelpRichText): readonly HelpInline[] =>
+    typeof value === "string" ? (value ? [text(value)] : []) : value;
+  const paragraph = (key: string, value: HelpRichText): HelpNode => ({
     type: "paragraph",
-    blockId: id(`paragraph:${key}`),
-    content: [{ type: "text", text }],
+    attrs: { blockId: id(`paragraph:${key}`) },
+    content: inlineContent(value),
   });
   const listItem = (
     key: string,
-    text: string,
-    children: NoteBlock[] = [],
-  ): ListItemBlock => ({
+    value: HelpRichText,
+    children: readonly HelpNode[] = [],
+  ): HelpNode => ({
     type: "listItem",
-    blockId: id(`list-item:${key}`),
-    children: [paragraph(`list-item:${key}`, text), ...children],
+    attrs: { blockId: id(`list-item:${key}`) },
+    content: [paragraph(`list-item:${key}`, value), ...children],
   });
-  const bulletList = (key: string, items: ListItemBlock[]): NoteBlock => ({
+  const bulletList = (key: string, items: readonly HelpNode[]): HelpNode => ({
     type: "bulletList",
-    blockId: id(`bullet-list:${key}`),
-    children: items,
+    attrs: { blockId: id(`bullet-list:${key}`) },
+    content: items,
   });
   const tableCell = (
     key: string,
-    text: string,
+    value: HelpRichText,
     header = false,
-  ): TableCellBlock => ({
+  ): HelpNode => ({
     type: header ? "tableHeader" : "tableCell",
-    blockId: id(`table-cell:${key}`),
-    children: [paragraph(`table-cell:${key}`, text)],
+    attrs: { blockId: id(`table-cell:${key}`) },
+    content: [paragraph(`table-cell:${key}`, value)],
   });
   const tableRow = (
     key: string,
-    values: readonly string[],
+    values: readonly HelpRichText[],
     header = false,
-  ): TableRowBlock => ({
+  ): HelpNode => ({
     type: "tableRow",
-    blockId: id(`table-row:${key}`),
-    children: values.map((value, index) =>
+    attrs: { blockId: id(`table-row:${key}`) },
+    content: values.map((value, index) =>
       tableCell(`${key}:${index}`, value, header),
     ),
   });
   const table = (
     key: string,
-    headings: readonly string[],
-    rows: readonly (readonly string[])[],
-  ): NoteBlock => ({
+    headings: readonly HelpRichText[],
+    rows: readonly (readonly HelpRichText[])[],
+  ): HelpNode => ({
     type: "table",
-    blockId: id(`table:${key}`),
-    children: [
+    attrs: { blockId: id(`table:${key}`) },
+    content: [
       tableRow(`${key}:header`, headings, true),
       ...rows.map((row, index) => tableRow(`${key}:${index}`, row)),
     ],
@@ -73,13 +111,13 @@ export function createMemokaHelpSectionSnapshot(
   const section = (
     key: string,
     title: string,
-    body: readonly NoteBlock[],
+    body: readonly HelpNode[],
     children: readonly SectionSnapshot[] = [],
   ): SectionSnapshot => ({
     sectionId: id(`section:${key}`),
     title,
     tags: [],
-    body: body.map(blockToSnapshotJson),
+    body,
     children,
   });
 
@@ -88,45 +126,217 @@ export function createMemokaHelpSectionSnapshot(
     title: MEMOKA_HELP_TITLE,
     tags: [],
     body: [
-      blockToSnapshotJson(
-        paragraph(
-          "intro",
-          "Memokaは、Markdown記号を意識せずに、Vimの操作感で素早く書くローカルファーストのメモ帳です。編集内容は構造化されたNoteDocへ自動保存されます。",
+      paragraph(
+        "intro",
+        rich(
+          bold("Memoka"),
+          "は、Markdown記号を意識せずに、Vimの操作感で素早く書く",
+          italic("ローカルファースト"),
+          "のメモ帳です。編集内容は構造化された",
+          code("NoteDoc"),
+          "へ自動保存されます。",
         ),
       ),
     ],
     children: [
+      section("contents", "目次", [
+        paragraph(
+          "contents-intro",
+          rich(
+            "このHelpは現在の製品操作をまとめた",
+            bold("唯一の利用者向けマニュアル"),
+            "です。次のInternal Linkは",
+            code("gf"),
+            "で開けます。",
+          ),
+        ),
+        bulletList("contents", [
+          listItem(
+            "contents-first",
+            rich(helpLink("first-steps", "最初に覚える")),
+          ),
+          listItem(
+            "contents-insert",
+            rich(helpLink("insert-mode", "Insert mode")),
+          ),
+          listItem(
+            "contents-movement",
+            rich(helpLink("movement-editing", "移動と編集")),
+          ),
+          listItem(
+            "contents-table",
+            rich(helpLink("table-editing", "Table編集")),
+          ),
+          listItem(
+            "contents-notes",
+            rich(helpLink("notes", "ノートとSection")),
+          ),
+          listItem(
+            "contents-windows",
+            rich(helpLink("windows", "Window・Sidebar・Tab")),
+          ),
+          listItem(
+            "contents-leader",
+            rich(helpLink("leader-shortcuts", "Leader shortcuts")),
+          ),
+          listItem(
+            "contents-command",
+            rich(helpLink("command-line", "Command-line")),
+          ),
+        ]),
+      ]),
       section("first-steps", "最初に覚える", [
         bulletList("first-steps", [
           listItem(
             "mode",
-            "Normal modeでは移動とCommand、Insert modeでは本文入力を行います。",
+            rich(
+              code("Normal mode"),
+              "では移動とCommand、",
+              code("Insert mode"),
+              "では本文入力を行います。",
+            ),
             [
               bulletList("mode-details", [
                 listItem(
                   "mode-insert",
-                  "i / a / I / A / o / O: Insert modeへ入る",
+                  rich(code("i / a / I / A / o / O"), ": Insert modeへ入る"),
                 ),
                 listItem(
                   "mode-normal",
-                  "Esc: Insert・VisualからNormal modeへ戻る",
+                  rich(code("Esc / Ctrl-c"), ": InsertからNormal modeへ戻る"),
                 ),
                 listItem(
                   "mode-visual",
-                  "v: 文字選択、V: 論理行・構造単位の選択、Table内のCtrl-v: 矩形Cell選択",
+                  rich(
+                    code("v"),
+                    ": 文字選択、",
+                    code("V"),
+                    ": 論理行・構造単位の選択、Table内の",
+                    code("Ctrl-v"),
+                    ": 矩形Cell選択",
+                  ),
                 ),
               ]),
             ],
           ),
           listItem(
             "ime",
-            "日本語IMEの変換中はEditorがcompositionを優先します。Escは変換を終了してからNormal modeへ戻ります。",
+            rich(
+              "日本語IMEの変換中はEditorが",
+              code("composition"),
+              "を優先します。",
+              code("Esc / Ctrl-c"),
+              "はまず変換を終了し、その後の入力でNormal modeへ戻ります。",
+            ),
           ),
           listItem(
             "save",
-            "保存操作は不要です。確定した編集はCore transactionを通って自動保存されます。",
+            rich(
+              bold("保存操作は不要です。"),
+              "確定した編集はCore transactionを通って自動保存されます。",
+            ),
           ),
         ]),
+      ]),
+      section("insert-mode", "Insert mode", [
+        paragraph(
+          "insert-intro",
+          rich(
+            "通常の文字入力と矢印移動はEditorへ渡します。次のCtrl操作はVim互換の入力補助です。",
+            italic("IME変換中はIME側の操作を優先します。"),
+          ),
+        ),
+        table(
+          "insert-keys",
+          ["キー", "動作", "範囲・補足"],
+          [
+            [
+              rich(code("Esc / Ctrl-c")),
+              "Normal modeへ戻る",
+              "Insert caretの直前の文字にNormal caretを置く",
+            ],
+            [
+              rich(code("Ctrl-h")),
+              "Backspace",
+              "選択範囲、1文字、またはblock境界を通常のBackspaceと同じ規則で削除",
+            ],
+            [
+              rich(code("Ctrl-j / Ctrl-m")),
+              "改行",
+              "通常のEnterと同じ。現在blockに応じてParagraphやListItemを分割",
+            ],
+            [
+              rich(code("Ctrl-u")),
+              "行頭からcaret直前まで削除",
+              "表示上の折返しではなく、Paragraph先頭またはShift-Enterによる明示改行までを対象",
+            ],
+            [
+              rich(code("Ctrl-w")),
+              "直前の単語を削除",
+              "空白を後方へ読み飛ばしてから、直前の単語classまたは連続する記号を削除",
+            ],
+            [
+              rich(code("Ctrl-t")),
+              "Sectionを1段深くする",
+              "SectionタイトルではNormalの >>、直接本文Paragraphでは子Section化",
+            ],
+            [
+              rich(code("Ctrl-d")),
+              "Sectionを1段浅くする",
+              "SectionタイトルではNormalの <<、直接本文Paragraphでは兄弟Section化",
+            ],
+            [
+              rich(code("Ctrl-Enter")),
+              "構造blockから脱出",
+              "List、Table、Code Block、Blockquoteの直後に新しいParagraphを作成",
+            ],
+            [
+              rich(code("Tab / Shift-Tab")),
+              "文脈依存の移動・階層変更",
+              "ListItemの階層変更、Tableの次・前Cellへの移動など",
+            ],
+          ],
+        ),
+        paragraph(
+          "insert-word-definition",
+          rich(
+            bold("単語の定義: "),
+            code("Ctrl-w"),
+            "とNormalの",
+            code("w / b / e"),
+            "は同じ分類を使います。漢字、ひらがな、カタカナ、英数字とunderscoreをそれぞれ別の連続単位として扱います。濁点などの結合文字と長音・中点などの共有仮名記号は隣の文字へ属し、空白・句読点・記号・emojiは単語外です。",
+          ),
+        ),
+        paragraph(
+          "insert-section-conversion",
+          rich(
+            bold("直接本文ParagraphのSection化: "),
+            "Section直下のParagraph上では、Insert modeの",
+            code("Ctrl-t"),
+            "またはNormal modeの",
+            code(">>"),
+            "を押すと、そのParagraphをタイトルにした最初の子Sectionを作ります。",
+            "Insertの",
+            code("Ctrl-d"),
+            "またはNormalの",
+            code("<<"),
+            "では現在Section直後の兄弟Sectionを作ります。Paragraphより後ろの本文も新Sectionへ移り、兄弟化では表示順を守るため現在Sectionの子Sectionも新Sectionの配下へ移ります。タイトルは表示文字だけを使い、装飾とLinkを外し、",
+            code("Shift-Enter"),
+            "の改行を空白へ変換します。Normal操作後はNormal modeを維持し、",
+            code("u"),
+            "で元に戻せます。",
+          ),
+        ),
+        paragraph(
+          "insert-section-reverse",
+          rich(
+            bold("一時的な逆変換: "),
+            "Insert modeのCtrl-t / Ctrl-dによる変換直後は反対のキーで元のParagraph、装飾、Link、caret位置を完全に戻せます。Normalの>> / <<にはこの逆変換を適用せず、uで戻します。Insertでの逆変換は移動だけなら有効ですが、",
+            italic(
+              "本文編集、別の構造操作、Undo、またはノートの再読込を行うと逆変換情報は破棄されます。",
+            ),
+          ),
+        ),
       ]),
       section("leader-shortcuts", "Leader shortcuts", [
         paragraph(
@@ -148,46 +358,128 @@ export function createMemokaHelpSectionSnapshot(
           "movement-editing",
           ["目的", "キー", "動作"],
           [
-            ["基本移動", "[count]h/j/k/l", "文字・論理行を移動"],
-            ["単語移動", "w / b / e", "次・前・末尾の単語境界へ移動"],
-            ["行内移動", "0 / $", "論理行の先頭・末尾へ移動"],
-            ["文書移動", "gg / G", "表示中のSection subtreeの先頭・末尾へ移動"],
+            [
+              "基本移動",
+              rich(code("[count]h/j/k/l")),
+              "文字・論理行を移動。h/lの行端越えはwhichwrapで設定",
+            ],
+            [
+              "表示行移動",
+              rich(code("gj / gk")),
+              "同じ論理行内を含む、画面上の折返し行を上下移動",
+            ],
+            [
+              "単語移動",
+              rich(code("w / b / e")),
+              "次・前・末尾の単語境界へ移動。日本語の分類はInsert mode章を参照",
+            ],
+            ["行内移動", rich(code("0 / $")), "論理行の先頭・末尾へ移動"],
+            [
+              "文書移動",
+              rich(code("gg / G")),
+              "表示中のSection subtreeの先頭・末尾へ移動",
+            ],
+            [
+              "画面移動",
+              rich(code("Ctrl-f / Ctrl-b")),
+              "1画面ぶん下・上へ移動",
+            ],
+            [
+              "半画面移動",
+              rich(code("Ctrl-d / Ctrl-u")),
+              "半画面ぶん下・上へ移動",
+            ],
             [
               "ノート内検索",
-              "/、[count]n / N",
+              rich(code("/、[count]n / N")),
               "現在のFocused Section内を検索し、次・前の一致へ移動",
             ],
-            ["削除", "x / dd / D", "文字・論理行・行末までを削除"],
-            ["変更", "c + motion / cc / C", "範囲を置換してInsert modeへ移動"],
-            ["Yank", "y + motion / yy", "文字または構造をClipboardへコピー"],
+            [
+              "削除",
+              rich(code("x / d{motion} / dd / D")),
+              "文字・motion範囲・論理行・行末までを削除",
+            ],
+            [
+              "変更",
+              rich(code("c{motion} / cc / C / S")),
+              "範囲、論理行内容、または行末までを置換してInsert modeへ移動",
+            ],
+            [
+              "文字置換",
+              rich(code("[count]r{char} / R")),
+              "文字を置換／Replace modeへ移動",
+            ],
+            [
+              "行連結",
+              rich(code("J / gJ")),
+              "空白を調整して連結／空白を一切調整せず連結",
+            ],
+            [
+              "Yank",
+              rich(code("y{motion} / yy")),
+              "文字または論理行・構造をClipboardへコピー",
+            ],
             [
               "Paste",
-              "p / P",
+              rich(code("p / P")),
               "カーソルの後・前へregister、または外部でcopyしたfileを貼り付け",
             ],
-            ["履歴", "u / Ctrl-r", "NoteDoc共有履歴をUndo / Redo"],
-            ["選択", "v / V", "文字・論理行／Section構造を選択"],
+            [
+              "履歴",
+              rich(code("u / Ctrl-r / .")),
+              "NoteDoc共有履歴をUndo / Redo／直前の対応編集をrepeat",
+            ],
+            [
+              "Text object",
+              rich(code("iw / aw / ip / ap")),
+              "operatorの対象を内側・周囲のwordまたはParagraphにする",
+            ],
+            ["選択", rich(code("v / V")), "文字・論理行／Section構造を選択"],
             [
               "文字装飾",
-              "vで選択 → m",
+              rich(code("v"), "で選択 → ", code("m")),
               "共通検索ペインから斜体・太字・打ち消し・コード・外部リンク・全解除を適用",
             ],
             [
               "外部リンク・添付を開く",
-              "gx",
+              rich(code("gx")),
               "caret下の安全な外部リンクまたは添付をOSへ渡す",
             ],
             [
               "Section focus",
-              "zf / zF",
+              rich(code("zf / zF")),
               "caret方向へ1階層絞る／現在Focusから親へ1階層戻る",
             ],
             [
               "Section階層",
-              ">> / <<、Visual Lineの > / <",
-              "Sectionタイトルを1段降格／昇格",
+              rich(code(">> / <<"), "、Visual Lineの ", code("> / <")),
+              "Sectionタイトルを1段降格／昇格。直接本文ParagraphではSectionへ変換",
             ],
           ],
+        ),
+        paragraph(
+          "movement-count",
+          rich(
+            bold("Count: "),
+            "数値を操作の前に置くと移動や編集を繰り返します（例: ",
+            code("3j"),
+            "、",
+            code("2dw"),
+            "、",
+            code("4x"),
+            "）。operator前後のCountは乗算し、上限は",
+            code("9999"),
+            "です。",
+          ),
+        ),
+        paragraph(
+          "movement-logical-line",
+          rich(
+            bold("論理行: "),
+            "ParagraphとSectionタイトルではblock先頭、および",
+            code("Shift-Enter"),
+            "で明示した改行を境界にします。Window幅による自動折返しは論理行を増やしません。ListItem、Code Block、Table Cellなどは各構造に対応する境界を使います。",
+          ),
         ),
       ]),
       section("table-editing", "Table編集", [
@@ -284,7 +576,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "section-depth",
-            "Sectionタイトル上でNormalの>> / <<、InsertのCtrl-t / Ctrl-d、Visual Lineの> / <を使うと、表示順を変えずに階層を1段変更します。",
+            "Sectionタイトル上でNormalの>> / <<、InsertのCtrl-t / Ctrl-d、Visual Lineの> / <を使うと、表示順を変えずに階層を1段変更します。直接本文Paragraph上のNormal >> / <<とInsert Ctrl-t / Ctrl-dは、そのParagraphを子／兄弟Sectionへ変換します。",
           ),
           listItem(
             "links",
@@ -327,81 +619,47 @@ export function createMemokaHelpSectionSnapshot(
       section("command-line", "Command-line", [
         paragraph(
           "command-picker",
-          ",cは共通検索ペインでCommandを選び、選択したcanonical nameを下部のCommand-lineへ転記します。「:」は従来どおり空のCommand-lineを直接開きます。",
+          rich(
+            code(",c"),
+            "は共通検索ペインでCommandを選び、選択したcanonical nameを下部のCommand-lineへ転記します。",
+            code(":"),
+            "は空のCommand-lineを直接開きます。",
+          ),
         ),
         {
           type: "codeBlock",
-          blockId: id("code-block:commands"),
-          language: "text",
-          text: APPLICATION_COMMANDS.map(
-            ({ name, aliases, description }) =>
-              `:${name}${aliases.length > 0 ? ` (${aliases.map((alias) => `:${alias}`).join(", ")})` : ""} — ${description}`,
-          ).join("\n"),
+          attrs: {
+            blockId: id("code-block:commands"),
+            language: "text",
+          },
+          content: [
+            {
+              type: "text",
+              text: APPLICATION_COMMANDS.map(
+                ({ name, aliases, description }) =>
+                  `:${name}${aliases.length > 0 ? ` (${aliases.map((alias) => `:${alias}`).join(", ")})` : ""} — ${description}`,
+              ).join("\n"),
+            },
+          ],
         },
       ]),
       section("managed-help", "このHelpについて", [
         paragraph(
           "managed-help",
-          "このノートはMemokaが管理します。:helpを再実行すると最新のSection構造と操作説明へ同期されます。",
+          rich(
+            "このノートはMemokaが管理します。",
+            code(":help"),
+            "を再実行すると最新のSection構造と操作説明へ同期され、このノートへの手動変更は置き換えられます。問題報告とソースコードは",
+            externalLink(
+              "memoka-project/memoka",
+              "https://github.com/memoka-project/memoka",
+            ),
+            "を参照してください。",
+          ),
         ),
       ]),
     ],
   };
-}
-
-function blockToSnapshotJson(block: NoteBlock): unknown {
-  const attrs: Record<string, unknown> = { blockId: block.blockId };
-  let content: unknown[] = [];
-  switch (block.type) {
-    case "paragraph":
-      content = block.content.map((inline) =>
-        inline.type === "text"
-          ? { type: "text", text: inline.text }
-          : {
-              type: "internalSectionLink",
-              attrs: { targetSectionId: inline.targetSectionId },
-              content: [{ type: "text", text: inline.text }],
-            },
-      );
-      break;
-    case "bulletList":
-    case "listItem":
-    case "blockquote":
-    case "table":
-    case "tableRow":
-      content = block.children.map(blockToSnapshotJson);
-      break;
-    case "horizontalRule":
-      break;
-    case "orderedList":
-      attrs.start = block.start ?? 1;
-      content = block.children.map(blockToSnapshotJson);
-      break;
-    case "tableCell":
-    case "tableHeader":
-      if (block.alignment) attrs.align = block.alignment;
-      content = block.children.map(blockToSnapshotJson);
-      break;
-    case "codeBlock":
-      if (block.language) attrs.language = block.language;
-      content = [{ type: "text", text: block.text }];
-      break;
-    case "sourceBlock":
-      attrs.sourceFormat = block.sourceFormat;
-      content = [{ type: "text", text: block.text }];
-      break;
-    case "image":
-      attrs.attachmentId = block.attachmentId;
-      attrs.alt = block.altText;
-      attrs.alignment = block.alignment ?? "center";
-      if (block.width !== undefined) attrs.width = block.width;
-      break;
-    case "attachment":
-      attrs.attachmentId = block.attachmentId;
-      attrs.label = block.label;
-      break;
-  }
-  return { type: block.type, attrs, content };
 }
 
 function stableHelpId(noteId: string, semanticKey: string): string {

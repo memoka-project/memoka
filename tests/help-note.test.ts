@@ -10,6 +10,7 @@ import { MEMOKA_HELP_TITLE } from "../app/src/core/help-note";
 import { createUuidV7 } from "../app/src/core/ids";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { sectionSnapshot } from "../app/src/core/section-model";
 
 function deterministicIds() {
   let counter = 0;
@@ -77,12 +78,48 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("<Leader>C");
     expect(helpText).toContain("Config / Settings");
     expect(helpText).toContain("予約済み（未実装）");
-    expect(helpText).toContain(",cは共通検索ペイン");
+    expect(helpText).toContain("共通検索ペインでCommandを選び");
     expect(helpText).toContain("/または,s");
     expect(helpText).toContain("Image Block stub、Attachment Fileを選べます");
     expect(helpText).toContain("Attachment Fileまたは:attach");
     expect(helpText).toContain("取り消すと「/」は本文に残ります");
+    expect(helpText).toContain("Ctrl-h");
+    expect(helpText).toContain("Ctrl-j / Ctrl-m");
+    expect(helpText).toContain("行頭からcaret直前まで削除");
+    expect(helpText).toContain("漢字、ひらがな、カタカナ、英数字");
+    expect(helpText).toContain("直接本文ParagraphのSection化");
+    expect(helpText).toContain("兄弟化では表示順を守るため");
+    expect(helpText).toContain("一時的な逆変換");
+    expect(helpText).toContain("唯一の利用者向けマニュアル");
     expect(helpText).toContain(":help");
+    expect(helpText).not.toContain("<code>");
+    expect(helpText).not.toContain("<link");
+    const helpSnapshot = sectionSnapshot(note.rootSection);
+    const serializedHelp = JSON.stringify(helpSnapshot);
+    expect(serializedHelp).toContain('"type":"bold"');
+    expect(serializedHelp).toContain('"type":"italic"');
+    expect(serializedHelp).toContain('"type":"code"');
+    expect(serializedHelp).toContain('"type":"link"');
+    const internalLinks = collectSerializedNodes(
+      helpSnapshot,
+      "internalSectionLink",
+    );
+    expect(internalLinks.length).toBeGreaterThanOrEqual(8);
+    const sectionIds = new Set(
+      noteSectionCatalog(note).map(({ sectionId }) => sectionId),
+    );
+    expect(
+      internalLinks.every((link) => {
+        const attrs = link.attrs;
+        return (
+          attrs !== null &&
+          typeof attrs === "object" &&
+          sectionIds.has(
+            String((attrs as Record<string, unknown>).targetSectionId),
+          )
+        );
+      }),
+    ).toBe(true);
     const blockIds = collectBlockIds(note);
 
     await runtime.renameNote(first.noteId, "書き換えたHelp");
@@ -218,6 +255,26 @@ describe("managed Memoka help note", () => {
     reopened.destroy();
   });
 });
+
+function collectSerializedNodes(
+  value: unknown,
+  type: string,
+): Array<Record<string, unknown>> {
+  const matches: Array<Record<string, unknown>> = [];
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (!current || typeof current !== "object") continue;
+    const record = current as Record<string, unknown>;
+    if (record.type === type) matches.push(record);
+    pending.push(...Object.values(record));
+  }
+  return matches;
+}
 
 function collectBlockIds(note: NoteDocument): string[] {
   const output: string[] = [];

@@ -308,6 +308,25 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("visual-char", ">", noteContext)).toBeNull();
   });
 
+  it("maps Vim-compatible Insert Ctrl commands without changing Normal Ctrl-w", () => {
+    for (const [key, command] of [
+      ["Ctrl+c", "mode.normal"],
+      ["Ctrl+h", "insert.backspace"],
+      ["Ctrl+j", "insert.newline"],
+      ["Ctrl+m", "insert.newline"],
+      ["Ctrl+u", "insert.delete-line-prefix"],
+      ["Ctrl+w", "insert.delete-word-backward"],
+    ] as const) {
+      expect(resolveKey("insert", key, noteContext)).toBe(command);
+    }
+    expect(
+      resolveKey("insert", "Ctrl+c", {
+        ...noteContext,
+        isComposing: true,
+      }),
+    ).toBeNull();
+  });
+
   it("maps Ctrl-w Window commands plus g TabPage commands from Normal mode", () => {
     const windowPrefix = advanceVimInput(
       createVimInputState(),
@@ -362,7 +381,6 @@ describe("Memoka Vim input grammar", () => {
     for (const key of ["Ctrl+h", "Ctrl+j", "Ctrl+k", "Ctrl+l"] as const) {
       for (const mode of [
         "normal",
-        "insert",
         "replace",
         "visual-char",
         "visual-line",
@@ -370,6 +388,12 @@ describe("Memoka Vim input grammar", () => {
         expect(resolveKey(mode, key, noteContext)).toBeNull();
       }
     }
+    expect(resolveKey("insert", "Ctrl+h", noteContext)).toBe(
+      "insert.backspace",
+    );
+    expect(resolveKey("insert", "Ctrl+j", noteContext)).toBe("insert.newline");
+    expect(resolveKey("insert", "Ctrl+k", noteContext)).toBeNull();
+    expect(resolveKey("insert", "Ctrl+l", noteContext)).toBeNull();
     const g = advanceVimInput(
       createVimInputState(),
       "normal",
@@ -414,7 +438,7 @@ describe("Memoka Vim input grammar", () => {
     expect(
       advanceVimInput(createVimInputState(), "insert", "Ctrl+w", noteContext)
         .resolvedCommand,
-    ).toBeNull();
+    ).toBe("insert.delete-word-backward");
   });
 
   it("maps the default comma Leader to application commands", () => {

@@ -24,7 +24,7 @@ import {
   type VimCharacterCellRect,
 } from "./caret-geometry";
 import type { VimCommand, VimMode, VimOperator } from "./input";
-import { classifyVimWordCharacters } from "./word-semantics";
+import { classifyVimWordCharacters, type VimWordClass } from "./word-semantics";
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   type ApplicationKeyConfig,
@@ -95,6 +95,17 @@ export interface SectionDepthShiftSelection {
   readonly sectionIds: readonly string[];
   readonly caretSectionId: string;
   readonly caretOffset: number;
+  readonly caretPosition: number;
+}
+
+export interface SectionParagraphConversionSelection {
+  readonly boundarySectionId: string;
+  readonly sourceSectionId: string;
+  readonly paragraphBlockId: string;
+  readonly paragraphBodyIndex: number;
+  readonly title: string;
+  readonly caretOffset: number;
+  readonly paragraphOffset: number;
   readonly caretPosition: number;
 }
 
@@ -343,6 +354,246 @@ export function runEditorInsertEnter(
     handled: false,
     detail: "insert:enter",
   };
+}
+
+function insertLogicalLineStartOffset(
+  parent: ProseMirrorNode,
+  caretOffset: number,
+): number {
+  let lineStart = 0;
+  parent.forEach((child, childOffset) => {
+    if (childOffset >= caretOffset) return;
+    if (
+      (child.type.name === "hardBreak" || child.type.name === "hard_break") &&
+      childOffset + child.nodeSize <= caretOffset
+    ) {
+      lineStart = childOffset + child.nodeSize;
+      return;
+    }
+    if (!child.isText || !child.text) return;
+    const through = Math.max(
+      0,
+      Math.min(child.text.length, caretOffset - childOffset),
+    );
+    const newline = child.text.lastIndexOf("\n", through - 1);
+    if (newline >= 0) lineStart = childOffset + newline + 1;
+  });
+  return lineStart;
+}
+
+function insertDeletionStoredMarks(
+  view: VimEditorView,
+): readonly import("@tiptap/pm/model").Mark[] | null {
+  if (!(view.state.selection instanceof TextSelection)) return null;
+  return view.state.storedMarks ?? view.state.selection.$from.marks();
+}
+
+function deleteInsertRange(
+  view: VimEditorView,
+  from: number,
+  to: number,
+  detail: string,
+): EditorVimResult {
+  if (from >= to) return { handled: false, detail };
+  const marks = insertDeletionStoredMarks(view);
+  try {
+    const transaction = view.state.tr.delete(from, to);
+    transaction.setSelection(TextSelection.create(transaction.doc, from));
+    if (marks) transaction.setStoredMarks([...marks]);
+    view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+    view.focus();
+    return { handled: true, detail };
+  } catch {
+    return { handled: false, detail };
+  }
+}
+
+/** Deletes from the current explicit logical-line start to the Insert caret. */
+export function runEditorInsertDeleteLinePrefix(
+  view: VimEditorView,
+): EditorVimResult {
+  const selection = view.state.selection;
+  if (
+    !(selection instanceof TextSelection) ||
+    !selection.empty ||
+    !selection.$from.parent.isTextblock
+  ) {
+    return { handled: false, detail: "insert:delete-line-prefix" };
+  }
+  const lineStartOffset = insertLogicalLineStartOffset(
+    selection.$from.parent,
+    selection.$from.parentOffset,
+  );
+  return deleteInsertRange(
+    view,
+    selection.$from.start() + lineStartOffset,
+    selection.from,
+    "insert:delete-line-prefix",
+  );
+}
+
+/** Runs the same structural boundary rules as Backspace, then deletes one unit. */
+export function runEditorInsertBackspace(view: VimEditorView): EditorVimResult {
+  const boundary = runEditorInsertBoundaryDelete(view, "backward");
+  if (boundary.handled || boundary.preventDefault) return boundary;
+  const selection = view.state.selection;
+  const detail = "insert:backspace";
+  if (!(selection instanceof TextSelection)) {
+    return { handled: false, detail };
+  }
+  if (!selection.empty) {
+    return deleteInsertRange(view, selection.from, selection.to, detail);
+  }
+  const before = selection.$from.nodeBefore;
+  if (!before) return { handled: false, detail };
+  if (before.isText && before.text) {
+    const character = Array.from(before.text).at(-1);
+    return character
+      ? deleteInsertRange(
+          view,
+          selection.from - character.length,
+          selection.from,
+          detail,
+        )
+      : { handled: false, detail };
+  }
+  if (before.isInline && (before.isAtom || before.isLeaf)) {
+    return deleteInsertRange(
+      view,
+      selection.from - before.nodeSize,
+      selection.from,
+      detail,
+    );
+  }
+  return { handled: false, detail };
+}
+
+interface InsertBackwardUnit {
+  readonly from: number;
+  readonly to: number;
+  readonly character: string;
+  readonly kind: "text" | "atom";
+  wordClass: VimWordClass | null;
+}
+
+function insertBackwardUnits(
+  parent: ProseMirrorNode,
+  parentStart: number,
+  lineStartOffset: number,
+  caretOffset: number,
+): InsertBackwardUnit[] {
+  const units: InsertBackwardUnit[] = [];
+  parent.forEach((child, childOffset) => {
+    const childEnd = childOffset + child.nodeSize;
+    if (childEnd <= lineStartOffset || childOffset >= caretOffset) return;
+    if (child.isText && child.text) {
+      const fromOffset = Math.max(lineStartOffset, childOffset);
+      const toOffset = Math.min(caretOffset, childEnd);
+      const slice = child.text.slice(
+        fromOffset - childOffset,
+        toOffset - childOffset,
+      );
+      let position = parentStart + fromOffset;
+      for (const character of Array.from(slice)) {
+        units.push({
+          from: position,
+          to: position + character.length,
+          character,
+          kind: "text",
+          wordClass: null,
+        });
+        position += character.length;
+      }
+      return;
+    }
+    if (
+      child.isInline &&
+      (child.isAtom || child.isLeaf) &&
+      childOffset >= lineStartOffset &&
+      childEnd <= caretOffset
+    ) {
+      units.push({
+        from: parentStart + childOffset,
+        to: parentStart + childEnd,
+        character: " ",
+        kind: "atom",
+        wordClass: null,
+      });
+    }
+  });
+  const classes = classifyVimWordCharacters(
+    units.map((unit) => (unit.kind === "atom" ? " " : unit.character)),
+  );
+  units.forEach((unit, index) => {
+    unit.wordClass = unit.kind === "text" ? (classes[index] ?? null) : null;
+  });
+  return units;
+}
+
+function isInsertWhitespace(unit: InsertBackwardUnit): boolean {
+  return unit.kind === "text" && /\s/u.test(unit.character);
+}
+
+/** Implements Vim-style Insert CTRL-W without crossing an editable line. */
+export function runEditorInsertDeleteWordBackward(
+  view: VimEditorView,
+): EditorVimResult {
+  const selection = view.state.selection;
+  const detail = "insert:delete-word-backward";
+  if (
+    !(selection instanceof TextSelection) ||
+    !selection.empty ||
+    !selection.$from.parent.isTextblock
+  ) {
+    return { handled: false, detail };
+  }
+  const parent = selection.$from.parent;
+  const caretOffset = selection.$from.parentOffset;
+  const lineStartOffset = insertLogicalLineStartOffset(parent, caretOffset);
+  const units = insertBackwardUnits(
+    parent,
+    selection.$from.start(),
+    lineStartOffset,
+    caretOffset,
+  );
+  if (units.length === 0) return { handled: false, detail };
+
+  let index = units.length - 1;
+  while (index >= 0 && isInsertWhitespace(units[index]!)) index -= 1;
+  if (index < 0) {
+    return deleteInsertRange(view, units[0]!.from, selection.from, detail);
+  }
+
+  const target = units[index]!;
+  let startIndex = index;
+  if (target.kind === "atom") {
+    startIndex = index;
+  } else if (target.wordClass !== null) {
+    while (
+      startIndex > 0 &&
+      units[startIndex - 1]!.kind === "text" &&
+      units[startIndex - 1]!.wordClass === target.wordClass &&
+      units[startIndex - 1]!.to === units[startIndex]!.from
+    ) {
+      startIndex -= 1;
+    }
+  } else {
+    while (
+      startIndex > 0 &&
+      units[startIndex - 1]!.kind === "text" &&
+      units[startIndex - 1]!.wordClass === null &&
+      !isInsertWhitespace(units[startIndex - 1]!) &&
+      units[startIndex - 1]!.to === units[startIndex]!.from
+    ) {
+      startIndex -= 1;
+    }
+  }
+  return deleteInsertRange(
+    view,
+    units[startIndex]!.from,
+    selection.from,
+    detail,
+  );
 }
 
 function textBlockBoundaryInNode(
@@ -1380,6 +1631,93 @@ function sectionHeaderAtUnit(
 function focusedSectionId(view: Pick<VimEditorView, "dom">): string | null {
   const value = view.dom.dataset.sectionId;
   return value && value.length > 0 ? value : null;
+}
+
+function plainSectionTitleFromParagraph(
+  paragraph: ProseMirrorNode,
+  through = paragraph.content.size,
+  resolveInternalLinkTitle?: (targetSectionId: string) => string | null,
+): string {
+  const bounded = Math.max(0, Math.min(through, paragraph.content.size));
+  const content = paragraph.content.cut(0, bounded);
+  let result = "";
+  content.descendants((node) => {
+    if (node.isText) {
+      result += node.text ?? "";
+      return false;
+    }
+    if (node.type.name === "hardBreak" || node.type.name === "hard_break") {
+      result += " ";
+      return false;
+    }
+    if (node.type.name === "internalSectionLink") {
+      const targetSectionId = String(node.attrs.targetSectionId ?? "");
+      result +=
+        (targetSectionId
+          ? resolveInternalLinkTitle?.(targetSectionId)
+          : null) ?? node.textContent;
+      return false;
+    }
+    if (node.isInline && (node.isAtom || node.isLeaf)) {
+      result += node.textContent;
+      return false;
+    }
+    return true;
+  });
+  return result;
+}
+
+/** Resolves an Insert caret in a direct Section-body Paragraph. */
+export function sectionParagraphConversionSelection(
+  view: VimEditorView,
+  resolveInternalLinkTitle?: (targetSectionId: string) => string | null,
+): SectionParagraphConversionSelection | null {
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  const chunkDepth = $from.depth - 1;
+  const bodyDepth = $from.depth - 2;
+  const sectionDepth = $from.depth - 3;
+  if (
+    $from.parent.type.name !== "paragraph" ||
+    $from.depth < 3 ||
+    $from.node(chunkDepth).type.name !== BODY_CHUNK_NODE ||
+    $from.node(bodyDepth).type.name !== "sectionBody" ||
+    $from.node(sectionDepth).type.name !== "section"
+  ) {
+    return null;
+  }
+  const boundarySectionId = focusedSectionId(view);
+  const sourceHeader = $from.node(sectionDepth).firstChild;
+  const sourceSectionId = String(sourceHeader?.attrs.sectionId ?? "");
+  const paragraphBlockId = String($from.parent.attrs.blockId ?? "");
+  if (!boundarySectionId || !sourceSectionId || !paragraphBlockId) return null;
+  const body = $from.node(bodyDepth);
+  const chunkIndex = $from.index(bodyDepth);
+  let paragraphBodyIndex = $from.index(chunkDepth);
+  for (let index = 0; index < chunkIndex; index += 1) {
+    const chunk = body.child(index);
+    if (chunk.type.name !== BODY_CHUNK_NODE) return null;
+    paragraphBodyIndex += chunk.childCount;
+  }
+  return {
+    boundarySectionId,
+    sourceSectionId,
+    paragraphBlockId,
+    paragraphBodyIndex,
+    title: plainSectionTitleFromParagraph(
+      $from.parent,
+      $from.parent.content.size,
+      resolveInternalLinkTitle,
+    ),
+    caretOffset: plainSectionTitleFromParagraph(
+      $from.parent,
+      $from.parentOffset,
+      resolveInternalLinkTitle,
+    ).length,
+    paragraphOffset: $from.parentOffset,
+    caretPosition: selection.from,
+  };
 }
 
 /** Resolves Vim depth commands to Section Header IDs inside this mounted view. */
@@ -5057,6 +5395,9 @@ const editorVimCommandHandlers: Partial<
     moveNormalTableCell(view, -1, count),
   "insert.line-start": (view) => enterInsertAtLineBoundary(view, "start"),
   "insert.line-end": (view) => enterInsertAtLineBoundary(view, "end"),
+  "insert.delete-line-prefix": (view) => runEditorInsertDeleteLinePrefix(view),
+  "insert.delete-word-backward": (view) =>
+    runEditorInsertDeleteWordBackward(view),
   "line.open-below": (view) => openLogicalLine(view, "below"),
   "line.open-above": (view) => openLogicalLine(view, "above"),
   "line.join": (view, _mode, _register, count) =>

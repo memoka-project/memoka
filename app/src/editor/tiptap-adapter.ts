@@ -1,5 +1,6 @@
 import { Editor, Extension } from "@tiptap/core";
-import { Plugin } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
 import * as Y from "yjs";
 import {
   SECTION_DEPTH_SHIFT_ORIGIN,
@@ -43,6 +44,7 @@ import {
 import {
   sectionHeaderPosition,
   type SectionDepthShiftSelection,
+  type SectionParagraphConversionSelection,
 } from "../vim/editor-commands";
 import type { VimRegisterStore } from "../vim/register-store";
 import type { VimRepeatStore } from "../vim/repeat";
@@ -184,6 +186,15 @@ export interface TiptapEditorAdapterOptions {
     changed: boolean;
     affectedSectionIds: readonly string[];
   }>;
+  onSectionFromParagraph?: (
+    request: SectionParagraphConversionSelection & {
+      direction: "deeper" | "shallower";
+      mode: "insert" | "normal";
+    },
+  ) => Promise<{
+    changed: boolean;
+    createdSectionId: string | null;
+  }>;
   keyConfig?: ApplicationKeyConfig;
   getInternalLinkCandidates?: () => readonly InternalLinkCandidate[];
   resolveInternalLinkTitle?: InternalLinkTitleResolver;
@@ -209,6 +220,36 @@ interface PendingSectionDepthShift {
   readonly scrollTop: number;
 }
 
+interface SectionScrollLock {
+  readonly scrollTop: number;
+}
+
+interface SectionParagraphReverse {
+  readonly createdSectionId: string;
+  readonly sourceBlockId: string;
+  readonly paragraphOffset: number;
+  readonly reverseCommand: "section.demote" | "section.promote";
+  readonly postDocument: ProseMirrorNode;
+  readonly undoItem: unknown;
+}
+
+function blockTextPosition(
+  document: ProseMirrorNode,
+  blockId: string,
+  offset: number,
+): number | null {
+  let result: number | null = null;
+  document.descendants((node, position) => {
+    if (result !== null || node.attrs.blockId !== blockId) {
+      return result === null;
+    }
+    if (!node.isTextblock) return false;
+    result = position + 1 + Math.max(0, Math.min(offset, node.content.size));
+    return false;
+  });
+  return result;
+}
+
 export class TiptapEditorAdapter {
   private currentEditor: Editor;
   private readonly scrollElement: HTMLElement;
@@ -221,8 +262,9 @@ export class TiptapEditorAdapter {
   private readonly internalLinkCompletion: InternalLinkCompletion | null;
   private navigationRevealFrame: number | null = null;
   private sectionDepthScrollFrame: number | null = null;
-  private sectionDepthScrollLock: PendingSectionDepthShift | null = null;
+  private sectionDepthScrollLock: SectionScrollLock | null = null;
   private pendingSectionDepthShift: PendingSectionDepthShift | null = null;
+  private sectionParagraphReverse: SectionParagraphReverse | null = null;
   private selectionUpdateFrame: number | null = null;
   private selectionUpdateEditor: Editor | null = null;
   private selectionUpdateSuppressed = false;
@@ -311,7 +353,9 @@ export class TiptapEditorAdapter {
       onOpenAttachment: options.attachmentRepository
         ? (attachmentId) => options.attachmentRepository!.open(attachmentId)
         : undefined,
+      resolveInternalLinkTitle: options.resolveInternalLinkTitle,
       onMessage: options.onMessage,
+      onInsertKey: (key) => this.currentEditor.commands.keyboardShortcut(key),
       onCommandLine: options.onCommandLine,
       onCommandPicker: options.onCommandPicker,
       onApplicationCommand: options.onApplicationCommand,
@@ -347,6 +391,10 @@ export class TiptapEditorAdapter {
           this.finishSectionDepthScrollLock(pending);
         }
       },
+      onSectionFromParagraph: async (request) =>
+        this.createSectionFromParagraph(request),
+      onSectionParagraphReverse: (command, currentSectionId) =>
+        this.reverseSectionParagraph(command, currentSectionId),
       keyConfig: options.keyConfig,
       undo: () => this.currentEditor.commands.undo(),
       redo: () => this.currentEditor.commands.redo(),
@@ -1007,6 +1055,7 @@ export class TiptapEditorAdapter {
 
   private recreateEditor(): void {
     const hadFocus = this.currentEditor.isFocused;
+    this.sectionParagraphReverse = null;
     this.cancelSelectionUpdate();
     this.internalLinkCompletion?.close();
     this.currentEditor.destroy();
@@ -1117,6 +1166,118 @@ export class TiptapEditorAdapter {
     this.holdSectionDepthScrollPosition();
   }
 
+  private async createSectionFromParagraph(
+    request: SectionParagraphConversionSelection & {
+      direction: "deeper" | "shallower";
+      mode: "insert" | "normal";
+    },
+  ): Promise<{ changed: boolean; createdSectionId: string | null }> {
+    const document = this.handle.current;
+    if (
+      document.kind !== "note" ||
+      this.currentEditor.isDestroyed ||
+      !this.options.onSectionFromParagraph
+    ) {
+      return { changed: false, createdSectionId: null };
+    }
+    this.sectionParagraphReverse = null;
+    const priorUndoItems = new Set(document.undoManager.undoStack);
+    const scrollLock = { scrollTop: this.scrollElement.scrollTop };
+    this.beginSectionDepthScrollLock(scrollLock);
+    try {
+      const result = await this.options.onSectionFromParagraph(request);
+      if (!result.changed || !result.createdSectionId) return result;
+      await Promise.resolve();
+      if (this.currentEditor.isDestroyed) return result;
+      const position = sectionHeaderPosition(
+        this.currentEditor.view,
+        result.createdSectionId,
+        request.caretOffset,
+      );
+      if (position !== null) {
+        this.vimSession.applySectionDepthShiftPosition(
+          position,
+          request.mode,
+          `section:paragraph-${request.direction}:changed`,
+          request.mode === "normal" ? request.caretPosition : undefined,
+        );
+      }
+      const undoItem = document.undoManager.undoStack.find(
+        (item) => !priorUndoItems.has(item),
+      );
+      if (
+        request.mode === "insert" &&
+        undoItem &&
+        document.undoManager.undoStack.at(-1) === undoItem
+      ) {
+        this.sectionParagraphReverse = {
+          createdSectionId: result.createdSectionId,
+          sourceBlockId: request.paragraphBlockId,
+          paragraphOffset: request.paragraphOffset,
+          reverseCommand:
+            request.direction === "deeper"
+              ? "section.promote"
+              : "section.demote",
+          postDocument: this.currentEditor.state.doc,
+          undoItem,
+        };
+      }
+      return result;
+    } finally {
+      this.finishSectionDepthScrollLock(scrollLock);
+    }
+  }
+
+  private reverseSectionParagraph(
+    command: "section.demote" | "section.promote",
+    currentSectionId: string,
+  ): boolean {
+    const token = this.sectionParagraphReverse;
+    const document = this.handle.current;
+    if (!token || document.kind !== "note" || this.currentEditor.isDestroyed) {
+      return false;
+    }
+    const valid =
+      token.reverseCommand === command &&
+      token.createdSectionId === currentSectionId &&
+      token.postDocument === this.currentEditor.state.doc &&
+      document.undoManager.undoStack.at(-1) === token.undoItem;
+    if (!valid) {
+      if (token.postDocument !== this.currentEditor.state.doc) {
+        this.sectionParagraphReverse = null;
+      }
+      return false;
+    }
+
+    this.sectionParagraphReverse = null;
+    const scrollLock = { scrollTop: this.scrollElement.scrollTop };
+    this.beginSectionDepthScrollLock(scrollLock);
+    const changed = this.currentEditor.commands.undo();
+    queueMicrotask(() => {
+      if (!changed || this.currentEditor.isDestroyed) {
+        this.finishSectionDepthScrollLock(scrollLock);
+        return;
+      }
+      const position = blockTextPosition(
+        this.currentEditor.state.doc,
+        token.sourceBlockId,
+        token.paragraphOffset,
+      );
+      if (position !== null) {
+        this.currentEditor.view.dispatch(
+          this.currentEditor.state.tr
+            .setSelection(
+              TextSelection.create(this.currentEditor.state.doc, position),
+            )
+            .setMeta("addToHistory", false),
+        );
+        this.currentEditor.commands.focus();
+      }
+      this.finishSectionDepthScrollLock(scrollLock);
+    });
+    return true;
+  }
+
   private applySectionDepthShiftPosition(
     pending: PendingSectionDepthShift,
     changed: boolean,
@@ -1139,7 +1300,7 @@ export class TiptapEditorAdapter {
     );
   }
 
-  private beginSectionDepthScrollLock(pending: PendingSectionDepthShift): void {
+  private beginSectionDepthScrollLock(pending: SectionScrollLock): void {
     if (this.sectionDepthScrollFrame !== null) {
       window.cancelAnimationFrame(this.sectionDepthScrollFrame);
       this.sectionDepthScrollFrame = null;
@@ -1157,9 +1318,7 @@ export class TiptapEditorAdapter {
     this.scrollElement.scrollTop = pending.scrollTop;
   }
 
-  private finishSectionDepthScrollLock(
-    pending: PendingSectionDepthShift,
-  ): void {
+  private finishSectionDepthScrollLock(pending: SectionScrollLock): void {
     if (this.sectionDepthScrollLock !== pending) return;
     this.holdSectionDepthScrollPosition();
     if (this.sectionDepthScrollFrame !== null) {

@@ -25,6 +25,7 @@ import {
   insertChildSection,
   sectionBody,
   sectionId,
+  sectionSnapshot,
   sectionTitle,
 } from "../app/src/core/section-model";
 import { addSecondWindow } from "./helpers/runtime";
@@ -525,6 +526,468 @@ describe("Memoka Section editor semantics", () => {
       bId,
       cId,
     ]);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("turns a direct body Paragraph into a child Section and restores it with the opposite key", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-03T12:00:00.000Z",
+    });
+    const note = runtime.noteDocument;
+    const firstId = createUuidV7();
+    const sourceId = createUuidV7();
+    const suffixId = createUuidV7();
+    const existingChildId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml({
+            type: "paragraph",
+            blockId: firstId,
+            content: [{ type: "text", text: "before" }],
+          }),
+          blockToYXml({
+            type: "paragraph",
+            blockId: sourceId,
+            content: [
+              {
+                type: "text",
+                text: "styled ",
+                marks: [{ type: "bold" }],
+              } as never,
+              {
+                type: "internalSectionLink",
+                targetSectionId: existingChildId,
+                text: "stale title",
+              },
+            ],
+          }),
+          blockToYXml({
+            type: "paragraph",
+            blockId: suffixId,
+            content: [{ type: "text", text: "following body" }],
+          }),
+        ]),
+      );
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(existingChildId, "Existing"),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === sourceId,
+      ) + 6,
+    );
+    editor.commands.focus();
+
+    expect(
+      press(editor, "t", { code: "KeyT", ctrlKey: true }).defaultPrevented,
+    ).toBe(true);
+    await settle(runtime);
+    const converted = sectionSnapshot(note.rootSection);
+    expect(converted.body.map((value) => JSON.stringify(value))).toEqual([
+      JSON.stringify(before.body[0]),
+    ]);
+    expect(converted.children.map(({ sectionId: id }) => id)).toEqual([
+      expect.not.stringMatching(existingChildId),
+      existingChildId,
+    ]);
+    const created = converted.children[0]!;
+    expect(created.title).toBe("styled Existing");
+    expect(created.body).toEqual([before.body[2]]);
+    expect(JSON.stringify(created)).not.toContain('"bold"');
+    expect(JSON.stringify(created)).not.toContain("internalSectionLink");
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+    expect(editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      created.sectionId,
+    );
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "sectionHeader",
+        (node) => node.attrs.sectionId === created.sectionId,
+      ) + created.title.length,
+    );
+
+    expect(
+      press(editor, "d", { code: "KeyD", ctrlKey: true }).defaultPrevented,
+    ).toBe(true);
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+    expect(editor.state.selection.$from.parent.attrs.blockId).toBe(sourceId);
+    expect(editor.state.selection.$from.parentOffset).toBe(6);
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("converts the second Paragraph created by Enter instead of its predecessor", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-04T11:00:00.000Z",
+    });
+    const note = runtime.noteDocument;
+    const originalBlockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml({
+            type: "paragraph",
+            blockId: originalBlockId,
+            content: [{ type: "text", text: "P1P2" }],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === originalBlockId,
+      ) + 2,
+    );
+    editor.commands.focus();
+    expect(editor.commands.keyboardShortcut("Enter")).toBe(true);
+    await settle(runtime);
+
+    const paragraphs: Array<{ id: string; text: string; position: number }> =
+      [];
+    editor.state.doc.descendants((node, position) => {
+      if (node.type.name === "paragraph") {
+        paragraphs.push({
+          id: String(node.attrs.blockId ?? ""),
+          text: node.textContent,
+          position: position + 1,
+        });
+      }
+      return true;
+    });
+    expect(paragraphs.map(({ text }) => text)).toEqual(["P1", "P2"]);
+    expect(new Set(paragraphs.map(({ id }) => id)).size).toBe(2);
+
+    editor.commands.setTextSelection(paragraphs[1]!.position + 2);
+    press(editor, "t", { code: "KeyT", ctrlKey: true });
+    await settle(runtime);
+    const converted = sectionSnapshot(note.rootSection);
+    expect(JSON.stringify(converted.body)).toContain("P1");
+    expect(JSON.stringify(converted.body)).not.toContain("P2");
+    expect(converted.children[0]?.title).toBe("P2");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("turns a direct body Paragraph into a child Section with Normal >>", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-04T13:10:00.000Z",
+    });
+    const note = runtime.noteDocument;
+    const firstBlockId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    const suffixBlockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml({
+            type: "paragraph",
+            blockId: firstBlockId,
+            content: [{ type: "text", text: "P1" }],
+          }),
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [{ type: "text", text: "P2" }],
+          }),
+          blockToYXml({
+            type: "paragraph",
+            blockId: suffixBlockId,
+            content: [{ type: "text", text: "P3" }],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ) + 1,
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    press(editor, ">", { code: "Period", shiftKey: true });
+    press(editor, ">", { code: "Period", shiftKey: true });
+    await settle(runtime);
+
+    const converted = sectionSnapshot(note.rootSection);
+    expect(JSON.stringify(converted.body)).toContain("P1");
+    expect(JSON.stringify(converted.body)).not.toContain("P2");
+    expect(converted.children[0]?.title).toBe("P2");
+    expect(JSON.stringify(converted.children[0]?.body)).toContain("P3");
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+    expect(editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      converted.children[0]?.sectionId,
+    );
+
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+    expect(editor.state.selection.$from.parent.attrs.blockId).toBe(
+      targetBlockId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("turns a nested direct body Paragraph into a sibling Section with Normal <<", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-04T13:20:00.000Z",
+    });
+    const note = runtime.noteDocument;
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    const existingChildId = createUuidV7();
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(
+          sourceSectionId,
+          "Source",
+          [
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "P1" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: targetBlockId,
+              content: [{ type: "text", text: "P2" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "P3" }],
+            }),
+          ],
+          [createSectionXml(existingChildId, "Existing child")],
+        ),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ) + 1,
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    press(editor, "<", { code: "Comma", shiftKey: true });
+    press(editor, "<", { code: "Comma", shiftKey: true });
+    await settle(runtime);
+
+    const converted = sectionSnapshot(note.rootSection);
+    expect(converted.children).toHaveLength(2);
+    expect(converted.children[0]?.sectionId).toBe(sourceSectionId);
+    expect(JSON.stringify(converted.children[0]?.body)).toContain("P1");
+    expect(converted.children[0]?.children).toEqual([]);
+    expect(converted.children[1]?.title).toBe("P2");
+    expect(JSON.stringify(converted.children[1]?.body)).toContain("P3");
+    expect(converted.children[1]?.children[0]?.sectionId).toBe(existingChildId);
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("creates a sibling Section on Ctrl-d while preserving preorder and can restore it", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-03T12:10:00.000Z",
+    });
+    const note = runtime.noteDocument;
+    const sourceBlockId = createUuidV7();
+    const childId = createUuidV7();
+    const sourceSectionId = createUuidV7();
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(
+          sourceSectionId,
+          "Source",
+          [
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "before" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: sourceBlockId,
+              content: [{ type: "text", text: "new sibling" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "following" }],
+            }),
+          ],
+          [createSectionXml(childId, "Existing child")],
+        ),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === sourceBlockId,
+      ) + 3,
+    );
+    editor.commands.focus();
+
+    press(editor, "d", { code: "KeyD", ctrlKey: true });
+    await settle(runtime);
+    const converted = sectionSnapshot(note.rootSection);
+    expect(converted.children).toHaveLength(2);
+    expect(converted.children[0]!.sectionId).toBe(sourceSectionId);
+    expect(converted.children[0]!.children).toEqual([]);
+    expect(converted.children[1]!.title).toBe("new sibling");
+    expect(converted.children[1]!.children[0]!.sectionId).toBe(childId);
+    expect(JSON.stringify(converted.children[1]!.body)).toContain("following");
+
+    press(editor, "t", { code: "KeyT", ctrlKey: true });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+    expect(editor.state.selection.$from.parent.attrs.blockId).toBe(
+      sourceBlockId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("serializes Editor input behind an in-flight Paragraph conversion without losing Undo", async () => {
+    const persistence = new PausedWorkspaceCommitPort();
+    const errors: Error[] = [];
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+      clock: () => "2026-09-04T12:00:00.000Z",
+      onError: (error) => errors.push(error),
+    });
+    const note = runtime.noteDocument;
+    const paragraphBlockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml({
+            type: "paragraph",
+            blockId: paragraphBlockId,
+            content: [{ type: "text", text: "section title" }],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === paragraphBlockId,
+      ) + "section title".length,
+    );
+    editor.commands.focus();
+
+    const commitHeld = persistence.pauseNextWorkspaceCommit();
+    press(editor, "t", { code: "KeyT", ctrlKey: true });
+    await commitHeld;
+    expect(sectionSnapshot(note.rootSection).children[0]?.title).toBe(
+      "section title",
+    );
+
+    // WebKit may deliver the next edit while the async Core commit is still
+    // crossing the Tauri persistence boundary.
+    editor.commands.insertContent("!");
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+    persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+
+    expect(errors).toEqual([]);
+    expect(editorUndoManager(editor).undoStack).toHaveLength(2);
+    press(editor, "d", { code: "KeyD", ctrlKey: true });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection).children).toHaveLength(1);
+    expect(editor.state.doc.textContent).toContain("!");
+    press(editor, "Escape");
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
 
     adapter.destroy();
     runtime.destroy();

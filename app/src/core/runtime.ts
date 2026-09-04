@@ -13,9 +13,11 @@ import {
   NOTE_TIMESTAMP_ORIGIN,
   PERSISTENCE_LOAD_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
+  SECTION_PARAGRAPH_CONVERSION_ORIGIN,
   addNoteMetadata,
   applyNoteSectionDepthShift,
   createNoteDocument,
+  createNoteSectionFromParagraph,
   createWorkspaceDocument,
   listNoteMetadata,
   loadNoteDocumentWithSectionIdentityRecovery,
@@ -1069,6 +1071,30 @@ export class CoreRuntime {
     });
   }
 
+  createSectionFromParagraph(
+    noteId: string,
+    request: {
+      boundarySectionId: string;
+      sourceSectionId: string;
+      paragraphBlockId: string;
+      paragraphBodyIndex: number;
+      title: string;
+      direction: "deeper" | "shallower";
+    },
+  ): Promise<CoreCommandResults["section.create_from_paragraph"]> {
+    return this.executeCommand({
+      name: "section.create_from_paragraph",
+      operationId: this.idFactory(),
+      source: "editor",
+      payload: {
+        noteId,
+        ...request,
+        newSectionId: this.idFactory(),
+        updatedAt: this.clock(),
+      },
+    });
+  }
+
   sectionBreadcrumb(
     noteId: string,
     targetSectionId: string,
@@ -1952,6 +1978,15 @@ export class CoreRuntime {
           [...request.sectionIds],
           request.direction,
         ),
+      onSectionFromParagraph: (request) =>
+        this.createSectionFromParagraph(attachedNoteId, {
+          boundarySectionId: request.boundarySectionId,
+          sourceSectionId: request.sourceSectionId,
+          paragraphBlockId: request.paragraphBlockId,
+          paragraphBodyIndex: request.paragraphBodyIndex,
+          title: request.title,
+          direction: request.direction,
+        }),
       keyConfig: options.keyConfig,
       getInternalLinkCandidates: () => this.internalLinkCandidates(),
       resolveInternalLinkTitle: (targetSectionId) =>
@@ -2387,80 +2422,155 @@ export class CoreRuntime {
       } = envelope.payload;
       this.requireLiveMetadata(noteId);
       const handle = await this.ensureNoteLoaded(noteId);
-      // A depth command may immediately follow Insert input. Serialize it
-      // behind already-observed editor updates so both operations use the
-      // correct persisted revision and neither can roll the other back.
-      await this.notePersistence.get(noteId)?.flush();
-      if (handle.current.kind !== "note") {
-        throw new Error("Section depth target is not a NoteDoc");
-      }
-      const plan = planNoteSectionDepthShift(
-        handle.current,
-        boundarySectionId,
-        sectionIds,
-        direction,
-      );
-      if (!plan.changed) {
-        return { noteId, changed: false, affectedSectionIds: [] };
-      }
-      this.setSaving();
-      handle.current.undoManager.stopCapturing();
-      const workspaceBaseRevision = this.workspace.revision;
-      try {
-        await this.transactions.transact(
-          {
-            operationId: envelope.operationId,
-            scope: "workspace-structure",
-            documents: [this.workspace, handle],
-            searchIndexMetadataOnlyNoteId: noteId,
-            fault,
-          },
-          () => {
-            if (handle.current.kind !== "note") {
-              throw new Error("Section depth target is not a NoteDoc");
-            }
-            applyNoteSectionDepthShift(
-              handle.current,
-              boundarySectionId,
-              plan,
-              updatedAt,
-              SECTION_DEPTH_SHIFT_ORIGIN,
-            );
-            renameNoteMetadata(
-              this.workspaceDocument,
-              noteId,
-              readNoteTitle(handle.current),
-              updatedAt,
-              CORE_TRANSACTION_ORIGIN,
-            );
-          },
-        );
-        await this.advanceWorkspaceSearchIndexMetadataRevision({
-          schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
-          workspaceId: this.workspaceDocument.workspaceId,
-          baseRevision: workspaceBaseRevision,
-          workspaceRevision: this.workspace.revision,
-          noteId,
-        });
-        if (handle.current.kind === "note") {
-          handle.current.undoManager.stopCapturing();
+      return this.runWithNotePersistenceLock(noteId, async () => {
+        if (handle.current.kind !== "note") {
+          throw new Error("Section depth target is not a NoteDoc");
         }
-        this.changedNoteRevisions.set(noteId, handle.revision);
-        this.noteContentRevision += 1;
-        this.sectionCatalogRevision += 1;
-        this.internalLinkLabelRevision += 1;
-        this.queueWorkspaceSearchIndexDocument(noteId);
-        this.setReady();
-        return {
-          noteId,
-          changed: true,
-          affectedSectionIds: [...plan.affectedSectionIds],
-        };
-      } catch (error) {
-        this.reportError(error);
-        throw error;
-      }
+        const plan = planNoteSectionDepthShift(
+          handle.current,
+          boundarySectionId,
+          sectionIds,
+          direction,
+        );
+        if (!plan.changed) {
+          return { noteId, changed: false, affectedSectionIds: [] };
+        }
+        this.setSaving();
+        handle.current.undoManager.stopCapturing();
+        const workspaceBaseRevision = this.workspace.revision;
+        try {
+          await this.transactions.transact(
+            {
+              operationId: envelope.operationId,
+              scope: "workspace-structure",
+              documents: [this.workspace, handle],
+              searchIndexMetadataOnlyNoteId: noteId,
+              fault,
+            },
+            () => {
+              if (handle.current.kind !== "note") {
+                throw new Error("Section depth target is not a NoteDoc");
+              }
+              applyNoteSectionDepthShift(
+                handle.current,
+                boundarySectionId,
+                plan,
+                updatedAt,
+                SECTION_DEPTH_SHIFT_ORIGIN,
+              );
+              handle.current.undoManager.stopCapturing();
+              renameNoteMetadata(
+                this.workspaceDocument,
+                noteId,
+                readNoteTitle(handle.current),
+                updatedAt,
+                CORE_TRANSACTION_ORIGIN,
+              );
+            },
+          );
+          await this.advanceWorkspaceSearchIndexMetadataRevision({
+            schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+            workspaceId: this.workspaceDocument.workspaceId,
+            baseRevision: workspaceBaseRevision,
+            workspaceRevision: this.workspace.revision,
+            noteId,
+          });
+          if (handle.current.kind === "note") {
+            handle.current.undoManager.stopCapturing();
+          }
+          this.changedNoteRevisions.set(noteId, handle.revision);
+          this.noteContentRevision += 1;
+          this.sectionCatalogRevision += 1;
+          this.internalLinkLabelRevision += 1;
+          this.queueWorkspaceSearchIndexDocument(noteId);
+          this.setReady();
+          return {
+            noteId,
+            changed: true,
+            affectedSectionIds: [...plan.affectedSectionIds],
+          };
+        } catch (error) {
+          this.reportError(error);
+          throw error;
+        }
+      });
     });
+
+    this.commands.register(
+      "section.create_from_paragraph",
+      async (envelope) => {
+        const { noteId, updatedAt, fault, ...request } = envelope.payload;
+        this.requireLiveMetadata(noteId);
+        const handle = await this.ensureNoteLoaded(noteId);
+        return this.runWithNotePersistenceLock(noteId, async () => {
+          if (handle.current.kind !== "note") {
+            throw new Error("Paragraph conversion target is not a NoteDoc");
+          }
+          this.setSaving();
+          handle.current.undoManager.stopCapturing();
+          const workspaceBaseRevision = this.workspace.revision;
+          let result = {
+            changed: false,
+            createdSectionId: null as string | null,
+          };
+          try {
+            await this.transactions.transact(
+              {
+                operationId: envelope.operationId,
+                scope: "workspace-structure",
+                documents: [this.workspace, handle],
+                searchIndexMetadataOnlyNoteId: noteId,
+                fault,
+              },
+              () => {
+                if (handle.current.kind !== "note") {
+                  throw new Error(
+                    "Paragraph conversion target is not a NoteDoc",
+                  );
+                }
+                result = createNoteSectionFromParagraph(
+                  handle.current,
+                  { ...request, updatedAt },
+                  SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+                );
+                handle.current.undoManager.stopCapturing();
+                if (result.changed) {
+                  renameNoteMetadata(
+                    this.workspaceDocument,
+                    noteId,
+                    readNoteTitle(handle.current),
+                    updatedAt,
+                    CORE_TRANSACTION_ORIGIN,
+                  );
+                }
+              },
+            );
+            handle.current.undoManager.stopCapturing();
+            if (!result.changed) {
+              this.setReady();
+              return { noteId, ...result };
+            }
+            await this.advanceWorkspaceSearchIndexMetadataRevision({
+              schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+              workspaceId: this.workspaceDocument.workspaceId,
+              baseRevision: workspaceBaseRevision,
+              workspaceRevision: this.workspace.revision,
+              noteId,
+            });
+            this.changedNoteRevisions.set(noteId, handle.revision);
+            this.noteContentRevision += 1;
+            this.sectionCatalogRevision += 1;
+            this.internalLinkLabelRevision += 1;
+            this.queueWorkspaceSearchIndexDocument(noteId);
+            this.setReady();
+            return { noteId, ...result };
+          } catch (error) {
+            this.reportError(error);
+            throw error;
+          }
+        });
+      },
+    );
 
     this.commands.register("note.move_to_trash", async (envelope) => {
       const { noteId, deletedAt, fault } = envelope.payload;
@@ -4442,6 +4552,14 @@ export class CoreRuntime {
     this.onError?.(normalized);
   }
 
+  private runWithNotePersistenceLock<Result>(
+    noteId: string,
+    action: () => Promise<Result>,
+  ): Promise<Result> {
+    const session = this.notePersistence.get(noteId);
+    return session ? session.runExclusive(action) : action();
+  }
+
   private createNotePersistenceSession(
     noteId: string,
     handle: ManagedCrdtDocument<ProductDocument>,
@@ -4741,6 +4859,28 @@ class NotePersistenceSession {
     if (this.lastError) throw this.lastError;
   }
 
+  /**
+   * Runs a Core mutation in the same per-Note queue as observed Editor
+   * updates. Updates emitted while the mutation is awaiting persistence are
+   * appended behind this barrier and therefore start from its new revision.
+   */
+  runExclusive<Result>(action: () => Promise<Result>): Promise<Result> {
+    const result = this.pending
+      .catch(() => undefined)
+      .then(() => {
+        if (this.lastError) throw this.lastError;
+        return action();
+      });
+    // A structural-command failure is returned to its own caller. It must not
+    // poison later Editor persistence, whose update handler already owns its
+    // own error reporting and retry boundary.
+    this.pending = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   destroy(): void {
     this.unsubscribeReplacement();
     if (this.observedDoc) {
@@ -4766,6 +4906,7 @@ class NotePersistenceSession {
     if (
       origin === CORE_TRANSACTION_ORIGIN ||
       origin === SECTION_DEPTH_SHIFT_ORIGIN ||
+      origin === SECTION_PARAGRAPH_CONVERSION_ORIGIN ||
       origin === NOTE_TIMESTAMP_ORIGIN ||
       origin === PERSISTENCE_LOAD_ORIGIN ||
       origin === BOOTSTRAP_ORIGIN

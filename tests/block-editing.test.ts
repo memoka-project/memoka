@@ -91,6 +91,109 @@ async function productEditor() {
 }
 
 describe("Memoka block editing boundaries", () => {
+  it("maps Ctrl-h and Ctrl-j/Ctrl-m onto Insert Backspace and Enter", async () => {
+    const { adapter, destroy, editor, runtime } = await productEditor();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { language: "typescript" },
+          content: [{ type: "text", text: "  alpha" }],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "alpha") + 5);
+
+    expect(
+      press(editor, "h", { code: "KeyH", ctrlKey: true }).defaultPrevented,
+    ).toBe(true);
+    expect(editor.state.doc.textContent).toBe("  alph");
+
+    expect(
+      press(editor, "j", { code: "KeyJ", ctrlKey: true }).defaultPrevented,
+    ).toBe(true);
+    expect(editor.state.doc.textContent).toBe("  alph\n  ");
+
+    expect(
+      press(editor, "m", { code: "KeyM", ctrlKey: true }).defaultPrevented,
+    ).toBe(true);
+    expect(editor.state.doc.textContent).toBe("  alph\n  \n  ");
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+    await runtime.flush();
+    destroy();
+  });
+
+  it("deletes the Insert logical-line prefix with Ctrl-u", async () => {
+    const { destroy, editor, runtime } = await productEditor();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "first" },
+            { type: "hardBreak" },
+            { type: "text", text: "second tail" },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "second") + 6);
+
+    const event = press(editor, "u", { code: "KeyU", ctrlKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.state.doc.textContent).toBe("first tail");
+    expect(editor.state.selection.$from.parentOffset).toBe(6);
+    await runtime.flush();
+    destroy();
+  });
+
+  it("uses Japanese-aware word runs and Vim separator handling for Ctrl-w", async () => {
+    const { destroy, editor, runtime } = await productEditor();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "漢字ひらがな カタカナ...  " }],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(
+      textPosition(editor, "漢字") + "漢字ひらがな カタカナ...  ".length,
+    );
+
+    const ctrlW = () => press(editor, "w", { code: "KeyW", ctrlKey: true });
+    expect(ctrlW().defaultPrevented).toBe(true);
+    expect(editor.state.doc.textContent).toBe("漢字ひらがな カタカナ");
+    ctrlW();
+    expect(editor.state.doc.textContent).toBe("漢字ひらがな ");
+    ctrlW();
+    expect(editor.state.doc.textContent).toBe("漢字");
+    await runtime.flush();
+    destroy();
+  });
+
+  it("lets IME own Ctrl-c while composing and exits Insert afterward", async () => {
+    const { adapter, destroy, editor, runtime } = await productEditor();
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    const composing = press(editor, "c", { code: "KeyC", ctrlKey: true });
+    expect(composing.defaultPrevented).toBe(false);
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true }),
+    );
+    const completed = press(editor, "c", { code: "KeyC", ctrlKey: true });
+    expect(completed.defaultPrevented).toBe(true);
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+    await runtime.flush();
+    destroy();
+  });
+
   it("inherits the current Code Block line indentation on Enter", async () => {
     const { adapter, destroy, editor, runtime } = await productEditor();
     editor.commands.setContent({

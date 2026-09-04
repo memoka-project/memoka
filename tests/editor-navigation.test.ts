@@ -1,4 +1,5 @@
 import type { Editor, JSONContent } from "@tiptap/core";
+import { EditorState } from "@tiptap/pm/state";
 import { describe, expect, it, vi } from "vitest";
 import {
   internalSectionLinkAtPosition,
@@ -152,7 +153,9 @@ describe("Memoka Section Link and Jump List navigation", () => {
     const view = runtime.editorForTesting("window-1", root, {
       directBodyOnly: false,
     });
-    view.editor.commands.setContent(
+    // Construct a plugin-free legacy view state so the editor's identity
+    // maintenance does not normalize this intentionally damaged fixture.
+    const legacyDoc = view.editor.schema.nodeFromJSON(
       noteContent(runtime.noteId, "search fallback", [
         {
           type: "paragraph",
@@ -166,13 +169,17 @@ describe("Memoka Section Link and Jump List navigation", () => {
         },
       ]),
     );
+    const legacyState = EditorState.create({
+      schema: view.editor.schema,
+      doc: legacyDoc,
+    });
     const paragraphStarts: number[] = [];
-    view.editor.state.doc.descendants((node, position) => {
+    legacyState.doc.descendants((node, position) => {
       if (node.type.name === "paragraph") paragraphStarts.push(position + 1);
     });
     const resolved = resolveEditorNavigationDestination(
       runtime.noteDocument,
-      view.editor.view,
+      { state: legacyState },
       {
         kind: "search-match",
         noteId: runtime.noteId,

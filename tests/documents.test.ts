@@ -3,6 +3,7 @@ import * as Y from "yjs";
 import {
   addNoteMetadata,
   createNoteDocument,
+  createNoteSectionFromParagraph,
   createWorkspaceDocument,
   encodeProductDocument,
   listNoteMetadata,
@@ -21,6 +22,7 @@ import {
   sectionBodyBlocks,
   sectionHeader,
   sectionId,
+  sectionSnapshot,
 } from "../app/src/core/section-model";
 import { isUuidV7 } from "../app/src/core/ids";
 
@@ -237,6 +239,45 @@ describe("Memoka CRDT document schema v3", () => {
     ).toEqual(repairedIds);
     durable.document.doc.destroy();
     recovered.document.doc.destroy();
+    note.doc.destroy();
+  });
+
+  it("uses the captured body position to disambiguate a historical duplicate Paragraph ID", () => {
+    const newSectionId = "01900000-0000-7000-8000-000000000007";
+    const note = createNoteDocument(
+      NOTE_ID,
+      [
+        {
+          type: "paragraph",
+          blockId: BLOCK_ID,
+          content: [{ type: "text", text: "P1" }],
+        },
+        {
+          type: "paragraph",
+          blockId: BLOCK_ID,
+          content: [{ type: "text", text: "P2" }],
+        },
+      ],
+      "Root",
+    );
+
+    expect(
+      createNoteSectionFromParagraph(note, {
+        boundarySectionId: NOTE_ID,
+        sourceSectionId: NOTE_ID,
+        paragraphBlockId: BLOCK_ID,
+        paragraphBodyIndex: 1,
+        newSectionId,
+        title: "P2",
+        direction: "deeper",
+        updatedAt: "2026-09-04T13:00:00.000Z",
+      }),
+    ).toEqual({ changed: true, createdSectionId: newSectionId });
+
+    const snapshot = sectionSnapshot(note.rootSection);
+    expect(JSON.stringify(snapshot.body)).toContain("P1");
+    expect(JSON.stringify(snapshot.body)).not.toContain("P2");
+    expect(snapshot.children[0]?.title).toBe("P2");
     note.doc.destroy();
   });
 

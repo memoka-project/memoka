@@ -1406,6 +1406,37 @@ const BodyChunking = Extension.create({
   },
 });
 
+const BLOCK_IDENTITY_REPAIR_META = "memoka:block-identity-repair";
+
+function blockIdentity(
+  node: ProseMirrorNode | null | undefined,
+): string | null {
+  if (!node || !BLOCK_NODE_NAMES.has(node.type.name)) return null;
+  const value = node.attrs.blockId;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function mappedHistoricalBlockIds(
+  before: ProseMirrorNode,
+  after: ProseMirrorNode,
+  mapping: Mapping,
+): ReadonlyMap<number, string> {
+  const result = new Map<number, string>();
+  before.descendants((node, position) => {
+    const id = blockIdentity(node);
+    if (!id) return true;
+    // Map the old node start forward. At an insertion boundary, assoc=1 maps
+    // the old block past the insertion and therefore never assigns its ID to
+    // the fresh block placed immediately before it.
+    const mapped = mapping.mapResult(position, 1);
+    if (mapped.deleted) return true;
+    const survivingBlock = after.nodeAt(mapped.pos);
+    if (blockIdentity(survivingBlock)) result.set(mapped.pos, id);
+    return true;
+  });
+  return result;
+}
+
 const BlockIdentity = Extension.create({
   name: "memokaBlockIdentity",
   priority: 1100,
@@ -1454,22 +1485,86 @@ const BlockIdentity = Extension.create({
         props: {
           transformPasted: freshBlockIdsInSlice,
         },
-        appendTransaction: (transactions, _oldState, newState) => {
+        appendTransaction: (transactions, oldState, newState) => {
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
-          const transaction = newState.tr;
-          let changed = false;
-          for (const position of changedNodePositions(
+          if (
+            transactions.some((transaction) =>
+              transaction.getMeta(BLOCK_IDENTITY_REPAIR_META),
+            )
+          ) {
+            return null;
+          }
+          const mapping = new Mapping();
+          for (const transaction of transactions) {
+            mapping.appendMapping(transaction.mapping);
+          }
+          const historicalIds = mappedHistoricalBlockIds(
+            oldState.doc,
+            newState.doc,
+            mapping,
+          );
+          const changedPositions = changedNodePositions(
             newState.doc,
             transactions,
             (node) => BLOCK_NODE_NAMES.has(node.type.name),
-          )) {
+          );
+          const changedIds = new Set<string>();
+          const identityAtRisk = changedPositions.some((position) => {
             const node = newState.doc.nodeAt(position);
-            if (!node || node.attrs.blockId) continue;
+            const currentId = blockIdentity(node);
+            if (!node || !currentId || changedIds.has(currentId)) return true;
+            changedIds.add(currentId);
+            return !historicalIds.has(position);
+          });
+          if (!identityAtRisk) return null;
+
+          const blocks: Array<{
+            node: ProseMirrorNode;
+            position: number;
+            currentId: string | null;
+            historicalId: string | null;
+          }> = [];
+          newState.doc.descendants((node, position) => {
+            if (!BLOCK_NODE_NAMES.has(node.type.name)) return true;
+            blocks.push({
+              node,
+              position,
+              currentId: blockIdentity(node),
+              historicalId: historicalIds.get(position) ?? null,
+            });
+            return true;
+          });
+          const protectedHistoricalIds = new Set(
+            blocks.flatMap(({ historicalId }) =>
+              historicalId ? [historicalId] : [],
+            ),
+          );
+          const seen = new Set<string>();
+          const transaction = newState.tr.setMeta(
+            BLOCK_IDENTITY_REPAIR_META,
+            true,
+          );
+          let changed = false;
+          for (const { node, position, currentId, historicalId } of blocks) {
+            let nextId =
+              historicalId && !seen.has(historicalId)
+                ? historicalId
+                : currentId &&
+                    !seen.has(currentId) &&
+                    !protectedHistoricalIds.has(currentId)
+                  ? currentId
+                  : null;
+            if (!nextId) {
+              do nextId = createUuidV7();
+              while (seen.has(nextId) || protectedHistoricalIds.has(nextId));
+            }
+            seen.add(nextId);
+            if (nextId === currentId) continue;
             transaction.setNodeMarkup(position, undefined, {
               ...node.attrs,
-              blockId: createUuidV7(),
+              blockId: nextId,
             });
             changed = true;
           }

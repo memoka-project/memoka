@@ -31,6 +31,7 @@ import {
   runEditorEnterInsertFromHorizontalRule,
   runEditorExitBlock,
   runEditorInsertBoundaryDelete,
+  runEditorInsertBackspace,
   runEditorInsertEnter,
   runEditorReplaceCharacter,
   runEditorReplaceText,
@@ -39,6 +40,7 @@ import {
   runEditorVimOperator,
   runVisualLineCommand,
   sectionDepthShiftSelection,
+  sectionParagraphConversionSelection,
   visualCharCursor,
   vimBlockCursorBeforeInsertCaret,
   vimRegisterLabel,
@@ -47,6 +49,7 @@ import {
   type VimRegister,
   type VimVisualLineState,
   type SectionDepthShiftSelection,
+  type SectionParagraphConversionSelection,
 } from "./editor-commands";
 import {
   measureVimBlockCaretGeometry,
@@ -184,7 +187,9 @@ export interface ProductVimSessionOptions {
   onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
   onOpenAttachment?: (attachmentId: string) => void | Promise<void>;
+  resolveInternalLinkTitle?: (targetSectionId: string) => string | null;
   onMessage?: (message: string) => void;
+  onInsertKey?: (key: "Backspace" | "Enter") => boolean;
   onCommandLine?: () => void;
   onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
@@ -205,6 +210,22 @@ export interface ProductVimSessionOptions {
         changed: boolean;
         affectedSectionIds: readonly string[];
       } | void>;
+  onSectionFromParagraph?: (
+    request: SectionParagraphConversionSelection & {
+      direction: "deeper" | "shallower";
+      mode: "insert" | "normal";
+    },
+  ) =>
+    | { changed: boolean; createdSectionId: string | null }
+    | void
+    | Promise<{
+        changed: boolean;
+        createdSectionId: string | null;
+      } | void>;
+  onSectionParagraphReverse?: (
+    command: "section.demote" | "section.promote",
+    currentSectionId: string,
+  ) => boolean;
   keyConfig?: ApplicationKeyConfig;
   undo?: () => boolean;
   redo?: () => boolean;
@@ -1246,6 +1267,24 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "insert.backspace" || command === "insert.newline") {
+      event.preventDefault();
+      const nativeKey = command === "insert.backspace" ? "Backspace" : "Enter";
+      const special =
+        nativeKey === "Backspace"
+          ? runEditorInsertBackspace(view)
+          : runEditorInsertEnter(view, false);
+      const handled =
+        special.handled || special.preventDefault
+          ? special.handled
+          : (this.options.onInsertKey?.(nativeKey) ?? false);
+      view.focus();
+      this.action = `${special.handled || special.preventDefault ? special.detail : `insert:${nativeKey.toLowerCase()}`}:${handled ? "changed" : "boundary"}`;
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return true;
+    }
+
     if (command === "edit.repeat") {
       event.preventDefault();
       this.runRepeat(view, resolution.count, resolution.countExplicit ?? false);
@@ -1295,6 +1334,55 @@ export class ProductVimSession {
 
     if (command === "section.demote" || command === "section.promote") {
       event.preventDefault();
+      const direction = command === "section.demote" ? "deeper" : "shallower";
+      const paragraphMode =
+        this.mode === "insert" || this.mode === "normal" ? this.mode : null;
+      if (paragraphMode === "insert") {
+        const currentSectionId = sectionIdAtEditorSelection(view.state);
+        if (
+          currentSectionId &&
+          this.options.onSectionParagraphReverse?.(command, currentSectionId)
+        ) {
+          this.action = `${command}:paragraph-restore-requested`;
+          this.emit();
+          this.scheduleCaretRefresh(view);
+          return true;
+        }
+      }
+      if (paragraphMode) {
+        const paragraph = sectionParagraphConversionSelection(
+          view,
+          this.options.resolveInternalLinkTitle,
+        );
+        if (paragraph) {
+          if (
+            direction === "shallower" &&
+            paragraph.sourceSectionId === paragraph.boundarySectionId
+          ) {
+            this.action = `${command}:boundary`;
+            this.emit();
+            this.scheduleCaretRefresh(view);
+            return true;
+          }
+          const pending = this.options.onSectionFromParagraph?.({
+            ...paragraph,
+            direction,
+            mode: paragraphMode,
+          });
+          this.action = this.options.onSectionFromParagraph
+            ? `${command}:paragraph-requested`
+            : `${command}:unavailable`;
+          this.emit();
+          if (
+            pending &&
+            typeof (pending as Promise<unknown>).then === "function"
+          ) {
+            void Promise.resolve(pending).catch(() => undefined);
+          }
+          this.scheduleCaretRefresh(view);
+          return true;
+        }
+      }
       const request = sectionDepthShiftSelection(
         view,
         this.mode,
@@ -1313,7 +1401,7 @@ export class ProductVimSession {
       }
       const pending = this.options.onSectionDepthShift?.({
         ...request,
-        direction: command === "section.demote" ? "deeper" : "shallower",
+        direction,
         mode: requestMode,
       });
       this.action = this.options.onSectionDepthShift
@@ -2714,8 +2802,11 @@ function eventSequence(event: KeyboardEvent): string {
   const key = codeKey ?? eventKey;
   if (
     event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
     [
       "b",
+      "c",
       "d",
       "f",
       "h",
@@ -2723,6 +2814,7 @@ function eventSequence(event: KeyboardEvent): string {
       "j",
       "k",
       "l",
+      "m",
       "o",
       "r",
       "t",

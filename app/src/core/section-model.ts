@@ -1317,13 +1317,18 @@ function replaceSectionFields(
     emoji: snapshot.emoji ?? "",
     tags: [...snapshot.tags],
   });
+  replaceSectionBodySnapshot(target, snapshot.body);
+}
+
+/** Replaces only one Section body while leaving its Header and children live. */
+export function replaceSectionBodySnapshot(
+  target: Y.XmlElement,
+  bodySnapshot: readonly unknown[],
+): void {
   const targetBody = sectionBody(target);
   targetBody.delete(0, targetBody.length);
-  const body = sectionBodyFromSnapshot(snapshot);
-  const chunks = createBodyChunks(
-    body,
-    snapshot.body.map(approximateJsonBytes),
-  );
+  const body = sectionBodyFromSnapshot({ body: bodySnapshot });
+  const chunks = createBodyChunks(body, bodySnapshot.map(approximateJsonBytes));
   if (chunks.length > 0) targetBody.insert(0, chunks);
 }
 

@@ -89,6 +89,18 @@ export interface CoreCommandPayloads {
     updatedAt: string;
     fault?: CommitFault;
   };
+  "section.create_from_paragraph": {
+    noteId: string;
+    boundarySectionId: string;
+    sourceSectionId: string;
+    paragraphBlockId: string;
+    paragraphBodyIndex: number;
+    newSectionId: string;
+    title: string;
+    direction: SectionDepthShiftDirection;
+    updatedAt: string;
+    fault?: CommitFault;
+  };
   "note.move_to_trash": {
     noteId: string;
     deletedAt: string;
@@ -214,6 +226,11 @@ export interface CoreCommandResults {
     noteId: string;
     changed: boolean;
     affectedSectionIds: string[];
+  };
+  "section.create_from_paragraph": {
+    noteId: string;
+    changed: boolean;
+    createdSectionId: string | null;
   };
   "note.move_to_trash": {
     noteId: string;
