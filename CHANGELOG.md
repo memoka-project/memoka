@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-05
+
+- 空のNote／Section title表示を深さに応じたplaceholder色へ整え、Sectionを同階層へ貼り付ける構造操作を修正。
+- 行番号の表示下限、Section／List／Code Block／Tableの共通indent幅、Replace modeの表示を設定可能にし、layout guideを整理。
+- Normal modeの`W` / `B` / `E`と、単語motionを含む設定可能な`whichwrap`を追加。
+- Obsidian形式の`==highlight==`とGitHub／Obsidian Alertの貼り付け、編集、表示に対応。
+- `zo` / `zO` / `zc` / `zC` / `za` / `zA`によるWindow固有のSection折り畳みと、Outline・Note内検索との連携を追加。
+- ListItemの論理行削除で未選択の子孫を保持し、Normal／Visual Line／Insert modeから表示順を保ったList深さ変更を行えるように変更。
+
 ## [0.1.5] - 2026-09-04
 
 - 巨大Noteで表示範囲のrich textが素のtextへ切り替わる問題を修正。
@@ -52,7 +61,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/memoka-project/memoka/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/memoka-project/memoka/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/memoka-project/memoka/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/memoka-project/memoka/compare/v0.1.2...v0.1.3
