@@ -144,5 +144,6 @@ describe("Memoka application appearance", () => {
     expect(css).toMatch(
       /\.editor-window\[data-vim-mode="replace"\] \.window-mode\s*\{[^}]*background: var\(--memoka-color-danger\)/su,
     );
+    expect(css).toMatch(/\.window-mode\s*\{[^}]*font-weight: 700;/su);
   });
 });

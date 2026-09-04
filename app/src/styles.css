@@ -2272,6 +2272,7 @@ textarea {
   background: var(--memoka-color-mode-normal);
   padding: 2px 5px;
   flex: 0 0 auto;
+  font-weight: 700;
   white-space: nowrap;
 }
 
