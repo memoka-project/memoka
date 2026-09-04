@@ -4,6 +4,8 @@ import { Plugin, TextSelection } from "@tiptap/pm/state";
 import * as Y from "yjs";
 import {
   SECTION_DEPTH_SHIFT_ORIGIN,
+  noteSectionCatalog,
+  putNoteSectionSibling,
   type ProductDocument,
 } from "../core/documents";
 import {
@@ -48,6 +50,7 @@ import {
 } from "../vim/session";
 import {
   sectionHeaderPosition,
+  sectionSnapshotForPut,
   type SectionDepthShiftSelection,
   type SectionParagraphConversionSelection,
 } from "../vim/editor-commands";
@@ -432,6 +435,28 @@ export class TiptapEditorAdapter {
       },
       onSectionFromParagraph: async (request) =>
         this.createSectionFromParagraph(request),
+      onSectionSiblingPut: (request) => {
+        const document = this.handle.current;
+        if (document.kind !== "note" || this.currentEditor.isDestroyed) {
+          return false;
+        }
+        const occupiedSectionIds = new Set(
+          noteSectionCatalog(document).map(({ sectionId }) => sectionId),
+        );
+        const prepared = sectionSnapshotForPut(
+          this.currentEditor.view,
+          request.register,
+          occupiedSectionIds,
+        );
+        return prepared
+          ? putNoteSectionSibling(
+              document,
+              request.targetSectionId,
+              prepared.snapshot,
+              request.direction,
+            )
+          : false;
+      },
       onSectionParagraphReverse: (command, currentSectionId) =>
         this.reverseSectionParagraph(command, currentSectionId),
       keyConfig: options.keyConfig,

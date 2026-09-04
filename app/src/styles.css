@@ -971,13 +971,24 @@ textarea {
   color: var(--memoka-markup-heading-color);
 }
 
-.memoka-section-header[data-note-title-placeholder]::before {
+.memoka-section-header:is(
+    [data-note-title-placeholder],
+    [data-section-title-placeholder]
+  )::before {
   position: absolute;
   inset: 0 auto auto 0;
-  color: var(--memoka-color-text-subtle);
-  content: attr(data-note-title-placeholder);
+  color: var(--memoka-markup-heading-color, var(--memoka-color-text-subtle));
   font: inherit;
+  opacity: 0.5;
   pointer-events: none;
+}
+
+.memoka-section-header[data-note-title-placeholder]::before {
+  content: attr(data-note-title-placeholder);
+}
+
+.memoka-section-header[data-section-title-placeholder]::before {
+  content: attr(data-section-title-placeholder);
 }
 
 .memoka-section .memoka-section-header {
@@ -1052,8 +1063,8 @@ textarea {
  */
 .memoka-section > .memoka-section-body,
 .memoka-section > .memoka-section-children {
-  margin-left: 10px;
-  padding-left: 12px;
+  margin-left: 6px;
+  padding-left: 16px;
 }
 
 .memoka-section > .memoka-section-body,

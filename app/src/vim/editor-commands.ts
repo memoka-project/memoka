@@ -34,7 +34,7 @@ import {
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
 import { createUuidV7 } from "../core/ids";
-import { BODY_CHUNK_NODE } from "../core/section-model";
+import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
 import {
   moveNormalTableCell,
   moveNormalTableRow,
@@ -1898,8 +1898,28 @@ function sectionRegisterForVisualTitle(
   view: VimEditorView,
   visualLine: VimVisualLineState,
 ): Extract<VimRegister, { kind: "section" }> | null {
-  const target = sectionTitleTarget(view, visualLine);
+  const units = blockSemantics.visualLineUnits(view);
+  const first = Math.min(visualLine.anchorUnit, visualLine.headUnit);
+  const last = Math.max(visualLine.anchorUnit, visualLine.headUnit);
+  const selectedUnits = units.slice(first, last + 1);
+  const headerIndexes = selectedUnits.flatMap((unit, offset) =>
+    unit.nodeName === "sectionHeader" ? [first + offset] : [],
+  );
+  if (headerIndexes.length !== 1) return null;
+  const headerIndex = headerIndexes[0]!;
+  const headerUnit = units[headerIndex];
+  if (!headerUnit) return null;
+  const target = sectionTitleTarget(view, {
+    anchorUnit: headerIndex,
+    headUnit: headerIndex,
+    cursor: headerUnit.cursorFrom,
+  });
   if (!target) return null;
+  if (
+    selectedUnits.some((unit) => unit.from < target.from || unit.to > target.to)
+  ) {
+    return null;
+  }
   const sectionIds: string[] = [];
   target.node.descendants((node) => {
     if (node.type.name === "sectionHeader") {
@@ -2032,6 +2052,7 @@ function copiedSectionNode(
 function sectionSliceForPut(
   view: VimEditorView,
   register: Extract<VimRegister, { kind: "section" }>,
+  occupiedSectionIds?: ReadonlySet<string>,
 ): { slice: Slice; reidentified: boolean } | null {
   if (
     register.slice.openStart !== 0 ||
@@ -2041,7 +2062,9 @@ function sectionSliceForPut(
   ) {
     return null;
   }
-  const occupied = sectionIdsInDocument(view.state.doc);
+  const occupied = new Set(
+    occupiedSectionIds ?? sectionIdsInDocument(view.state.doc),
+  );
   const hasCollision = register.sectionIds.some((id) => occupied.has(id));
   const reidentified = register.transfer === "copy" || hasCollision;
   const idMap = new Map<string, string>();
@@ -2055,6 +2078,88 @@ function sectionSliceForPut(
     slice: new Slice(Fragment.from(copied), 0, 0),
     reidentified,
   };
+}
+
+function sectionTagsFromHeader(node: ProseMirrorNode): string[] | null {
+  const raw = node.attrs.tags;
+  if (Array.isArray(raw)) {
+    return raw.every((value) => typeof value === "string") ? [...raw] : null;
+  }
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) &&
+      parsed.every((value) => typeof value === "string")
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sectionSnapshotFromNode(
+  node: ProseMirrorNode,
+): SectionSnapshot | null {
+  if (node.type.name !== "section" || node.childCount !== 3) return null;
+  const header = node.child(0);
+  const body = node.child(1);
+  const children = node.child(2);
+  if (
+    header.type.name !== "sectionHeader" ||
+    body.type.name !== "sectionBody" ||
+    children.type.name !== "sectionChildren"
+  ) {
+    return null;
+  }
+  const sectionId = String(header.attrs.sectionId ?? "");
+  const tags = sectionTagsFromHeader(header);
+  if (!sectionId || !tags) return null;
+
+  const bodyBlocks: unknown[] = [];
+  let valid = true;
+  body.forEach((chunk) => {
+    if (chunk.type.name !== BODY_CHUNK_NODE) {
+      valid = false;
+      return;
+    }
+    chunk.forEach((block) => bodyBlocks.push(block.toJSON()));
+  });
+  if (!valid) return null;
+
+  const childSnapshots: SectionSnapshot[] = [];
+  children.forEach((childNode) => {
+    const snapshot = sectionSnapshotFromNode(childNode);
+    if (!snapshot) valid = false;
+    else childSnapshots.push(snapshot);
+  });
+  if (!valid) return null;
+
+  const emoji = String(header.attrs.emoji ?? "");
+  return {
+    sectionId,
+    title: header.textContent,
+    ...(emoji ? { emoji } : {}),
+    tags,
+    body: bodyBlocks,
+    children: childSnapshots,
+  };
+}
+
+/**
+ * Materializes a Section register for insertion outside the mounted
+ * ProseMirror subtree. This is needed when a Focused Section is the editor
+ * root but linewise p/P must insert beside it in the owning NoteDoc.
+ */
+export function sectionSnapshotForPut(
+  view: VimEditorView,
+  register: Extract<VimRegister, { kind: "section" }>,
+  occupiedSectionIds: ReadonlySet<string>,
+): { snapshot: SectionSnapshot; reidentified: boolean } | null {
+  const prepared = sectionSliceForPut(view, register, occupiedSectionIds);
+  const section = prepared?.slice.content.firstChild;
+  if (!prepared || !section) return null;
+  const snapshot = sectionSnapshotFromNode(section);
+  return snapshot ? { snapshot, reidentified: prepared.reidentified } : null;
 }
 
 function nearestSectionDepth(view: VimEditorView, position: number): number {

@@ -17,6 +17,7 @@ import {
   deriveSectionCatalog,
   findSectionById,
   findParentSection,
+  insertChildSection,
   sectionBodyBlocks,
   planSectionDepthShift,
   sectionBody,
@@ -865,6 +866,38 @@ export function applyNoteSectionDepthShift(
     applySectionHierarchySnapshot(boundary, plan.snapshot);
     note.meta.set("updated_at", updatedAt);
   }, origin);
+}
+
+/**
+ * Inserts a fully prepared Section beside a non-Root target. Focused Section
+ * editors mount only the target subtree, so this parent-level edit cannot be
+ * represented by a ProseMirror transaction inside that view.
+ */
+export function putNoteSectionSibling(
+  note: NoteDocument,
+  targetSectionId: string,
+  snapshot: SectionSnapshot,
+  direction: "after" | "before",
+  origin: unknown = ySyncPluginKey,
+): boolean {
+  const target = findSectionById(note.rootSection, targetSectionId);
+  const parent = target
+    ? findParentSection(note.rootSection, targetSectionId)
+    : null;
+  if (!target || !parent) return false;
+  const targetIndex = childSections(parent).findIndex(
+    (child) => sectionId(child) === targetSectionId,
+  );
+  if (targetIndex < 0) return false;
+  const inserted = createSectionFromSnapshot(snapshot);
+  note.doc.transact(() => {
+    insertChildSection(
+      parent,
+      inserted,
+      targetIndex + (direction === "after" ? 1 : 0),
+    );
+  }, origin);
+  return true;
 }
 
 export interface NoteSectionFromParagraphResult {

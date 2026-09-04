@@ -1602,4 +1602,93 @@ describe("Memoka Section editor semantics", () => {
     runtime.destroy();
     targetRoot.remove();
   });
+
+  it("puts a yanked Section-and-body selection beside a Focused Section", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceId = addChild(runtime, "Source", "source body");
+    const targetId = addChild(runtime, "Target", "target body");
+    const fullRoot = rootElement();
+    const full = runtime.editorForTesting("window-1", fullRoot, {
+      directBodyOnly: false,
+    });
+    const sourceHeader = positionOf(
+      full.editor,
+      "sectionHeader",
+      (node) => node.attrs.sectionId === sourceId,
+    );
+    full.editor.commands.setTextSelection(sourceHeader);
+    full.editor.commands.focus();
+    press(full.editor, "Escape");
+    press(full.editor, "V", { shiftKey: true });
+    press(full.editor, "j");
+    press(full.editor, "y");
+    expect(runtime.vimRegister.read(full.editor.schema)).toMatchObject({
+      kind: "section",
+      transfer: "copy",
+      sectionIds: [sourceId],
+    });
+    const fullTargetHeader = positionOf(
+      full.editor,
+      "sectionHeader",
+      (node) => node.attrs.sectionId === targetId,
+    );
+    full.editor.commands.setTextSelection(fullTargetHeader);
+    press(full.editor, "P", { shiftKey: true });
+    await settle(runtime);
+    expect(
+      childSections(runtime.noteDocument.rootSection).map(sectionTitle),
+    ).toEqual(["Source", "Source", "Target"]);
+    expect(
+      childSections(
+        findSectionById(runtime.noteDocument.rootSection, targetId)!,
+      ),
+    ).toHaveLength(0);
+    press(full.editor, "u");
+    await settle(runtime);
+    expect(
+      childSections(runtime.noteDocument.rootSection).map(sectionTitle),
+    ).toEqual(["Source", "Target"]);
+    full.adapter.destroy();
+    fullRoot.remove();
+
+    await runtime.focusSection("window-1", runtime.noteId, targetId);
+    const focusedRoot = rootElement();
+    const focused = runtime.editorForTesting("window-1", focusedRoot, {
+      directBodyOnly: false,
+    });
+    const targetHeader = positionOf(
+      focused.editor,
+      "sectionHeader",
+      (node) => node.attrs.sectionId === targetId,
+    );
+    focused.editor.commands.setTextSelection(targetHeader);
+    focused.editor.commands.focus();
+    press(focused.editor, "Escape");
+    press(focused.editor, "P", { shiftKey: true });
+    await settle(runtime);
+
+    const rootChildren = childSections(runtime.noteDocument.rootSection);
+    expect(rootChildren.map(sectionTitle)).toEqual([
+      "Source",
+      "Source",
+      "Target",
+    ]);
+    const target = findSectionById(runtime.noteDocument.rootSection, targetId);
+    expect(target).not.toBeNull();
+    expect(childSections(target!)).toHaveLength(0);
+    expect(new Set(rootChildren.map(sectionId)).size).toBe(3);
+
+    press(focused.editor, "u");
+    await settle(runtime);
+    expect(
+      childSections(runtime.noteDocument.rootSection).map(sectionTitle),
+    ).toEqual(["Source", "Target"]);
+
+    focused.adapter.destroy();
+    runtime.destroy();
+    focusedRoot.remove();
+  });
 });

@@ -38,8 +38,40 @@ describe("Section depth guides", () => {
     expect(style.textContent).toContain(
       "border-left: 1px solid var(--memoka-color-border-subtle)",
     );
+    expect(style.textContent).toContain("margin-left: 6px");
+    expect(style.textContent).toContain("padding-left: 16px");
 
     style.remove();
+  });
+
+  it("shows distinct subtle placeholders for empty Note and Section titles", async () => {
+    const note = createNoteDocument(createUuidV7(), [], "");
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(createUuidV7(), ""),
+      );
+    });
+    const editor = new Editor({
+      extensions: productEditorExtensions(note),
+    });
+
+    try {
+      await Promise.resolve();
+      expect(
+        editor.view.dom.querySelector(
+          '[data-note-title-placeholder="新しいノート"]',
+        ),
+      ).not.toBeNull();
+      expect(
+        editor.view.dom.querySelector(
+          '[data-section-title-placeholder="無題のセクション"]',
+        ),
+      ).not.toBeNull();
+    } finally {
+      editor.destroy();
+      note.doc.destroy();
+    }
   });
 
   it("shares all six cyclic heading colors with the Outline", () => {
@@ -58,6 +90,9 @@ describe("Section depth guides", () => {
     );
     expect(css).toContain(
       "color: var(--memoka-markup-heading-color, var(--memoka-color-text-muted))",
+    );
+    expect(css).toMatch(
+      /\.memoka-section-header:is\([^}]*\)::before\s*\{[^}]*color:\s*var\(\s*--memoka-markup-heading-color,\s*var\(--memoka-color-text-subtle\)\s*\);[^}]*opacity:\s*0\.5;/su,
     );
   });
 

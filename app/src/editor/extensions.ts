@@ -1721,33 +1721,33 @@ const SectionIdentity = Extension.create({
   },
 });
 
-function rootTitlePlaceholder(noteId: string): Extension {
+function sectionTitlePlaceholders(noteId: string): Extension {
   return Extension.create({
-    name: "memokaRootTitlePlaceholder",
+    name: "memokaSectionTitlePlaceholders",
     addProseMirrorPlugins() {
       return [
         new Plugin({
           props: {
             decorations(state) {
-              let decoration: Decoration | null = null;
+              const decorations: Decoration[] = [];
               state.doc.descendants((node, position) => {
-                if (
-                  node.type.name === SECTION_HEADER_NODE &&
-                  node.attrs.sectionId === noteId
-                ) {
-                  if (node.content.size === 0) {
-                    decoration = Decoration.node(
-                      position,
-                      position + node.nodeSize,
-                      { "data-note-title-placeholder": "新しいノート" },
-                    );
-                  }
-                  return false;
+                if (node.type.name !== SECTION_HEADER_NODE) return true;
+                if (node.content.size === 0) {
+                  const rootTitle = node.attrs.sectionId === noteId;
+                  decorations.push(
+                    Decoration.node(position, position + node.nodeSize, {
+                      [rootTitle
+                        ? "data-note-title-placeholder"
+                        : "data-section-title-placeholder"]: rootTitle
+                        ? "新しいノート"
+                        : "無題のセクション",
+                    }),
+                  );
                 }
-                return decoration === null;
+                return false;
               });
-              return decoration
-                ? DecorationSet.create(state.doc, [decoration])
+              return decorations.length > 0
+                ? DecorationSet.create(state.doc, decorations)
                 : DecorationSet.empty;
             },
           },
@@ -2036,7 +2036,7 @@ export function productEditorExtensions(
           BodyChunk,
           SectionChildren,
         ]),
-    ...(!options.directBodyOnly ? [rootTitlePlaceholder(note.noteId)] : []),
+    ...(!options.directBodyOnly ? [sectionTitlePlaceholders(note.noteId)] : []),
     TableKit.configure({
       table: {
         resizable: false,

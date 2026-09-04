@@ -235,6 +235,11 @@ export interface ProductVimSessionOptions {
         changed: boolean;
         createdSectionId: string | null;
       } | void>;
+  onSectionSiblingPut?: (request: {
+    targetSectionId: string;
+    direction: "after" | "before";
+    register: Extract<VimRegister, { kind: "section" }>;
+  }) => boolean;
   onSectionParagraphReverse?: (
     command: "section.demote" | "section.promote",
     currentSectionId: string,
@@ -1957,14 +1962,16 @@ export class ProductVimSession {
     const undoManager = findUndoManager(view);
     const cursorBeforeCommand = selectionCursor(view);
     undoManager?.stopCapturing();
-    const result = runEditorVimCommand(
-      view,
-      command,
-      this.mode,
-      register,
-      count,
-      countExplicit,
-    );
+    const result =
+      this.focusedSectionSiblingPutResult(view, command, register, count) ??
+      runEditorVimCommand(
+        view,
+        command,
+        this.mode,
+        register,
+        count,
+        countExplicit,
+      );
     const repeatDescriptor = result.handled
       ? createVimRepeatDescriptor({
           mode: this.mode,
@@ -1990,6 +1997,55 @@ export class ProductVimSession {
     this.scheduleCaretRefresh(view);
   }
 
+  private focusedSectionSiblingPutResult(
+    view: EditorView,
+    command: "put.after" | "put.before",
+    register: VimRegister | null,
+    count: number,
+  ): EditorVimResult | null {
+    if (register?.kind !== "section" || !this.options.onSectionSiblingPut) {
+      return null;
+    }
+    const mountedSectionId = view.dom.dataset.sectionId ?? null;
+    const targetSectionId = sectionIdAtEditorSelection(view.state);
+    if (
+      !mountedSectionId ||
+      mountedSectionId === this.options.getRootNoteId?.() ||
+      targetSectionId !== mountedSectionId
+    ) {
+      return null;
+    }
+    const direction = command === "put.after" ? "after" : "before";
+    let handled = false;
+    try {
+      for (
+        let repetition = 0;
+        repetition < Math.max(1, Math.floor(count));
+        repetition += 1
+      ) {
+        if (
+          !this.options.onSectionSiblingPut({
+            targetSectionId,
+            direction,
+            register,
+          })
+        ) {
+          break;
+        }
+        handled = true;
+      }
+    } catch (error) {
+      this.options.onMessage?.(
+        `セクションを貼り付けられませんでした: ${String(error)}`,
+      );
+    }
+    return {
+      handled,
+      detail: direction === "after" ? "put:after" : "put:before",
+      consumeRegister: handled && register.transfer === "cut",
+    };
+  }
+
   private runRepeat(
     view: EditorView,
     count: number,
@@ -2009,39 +2065,51 @@ export class ProductVimSession {
       descriptor.command,
       descriptor.operator,
     );
-    const result: EditorVimResult = descriptor.tableAction
-      ? (() => {
-          const tableResult = repeatTableAction(
+    const repeatedRegister = this.registerStore.read(view.state.schema);
+    const repeatedPut =
+      descriptor.command === "put.after" || descriptor.command === "put.before"
+        ? this.focusedSectionSiblingPutResult(
             view,
-            descriptor.tableAction,
-            countExplicit ? count : 1,
-          );
-          return {
-            handled: tableResult.changed,
-            detail: `table:action:${descriptor.tableAction.action}`,
-          };
-        })()
-      : descriptor.tableRectangle
-        ? selectVisualBlockRectangle(
-            view,
-            descriptor.tableRectangle.width,
-            descriptor.tableRectangle.height,
+            descriptor.command,
+            repeatedRegister,
+            countExplicit ? count : descriptor.count,
           )
-          ? runVisualBlockCommand(
+        : null;
+    const result: EditorVimResult =
+      repeatedPut ??
+      (descriptor.tableAction
+        ? (() => {
+            const tableResult = repeatTableAction(
               view,
-              descriptor.command,
-              this.registerStore.read(view.state.schema),
-              countExplicit ? count : descriptor.count,
+              descriptor.tableAction,
+              countExplicit ? count : 1,
+            );
+            return {
+              handled: tableResult.changed,
+              detail: `table:action:${descriptor.tableAction.action}`,
+            };
+          })()
+        : descriptor.tableRectangle
+          ? selectVisualBlockRectangle(
+              view,
+              descriptor.tableRectangle.width,
+              descriptor.tableRectangle.height,
             )
-          : { handled: false, detail: "table:visual-block:repeat" }
-        : replayVimRepeat(
-            view,
-            descriptor,
-            this.registerStore.read(view.state.schema),
-            count,
-            countExplicit,
-            this.options.keyConfig,
-          );
+            ? runVisualBlockCommand(
+                view,
+                descriptor.command,
+                repeatedRegister,
+                countExplicit ? count : descriptor.count,
+              )
+            : { handled: false, detail: "table:visual-block:repeat" }
+          : replayVimRepeat(
+              view,
+              descriptor,
+              repeatedRegister,
+              count,
+              countExplicit,
+              this.options.keyConfig,
+            ));
     if (
       result.handled &&
       !continuesIntoInsert &&
@@ -2063,7 +2131,9 @@ export class ProductVimSession {
     if (!continuesIntoInsert) undoManager?.stopCapturing();
     if (result.nextMode) this.changeMode(view, result.nextMode);
     this.action = `repeat:${result.detail}${countExplicit && count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
-    if (result.register !== undefined) this.registerStore.set(result.register);
+    if (result.consumeRegister) this.registerStore.clear();
+    else if (result.register !== undefined)
+      this.registerStore.set(result.register);
     else this.emit();
     this.scheduleCaretRefresh(view);
   }
