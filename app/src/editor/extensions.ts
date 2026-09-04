@@ -56,6 +56,7 @@ import {
   type BodyChunkViewportChangedDetail,
 } from "./body-chunk-viewport-event";
 import { SectionTitleCompositionGuard } from "./section-title-composition";
+import { JapaneseLineBreaking } from "./japanese-line-breaking";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -2065,6 +2066,7 @@ export function productEditorExtensions(
     ...(!options.directBodyOnly ? [SectionTitleCompositionGuard] : []),
     SectionIdentity,
     ...(!options.directBodyOnly ? [BodyChunkViewport, BodyChunking] : []),
+    JapaneseLineBreaking,
     BlockIdentity,
     AttachmentIdentity,
     TableShortcuts,

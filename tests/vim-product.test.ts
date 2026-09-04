@@ -1651,7 +1651,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     root.remove();
   });
 
-  it("moves Japanese words by Han, Hiragana, Katakana and alphanumeric runs", async () => {
+  it("moves and edits Japanese text by BudouX phrase", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       clock: () => "2026-07-27T00:00:00.000Z",
@@ -1659,7 +1659,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const { adapter, editor } = runtime.editorForTesting("window-1", root);
-    const text = "漢字ひらがなカタカナーabc123_漢字";
+    const text = "日本語の文章を快適に編集する";
     editor.commands.setContent(`<p>${text}</p>`);
     const start = textPosition(editor, text);
     editor.commands.setTextSelection(start);
@@ -1667,7 +1667,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     await runtime.flush();
     press(editor, "Escape");
 
-    const runStarts = [start, start + 2, start + 6, start + 11, start + 18];
+    const runStarts = [start, start + 4, start + 7, start + 10];
     for (const expected of runStarts.slice(1)) {
       press(editor, "w");
       expect(editor.state.selection.from).toBe(expected);
@@ -1678,17 +1678,17 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     }
 
     press(editor, "e");
-    expect(editor.state.selection.from).toBe(start + 1);
+    expect(editor.state.selection.from).toBe(start + 3);
     press(editor, "e");
-    expect(editor.state.selection.from).toBe(start + 5);
+    expect(editor.state.selection.from).toBe(start + 6);
 
-    editor.commands.setTextSelection(start + 3);
+    editor.commands.setTextSelection(start + 5);
     press(editor, "d");
     press(editor, "i");
     press(editor, "w");
     await runtime.flush();
-    expect(editor.getText()).toBe("漢字カタカナーabc123_漢字");
-    expect(adapter.vimSnapshot.register).toBe("text: ひらがな");
+    expect(editor.getText()).toBe("日本語の快適に編集する");
+    expect(adapter.vimSnapshot.register).toBe("text: 文章を");
 
     adapter.destroy();
     runtime.destroy();
@@ -2551,6 +2551,26 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       content: [
         {
           type: "paragraph",
+          content: [{ type: "text", text: "日本語の文章。" }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Nextを編集する" }],
+        },
+      ],
+    });
+    await runtime.flush();
+    editor.commands.setTextSelection(textPosition(editor, "日本語"));
+    press(editor, "J");
+    expect(editor.state.doc.child(0).textContent).toBe(
+      "日本語の文章。Nextを編集する",
+    );
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
           content: [{ type: "text", text: "alpha " }],
         },
         {
@@ -2674,6 +2694,20 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     editor.commands.setTextSelection(textPosition(editor, "one"));
     press(editor, "J");
     expect(editor.state.doc.child(0).textContent).toBe("one two");
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          content: [{ type: "text", text: "日本語\nコード" }],
+        },
+      ],
+    });
+    await runtime.flush();
+    editor.commands.setTextSelection(textPosition(editor, "日本語"));
+    press(editor, "J");
+    expect(editor.state.doc.child(0).textContent).toBe("日本語コード");
 
     editor.commands.setContent({
       type: "doc",

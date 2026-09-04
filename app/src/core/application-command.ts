@@ -27,6 +27,8 @@ export type ApplicationCommandId =
   | "application.font"
   | "application.zoom"
   | "application.note_width"
+  | "application.japanese_word_segmentation"
+  | "application.japanese_line_break_segmentation"
   | "application.quit"
   | "application.help";
 
@@ -198,6 +200,20 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "note-width",
     aliases: [],
     description: "ノートの最大表示幅を表示、変更、または解除する",
+    argument: "optional",
+  },
+  {
+    id: "application.japanese_word_segmentation",
+    name: "word-segmentation",
+    aliases: ["word-segment"],
+    description: "日本語word操作の分割方法を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.japanese_line_break_segmentation",
+    name: "line-break-segmentation",
+    aliases: ["line-break"],
+    description: "日本語本文の表示上の分割方法を表示・変更する",
     argument: "optional",
   },
   {

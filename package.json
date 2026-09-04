@@ -52,6 +52,7 @@
     "@tiptap/react": "3.29.0",
     "@tiptap/starter-kit": "3.29.0",
     "@tiptap/y-tiptap": "3.0.7",
+    "budoux": "0.9.1",
     "jittered-fractional-indexing": "1.0.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",

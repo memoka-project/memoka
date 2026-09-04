@@ -703,6 +703,25 @@ textarea {
 }
 
 /*
+ * The configured fine/BudouX projection contributes display-only <wbr>
+ * opportunities. keep-all suppresses arbitrary CJK breaks while overflow-wrap
+ * remains the safety valve for a unit wider than the viewport. Code keeps its
+ * native wrapping behavior.
+ */
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-budoux-textblock {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-budoux-textblock
+  code {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+/*
  * WebKitGTK can use different antialiasing paths for ordinary editable text
  * and text inside a native Table. The difference is most visible as uneven
  * weight on a light canvas, so use one grayscale path for rendered Note text

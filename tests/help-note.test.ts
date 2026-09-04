@@ -86,7 +86,11 @@ describe("managed Memoka help note", () => {
     expect(helpText).toContain("Ctrl-h");
     expect(helpText).toContain("Ctrl-j / Ctrl-m");
     expect(helpText).toContain("行頭からcaret直前まで削除");
-    expect(helpText).toContain("漢字、ひらがな、カタカナ、英数字");
+    expect(helpText).toContain("BudouX文節を基礎");
+    expect(helpText).toContain("日本語の折り返し");
+    expect(helpText).toContain(":word-segmentation");
+    expect(helpText).toContain("line_break_segmentation");
+    expect(helpText).toContain("日本語句読点に接する境界");
     expect(helpText).toContain("直接本文ParagraphのSection化");
     expect(helpText).toContain("兄弟化では表示順を守るため");
     expect(helpText).toContain("一時的な逆変換");

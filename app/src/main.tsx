@@ -12,6 +12,7 @@ import {
   applyApplicationNoteMaxWidth,
   createDefaultApplicationZoomPort,
 } from "./platform/application-appearance";
+import { setJapaneseSegmentationConfiguration } from "./core/japanese-segmentation";
 import "./styles.css";
 
 applyApplicationTheme(document.documentElement, DEFAULT_APPLICATION_THEME_ID);
@@ -25,12 +26,18 @@ void loadApplicationConfig().then(
     fontFamily,
     zoomPercent,
     noteMaxWidthPx,
+    japaneseWordSegmentation,
+    japaneseLineBreakSegmentation,
     waitForMirrorOnExit,
     warning,
   }) => {
     applyApplicationTheme(document.documentElement, theme);
     applyApplicationFont(document.documentElement, fontFamily);
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
+    setJapaneseSegmentationConfiguration({
+      wordSegmentation: japaneseWordSegmentation,
+      lineBreakSegmentation: japaneseLineBreakSegmentation,
+    });
     let appliedZoomPercent = zoomPercent;
     let startupWarning = warning;
     try {
@@ -48,6 +55,8 @@ void loadApplicationConfig().then(
         initialFontFamily={fontFamily}
         initialZoomPercent={appliedZoomPercent}
         initialNoteMaxWidthPx={noteMaxWidthPx}
+        initialJapaneseWordSegmentation={japaneseWordSegmentation}
+        initialJapaneseLineBreakSegmentation={japaneseLineBreakSegmentation}
         keyConfig={config}
         keyConfigWarning={startupWarning}
         waitForMirrorOnExit={waitForMirrorOnExit}

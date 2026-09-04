@@ -280,7 +280,7 @@ export function createMemokaHelpSectionSnapshot(
             [
               rich(code("Ctrl-w")),
               "直前の単語を削除",
-              "空白を後方へ読み飛ばしてから、直前の単語classまたは連続する記号を削除",
+              "空白を後方へ読み飛ばしてから、設定中の日本語word単位または英数字wordを削除",
             ],
             [
               rich(code("Ctrl-t")),
@@ -311,7 +311,18 @@ export function createMemokaHelpSectionSnapshot(
             code("Ctrl-w"),
             "とNormalの",
             code("w / b / e"),
-            "は同じ分類を使います。漢字、ひらがな、カタカナ、英数字とunderscoreをそれぞれ別の連続単位として扱います。濁点などの結合文字と長音・中点などの共有仮名記号は隣の文字へ属し、空白・句読点・記号・emojiは単語外です。",
+            "に加え、",
+            code("d / y / c + motion"),
+            "と",
+            code("iw / aw"),
+            "は同じ単語境界を使います。既定のfineはBudouX文節を基礎に、長い文節を最大10書記素程度の均等な単位へ細分化し、文字種境界と禁則を優先します。budouxは文節をそのまま使い、unicodeは従来の漢字・ひらがな・カタカナ・英数字classを使います。明示的な空白とblock・Cellなどの構造境界は常に分割します。日本語を含まない文字列、および8,192 UTF-16 code unitを超える単一論理行ではUnicode class分類へフォールバックします。",
+          ),
+        ),
+        paragraph(
+          "japanese-line-breaking",
+          rich(
+            bold("日本語の折り返し: "),
+            "Editor本文と本文検索のプレビューでは、既定のfineでBudouX文節と細分化境界を改行候補にします。budouxは文節境界だけ、nativeはブラウザ標準の改行を使います。操作用境界とは独立して変更でき、文書データへ空白やゼロ幅文字は追加しません。インラインコードとCode / Source Block、および8,192 UTF-16 code unitを超える単一text blockは通常のブラウザ折り返しを使います。",
           ),
         ),
         paragraph(
@@ -419,7 +430,7 @@ export function createMemokaHelpSectionSnapshot(
             [
               "行連結",
               rich(code("J / gJ")),
-              "空白を調整して連結／空白を一切調整せず連結",
+              "Jは英語境界に空白を1つ入れ、日本語または日本語句読点に接する境界では空白なしで連結。gJは空白を一切調整せず連結",
             ],
             [
               "Yank",
@@ -622,7 +633,7 @@ export function createMemokaHelpSectionSnapshot(
           ),
           listItem(
             "key-config",
-            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_pxで指定し、0で上限を解除できます。不正な設定は全体を無効にして既定値へ戻します。",
+            "物理Leader、共通cursor移動、Tree操作、Visual-charの文字装飾キー、Tableの移動・Visual Block開始キーはapplication config directoryのconfig.tomlで変更できます。Leader後のカテゴリ文字とContext ActionsのLeader aは固定です。[vim]のwhichwrapはNormal／Visual Charのh/lが論理行端を越えるかを全block共通で制御し、既定値はtrueです。[japanese]のword_segmentationはfine / budoux / unicode、line_break_segmentationはfine / budoux / nativeから選びます。:word-segmentationと:line-break-segmentationでも現在値の確認と即時変更・保存ができます。[shutdown]のwait_for_mirror = falseを指定すると、終了時は正本だけを保存し、mirror生成を次回起動後へ回します。既定値はtrueです。ノートの最大表示幅はnote_max_width_pxで指定し、0で上限を解除できます。不正な設定は全体を無効にして既定値へ戻します。",
           ),
           listItem(
             "color-theme",

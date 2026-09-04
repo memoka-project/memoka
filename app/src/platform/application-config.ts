@@ -19,6 +19,14 @@ import {
   normalizeApplicationZoomPercent,
 } from "../core/application-appearance";
 import { validateVimKeyConfig } from "../vim/input";
+import {
+  DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
+  DEFAULT_JAPANESE_WORD_SEGMENTATION,
+  normalizeJapaneseLineBreakSegmentationMode,
+  normalizeJapaneseWordSegmentationMode,
+  type JapaneseLineBreakSegmentationMode,
+  type JapaneseWordSegmentationMode,
+} from "../core/japanese-segmentation";
 
 interface ApplicationKeyConfigLoadWire {
   readonly configPath: string;
@@ -27,6 +35,8 @@ interface ApplicationKeyConfigLoadWire {
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
+  readonly japaneseWordSegmentation: string;
+  readonly japaneseLineBreakSegmentation: string;
   readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
@@ -38,6 +48,8 @@ export interface LoadedApplicationConfig {
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
+  readonly japaneseWordSegmentation: JapaneseWordSegmentationMode;
+  readonly japaneseLineBreakSegmentation: JapaneseLineBreakSegmentationMode;
   readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
@@ -47,6 +59,12 @@ export interface ApplicationConfigPort {
   readonly saveFontFamily: (fontFamily: string) => Promise<void>;
   readonly saveZoomPercent: (zoomPercent: number) => Promise<void>;
   readonly saveNoteMaxWidthPx: (noteMaxWidthPx: number) => Promise<void>;
+  readonly saveJapaneseWordSegmentation: (
+    mode: JapaneseWordSegmentationMode,
+  ) => Promise<void>;
+  readonly saveJapaneseLineBreakSegmentation: (
+    mode: JapaneseLineBreakSegmentationMode,
+  ) => Promise<void>;
 }
 
 export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
@@ -67,6 +85,16 @@ export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
       if (!isTauriRuntime()) return;
       await invoke("application_note_max_width_px_save", { noteMaxWidthPx });
     },
+    saveJapaneseWordSegmentation: async (mode) => {
+      if (!isTauriRuntime()) return;
+      await invoke("application_japanese_word_segmentation_save", { mode });
+    },
+    saveJapaneseLineBreakSegmentation: async (mode) => {
+      if (!isTauriRuntime()) return;
+      await invoke("application_japanese_line_break_segmentation_save", {
+        mode,
+      });
+    },
   };
 }
 
@@ -79,6 +107,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+      japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
       warning: null,
     };
@@ -98,6 +128,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+      japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
       warning,
     };
@@ -111,6 +143,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+      japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
       warning: loaded.warning,
     };
@@ -137,6 +171,23 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     if (noteMaxWidthPx === null) {
       throw new Error(`不正なノート最大幅です: ${loaded.noteMaxWidthPx}px`);
     }
+    const japaneseWordSegmentation = normalizeJapaneseWordSegmentationMode(
+      loaded.japaneseWordSegmentation,
+    );
+    if (!japaneseWordSegmentation) {
+      throw new Error(
+        `不正な日本語word分割です: ${loaded.japaneseWordSegmentation}`,
+      );
+    }
+    const japaneseLineBreakSegmentation =
+      normalizeJapaneseLineBreakSegmentationMode(
+        loaded.japaneseLineBreakSegmentation,
+      );
+    if (!japaneseLineBreakSegmentation) {
+      throw new Error(
+        `不正な日本語表示分割です: ${loaded.japaneseLineBreakSegmentation}`,
+      );
+    }
     return {
       config,
       configPath: loaded.configPath,
@@ -144,6 +195,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily,
       zoomPercent,
       noteMaxWidthPx,
+      japaneseWordSegmentation,
+      japaneseLineBreakSegmentation,
       waitForMirrorOnExit: loaded.waitForMirrorOnExit,
       warning: loaded.warning,
     };
@@ -157,6 +210,8 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+      japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+      japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
       waitForMirrorOnExit: true,
       warning,
     };

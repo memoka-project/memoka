@@ -24,7 +24,11 @@ import {
   type VimCharacterCellRect,
 } from "./caret-geometry";
 import type { VimCommand, VimMode, VimOperator } from "./input";
-import { classifyVimWordCharacters, type VimWordClass } from "./word-semantics";
+import {
+  normalizedJoinSeparator,
+  segmentVimWordCharacters,
+  type VimWordSegment,
+} from "./word-semantics";
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   type ApplicationKeyConfig,
@@ -473,7 +477,7 @@ interface InsertBackwardUnit {
   readonly to: number;
   readonly character: string;
   readonly kind: "text" | "atom";
-  wordClass: VimWordClass | null;
+  wordClass: VimWordSegment | null;
 }
 
 function insertBackwardUnits(
@@ -521,7 +525,7 @@ function insertBackwardUnits(
       });
     }
   });
-  const classes = classifyVimWordCharacters(
+  const classes = segmentVimWordCharacters(
     units.map((unit) => (unit.kind === "atom" ? " " : unit.character)),
   );
   units.forEach((unit, index) => {
@@ -2907,13 +2911,24 @@ function wordClasses(
   const characters = positions.map((_, index) =>
     characterAt(view, positions, index, lineTo),
   );
-  const classes = classifyVimWordCharacters(characters);
-  let structuralSegment = 0;
-  return classes.map((wordClass, index) => {
-    if (index > 0 && positions[index] !== (positions[index - 1] ?? 0) + 1) {
-      structuralSegment += 1;
+  const hardBoundaryBefore = positions.map(
+    (position, index) =>
+      index > 0 && position !== (positions[index - 1] ?? 0) + 1,
+  );
+  const segments = segmentVimWordCharacters(characters, hardBoundaryBefore);
+  return segments.map((segment, index) => {
+    const position = positions[index];
+    if (position === undefined) return null;
+    const nodeAfter = view.state.doc.resolve(position).nodeAfter;
+    if (
+      nodeAfter &&
+      !nodeAfter.isText &&
+      nodeAfter.isInline &&
+      (nodeAfter.isAtom || nodeAfter.isLeaf)
+    ) {
+      return `inline-atom:${position}`;
     }
-    if (wordClass !== null) return `${wordClass}:${structuralSegment}`;
+    if (segment !== null) return segment;
     const cell = tableCellAtPosition(view, positions[index]);
     // A structurally empty Cell still occupies one Vim word-motion stop. Its
     // fallback cursor has no character to classify, so give it a synthetic
@@ -5175,14 +5190,12 @@ function joinTextEdges(
   const nextText = lineText(view, next);
   const trailingLength = currentText.match(/[\t ]+$/u)?.[0].length ?? 0;
   const leadingLength = nextText.match(/^[\t ]+/u)?.[0].length ?? 0;
+  const left = currentText.slice(0, currentText.length - trailingLength);
+  const right = nextText.slice(leadingLength);
   return {
     from: line.to - trailingLength,
     leadingLength,
-    separator:
-      currentText.slice(0, currentText.length - trailingLength).length > 0 &&
-      nextText.slice(leadingLength).length > 0
-        ? " "
-        : "",
+    separator: normalizedJoinSeparator(left, right),
   };
 }
 

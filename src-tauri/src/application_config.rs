@@ -18,6 +18,10 @@ const DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 0;
 const MIN_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 320;
 const MAX_APPLICATION_NOTE_MAX_WIDTH_PX: u16 = 4096;
 
+const DEFAULT_JAPANESE_WORD_SEGMENTATION: JapaneseWordSegmentation = JapaneseWordSegmentation::Fine;
+const DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION: JapaneseLineBreakSegmentation =
+    JapaneseLineBreakSegmentation::Fine;
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum ApplicationTheme {
@@ -57,6 +61,60 @@ impl ApplicationTheme {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum JapaneseWordSegmentation {
+    Fine,
+    Budoux,
+    Unicode,
+}
+
+impl JapaneseWordSegmentation {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fine" => Some(Self::Fine),
+            "budoux" => Some(Self::Budoux),
+            "unicode" => Some(Self::Unicode),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Fine => "fine",
+            Self::Budoux => "budoux",
+            Self::Unicode => "unicode",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum JapaneseLineBreakSegmentation {
+    Fine,
+    Budoux,
+    Native,
+}
+
+impl JapaneseLineBreakSegmentation {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fine" => Some(Self::Fine),
+            "budoux" => Some(Self::Budoux),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Fine => "fine",
+            Self::Budoux => "budoux",
+            Self::Native => "native",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfigFile {
@@ -67,6 +125,7 @@ struct ApplicationConfigFile {
     leader: Option<String>,
     vim: Option<VimConfigFile>,
     keymap: Option<KeymapConfigFile>,
+    japanese: Option<JapaneseConfigFile>,
     shutdown: Option<ShutdownConfigFile>,
 }
 
@@ -91,6 +150,13 @@ struct ShutdownConfigFile {
     wait_for_mirror: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JapaneseConfigFile {
+    word_segmentation: Option<JapaneseWordSegmentation>,
+    line_break_segmentation: Option<JapaneseLineBreakSegmentation>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationKeyConfigOverride {
@@ -111,6 +177,8 @@ pub struct ApplicationKeyConfigLoadResult {
     font_family: String,
     zoom_percent: u16,
     note_max_width_px: u16,
+    japanese_word_segmentation: JapaneseWordSegmentation,
+    japanese_line_break_segmentation: JapaneseLineBreakSegmentation,
     wait_for_mirror_on_exit: bool,
     warning: Option<String>,
 }
@@ -127,6 +195,8 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
                 zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
                 note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+                japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+                japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
                 wait_for_mirror_on_exit: true,
                 warning: Some(format!(
                     "config.toml: 設定ディレクトリを取得できません: {error}"
@@ -181,6 +251,35 @@ pub fn application_note_max_width_px_save(
     save_application_note_max_width_px(&directory.join("config.toml"), note_max_width_px)
 }
 
+#[tauri::command]
+pub fn application_japanese_word_segmentation_save(
+    app: AppHandle,
+    mode: String,
+) -> Result<(), String> {
+    let mode = JapaneseWordSegmentation::parse(&mode)
+        .ok_or_else(|| format!("word_segmentationはfine、budoux、unicodeのいずれかです: {mode}"))?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_japanese_word_segmentation(&directory.join("config.toml"), mode)
+}
+
+#[tauri::command]
+pub fn application_japanese_line_break_segmentation_save(
+    app: AppHandle,
+    mode: String,
+) -> Result<(), String> {
+    let mode = JapaneseLineBreakSegmentation::parse(&mode).ok_or_else(|| {
+        format!("line_break_segmentationはfine、budoux、nativeのいずれかです: {mode}")
+    })?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    save_japanese_line_break_segmentation(&directory.join("config.toml"), mode)
+}
+
 fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     let config_path = path.display().to_string();
     if !path.exists() {
@@ -191,6 +290,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
             zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
             note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+            japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+            japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
             wait_for_mirror_on_exit: true,
             warning: None,
         };
@@ -232,6 +333,16 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     if let Err(error) = validate_application_note_max_width_px(note_max_width_px) {
         return warning_result(path, error);
     }
+    let japanese_word_segmentation = parsed
+        .japanese
+        .as_ref()
+        .and_then(|value| value.word_segmentation)
+        .unwrap_or(DEFAULT_JAPANESE_WORD_SEGMENTATION);
+    let japanese_line_break_segmentation = parsed
+        .japanese
+        .as_ref()
+        .and_then(|value| value.line_break_segmentation)
+        .unwrap_or(DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION);
     let mut keymap = parsed.keymap;
     let ignored_table_action_picker = keymap
         .as_mut()
@@ -259,6 +370,8 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         font_family,
         zoom_percent,
         note_max_width_px,
+        japanese_word_segmentation,
+        japanese_line_break_segmentation,
         wait_for_mirror_on_exit,
         warning,
     }
@@ -286,6 +399,24 @@ fn save_application_note_max_width_px(path: &Path, note_max_width_px: u16) -> Re
     validate_application_note_max_width_px(note_max_width_px)?;
     update_application_config(path, |document| {
         document["note_max_width_px"] = value(i64::from(note_max_width_px));
+    })
+}
+
+fn save_japanese_word_segmentation(
+    path: &Path,
+    mode: JapaneseWordSegmentation,
+) -> Result<(), String> {
+    update_application_config(path, |document| {
+        document["japanese"]["word_segmentation"] = value(mode.as_str());
+    })
+}
+
+fn save_japanese_line_break_segmentation(
+    path: &Path,
+    mode: JapaneseLineBreakSegmentation,
+) -> Result<(), String> {
+    update_application_config(path, |document| {
+        document["japanese"]["line_break_segmentation"] = value(mode.as_str());
     })
 }
 
@@ -386,6 +517,8 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
         font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
         zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
         note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+        japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
+        japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
         wait_for_mirror_on_exit: true,
         warning: Some(format!(
             "{}: {detail}; 既定設定を使用します",
@@ -398,9 +531,11 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
 mod tests {
     use super::{
         ApplicationTheme, DEFAULT_APPLICATION_FONT_FAMILY, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
-        DEFAULT_APPLICATION_ZOOM_PERCENT, load_application_key_config,
-        save_application_font_family, save_application_note_max_width_px, save_application_theme,
-        save_application_zoom_percent,
+        DEFAULT_APPLICATION_ZOOM_PERCENT, DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
+        DEFAULT_JAPANESE_WORD_SEGMENTATION, JapaneseLineBreakSegmentation,
+        JapaneseWordSegmentation, load_application_key_config, save_application_font_family,
+        save_application_note_max_width_px, save_application_theme, save_application_zoom_percent,
+        save_japanese_line_break_segmentation, save_japanese_word_segmentation,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -418,6 +553,14 @@ mod tests {
             absent.note_max_width_px,
             DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX
         );
+        assert_eq!(
+            absent.japanese_word_segmentation,
+            DEFAULT_JAPANESE_WORD_SEGMENTATION
+        );
+        assert_eq!(
+            absent.japanese_line_break_segmentation,
+            DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION
+        );
         assert!(absent.warning.is_none());
         assert!(!missing.exists());
 
@@ -432,6 +575,10 @@ note_max_width_px = 960
 
 [vim]
 whichwrap = false
+
+[japanese]
+word_segmentation = "budoux"
+line_break_segmentation = "native"
 
 [keymap.shared_navigation]
 "cursor.logical-up" = ["w"]
@@ -458,6 +605,14 @@ wait_for_mirror = false
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
         assert_eq!(loaded.note_max_width_px, 960);
+        assert_eq!(
+            loaded.japanese_word_segmentation,
+            JapaneseWordSegmentation::Budoux
+        );
+        assert_eq!(
+            loaded.japanese_line_break_segmentation,
+            JapaneseLineBreakSegmentation::Native
+        );
         assert_eq!(config.whichwrap, Some(false));
         assert_eq!(
             config
@@ -508,6 +663,10 @@ wait_for_mirror = false
         save_application_font_family(&path, "Noto Serif CJK JP, serif").expect("save font family");
         save_application_zoom_percent(&path, 130).expect("save zoom");
         save_application_note_max_width_px(&path, 880).expect("save note width");
+        save_japanese_word_segmentation(&path, JapaneseWordSegmentation::Unicode)
+            .expect("save word segmentation");
+        save_japanese_line_break_segmentation(&path, JapaneseLineBreakSegmentation::Budoux)
+            .expect("save line break segmentation");
         let updated = fs::read_to_string(&path).expect("read updated config");
         assert!(updated.contains("# personal config"));
         assert!(updated.contains("leader = \";\""));
@@ -516,11 +675,21 @@ wait_for_mirror = false
         assert!(updated.contains("font_family = \"Noto Serif CJK JP, serif\""));
         assert!(updated.contains("zoom_percent = 130"));
         assert!(updated.contains("note_max_width_px = 880"));
+        assert!(updated.contains("word_segmentation = \"unicode\""));
+        assert!(updated.contains("line_break_segmentation = \"budoux\""));
         let loaded = load_application_key_config(&path);
         assert_eq!(loaded.theme, ApplicationTheme::Dayfox);
         assert_eq!(loaded.font_family, "Noto Serif CJK JP, serif");
         assert_eq!(loaded.zoom_percent, 130);
         assert_eq!(loaded.note_max_width_px, 880);
+        assert_eq!(
+            loaded.japanese_word_segmentation,
+            JapaneseWordSegmentation::Unicode
+        );
+        assert_eq!(
+            loaded.japanese_line_break_segmentation,
+            JapaneseLineBreakSegmentation::Budoux
+        );
         assert!(!loaded.wait_for_mirror_on_exit);
     }
 
@@ -591,5 +760,16 @@ wait_for_mirror = false
         let unlimited_note_width = load_application_key_config(&path);
         assert_eq!(unlimited_note_width.note_max_width_px, 0);
         assert!(unlimited_note_width.warning.is_none());
+
+        fs::write(&path, "[japanese]\nword_segmentation = \"unknown\"\n")
+            .expect("write invalid Japanese segmentation");
+        let invalid_segmentation = load_application_key_config(&path);
+        assert!(invalid_segmentation.config.is_none());
+        assert!(
+            invalid_segmentation
+                .warning
+                .expect("Japanese segmentation warning")
+                .contains("word_segmentation")
+        );
     }
 }

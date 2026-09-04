@@ -2,6 +2,7 @@ import { afterEach, beforeEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 import { DEFAULT_APPLICATION_THEME_ID } from "../app/src/core/application-theme";
 import { applyApplicationTheme } from "../app/src/platform/application-theme";
+import { resetJapaneseSegmentationConfiguration } from "../app/src/core/japanese-segmentation";
 
 class ResizeObserverStub implements ResizeObserver {
   observe(): void {}
@@ -52,6 +53,7 @@ Object.defineProperties(Range.prototype, {
 
 beforeEach(() => {
   applyApplicationTheme(document.documentElement, DEFAULT_APPLICATION_THEME_ID);
+  resetJapaneseSegmentationConfiguration();
 });
 
 afterEach(() => {

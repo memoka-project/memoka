@@ -440,7 +440,7 @@ describe("Memoka Workspace search palette", () => {
       source: "ui",
       payload: {
         noteId: runtime.noteId,
-        text: "before highlighted needle after",
+        text: "日本語の文章を before highlighted needle after 快適に編集する",
       },
     });
     const root = document.createElement("div");
@@ -490,6 +490,13 @@ describe("Memoka Workspace search palette", () => {
       expect(
         document.querySelector(".workspace-search-preview-match")?.textContent,
       ).toBe("needle"),
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector(
+          ".workspace-search-preview-document .memoka-budoux-textblock wbr[data-memoka-budoux-break]",
+        ),
+      ).not.toBeNull(),
     );
 
     view.unmount();

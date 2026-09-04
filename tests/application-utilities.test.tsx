@@ -36,6 +36,7 @@ import {
   type ApplicationZoomPort,
 } from "../app/src/platform/application-appearance";
 import { DEFAULT_APPLICATION_FONT_FAMILY } from "../app/src/core/application-appearance";
+import { getJapaneseSegmentationConfiguration } from "../app/src/core/japanese-segmentation";
 
 function createNoteSearchOrigin(): NoteSearchOrigin {
   return {
@@ -96,6 +97,13 @@ function openCommandLine(editor: HTMLElement): HTMLInputElement {
   }) as HTMLInputElement;
 }
 
+function japaneseSegmentationConfigSavers() {
+  return {
+    saveJapaneseWordSegmentation: vi.fn(async () => {}),
+    saveJapaneseLineBreakSegmentation: vi.fn(async () => {}),
+  };
+}
+
 describe("Memoka Application utilities", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -112,6 +120,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         showDebugLine={false}
       />,
@@ -168,6 +177,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         showDebugLine={false}
       />,
@@ -221,6 +231,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         applicationZoom={applicationZoom}
         showDebugLine={false}
@@ -266,6 +277,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         applicationZoom={{ setZoomPercent }}
         showDebugLine={false}
@@ -298,6 +310,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         showDebugLine={false}
       />,
@@ -364,6 +377,7 @@ describe("Memoka Application utilities", () => {
           saveFontFamily,
           saveZoomPercent,
           saveNoteMaxWidthPx,
+          ...japaneseSegmentationConfigSavers(),
         }}
         showDebugLine={false}
       />,
@@ -390,6 +404,85 @@ describe("Memoka Application utilities", () => {
       ).not.toBeNull();
     });
     expect(saveNoteMaxWidthPx).toHaveBeenCalledWith(900);
+    view.unmount();
+  });
+
+  it("changes Japanese operation and display segmentation independently", async () => {
+    const saveJapaneseWordSegmentation = vi.fn(async () => {});
+    const saveJapaneseLineBreakSegmentation = vi.fn(async (mode: string) => {
+      if (mode === "fine") throw new Error("config write failed");
+    });
+    const view = render(
+      <App
+        initialJapaneseWordSegmentation="budoux"
+        initialJapaneseLineBreakSegmentation="native"
+        applicationConfig={{
+          saveTheme: vi.fn(async () => {}),
+          saveFontFamily: vi.fn(async () => {}),
+          saveZoomPercent: vi.fn(async () => {}),
+          saveNoteMaxWidthPx: vi.fn(async () => {}),
+          saveJapaneseWordSegmentation,
+          saveJapaneseLineBreakSegmentation,
+        }}
+        showDebugLine={false}
+      />,
+    );
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+
+    let command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "word-segmentation fine" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() =>
+      expect(saveJapaneseWordSegmentation).toHaveBeenCalledWith("fine"),
+    );
+    expect(getJapaneseSegmentationConfiguration()).toEqual({
+      wordSegmentation: "fine",
+      lineBreakSegmentation: "native",
+    });
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "line-break-segmentation budoux" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() =>
+      expect(saveJapaneseLineBreakSegmentation).toHaveBeenCalledWith("budoux"),
+    );
+    expect(getJapaneseSegmentationConfiguration()).toEqual({
+      wordSegmentation: "fine",
+      lineBreakSegmentation: "budoux",
+    });
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "line-break-segmentation fine" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    await waitFor(() =>
+      expect(
+        screen.getByText(/line-break-segmentation · 保存できませんでした/),
+      ).not.toBeNull(),
+    );
+    expect(getJapaneseSegmentationConfiguration()).toEqual({
+      wordSegmentation: "fine",
+      lineBreakSegmentation: "budoux",
+    });
+
+    command = openCommandLine(editor);
+    fireEvent.change(command, {
+      target: { value: "word-segmentation unknown" },
+    });
+    fireEvent.keyDown(command, { key: "Enter" });
+    expect(screen.getByText(/fine、budoux、unicode/)).not.toBeNull();
+    expect(saveJapaneseWordSegmentation).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

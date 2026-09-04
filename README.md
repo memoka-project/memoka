@@ -138,6 +138,7 @@ corepack pnpm tauri:build
 `Ctrl+=` / `Ctrl++`、`Ctrl+-`、`Ctrl+0`で変更・リセットでき、`:zoom 120`のような直接指定もできます。
 ノートの最大表示幅は`:note-width 1200`のようにCSS pxで指定できます。既定は`1000`で、
 `:note-width off`または`0`で上限を解除します。フォント、Zoom、ノート幅はWorkspaceには依存しません。
+日本語のword操作と表示上の改行方法も独立してアプリケーション全体へ設定できます。
 
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
@@ -147,6 +148,10 @@ note_max_width_px = 1000 # 320〜4096、0は上限なし
 
 [vim]
 whichwrap = true # Normal/Visual Charのh/lで前後の論理行へ移動
+
+[japanese]
+word_segmentation = "fine" # fine/budoux/unicode
+line_break_segmentation = "fine" # fine/budoux/native
 
 [shutdown]
 wait_for_mirror = false
@@ -159,6 +164,12 @@ wait_for_mirror = false
 `note_max_width_px`は行番号gutter、本文padding、すべてのblockを含むノートキャンバス全体の
 最大幅です。Windowがそれより広いときは中央寄せになり、狭いときはWindow幅に追従します。
 `:note-width`だけを実行すると現在値を表示します。表とコードブロックの水平スクロールは従来どおりです。
+
+`:word-segmentation`は`w/b/e`、word operator、`iw/aw`、Insertの`Ctrl-w`で使う日本語境界を変更します。
+`:line-break-segmentation`は本文と本文検索プレビューの表示上の改行候補だけを変更します。既定の`fine`は
+BudouX文節を基礎に長い文節を最大10書記素程度へ細分化します。`budoux`は文節をそのまま使い、操作の
+`unicode`は従来の文字種class、表示の`native`はブラウザ標準へ戻します。どちらのCommandも引数なしで
+現在値を表示し、引数を指定すると即時反映して`config.toml`へ保存します。
 
 終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
 次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。

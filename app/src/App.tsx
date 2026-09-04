@@ -81,6 +81,15 @@ import {
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
 } from "./core/application-appearance";
+import {
+  DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
+  DEFAULT_JAPANESE_WORD_SEGMENTATION,
+  normalizeJapaneseLineBreakSegmentationMode,
+  normalizeJapaneseWordSegmentationMode,
+  setJapaneseSegmentationConfiguration,
+  type JapaneseLineBreakSegmentationMode,
+  type JapaneseWordSegmentationMode,
+} from "./core/japanese-segmentation";
 import type { TiptapEditorAdapter } from "./editor/tiptap-adapter";
 import type { EditorNavigationDestination } from "./core/editor-navigation";
 import type { InternalLinkCompletionSnapshot } from "./editor/internal-link-completion";
@@ -161,6 +170,8 @@ export interface AppProps {
   initialFontFamily?: string;
   initialZoomPercent?: number;
   initialNoteMaxWidthPx?: number;
+  initialJapaneseWordSegmentation?: JapaneseWordSegmentationMode;
+  initialJapaneseLineBreakSegmentation?: JapaneseLineBreakSegmentationMode;
   applicationConfig?: ApplicationConfigPort;
   applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
@@ -182,6 +193,8 @@ export function App({
   initialFontFamily = DEFAULT_APPLICATION_FONT_FAMILY,
   initialZoomPercent = DEFAULT_APPLICATION_ZOOM_PERCENT,
   initialNoteMaxWidthPx = DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+  initialJapaneseWordSegmentation = DEFAULT_JAPANESE_WORD_SEGMENTATION,
+  initialJapaneseLineBreakSegmentation = DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
   applicationConfig: applicationConfigOverride,
   applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
@@ -208,6 +221,11 @@ export function App({
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
   const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
   const [noteMaxWidthPx, setNoteMaxWidthPx] = useState(initialNoteMaxWidthPx);
+  const [japaneseWordSegmentation, setJapaneseWordSegmentation] = useState(
+    initialJapaneseWordSegmentation,
+  );
+  const [japaneseLineBreakSegmentation, setJapaneseLineBreakSegmentation] =
+    useState(initialJapaneseLineBreakSegmentation);
   const [defaultApplicationZoom] = useState(createDefaultApplicationZoomPort);
   const applicationZoom = applicationZoomOverride ?? defaultApplicationZoom;
   const [defaultDesktopWindow] = useState(createDefaultDesktopWindowPort);
@@ -286,6 +304,18 @@ export function App({
   const noteMaxWidthPxRef = useRef(initialNoteMaxWidthPx);
   const persistedNoteMaxWidthPx = useRef(initialNoteMaxWidthPx);
   const noteMaxWidthRequestGeneration = useRef(0);
+  const japaneseWordSegmentationRef = useRef(initialJapaneseWordSegmentation);
+  const persistedJapaneseWordSegmentation = useRef(
+    initialJapaneseWordSegmentation,
+  );
+  const japaneseWordSegmentationRequestGeneration = useRef(0);
+  const japaneseLineBreakSegmentationRef = useRef(
+    initialJapaneseLineBreakSegmentation,
+  );
+  const persistedJapaneseLineBreakSegmentation = useRef(
+    initialJapaneseLineBreakSegmentation,
+  );
+  const japaneseLineBreakSegmentationRequestGeneration = useRef(0);
   const appRoot = useRef<HTMLElement>(null);
   const applicationActiveRef = useRef(true);
   const requestedEditorFocus = useRef<string | null>(null);
@@ -309,6 +339,14 @@ export function App({
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
     refreshApplicationLayout();
   }, [noteMaxWidthPx]);
+  useLayoutEffect(() => {
+    japaneseWordSegmentationRef.current = japaneseWordSegmentation;
+    japaneseLineBreakSegmentationRef.current = japaneseLineBreakSegmentation;
+    setJapaneseSegmentationConfiguration({
+      wordSegmentation: japaneseWordSegmentation,
+      lineBreakSegmentation: japaneseLineBreakSegmentation,
+    });
+  }, [japaneseLineBreakSegmentation, japaneseWordSegmentation]);
 
   const changeApplicationZoom = useCallback(
     async (requestedZoomPercent: number): Promise<void> => {
@@ -386,6 +424,89 @@ export function App({
         setNoteMaxWidthPx(fallback);
         setCommandMessage(
           `:note-width · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig],
+  );
+
+  const changeJapaneseWordSegmentation = useCallback(
+    async (requested: JapaneseWordSegmentationMode): Promise<void> => {
+      if (requested === japaneseWordSegmentationRef.current) {
+        setCommandMessage(`:word-segmentation · ${requested}`);
+        return;
+      }
+      const generation = ++japaneseWordSegmentationRequestGeneration.current;
+      japaneseWordSegmentationRef.current = requested;
+      setJapaneseWordSegmentation(requested);
+      setJapaneseSegmentationConfiguration({
+        wordSegmentation: requested,
+        lineBreakSegmentation: japaneseLineBreakSegmentationRef.current,
+      });
+      setCommandMessage(`:word-segmentation · ${requested}`);
+      try {
+        await applicationConfig.saveJapaneseWordSegmentation(requested);
+        if (generation !== japaneseWordSegmentationRequestGeneration.current) {
+          return;
+        }
+        persistedJapaneseWordSegmentation.current = requested;
+      } catch (cause) {
+        if (generation !== japaneseWordSegmentationRequestGeneration.current) {
+          return;
+        }
+        const fallback = persistedJapaneseWordSegmentation.current;
+        japaneseWordSegmentationRef.current = fallback;
+        setJapaneseWordSegmentation(fallback);
+        setJapaneseSegmentationConfiguration({
+          wordSegmentation: fallback,
+          lineBreakSegmentation: japaneseLineBreakSegmentationRef.current,
+        });
+        setCommandMessage(
+          `:word-segmentation · 保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig],
+  );
+
+  const changeJapaneseLineBreakSegmentation = useCallback(
+    async (requested: JapaneseLineBreakSegmentationMode): Promise<void> => {
+      if (requested === japaneseLineBreakSegmentationRef.current) {
+        setCommandMessage(`:line-break-segmentation · ${requested}`);
+        return;
+      }
+      const generation =
+        ++japaneseLineBreakSegmentationRequestGeneration.current;
+      japaneseLineBreakSegmentationRef.current = requested;
+      setJapaneseLineBreakSegmentation(requested);
+      setJapaneseSegmentationConfiguration({
+        wordSegmentation: japaneseWordSegmentationRef.current,
+        lineBreakSegmentation: requested,
+      });
+      setCommandMessage(`:line-break-segmentation · ${requested}`);
+      try {
+        await applicationConfig.saveJapaneseLineBreakSegmentation(requested);
+        if (
+          generation !== japaneseLineBreakSegmentationRequestGeneration.current
+        ) {
+          return;
+        }
+        persistedJapaneseLineBreakSegmentation.current = requested;
+      } catch (cause) {
+        if (
+          generation !== japaneseLineBreakSegmentationRequestGeneration.current
+        ) {
+          return;
+        }
+        const fallback = persistedJapaneseLineBreakSegmentation.current;
+        japaneseLineBreakSegmentationRef.current = fallback;
+        setJapaneseLineBreakSegmentation(fallback);
+        setJapaneseSegmentationConfiguration({
+          wordSegmentation: japaneseWordSegmentationRef.current,
+          lineBreakSegmentation: fallback,
+        });
+        setCommandMessage(
+          `:line-break-segmentation · 保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
         );
       }
     },
@@ -2180,6 +2301,50 @@ export function App({
           return;
         }
         void changeApplicationNoteMaxWidth(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
+      case "application.japanese_word_segmentation": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(`:word-segmentation · ${japaneseWordSegmentation}`);
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const requested = normalizeJapaneseWordSegmentationMode(argument);
+        if (!requested) {
+          setCommandMessage(
+            `:word-segmentation · fine、budoux、unicodeのいずれかを指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeJapaneseWordSegmentation(requested);
+        queueMicrotask(restoreFocus);
+        return;
+      }
+      case "application.japanese_line_break_segmentation": {
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (argument === null) {
+          setCommandMessage(
+            `:line-break-segmentation · ${japaneseLineBreakSegmentation}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const requested = normalizeJapaneseLineBreakSegmentationMode(argument);
+        if (!requested) {
+          setCommandMessage(
+            `:line-break-segmentation · fine、budoux、nativeのいずれかを指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        void changeJapaneseLineBreakSegmentation(requested);
         queueMicrotask(restoreFocus);
         return;
       }

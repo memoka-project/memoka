@@ -149,28 +149,31 @@ describe("Memoka block editing boundaries", () => {
     destroy();
   });
 
-  it("uses Japanese-aware word runs and Vim separator handling for Ctrl-w", async () => {
+  it("uses BudouX phrases and whitespace boundaries for Ctrl-w", async () => {
     const { destroy, editor, runtime } = await productEditor();
     editor.commands.setContent({
       type: "doc",
       content: [
         {
           type: "paragraph",
-          content: [{ type: "text", text: "漢字ひらがな カタカナ...  " }],
+          content: [
+            { type: "text", text: "日本語の文章を 快適に編集する。  " },
+          ],
         },
       ],
     });
     editor.commands.setTextSelection(
-      textPosition(editor, "漢字") + "漢字ひらがな カタカナ...  ".length,
+      textPosition(editor, "日本語") +
+        "日本語の文章を 快適に編集する。  ".length,
     );
 
     const ctrlW = () => press(editor, "w", { code: "KeyW", ctrlKey: true });
     expect(ctrlW().defaultPrevented).toBe(true);
-    expect(editor.state.doc.textContent).toBe("漢字ひらがな カタカナ");
+    expect(editor.state.doc.textContent).toBe("日本語の文章を 快適に");
     ctrlW();
-    expect(editor.state.doc.textContent).toBe("漢字ひらがな ");
+    expect(editor.state.doc.textContent).toBe("日本語の文章を ");
     ctrlW();
-    expect(editor.state.doc.textContent).toBe("漢字");
+    expect(editor.state.doc.textContent).toBe("日本語の");
     await runtime.flush();
     destroy();
   });
