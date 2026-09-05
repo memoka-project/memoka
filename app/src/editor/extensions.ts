@@ -63,7 +63,7 @@ import {
   BODY_CHUNK_VIEWPORT_CHANGED_EVENT,
   type BodyChunkViewportChangedDetail,
 } from "./body-chunk-viewport-event";
-import { SectionTitleCompositionGuard } from "./section-title-composition";
+import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
 import {
   deriveEditorSectionFoldEntries,
@@ -2345,7 +2345,7 @@ export function productEditorExtensions(
       resolveTitle: options.resolveInternalLinkTitle,
     }),
     SourceBlock,
-    ...(!options.directBodyOnly ? [SectionTitleCompositionGuard] : []),
+    ...(!options.directBodyOnly ? [WebKitGtkCompositionGuard] : []),
     SectionIdentity,
     ...(!options.directBodyOnly ? [BodyChunkViewport, BodyChunking] : []),
     JapaneseLineBreaking,

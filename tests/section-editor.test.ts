@@ -1361,6 +1361,113 @@ describe("Memoka Section editor semantics", () => {
     }
   });
 
+  it("does not split an empty ListItem when WebKitGTK confirms IME input", async () => {
+    const restoreNavigator = emulateWebKitGtkNavigator();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const note = runtime.noteDocument;
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml({
+            type: "bulletList",
+            blockId: createUuidV7(),
+            children: [
+              {
+                type: "listItem",
+                blockId: createUuidV7(),
+                children: [
+                  {
+                    type: "paragraph",
+                    blockId: createUuidV7(),
+                    content: [],
+                  },
+                ],
+              },
+            ],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      editor.commands.setTextSelection(positionOf(editor, "paragraph"));
+      editor.commands.focus();
+
+      composition(editor, "compositionstart");
+      editor.commands.insertContent("リスト");
+      const paragraph = root.querySelector<HTMLElement>("li p");
+      const provisional = Array.from(paragraph?.childNodes ?? []).find(
+        (node): node is Text =>
+          node.nodeType === Node.TEXT_NODE && node.textContent === "リスト",
+      );
+      expect(paragraph).not.toBeNull();
+      expect(provisional).toBeDefined();
+      if (!paragraph || !provisional) {
+        throw new Error("Missing provisional ListItem text");
+      }
+
+      input(editor, "beforeinput", "deleteCompositionText", null, [
+        {
+          startContainer: provisional,
+          startOffset: 0,
+          endContainer: provisional,
+          endOffset: provisional.length,
+        },
+      ]);
+      const sentinel = provisional.previousSibling;
+      expect(sentinel?.textContent).toBe("\u200b");
+      if (!(sentinel instanceof Text)) throw new Error("Missing IME sentinel");
+
+      // Model WebKitGTK's deleteCompositionText phase. Keeping one transient
+      // text node in the paragraph prevents WebKit from rebuilding the empty
+      // ListItem as a split sibling before insertFromComposition arrives.
+      provisional.data = sentinel.data;
+      sentinel.remove();
+      expect(paragraph.textContent).toBe("\u200b");
+      expect(paragraph.isConnected).toBe(true);
+      input(editor, "input", "deleteCompositionText", null);
+      expect(paragraph.textContent).toBe("");
+      expect(paragraph.isConnected).toBe(true);
+
+      paragraph.append(document.createTextNode("リスト"));
+      input(editor, "beforeinput", "insertFromComposition", "リスト");
+      input(editor, "input", "insertFromComposition", "リスト");
+      composition(editor, "compositionend", "リスト");
+      const beforeConfirmation = editor.state.doc;
+      let transactions = 0;
+      editor.on("transaction", () => {
+        transactions += 1;
+      });
+      const confirmationEnter = press(editor, "Enter", {
+        isComposing: false,
+      });
+
+      const list = editor.state.doc.nodeAt(
+        positionOf(editor, "bulletList") - 1,
+      );
+      expect(confirmationEnter.defaultPrevented).toBe(true);
+      expect(transactions).toBe(0);
+      expect(editor.state.doc).toBe(beforeConfirmation);
+      expect(list?.type.name).toBe("bulletList");
+      expect(list?.childCount).toBe(1);
+      expect(list?.firstChild?.textContent).toBe("リスト");
+      expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+      restoreNavigator();
+    }
+  });
+
   it("preserves the mounted Section identity when a rich paste replaces its content", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
