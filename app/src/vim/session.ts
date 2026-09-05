@@ -143,6 +143,19 @@ import {
 
 const largePasteUtf8Encoder = new TextEncoder();
 
+function reportLargePasteGateProfile(
+  phase: string,
+  detail: Record<string, number | boolean>,
+): void {
+  if (
+    typeof process === "undefined" ||
+    process.env.MEMOKA_RUN_LARGE_NOTE_GATE !== "1"
+  ) {
+    return;
+  }
+  console.warn(`large-paste:${phase}`, detail);
+}
+
 function largePlainTextSlice(
   state: EditorState,
   nodes: readonly ProseMirrorNode[],
@@ -1070,6 +1083,7 @@ export class ProductVimSession {
   }
 
   private beginLargePlainTextPaste(view: EditorView, text: string): boolean {
+    const preparationStarted = performance.now();
     this.largePlainTextPasteAbort?.abort();
     const abort = new AbortController();
     this.largePlainTextPasteAbort = abort;
@@ -1090,6 +1104,10 @@ export class ProductVimSession {
     })
       .then(
         (blocks) => {
+          reportLargePasteGateProfile("prepare", {
+            durationMs: performance.now() - preparationStarted,
+            blocks: blocks.length,
+          });
           if (
             this.largePlainTextPasteAbort !== abort ||
             generation !== this.clipboardReadGeneration ||
@@ -1143,6 +1161,7 @@ export class ProductVimSession {
     text: string,
     blocks: readonly string[],
   ): boolean {
+    const started = performance.now();
     if (view.state.selection.$from.parent.type.spec.code) {
       const normalized = text.replace(/\r\n?/gu, "\n");
       if (normalized.length === 0) return false;
@@ -1153,16 +1172,30 @@ export class ProductVimSession {
     if (!paragraph || blocks.length === 0) return false;
     const marks = view.state.selection.$from.marks();
     const blockIds = createUuidV7Batch(blocks.length);
+    const idsCreated = performance.now();
     const nodes = blocks.map((block, index) =>
       paragraph.create(
         { blockId: blockIds[index] },
         block.length > 0 ? view.state.schema.text(block, marks) : null,
       ),
     );
+    const nodesCreated = performance.now();
     const slice = largePlainTextSlice(view.state, nodes);
+    const sliceCreated = performance.now();
     const transaction = view.state.tr.replaceSelection(slice).scrollIntoView();
+    const transactionCreated = performance.now();
     if (!transaction.docChanged) return false;
     view.dispatch(transaction);
+    const dispatched = performance.now();
+    reportLargePasteGateProfile("apply", {
+      idsMs: idsCreated - started,
+      nodesMs: nodesCreated - idsCreated,
+      sliceMs: sliceCreated - nodesCreated,
+      transactionMs: transactionCreated - sliceCreated,
+      dispatchMs: dispatched - transactionCreated,
+      totalMs: dispatched - started,
+      blocks: blocks.length,
+    });
     return true;
   }
 

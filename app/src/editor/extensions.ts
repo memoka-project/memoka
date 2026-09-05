@@ -1495,6 +1495,19 @@ const MemokaImage = Image.extend<
 
 const BLOCK_NODE_NAMES = NOTE_BLOCK_NODE_NAMES;
 
+function reportLargePasteGateExtensionProfile(
+  phase: string,
+  detail: Record<string, number | boolean>,
+): void {
+  if (
+    typeof process === "undefined" ||
+    process.env.MEMOKA_RUN_LARGE_NOTE_GATE !== "1"
+  ) {
+    return;
+  }
+  console.warn(`large-paste:${phase}`, detail);
+}
+
 function mapPastedBlockIdentities(fragment: Fragment): Fragment {
   const children: ProseMirrorNode[] = [];
   fragment.forEach((node) => {
@@ -1635,6 +1648,7 @@ const BodyChunking = Extension.create({
     return [
       new Plugin({
         appendTransaction: (transactions, _oldState, newState) => {
+          const started = performance.now();
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
@@ -1643,6 +1657,7 @@ const BodyChunking = Extension.create({
             transactions,
             (node) => node.type.name === BODY_CHUNK_NODE,
           ).sort((left, right) => right - left);
+          const positionsCollected = performance.now();
           if (positions.length === 0) return null;
           const transaction = newState.tr;
           let changed = false;
@@ -1682,6 +1697,14 @@ const BodyChunking = Extension.create({
               transaction.split(splitPosition, 1, typesAfter);
               changed = true;
             }
+          }
+          if (newState.doc.content.size > 1_000_000 && positions.length > 10) {
+            reportLargePasteGateExtensionProfile("body-chunks", {
+              positionsMs: positionsCollected - started,
+              processMs: performance.now() - positionsCollected,
+              positions: positions.length,
+              changed,
+            });
           }
           return changed ? transaction : null;
         },
@@ -1770,6 +1793,7 @@ const BlockIdentity = Extension.create({
           transformPasted: freshBlockIdsInSlice,
         },
         appendTransaction: (transactions, oldState, newState) => {
+          const started = performance.now();
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
@@ -1789,11 +1813,13 @@ const BlockIdentity = Extension.create({
             newState.doc,
             mapping,
           );
+          const historyMapped = performance.now();
           const changedBlocks = changedNodeEntries(
             newState.doc,
             transactions,
             (node) => BLOCK_NODE_NAMES.has(node.type.name),
           );
+          const changesCollected = performance.now();
           const historicalIdSet = new Set(historicalIds.values());
           const changedIds = new Set<string>();
           const identityAtRisk = changedBlocks.some(({ node, position }) => {
@@ -1808,6 +1834,18 @@ const BlockIdentity = Extension.create({
             // that overwhelmingly common case (especially a huge paste).
             return historicalIdSet.has(currentId);
           });
+          if (
+            newState.doc.content.size > 1_000_000 &&
+            changedBlocks.length > 1_000
+          ) {
+            reportLargePasteGateExtensionProfile("block-identities", {
+              historyMs: historyMapped - started,
+              changesMs: changesCollected - historyMapped,
+              inspectMs: performance.now() - changesCollected,
+              changes: changedBlocks.length,
+              identityAtRisk,
+            });
+          }
           if (!identityAtRisk) return null;
 
           const blocks: Array<{
