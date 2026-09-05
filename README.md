@@ -11,7 +11,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 
 ## 対応環境とインストール
 
-v0.1.5の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
+v0.1.8の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
 Microsoft Store、apt repositoryは提供しません。
 
 ### Linux x86_64
@@ -216,8 +216,10 @@ BudouX文節を基礎に長い文節を最大10書記素程度へ細分化しま
 終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
 次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。
 
-製品コード、テスト、配布Workflowはこのrepositoryだけで完結します。内部仕様、ADR、計画、検証記録、
-release運用文書は公開source treeとは分離して管理しています。
+製品コード、テスト、配布Workflow、現行の規範仕様はこのrepositoryだけで完結します。仕様の入口は
+[`doc/specification.md`](doc/specification.md)です。仕様は固定版の文書ではなく、同じGit commitの
+ソースコードと1対1で更新します。ADR、計画、進捗、手動検証記録、release運用文書は公開source treeとは
+分離して管理しています。
 
 ## データと復旧
 

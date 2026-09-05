@@ -32,8 +32,9 @@
     "release:notices": "node scripts/generate-third-party-notices.mjs",
     "release:verify-appimage": "node scripts/verify-linux-appimage.mjs",
     "test:release-tools": "node scripts/test-linux-appimage-tools.mjs",
+    "spec:check": "node scripts/check-specification.mjs",
     "large-note-gate": "MEMOKA_RUN_LARGE_NOTE_GATE=1 vitest run tests/large-note-gate.test.ts --reporter=verbose",
-    "verify": "corepack pnpm format:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm test:release-tools && cargo test -p memoka-desktop && corepack pnpm build",
+    "verify": "corepack pnpm format:check && corepack pnpm spec:check && corepack pnpm lint && corepack pnpm typecheck && corepack pnpm test && corepack pnpm test:release-tools && cargo test -p memoka-desktop && corepack pnpm build",
     "tauri": "tauri"
   },
   "dependencies": {
