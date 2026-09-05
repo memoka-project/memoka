@@ -6,7 +6,7 @@
 
 ## [0.1.8] - 2026-09-05
 
-- 巨大なplain text貼り付けのUUID乱数生成をbatch化し、変更blockの再検索を省いてLinux release gateを安定化。
+- 巨大なplain text貼り付けのUUID乱数生成をbatch化し、変更blockの再検索と通常文に対する不要なMarkdown全文解析を省いてLinux release gateを安定化。
 
 ## [0.1.7] - 2026-09-05
 

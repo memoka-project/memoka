@@ -348,6 +348,11 @@ export function parseMarkdownNote(
     return null;
   }
   if (!isUuidV7(rootSectionId)) return null;
+  // A complete Note import must start with an ATX H1. Reject ordinary plain
+  // text before invoking Remark: parsing a multi-megabyte non-Markdown paste
+  // only to discover that its first node is a paragraph can block the UI for
+  // tens of seconds on slower machines.
+  if (!mayStartWithAtxH1(markdown)) return null;
 
   const normalized = normalizeMarkdown(markdown);
   if (!normalized.trim()) return null;
@@ -472,6 +477,22 @@ export function parseMarkdownNote(
 
 function normalizeMarkdown(markdown: string): string {
   return markdown.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n");
+}
+
+function mayStartWithAtxH1(markdown: string): boolean {
+  let offset = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
+  while (offset < markdown.length) {
+    const code = markdown.charCodeAt(offset);
+    if (code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      break;
+    }
+    offset += 1;
+  }
+  return (
+    markdown.charCodeAt(offset) === 0x23 &&
+    (markdown.charCodeAt(offset + 1) === 0x20 ||
+      markdown.charCodeAt(offset + 1) === 0x09)
+  );
 }
 
 function markdownHeadingText(

@@ -263,6 +263,19 @@ describe("Memoka explicit Markdown paste parser", () => {
     });
   });
 
+  it("keeps leading blank lines and a BOM valid for whole-note imports", () => {
+    withEditor((editor) => {
+      const parsed = parseMarkdownNote(
+        "\uFEFF\r\n\r\n# Imported note\r\n\r\nBody",
+        editor.schema,
+        "01900000-0000-7000-8000-000000000001",
+      );
+
+      expect(parsed?.title).toBe("Imported note");
+      expect(parsed?.root.child(1).textContent).toBe("Body");
+    });
+  });
+
   it("maps supported Markdown to structured blocks with fresh identities", () => {
     withEditor((editor) => {
       const markdown = [
