@@ -5,9 +5,11 @@
 > 互換性を壊す変更を行う可能性があります。重要なデータには必ず外部のバックアップと世代管理を
 > 用意してください。
 
-Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ローカルファーストのメモ帳です。
-ノートはTreeで整理し、各ノートの本文はSectionと構造化blockとして保存します。Markdownは
-編集用の第二データではなく、選択したデータ領域へ自動生成される可搬mirrorです。
+Memokaは、Vimが手に馴染んでしまいメモ帳では満足できず、Markdownを手で書きたくないVimmerのためのノートアプリです。
+
+- Vimの操作感でMarkdown記法を意識せずにノートを書けます。
+- ノートをツリー構造で整理できます。
+- Markdownを出力します。
 
 ## 対応環境とインストール
 
@@ -19,6 +21,12 @@ Microsoft Store、apt repositoryは提供しません。
 公式binaryとして配布するのはLinux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを
 取得し、同じReleaseの`SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。
 AppImageの更新artifactはTauri Updater用の鍵で署名します。
+
+```bash
+sha256sum --check SHA256SUMS --ignore-missing
+chmod +x Memoka_*_amd64.AppImage
+./Memoka_*_amd64.AppImage
+```
 
 AppImageはホストdesktop sessionのWayland/X11、GTK input method、GIO、GStreamerを利用します。
 Wayland / fcitx5では、環境によって日本語変換候補windowがcaretからずれて表示される既知制約があります。
@@ -107,132 +115,95 @@ corepack pnpm tauri:build
 - application本体: `target\release\memoka.exe`
 - unsigned NSIS installer: `target\release\bundle\nsis\`
 
-復旧CLIも必要な場合は`corepack pnpm cli:build`を実行します。出力は
-`target\release\memoka-cli.exe`です。
+## 設定ファイル
 
-## Markdown互換
-
-明示Markdown貼り付け、空Note titleへの文書貼り付け、Clipboard、可搬mirrorではCommonMark / GFMに加え、
-Obsidianの`==highlight==`とGitHub / Obsidian形式のAlert（Callout）を扱います。GitHubの
-`NOTE` / `TIP` / `IMPORTANT` / `WARNING` / `CAUTION`、Obsidianの標準typeとcustom type、custom title、
-`[!type]+` / `[!type]-`の折り畳み指定を保持します。Alert本文は編集できるようMemoka上では常に展開します。
-`==highlight==`はVisual-charで選択して`m`から新しく設定でき、AlertはInsert modeの空Paragraphで`/`を
-入力してtypeを選ぶことでも作成できます。
-
-Section表示はNormal modeの`zo` / `zO`、`zc` / `zC`、`za` / `zA`で展開、折り畳み、toggleできます。
-この表示状態はWindowごとに保存され、Note本文やMarkdownには書き込みません。折り畳んだ本文も`/`検索の対象で、
-一致へ移動すると必要なSectionが自動展開されます。これは上記AlertのMarkdown折り畳み指定とは別の機能です。
-
-## 画像と添付
-
-file picker、drop、file Clipboardに加え、Linux / WindowsのClipboard上にあるraster画像dataをInsert modeの
-pasteとNormal modeの`p` / `P`で取り込めます。Clipboard画像は安全な寸法を検証してPNGへ正規化し、他の添付と
-同じSHA-256 CASへ保存します。Count付きputでもCAS取り込みは1回だけです。
-
-画像1 blockだけをyankすると、Memoka内部構造、HTML、Markdown、materialize済みfileに加えてOSの画像dataも
-同時に公開します。画像と別blockを一緒にyankした場合は画像dataを公開しません。Normal modeで画像を選択または
-hoverすると右下のhandleをdragして表示幅を変更できます。`:image-width`で現在値を確認し、
-`:image-width 50`または`:image-width 50%`でノート表示幅の10〜100%を指定できます。既定の100%は通常の
-Markdown画像、狭めた画像は幅を保つ限定的な`<img width="50%">`としてClipboardと可搬mirrorへ出力されます。
-
-画像上の`gf`は現在Window、`Ctrl-w gf`は新しいTabPageへ永続的な画像Bufferを開きます。画像Bufferでは元画像を
-拡大せずWindow内へ収めて中央表示し、同じsession中は`Ctrl-o`で開く前の編集位置へ戻れます。画像Bufferは
-Application Window stateとして再起動後にも復元され、`:buffers`では📷付きで選択できます。`gx`は従来どおり
-安全な添付をOS既定applicationで開きます。
-
-## 開発
-
-必要な環境はNode.js、Corepack、Rust、Tauri 2のLinuxまたはWindows向け依存パッケージです。
-
-```bash
-corepack pnpm install --frozen-lockfile
-corepack pnpm tauri:dev
-```
-
-主要な検証は次で実行します。
-
-```bash
-corepack pnpm verify
-corepack pnpm large-note-gate
-corepack pnpm tauri:build
-```
-
-ユーザー設定はapplication config directoryの`config.toml`から読み込みます。カラーテーマは
-[Nightfox](https://github.com/EdenEast/nightfox.nvim)の7テーマから選べます。既定は`nightfox`です。
-`:colorscheme`（`:colo`）はライブプレビュー付きの選択画面を開き、`:colorscheme duskfox`のように
-直接指定することもできます。確定したテーマは次のトップレベル設定へ保存され、Workspaceを切り替えても
-アプリケーション全体で共通です。
-
-`:font`はプリセットまたは任意のCSS `font-family`をライブプレビューして選択します。通常のUIと本文へ
-適用され、コード、行番号、Command-line、デバッグ情報は等幅フォントを維持します。Zoomは
-`Ctrl+=` / `Ctrl++`、`Ctrl+-`、`Ctrl+0`で変更・リセットでき、`:zoom 120`のような直接指定もできます。
-ノートの最大表示幅は`:note-width 1200`のようにCSS pxで指定できます。既定は`1000`で、
-`:note-width off`または`0`で上限を解除します。フォント、Zoom、ノート幅はWorkspaceには依存しません。
-行番号を省略するWindow幅は`:line-number-min-width 480`、Section、List、行番号境界から最初の
-Section縦線までの間隔に共通するインデント幅は`:indent-width 24`のように指定します。日本語のword操作と表示上の改行方法も独立して
-アプリケーション全体へ設定できます。
+ユーザー設定は、TauriがOSごとに解決するapplication config directoryの`config.toml`から読み込みます。
+ファイルがない場合は既定値で起動し、起動するだけではファイルを作成しません。設定commandを確定すると
+必要な項目が保存されます。ファイルを直接編集した場合はMemokaを再起動してください。
 
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
 font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
 zoom_percent = 110 # 50〜200、10%刻み
 note_max_width_px = 1000 # 320〜4096、0は上限なし
-line_number_min_width_px = 480 # 240〜4096、0は狭いWindowでも常に表示
-indent_width_px = 24 # 16〜64、SectionとListに共通の1階層の幅
+line_number_min_width_px = 480 # 240〜4096、0は常に行番号を表示
+indent_width_px = 24 # 16〜64
+leader = ","
 
 [vim]
-whichwrap = true # h/l/w/b/e/W/B/Eで前後の論理行へ移動
+whichwrap = true
 
 [japanese]
 word_segmentation = "fine" # fine/budoux/unicode
 line_break_segmentation = "fine" # fine/budoux/native
 
 [shutdown]
-wait_for_mirror = false
+wait_for_mirror = true
+
+[keymap.shared_navigation]
+"cursor.logical-up" = ["k"]
+"cursor.logical-down" = ["j"]
+
+[keymap.tree_normal]
+"note.create_child" = ["c"]
+
+[keymap.visual_char]
+"selection.format" = ["m"]
+
+[keymap.table]
+"table.next_cell" = ["Tab"]
+"table.previous_cell" = ["Shift+Tab"]
+"mode.visual-block" = ["Ctrl+v"]
 ```
 
-`whichwrap`は全blockで共通です。`false`にするとNormalの`h/l/w/b/e/W/B/E`とVisual Charの
-`h/l/w/b/e`は現在の論理行端で停止します。Tableでは同じ論理行に属するCell間は引き続き
-移動できますが、前後のTable行やTable外へは移動しません。既定値は`true`です。
+主な設定commandは次のとおりです。引数を省略すると現在値または選択画面を表示します。
 
-`note_max_width_px`は行番号gutter、本文padding、すべてのblockを含むノートキャンバス全体の
-最大幅です。Windowがそれより広いときは中央寄せになり、狭いときはWindow幅に追従します。
-`:note-width`だけを実行すると現在値を表示します。表とコードブロックの水平スクロールは従来どおりです。
+| Command                                           | 設定内容                 |
+| ------------------------------------------------- | ------------------------ |
+| `:colorscheme [name]` / `:colo`                   | カラーテーマ             |
+| `:font`                                           | UIと本文のフォント       |
+| `:zoom [50..200]`                                 | アプリケーションの拡大率 |
+| `:note-width [px/off]`                            | ノートの最大表示幅       |
+| `:line-number-min-width [px/off]`                 | 行番号を表示する最小幅   |
+| `:indent-width [16..64]`                          | 共通インデント幅         |
+| `:word-segmentation [mode]` / `:word-segment`     | 日本語の単語分割         |
+| `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行     |
 
-`line_number_min_width_px`より狭いEditor Windowでは行番号gutterを省略して本文領域を広げます。
-`:line-number-min-width off`または`0`で幅による省略を無効にできます。`indent_width_px`はSectionの
-1階層、Listのネスト、List marker、Table、Code Blockを同じ表示グリッドへ揃える設定です。List markerの
-左端は行番号境界または所属Section縦線の次のグリッド線を基準に配置します。Bullet ListとNumbered Listの
-本文位置は共通で、markerから本文までの間隔はインデント設定に連動しない固定の文字幅です。List全体の左方向への
-微調整はインデント幅に比例し、32pxのとき0.5emです。ネストごとに1段ずつ進みます。
-どちらのCommandも引数なしで現在値を表示します。
+カラーテーマには[Nightfox](https://github.com/EdenEast/nightfox.nvim)の7テーマを収録しています。
 
-`:word-segmentation`は`w/b/e`、word operator、`iw/aw`、Insertの`Ctrl-w`で使う日本語境界を変更します。
-`:line-break-segmentation`は本文と本文検索プレビューの表示上の改行候補だけを変更します。既定の`fine`は
-BudouX文節を基礎に長い文節を最大10書記素程度へ細分化します。`budoux`は文節をそのまま使い、操作の
-`unicode`は従来の文字種class、表示の`native`はブラウザ標準へ戻します。どちらのCommandも引数なしで
-現在値を表示し、引数を指定すると即時反映して`config.toml`へ保存します。
+## CLI
 
-終了時は既定で最新のMarkdown mirrorが確定するまで待ちます。正本のCRDT保存後すぐ終了し、mirrorを
-次回起動後の自動生成へ回したい場合だけ、上記の`wait_for_mirror = false`を指定します。
-
-製品コード、テスト、配布Workflow、現行の規範仕様はこのrepositoryだけで完結します。仕様の入口は
-[`doc/specification.md`](doc/specification.md)です。仕様は固定版の文書ではなく、同じGit commitの
-ソースコードと1対1で更新します。ADR、計画、進捗、手動検証記録、release運用文書は公開source treeとは
-分離して管理しています。
-
-## データと復旧
-
-初回起動時にWorkspaceデータ領域を選択します。内部SSOTはその直下の`.memoka/`に保存され、
-人間可読なMarkdown mirrorはデータ領域直下へ自動出力されます。起動時はmanifestと正本のrevisionを
-照合し、一致していれば再生成しません。通常の本文編集では変更Noteだけを更新し、タイトル由来pathが
-変わる操作やmirror破損時にはリンク整合性を保つため全体を再構築します。復旧前には同梱のCLIで検証します。
-通常起動できるMemokaは1プロセスだけです。二重起動した場合、新しいプロセスはWorkspaceを開かず終了し、
-既存Windowを復元して前面へ移動します。
+`memoka-cli`は、Memokaがデータ領域へ出力したportable mirrorの検証と、空のデータ領域への復旧に使用します。
+復旧時はMemokaを終了し、復旧元と復旧先に別のディレクトリを指定してください。
 
 ```bash
 memoka-cli verify --source <portable-mirror-data-area>
 memoka-cli restore --source <portable-mirror-data-area> --target <empty-data-area>
+```
+
+CLIをsourceからbuildするには、repository rootで次を実行します。
+
+```bash
+corepack pnpm cli:build
+```
+
+出力先はLinuxでは`target/release/memoka-cli`、Windowsでは`target\release\memoka-cli.exe`です。
+
+## 開発
+
+必要な環境はNode.js 24 LTS、Corepack、Rust stable、Tauri 2のLinuxまたはWindows向け依存packageです。
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm tauri:dev
+```
+
+主要な検証とbuildは次で実行します。
+
+```bash
+corepack pnpm verify
+corepack pnpm large-note-gate
+corepack pnpm tauri:build
 ```
 
 ## ライセンス

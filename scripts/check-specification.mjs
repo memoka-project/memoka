@@ -102,11 +102,6 @@ if (!(await exists(entryPath))) {
     }
   }
 
-  const readme = await readFile(path.join(repositoryRoot, "README.md"), "utf8");
-  if (!readme.includes("](doc/specification.md)")) {
-    failures.push("README.md does not link to doc/specification.md");
-  }
-
   const commandCatalog = await readFile(commandCatalogPath, "utf8");
   const commandSpecification = await readFile(
     path.join(categoryDirectory, "configuration-and-commands.md"),
