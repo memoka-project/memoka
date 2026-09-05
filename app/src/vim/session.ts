@@ -123,6 +123,11 @@ import {
 import { externalLinkAtPosition } from "./inline-format";
 import { runMarkdownNoteImport } from "./markdown-note-import";
 import { createUuidV7 } from "../core/ids";
+import {
+  BODY_CHUNK_NODE,
+  BODY_CHUNK_TARGET_BLOCKS,
+  BODY_CHUNK_TARGET_BYTES,
+} from "../core/section-model";
 import { isLargePlainTextPaste } from "../editor/large-paste-protocol";
 import { prepareLargePlainTextPaste } from "../editor/large-plain-text-paste";
 import type { StableEditorPosition } from "../core/stable-position";
@@ -135,6 +140,54 @@ import {
   runSectionFoldCommand,
   type SectionFoldAction,
 } from "../editor/section-folding";
+
+const largePasteUtf8Encoder = new TextEncoder();
+
+function largePlainTextSlice(
+  state: EditorState,
+  nodes: readonly ProseMirrorNode[],
+): Slice {
+  const flatSlice = (): Slice => new Slice(Fragment.fromArray(nodes), 0, 0);
+  const { $from, $to } = state.selection;
+  if (
+    !$from.sameParent($to) ||
+    $from.depth < 1 ||
+    $from.node($from.depth - 1).type.name !== BODY_CHUNK_NODE
+  ) {
+    return flatSlice();
+  }
+  const chunk = state.schema.nodes[BODY_CHUNK_NODE];
+  if (!chunk) return flatSlice();
+
+  const chunks: ProseMirrorNode[] = [];
+  let pending: ProseMirrorNode[] = [];
+  let pendingBytes = 0;
+  const flush = (): void => {
+    if (pending.length === 0) return;
+    chunks.push(
+      chunk.create({ chunkId: createUuidV7() }, Fragment.fromArray(pending)),
+    );
+    pending = [];
+    pendingBytes = 0;
+  };
+  for (const node of nodes) {
+    const nodeBytes =
+      largePasteUtf8Encoder.encode(node.textContent).byteLength + 64;
+    if (
+      pending.length > 0 &&
+      (pending.length >= BODY_CHUNK_TARGET_BLOCKS ||
+        pendingBytes + nodeBytes > BODY_CHUNK_TARGET_BYTES)
+    ) {
+      flush();
+    }
+    pending.push(node);
+    pendingBytes += nodeBytes;
+  }
+  flush();
+  return chunks.length > 0
+    ? new Slice(Fragment.fromArray(chunks), 1, 1)
+    : flatSlice();
+}
 
 export interface VimSessionSnapshot {
   mode: VimMode;
@@ -1105,9 +1158,8 @@ export class ProductVimSession {
         block.length > 0 ? view.state.schema.text(block, marks) : null,
       ),
     );
-    const transaction = view.state.tr
-      .replaceSelection(new Slice(Fragment.fromArray(nodes), 0, 0))
-      .scrollIntoView();
+    const slice = largePlainTextSlice(view.state, nodes);
+    const transaction = view.state.tr.replaceSelection(slice).scrollIntoView();
     if (!transaction.docChanged) return false;
     view.dispatch(transaction);
     return true;

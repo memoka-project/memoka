@@ -1779,13 +1779,20 @@ const BlockIdentity = Extension.create({
             transactions,
             (node) => BLOCK_NODE_NAMES.has(node.type.name),
           );
+          const historicalIdSet = new Set(historicalIds.values());
           const changedIds = new Set<string>();
           const identityAtRisk = changedPositions.some((position) => {
             const node = newState.doc.nodeAt(position);
             const currentId = blockIdentity(node);
             if (!node || !currentId || changedIds.has(currentId)) return true;
             changedIds.add(currentId);
-            return !historicalIds.has(position);
+            const historicalId = historicalIds.get(position);
+            if (historicalId) return currentId !== historicalId;
+            // A newly inserted block is already safe when its ID is unique
+            // within the changed range and does not belong to a surviving
+            // historical block. Avoid normalizing the complete NoteDoc for
+            // that overwhelmingly common case (especially a huge paste).
+            return historicalIdSet.has(currentId);
           });
           if (!identityAtRisk) return null;
 

@@ -137,14 +137,16 @@ describe("Memoka structured Clipboard", () => {
     const attached = runtime.editorForTesting("window-1", root, {
       directBodyOnly: false,
     });
-    attached.editor.commands.setTextSelection(
-      firstParagraphPosition(attached.editor),
-    );
+    const paragraphStart = firstParagraphPosition(attached.editor);
+    attached.editor.commands.setTextSelection(paragraphStart);
+    attached.editor.commands.insertContent("beforeafter");
+    attached.editor.commands.setTextSelection(paragraphStart + "before".length);
     attached.editor.commands.focus();
     const text = paragraphPasteFixture({
       paragraphCount: 2_048,
       approximateParagraphBytes: 32,
     });
+    const pastedBlocks = text.split(/(?:\r\n?|\n)+/u);
     runtime.noteDocument.undoManager.clear();
     runtime.noteDocument.undoManager.stopCapturing();
 
@@ -161,7 +163,14 @@ describe("Memoka structured Clipboard", () => {
       if (node.type.name === "paragraph") paragraphs += 1;
       return true;
     });
-    expect(paragraphs).toBe(2_048);
+    expect(paragraphs).toBe(2_050);
+    const body = directBodyJson(attached.editor) as Array<{
+      content?: Array<{ text?: string }>;
+    }>;
+    expect(body[0]?.content?.[0]?.text).toBe("before");
+    expect(body[1]?.content?.[0]?.text).toBe(pastedBlocks[0]);
+    expect(body.at(-2)?.content?.[0]?.text).toBe(pastedBlocks.at(-1));
+    expect(body.at(-1)?.content?.[0]?.text).toBe("after");
     expect(attached.adapter.vimSnapshot.action).toBe(
       "clipboard:paste:large:changed",
     );
@@ -170,7 +179,7 @@ describe("Memoka structured Clipboard", () => {
       attached.editor.view.dom.querySelectorAll("p").length,
     ).toBeLessThanOrEqual(1_536);
     expect(attached.editor.commands.undo()).toBe(true);
-    expect(attached.editor.state.doc.child(1).textContent).toBe("");
+    expect(attached.editor.state.doc.child(1).textContent).toBe("beforeafter");
 
     attached.adapter.destroy();
     runtime.destroy();

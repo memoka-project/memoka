@@ -10,6 +10,7 @@
 - Note表示幅に対する画像幅をmouseまたはcommandで変更し、画像を現在Windowまたは新しいTabで開ける操作を追加。
 - 画像の選択枠、resize handle、配置を整理し、通常時は画像だけを表示するように調整。
 - WebKitGTKで空のListItemへ日本語入力を確定した際、ListItemが分割されて確定文字列の一部が重複する問題を修正。
+- 巨大なplain text貼り付けを事前にBodyChunkへ分割し、不要なblock identity全走査を省いて処理時間とmemory使用量を削減。
 
 ## [0.1.6] - 2026-09-05
 
