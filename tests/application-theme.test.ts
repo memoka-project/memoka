@@ -19,7 +19,7 @@ import {
 } from "../app/src/platform/application-theme";
 
 describe("Memoka application themes", () => {
-  it("ships every official Nightfox variant with stable source palette values", () => {
+  it("ships every Nightfox variant with stable adopted palette values", () => {
     expect(APPLICATION_THEME_IDS).toEqual([
       "nightfox",
       "dayfox",
@@ -44,7 +44,15 @@ describe("Memoka application themes", () => {
       duskfox: ["#232136", "#e0def4", "#569fba"],
       nordfox: ["#2e3440", "#cdcecf", "#81a1c1"],
       terafox: ["#152528", "#e6eaea", "#5a93aa"],
-      carbonfox: ["#161616", "#f2f4f8", "#78a9ff"],
+      carbonfox: ["#171414", "#cac5c4", "#4589ff"],
+    });
+    expect(applicationTheme("carbonfox").palette).toMatchObject({
+      red: "#da1e28",
+      yellow: "#b28600",
+      orange: "#eb6200",
+      green: "#24a148",
+      cyan: "#009d9a",
+      blue: "#4589ff",
     });
   });
 

@@ -1,6 +1,9 @@
 /**
  * Nightfox palette data is derived from EdenEast/nightfox.nvim at commit
  * 4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a (MIT, James Simpson).
+ * Carbonfox adopts the coherent Carbon Design palette proposed in the
+ * unmerged nightfox.nvim PR #487 at commit
+ * b97bb277cf5f5abdf408afc1988a8ea6cf74d2d5.
  *
  * Memoka intentionally consumes the stable palette values, not Neovim
  * highlight groups. Components use the semantic token layer below and never
@@ -274,21 +277,21 @@ const SOURCES: readonly ThemeSource[] = [
     name: "Carbonfox",
     appearance: "dark",
     palette: palette({
-      bg: ["#0c0c0c", "#161616", "#252525", "#353535", "#535353"],
-      fg: ["#f9fbff", "#f2f4f8", "#b6b8bb", "#7a7b7d"],
-      selection: ["#2a2a2a", "#525253"],
-      comment: "#6e6f70",
+      bg: ["#0d0b0b", "#171414", "#262121", "#362f2f", "#544949"],
+      fg: ["#d9d4d3", "#cac5c4", "#8d8989", "#504e4d"],
+      selection: ["#262626", "#393939"],
+      comment: "#5f5b5a",
       accents: [
-        "#282828",
+        "#3c3838",
+        "#da1e28",
+        "#24a148",
+        "#b28600",
+        "#4589ff",
+        "#a56eff",
+        "#009d9a",
+        "#cac5c4",
+        "#eb6200",
         "#ee5396",
-        "#25be6a",
-        "#08bdba",
-        "#78a9ff",
-        "#be95ff",
-        "#33b1ff",
-        "#dfdfe0",
-        "#3ddbd9",
-        "#ff7eb6",
       ],
     }),
   },

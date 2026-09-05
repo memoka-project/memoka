@@ -56,6 +56,9 @@ const nightfoxNotice = `## Bundled color palettes
 Memoka derives its seven built-in color palettes from
 [EdenEast/nightfox.nvim](https://github.com/EdenEast/nightfox.nvim) at commit
 \`4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a\`.
+Carbonfox incorporates the coherent Carbon Design palette proposed in
+[nightfox.nvim PR #487](https://github.com/EdenEast/nightfox.nvim/pull/487) at commit
+\`b97bb277cf5f5abdf408afc1988a8ea6cf74d2d5\`; that pull request was closed without merge.
 
 \`\`\`text
 MIT License

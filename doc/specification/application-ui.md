@@ -145,7 +145,8 @@ List markerは深さに応じて`●、○、■、□、◆、◇`を循環す�
 ## 11. 色とfont
 
 Nightfox系のsemantic color tokenをApplication全体で使用する。対応themeはNightfox、Dayfox、Dawnfox、
-Duskfox、Nordfox、Terafox、Carbonfoxである。
+Duskfox、Nordfox、Terafox、Carbonfoxである。Carbonfoxは暖色を区別できるよう、nightfox.nvimの
+未merge PR #487が提案したCarbon Design paletteを採用する。
 
 太字、斜体、inline code、打ち消し、外部link、内部link、Section title、List markerにsemantic colorを割り当てる。
 Section titleはNoteからの絶対depthで色を決め、H7相当以降はpaletteを循環する。`zf/zF`しても同じSectionの色を変えない。

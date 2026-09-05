@@ -169,7 +169,7 @@ wait_for_mirror = true
 | `:word-segmentation [mode]` / `:word-segment`     | 日本語の単語分割         |
 | `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行     |
 
-カラーテーマには[Nightfox](https://github.com/EdenEast/nightfox.nvim)の7テーマを収録しています。
+カラーテーマには[Nightfox](https://github.com/EdenEast/nightfox.nvim)を基にした7テーマを収録しています。
 
 ## CLI
 
