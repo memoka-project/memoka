@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-05
+
+- Clipboard上の画像dataを貼り付け、画像blockを画像dataとしてyankできるようにし、外部applicationとの画像copy／pasteを強化。
+- Note表示幅に対する画像幅をmouseまたはcommandで変更し、画像を現在Windowまたは新しいTabで開ける操作を追加。
+- 画像の選択枠、resize handle、配置を整理し、通常時は画像だけを表示するように調整。
+- WebKitGTKで空のListItemへ日本語入力を確定した際、ListItemが分割されて確定文字列の一部が重複する問題を修正。
+
 ## [0.1.6] - 2026-09-05
 
 - 空のNote／Section title表示を深さに応じたplaceholder色へ整え、巨大Noteではtitle用走査をSection構造だけに限定。Sectionを同階層へ貼り付ける構造操作も修正。
@@ -61,7 +68,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/memoka-project/memoka/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/memoka-project/memoka/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/memoka-project/memoka/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/memoka-project/memoka/compare/v0.1.3...v0.1.4

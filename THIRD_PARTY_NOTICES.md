@@ -283,6 +283,7 @@ SOFTWARE.
 - bs58@0.5.1 — MIT/Apache-2.0 — https://github.com/Nullus157/bs58-rs
 - bumpalo@3.20.3 — MIT OR Apache-2.0 — https://github.com/fitzgen/bumpalo
 - bytemuck@1.25.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/bytemuck
+- byteorder-lite@0.1.0 — Unlicense OR MIT — https://github.com/image-rs/byteorder-lite
 - byteorder@1.5.0 — Unlicense OR MIT — https://github.com/BurntSushi/byteorder
 - bytes@1.12.1 — MIT — https://github.com/tokio-rs/bytes
 - cairo-rs@0.18.5 — MIT — https://gtk-rs.org/
@@ -297,6 +298,7 @@ SOFTWARE.
 - cfg-expr@0.15.8 — MIT OR Apache-2.0 — https://github.com/EmbarkStudios/cfg-expr
 - cfg-if@1.0.4 — MIT OR Apache-2.0 — https://github.com/rust-lang/cfg-if
 - chrono@0.4.45 — MIT OR Apache-2.0 — https://github.com/chronotope/chrono
+- color_quant@1.1.0 — MIT — https://github.com/image-rs/color_quant.git
 - combine@4.6.7 — MIT — https://github.com/Marwes/combine
 - concurrent-queue@2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/concurrent-queue
 - const-oid@0.10.2 — Apache-2.0 OR MIT — https://github.com/RustCrypto/formats/tree/master/const-oid
@@ -387,6 +389,7 @@ SOFTWARE.
 - getrandom@0.2.17 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
 - getrandom@0.3.4 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
 - getrandom@0.4.3 — MIT OR Apache-2.0 — https://github.com/rust-random/getrandom
+- gif@0.14.2 — MIT OR Apache-2.0 — https://github.com/image-rs/image-gif
 - gio-sys@0.18.1 — MIT — https://gtk-rs.org/
 - gio@0.18.4 — MIT — https://gtk-rs.org/
 - glib-macros@0.18.5 — MIT — https://gtk-rs.org/
@@ -428,6 +431,8 @@ SOFTWARE.
 - ident_case@1.0.1 — MIT/Apache-2.0 — https://github.com/TedDriggs/ident_case
 - idna_adapter@1.2.2 — Apache-2.0 OR MIT — https://docs.rs/crate/idna_adapter/latest
 - idna@1.1.0 — MIT OR Apache-2.0 — https://github.com/servo/rust-url/
+- image-webp@0.2.4 — MIT OR Apache-2.0 — https://github.com/image-rs/image-webp
+- image@0.25.10 — MIT OR Apache-2.0 — https://github.com/image-rs/image
 - indexmap@1.9.3 — Apache-2.0 OR MIT — https://github.com/bluss/indexmap
 - indexmap@2.14.0 — Apache-2.0 OR MIT — https://github.com/indexmap-rs/indexmap
 - infer@0.19.0 — MIT — https://github.com/bojand/infer
@@ -465,6 +470,7 @@ SOFTWARE.
 - minisign-verify@0.2.5 — MIT — https://github.com/jedisct1/rust-minisign-verify
 - miniz_oxide@0.8.9 — MIT OR Zlib OR Apache-2.0 — https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 - mio@1.2.2 — MIT — https://github.com/tokio-rs/mio
+- moxcms@0.8.1 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/moxcms
 - muda@0.19.3 — Apache-2.0 OR MIT — https://github.com/tauri-apps/muda
 - ndk-sys@0.6.0+11769913 — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
 - ndk@0.9.0 — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
@@ -525,6 +531,8 @@ SOFTWARE.
 - proc-macro-error-attr@1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
 - proc-macro-error@1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
 - proc-macro2@1.0.107 — MIT OR Apache-2.0 — https://github.com/dtolnay/proc-macro2
+- pxfm@0.1.30 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/pxfm
+- quick-error@2.0.1 — MIT/Apache-2.0 — http://github.com/tailhook/quick-error
 - quick-xml@0.41.0 — MIT — https://github.com/tafia/quick-xml
 - quote@1.0.47 — MIT OR Apache-2.0 — https://github.com/dtolnay/quote
 - r-efi@5.3.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi/wiki
@@ -699,6 +707,7 @@ SOFTWARE.
 - webview2-com-macros@0.8.1 — MIT — https://github.com/wravery/webview2-rs
 - webview2-com-sys@0.38.2 — MIT — https://github.com/wravery/webview2-rs
 - webview2-com@0.38.2 — MIT — https://github.com/wravery/webview2-rs
+- weezl@0.1.12 — MIT OR Apache-2.0 — https://github.com/image-rs/weezl
 - winapi-i686-pc-windows-gnu@0.4.0 — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
 - winapi-util@0.1.11 — Unlicense OR MIT — https://github.com/BurntSushi/winapi-util
 - winapi-x86_64-pc-windows-gnu@0.4.0 — MIT/Apache-2.0 — https://github.com/retep998/winapi-rs
@@ -776,6 +785,8 @@ SOFTWARE.
 - zerovec@0.11.6 — Unicode-3.0 — https://github.com/unicode-org/icu4x
 - zip@4.6.1 — MIT — https://github.com/zip-rs/zip2.git
 - zmij@1.0.23 — MIT — https://github.com/dtolnay/zmij
+- zune-core@0.5.3 — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image
+- zune-jpeg@0.5.15 — MIT OR Apache-2.0 OR Zlib — https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 - zvariant_derive@5.15.0 — MIT — https://github.com/z-galaxy/zbus/
 - zvariant_utils@4.2.0 — MIT — https://github.com/z-galaxy/zbus/
 - zvariant@5.15.0 — MIT — https://github.com/z-galaxy/zbus/
