@@ -1528,12 +1528,17 @@ export function freshBlockIdsInSlice(slice: Slice): Slice {
   );
 }
 
-function changedNodePositions(
+interface ChangedNodeEntry {
+  readonly node: ProseMirrorNode;
+  readonly position: number;
+}
+
+function changedNodeEntries(
   after: ProseMirrorNode,
   transactions: readonly Transaction[],
   matches: (node: ProseMirrorNode) => boolean,
-): number[] {
-  const positions = new Set<number>();
+): ChangedNodeEntry[] {
+  const entries = new Map<number, ProseMirrorNode>();
   const steps = transactions.flatMap((transaction) =>
     transaction.steps.map((step, index) => ({
       step,
@@ -1546,7 +1551,7 @@ function changedNodePositions(
     const from = Math.max(0, lower - 1);
     const to = Math.min(after.content.size, Math.max(from + 1, upper + 1));
     after.nodesBetween(from, to, (node, position) => {
-      if (matches(node)) positions.add(position);
+      if (matches(node)) entries.set(position, node);
       return true;
     });
   };
@@ -1579,7 +1584,17 @@ function changedNodePositions(
       inspectFinalRange(toFinal.map(from, -1), toFinal.map(to, 1));
     }
   }
-  return [...positions];
+  return [...entries].map(([position, node]) => ({ node, position }));
+}
+
+function changedNodePositions(
+  after: ProseMirrorNode,
+  transactions: readonly Transaction[],
+  matches: (node: ProseMirrorNode) => boolean,
+): number[] {
+  return changedNodeEntries(after, transactions, matches).map(
+    ({ position }) => position,
+  );
 }
 
 function bodyChunkSplitOffsets(node: ProseMirrorNode): number[] {
@@ -1774,15 +1789,14 @@ const BlockIdentity = Extension.create({
             newState.doc,
             mapping,
           );
-          const changedPositions = changedNodePositions(
+          const changedBlocks = changedNodeEntries(
             newState.doc,
             transactions,
             (node) => BLOCK_NODE_NAMES.has(node.type.name),
           );
           const historicalIdSet = new Set(historicalIds.values());
           const changedIds = new Set<string>();
-          const identityAtRisk = changedPositions.some((position) => {
-            const node = newState.doc.nodeAt(position);
+          const identityAtRisk = changedBlocks.some(({ node, position }) => {
             const currentId = blockIdentity(node);
             if (!node || !currentId || changedIds.has(currentId)) return true;
             changedIds.add(currentId);

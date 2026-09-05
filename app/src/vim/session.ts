@@ -122,7 +122,7 @@ import {
 } from "./repeat";
 import { externalLinkAtPosition } from "./inline-format";
 import { runMarkdownNoteImport } from "./markdown-note-import";
-import { createUuidV7 } from "../core/ids";
+import { createUuidV7, createUuidV7Batch } from "../core/ids";
 import {
   BODY_CHUNK_NODE,
   BODY_CHUNK_TARGET_BLOCKS,
@@ -1152,9 +1152,10 @@ export class ProductVimSession {
     const paragraph = view.state.schema.nodes.paragraph;
     if (!paragraph || blocks.length === 0) return false;
     const marks = view.state.selection.$from.marks();
-    const nodes = blocks.map((block) =>
+    const blockIds = createUuidV7Batch(blocks.length);
+    const nodes = blocks.map((block, index) =>
       paragraph.create(
-        { blockId: createUuidV7() },
+        { blockId: blockIds[index] },
         block.length > 0 ? view.state.schema.text(block, marks) : null,
       ),
     );
