@@ -5,6 +5,7 @@ use super::{
     PLAIN_CLIPBOARD_MIME, PreferredClipboardFormats, RichClipboardFormats, TSV_CLIPBOARD_MIME,
     UTF8_PLAIN_CLIPBOARD_MIME, validate_clipboard_size,
 };
+use std::io::Cursor;
 use std::mem::size_of;
 use std::path::Path;
 use std::ptr::{copy_nonoverlapping, null_mut};
@@ -19,11 +20,12 @@ use windows_sys::Win32::System::DataExchange::{
 use windows_sys::Win32::System::Memory::{
     GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
 };
-use windows_sys::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
+use windows_sys::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT};
 use windows_sys::Win32::UI::Shell::{DROPFILES, DragQueryFileW};
 
 const HTML_FORMAT: &str = "HTML Format";
 const PREFERRED_DROP_EFFECT: &str = "Preferred DropEffect";
+const PNG_FORMAT: &str = "PNG";
 const DROPEFFECT_COPY: u32 = 1;
 const CLIPBOARD_OPEN_ATTEMPTS: usize = 12;
 
@@ -55,6 +57,7 @@ pub(super) fn write_rich_clipboard(formats: RichClipboardFormats) -> Result<(), 
 pub(super) fn write_rich_file_clipboard(
     paths: Vec<String>,
     formats: RichClipboardFormats,
+    image_png: Option<Vec<u8>>,
 ) -> Result<(), String> {
     let drop_files = file_drop_payload(&paths)?;
     let clipboard = open_clipboard()?;
@@ -66,6 +69,13 @@ pub(super) fn write_rich_file_clipboard(
                 registered_format(PREFERRED_DROP_EFFECT)?,
                 &DROPEFFECT_COPY.to_le_bytes(),
             )
+        })
+        .and_then(|()| {
+            if let Some(image_png) = &image_png {
+                set_clipboard_bytes(registered_format(PNG_FORMAT)?, image_png)?;
+                set_clipboard_bytes(CF_DIBV5 as u32, &png_to_dibv5(image_png)?)?;
+            }
+            Ok(())
         });
     if let Err(error) = published {
         let _ = empty_clipboard();
@@ -75,12 +85,56 @@ pub(super) fn write_rich_file_clipboard(
     Ok(())
 }
 
+fn png_to_dibv5(png: &[u8]) -> Result<Vec<u8>, String> {
+    use image::GenericImageView;
+    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .map_err(|error| format!("copied PNG is invalid: {error}"))?;
+    let (width, height) = image.dimensions();
+    super::validate_image_dimensions(width as i32, height as i32)?;
+    let rgba = image.to_rgba8();
+    let image_size = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "copied image size overflow".to_owned())?;
+    let mut dib = vec![0_u8; 124 + image_size as usize];
+    write_u32(&mut dib, 0, 124);
+    write_i32(&mut dib, 4, width as i32);
+    write_i32(&mut dib, 8, -(height as i32));
+    write_u16(&mut dib, 12, 1);
+    write_u16(&mut dib, 14, 32);
+    write_u32(&mut dib, 16, 3);
+    write_u32(&mut dib, 20, image_size);
+    write_u32(&mut dib, 40, 0x00ff_0000);
+    write_u32(&mut dib, 44, 0x0000_ff00);
+    write_u32(&mut dib, 48, 0x0000_00ff);
+    write_u32(&mut dib, 52, 0xff00_0000);
+    write_u32(&mut dib, 56, 0x7352_4742);
+    write_u32(&mut dib, 108, 4);
+    for (source, destination) in rgba.pixels().zip(dib[124..].chunks_exact_mut(4)) {
+        destination.copy_from_slice(&[source[2], source[1], source[0], source[3]]);
+    }
+    Ok(dib)
+}
+
+fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn write_i32(bytes: &mut [u8], offset: usize, value: i32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>, String> {
     let internal_format = registered_format(MEMOKA_CLIPBOARD_MIME)?;
     let markdown_format = registered_format(MARKDOWN_CLIPBOARD_MIME)?;
     let html_format = registered_format(HTML_FORMAT)?;
     let raw_html_format = registered_format(HTML_CLIPBOARD_MIME)?;
     let tsv_format = registered_format(TSV_CLIPBOARD_MIME)?;
+    let png_format = registered_format(PNG_FORMAT)?;
     let clipboard = open_clipboard()?;
     let mut available_types = Vec::new();
     let internal = if format_available(internal_format) {
@@ -119,6 +173,12 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
     } else {
         Vec::new()
     };
+    let image_available = format_available(png_format)
+        || format_available(CF_DIBV5 as u32)
+        || format_available(CF_DIB as u32);
+    if image_available {
+        available_types.push("image/png".to_owned());
+    }
     let plain_available = format_available(CF_UNICODETEXT as u32);
     if plain_available {
         available_types.push(PLAIN_CLIPBOARD_MIME.to_owned());
@@ -130,6 +190,7 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
         && html.is_none()
         && tsv.is_none()
         && file_paths.is_empty()
+        && !image_available
         && plain_available
     {
         Some(read_unicode_text()?)
@@ -144,6 +205,7 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
         && tsv.is_none()
         && plain.is_none()
         && file_paths.is_empty()
+        && !image_available
     {
         return Ok(None);
     }
@@ -155,7 +217,88 @@ pub(super) fn read_preferred_clipboard() -> Result<Option<PreferredClipboardForm
         tsv,
         plain,
         file_paths,
+        image_available,
     }))
+}
+
+pub(super) fn read_image_png() -> Result<Option<Vec<u8>>, String> {
+    use image::GenericImageView;
+    let png_format = registered_format(PNG_FORMAT)?;
+    let clipboard = open_clipboard()?;
+    let image = if format_available(png_format) {
+        let bytes = read_global_bytes(png_format, "image/png")?;
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .map_err(|error| format!("Windows PNG Clipboard is invalid: {error}"))?
+    } else if format_available(CF_DIBV5 as u32) {
+        decode_dib(&read_global_bytes(CF_DIBV5 as u32, "CF_DIBV5")?)?
+    } else if format_available(CF_DIB as u32) {
+        decode_dib(&read_global_bytes(CF_DIB as u32, "CF_DIB")?)?
+    } else {
+        drop(clipboard);
+        return Ok(None);
+    };
+    drop(clipboard);
+    let (width, height) = image.dimensions();
+    super::validate_image_dimensions(width as i32, height as i32)?;
+    let mut result = Cursor::new(Vec::new());
+    image
+        .write_to(&mut result, image::ImageFormat::Png)
+        .map_err(|error| format!("cannot normalize Windows Clipboard image: {error}"))?;
+    Ok(Some(result.into_inner()))
+}
+
+fn decode_dib(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    if bytes.len() < 40 {
+        return Err("Windows DIB Clipboard header is truncated".to_owned());
+    }
+    let header_size = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+    if header_size < 40 || header_size > bytes.len() {
+        return Err("Windows DIB Clipboard header size is invalid".to_owned());
+    }
+    let width = i32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    let signed_height = i32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    let planes = u16::from_le_bytes(bytes[12..14].try_into().unwrap());
+    let bits = u16::from_le_bytes(bytes[14..16].try_into().unwrap());
+    let compression = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+    if width <= 0 || signed_height == 0 || planes != 1 || !matches!(bits, 24 | 32) {
+        return Err("Windows DIB Clipboard geometry is unsupported".to_owned());
+    }
+    if !matches!(compression, 0 | 3) {
+        return Err("Windows DIB Clipboard compression is unsupported".to_owned());
+    }
+    let height = signed_height.unsigned_abs();
+    super::validate_image_dimensions(width, height as i32)?;
+    let width = width as u32;
+    let row_bytes = ((u64::from(width) * u64::from(bits) + 31) / 32 * 4) as usize;
+    let pixel_offset = header_size + usize::from(header_size == 40 && compression == 3) * 12;
+    let required = pixel_offset
+        .checked_add(row_bytes.saturating_mul(height as usize))
+        .ok_or_else(|| "Windows DIB Clipboard size overflow".to_owned())?;
+    if required > bytes.len() {
+        return Err("Windows DIB Clipboard pixels are truncated".to_owned());
+    }
+    let mut rgba = image::RgbaImage::new(width, height);
+    let mut any_alpha = false;
+    for y in 0..height {
+        let source_y = if signed_height > 0 { height - 1 - y } else { y };
+        let row = pixel_offset + source_y as usize * row_bytes;
+        for x in 0..width {
+            let offset = row + x as usize * usize::from(bits / 8);
+            let alpha = if bits == 32 { bytes[offset + 3] } else { 255 };
+            any_alpha |= alpha != 0;
+            rgba.put_pixel(
+                x,
+                y,
+                image::Rgba([bytes[offset + 2], bytes[offset + 1], bytes[offset], alpha]),
+            );
+        }
+    }
+    if bits == 32 && !any_alpha {
+        for pixel in rgba.pixels_mut() {
+            pixel.0[3] = 255;
+        }
+    }
+    Ok(image::DynamicImage::ImageRgba8(rgba))
 }
 
 pub(super) fn read_explicit_clipboard(
@@ -485,12 +628,32 @@ fn wide_nul(value: &str) -> Result<Vec<u16>, String> {
 mod tests {
     #[cfg(target_os = "windows")]
     use super::file_drop_payload;
-    use super::{build_cf_html, extract_cf_html_fragment};
+    use super::{build_cf_html, decode_dib, extract_cf_html_fragment, png_to_dibv5};
+    use image::{DynamicImage, GenericImageView, ImageFormat, Rgba, RgbaImage};
+    use std::io::Cursor;
 
     #[test]
     fn cf_html_round_trips_a_unicode_fragment() {
         let payload = build_cf_html("<p>日本語</p>").unwrap();
         assert_eq!(extract_cf_html_fragment(&payload).unwrap(), "<p>日本語</p>");
+    }
+
+    #[test]
+    fn png_and_dibv5_round_trip_preserves_rgba_pixels() {
+        let source = RgbaImage::from_fn(2, 2, |x, y| match (x, y) {
+            (0, 0) => Rgba([255, 0, 0, 255]),
+            (1, 0) => Rgba([0, 255, 0, 128]),
+            (0, 1) => Rgba([0, 0, 255, 64]),
+            _ => Rgba([255, 255, 255, 0]),
+        });
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(source.clone())
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+
+        let decoded = decode_dib(&png_to_dibv5(png.get_ref()).unwrap()).unwrap();
+        assert_eq!(decoded.dimensions(), (2, 2));
+        assert_eq!(decoded.to_rgba8(), source);
     }
 
     #[test]

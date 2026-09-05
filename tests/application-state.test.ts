@@ -5,6 +5,7 @@ import {
   closeTabPage,
   closeWindow,
   createApplicationWindowState,
+  createImageBuffer,
   createNoteBuffer,
   createTabPage,
   focusWindow,
@@ -69,7 +70,7 @@ describe("Memoka Application Window pure state", () => {
     const state = initialState();
 
     expect(state).toMatchObject({
-      schemaVersion: 7,
+      schemaVersion: 8,
       applicationWindowId: "application-window-1",
       activeTabId: "tab-1",
       tabs: [
@@ -126,7 +127,7 @@ describe("Memoka Application Window pure state", () => {
     const migrated = migrateApplicationWindowState(legacy);
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(7);
+    expect(state.schemaVersion).toBe(8);
     expect(state.tabs[0]?.leftSidebar).toMatchObject({
       utility: "tree",
       tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
@@ -149,7 +150,7 @@ describe("Memoka Application Window pure state", () => {
 
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(7);
+    expect(state.schemaVersion).toBe(8);
     expect(state.windows["window-1"]!.view.collapsedSectionIds).toEqual([]);
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
@@ -386,6 +387,22 @@ describe("Memoka Application Window pure state", () => {
     expect(state.buffers).toHaveProperty(`note:${NOTE_A}`);
     expect(state.buffers).toHaveProperty(`note:${NOTE_B}`);
     expect(original.windows["window-1"].bufferId).toBe(`note:${NOTE_A}`);
+  });
+
+  it("persists a canonical image Buffer independently from Note buffers", () => {
+    const attachmentId = "01900000-0000-7000-8000-000000000099";
+    const image = createImageBuffer(attachmentId);
+    const state = openBufferInWindow(initialState(), "window-1", image);
+
+    expect(image).toEqual({
+      id: `image:${attachmentId}`,
+      kind: "image",
+      attachmentId,
+    });
+    expect(state.windows["window-1"]?.bufferId).toBe(image.id);
+    expect(
+      reloadApplicationWindowState(serializeApplicationWindowState(state)),
+    ).toEqual(state);
   });
 
   it("opens a Buffer in an explicit Window without stealing focus when requested", () => {

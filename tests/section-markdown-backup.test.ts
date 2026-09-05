@@ -105,6 +105,7 @@ describe("Memoka Section Markdown backup", () => {
           blockId: imageBlockId,
           attachmentId,
           altText: "diagram",
+          width: 50,
         }),
         blockJson({
           type: "blockquote",
@@ -192,6 +193,9 @@ describe("Memoka Section Markdown backup", () => {
     );
     expect(rootFile).toContain("> [!TIP]+ Backup tip\n> quoted backup");
     expect(rootFile).toContain("\n---\n");
+    expect(rootFile).toContain(
+      `<img src="attachment:${attachmentId}" alt="diagram" width="50%">`,
+    );
     expect(rootFile).not.toContain("child-only body");
     expect(childFile).toContain("child-only body");
     expect(childFile).not.toContain("const section = true;");

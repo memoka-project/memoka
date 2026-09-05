@@ -19,6 +19,7 @@ export type ApplicationCommandId =
   | "editor.paste_markdown"
   | "editor.paste_html"
   | "editor.attach"
+  | "editor.image_width"
   | "workspace.switch"
   | "application.update"
   | "application.version"
@@ -147,6 +148,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     aliases: [],
     description: "ファイルを現在位置へ添付する",
     argument: "none",
+  },
+  {
+    id: "editor.image_width",
+    name: "image-width",
+    aliases: [],
+    description: "現在の画像の表示幅を10〜100%で表示・変更する",
+    argument: "optional",
   },
   {
     id: "workspace.switch",

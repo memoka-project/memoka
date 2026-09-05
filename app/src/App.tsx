@@ -141,6 +141,7 @@ import {
 } from "./platform/desktop-window";
 import {
   createDefaultAttachmentRepository,
+  type AttachmentMetadata,
   type AttachmentRepository,
 } from "./core/attachments";
 import {
@@ -309,6 +310,7 @@ export function App({
   const [shutdownProgress, setShutdownProgress] =
     useState<ApplicationShutdownProgressState | null>(null);
   const [applicationActive, setApplicationActive] = useState(true);
+  const [, setAttachmentLabelRevision] = useState(0);
   const [treeFocusRequest, setTreeFocusRequest] = useState(0);
   const [outlineFocusRequest, setOutlineFocusRequest] = useState(0);
   const editorAdapters = useRef(new Map<string, TiptapEditorAdapter>());
@@ -356,6 +358,13 @@ export function App({
   useLayoutEffect(() => {
     applyApplicationTheme(document.documentElement, themeId);
   }, [themeId]);
+  useEffect(
+    () =>
+      attachmentRepository.subscribe(() =>
+        setAttachmentLabelRevision((revision) => revision + 1),
+      ),
+    [attachmentRepository],
+  );
   useLayoutEffect(() => {
     applyApplicationFont(document.documentElement, fontFamily);
     refreshApplicationLayout();
@@ -2265,6 +2274,43 @@ export function App({
         adapter.chooseAttachmentFiles();
         return;
       }
+      case "editor.image_width": {
+        const adapter = editorAdapters.current.get(effectiveTargetWindowId);
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        if (!adapter) {
+          setCommandMessage(":image-width · 編集可能なBufferがありません");
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const current = adapter.currentImageWidthPercent();
+        if (current === null) {
+          setCommandMessage(
+            ":image-width · 画像にキャレットを合わせてください",
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        if (argument === null) {
+          setCommandMessage(`:image-width · ${current}%`);
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        const match = /^(\d+)%?$/u.exec(argument);
+        const requested = match ? Number(match[1]) : Number.NaN;
+        if (!Number.isInteger(requested) || requested < 10 || requested > 100) {
+          setCommandMessage(
+            `:image-width · 10〜100の整数または%で指定してください: ${argument}`,
+          );
+          queueMicrotask(restoreFocus);
+          return;
+        }
+        adapter.setCurrentImageWidthPercent(requested);
+        setCommandMessage(`:image-width · ${requested}%`);
+        queueMicrotask(restoreFocus);
+        return;
+      }
       case "workspace.switch":
         void chooseAndOpenDataArea().then((changed) => {
           if (changed) setCommandMessage(":switch-workspace · 切り替えました");
@@ -2552,6 +2598,39 @@ export function App({
         : 0;
     const applicationWindowState =
       snapshot.applicationWindow.windows[windowState.windowId];
+    if (windowState.attachmentId !== null) {
+      return (
+        <ImageViewerWindow
+          key={`${windowState.windowId}:${windowState.attachmentId}`}
+          runtime={runtime}
+          attachmentRepository={attachmentRepository}
+          windowId={windowState.windowId}
+          attachmentId={windowState.attachmentId}
+          focused={focused}
+          focusRequest={focusRequest}
+          canApplyFocusRequest={() =>
+            requestedEditorFocus.current === windowState.windowId
+          }
+          onFocusRequestApplied={(request) =>
+            consumeEditorFocusRequest(windowState.windowId, request)
+          }
+          onPointerFocusIntent={() =>
+            markEditorPointerFocus(windowState.windowId)
+          }
+          onFocus={() => reconcileEditorDomFocus(windowState.windowId)}
+          onCommandLine={openCommandLine}
+          onLeaderCommand={executeLeaderCommand}
+          onLeaderResolution={(resolution) =>
+            setCommandMessage(
+              leaderShortcutMessage(resolution, keyConfig.leaderKey),
+            )
+          }
+          onWindowCommand={executeVimWindowCommand}
+          onMessage={setCommandMessage}
+          keyConfig={keyConfig}
+        />
+      );
+    }
     if (windowState.noteId === null) {
       return (
         <EmptyEditorWindow
@@ -2644,6 +2723,9 @@ export function App({
       <ApplicationTabBar
         state={snapshot.applicationWindow}
         notes={snapshot.notes}
+        imageLabel={(attachmentId) =>
+          attachmentRepository.cached(attachmentId)?.originalFilename || "Image"
+        }
         onSwitch={(tabId) => void switchTab(tabId)}
         onCreate={() => void createTab()}
         onClose={(tabId) => void closeTab(tabId)}
@@ -2812,6 +2894,7 @@ export function App({
       ) : workspaceSearch ? (
         <WorkspaceSearchPalette
           runtime={runtime}
+          attachmentRepository={attachmentRepository}
           session={workspaceSearch}
           onClose={() => setWorkspaceSearch(null)}
           focused
@@ -3049,6 +3132,232 @@ function EmptyOutlineNotice({
       <div className="utility-empty" />
       <div className="utility-statusline">OUTLINE</div>
     </aside>
+  );
+}
+
+function ImageViewerWindow({
+  runtime,
+  attachmentRepository,
+  windowId,
+  attachmentId,
+  focused,
+  focusRequest,
+  canApplyFocusRequest,
+  onFocusRequestApplied,
+  onPointerFocusIntent,
+  onFocus,
+  onCommandLine,
+  onLeaderCommand,
+  onLeaderResolution,
+  onWindowCommand,
+  onMessage,
+  keyConfig,
+}: {
+  runtime: CoreRuntime;
+  attachmentRepository: AttachmentRepository;
+  windowId: string;
+  attachmentId: string;
+  focused: boolean;
+  focusRequest: number;
+  canApplyFocusRequest: () => boolean;
+  onFocusRequestApplied: (request: number) => void;
+  onPointerFocusIntent: () => void;
+  onFocus: () => void;
+  onCommandLine: (session: ApplicationCommandLineSession) => void;
+  onLeaderCommand: (
+    command: LeaderActiveCommandId,
+    restoreFocus: () => void,
+  ) => void;
+  onLeaderResolution: (
+    resolution: Exclude<LeaderShortcutResolution, { kind: "execute" }>,
+  ) => void;
+  onWindowCommand: (
+    windowId: string,
+    command: VimWindowCommand,
+  ) => Promise<void>;
+  onMessage: (message: string) => void;
+  keyConfig: ApplicationKeyConfig;
+}) {
+  const root = useRef<HTMLElement>(null);
+  const [prefix, setPrefix] = useState<"" | "g" | "tab" | "leader" | "ctrl-w">(
+    "",
+  );
+  const [metadata, setMetadata] = useState<AttachmentMetadata | null>(() =>
+    attachmentRepository.cached(attachmentId),
+  );
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = (): void => {
+      if (active) {
+        setMetadata(attachmentRepository.cached(attachmentId));
+        setLoadFailed(false);
+      }
+    };
+    const unsubscribe = attachmentRepository.subscribe((ids) => {
+      if (ids.includes(attachmentId)) refresh();
+    });
+    void attachmentRepository.resolve([attachmentId]).then(refresh, () => {
+      if (active) setLoadFailed(true);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [attachmentId, attachmentRepository]);
+
+  useLayoutEffect(() => {
+    const target = root.current;
+    if (!target || !focused) return;
+    target.focus();
+  }, [focused]);
+
+  useEffect(() => {
+    const target = root.current;
+    if (focusRequest <= 0 || !canApplyFocusRequest() || !target) return;
+    target.focus();
+    onFocusRequestApplied(focusRequest);
+  }, [canApplyFocusRequest, focusRequest, onFocusRequestApplied]);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+    const codeKey = event.code.match(/^Key([A-Z])$/u)?.[1]?.toLowerCase();
+    const shortcutKey = codeKey ?? event.key.toLowerCase();
+    if (event.key === "Escape") {
+      setPrefix("");
+      return;
+    }
+    if (
+      EMPTY_WINDOW_MODIFIER_ONLY_KEYS.has(event.key) ||
+      EMPTY_WINDOW_MODIFIER_ONLY_CODE.test(event.code)
+    ) {
+      return;
+    }
+    if (
+      prefix === "" &&
+      event.key === keyConfig.leaderKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey
+    ) {
+      event.preventDefault();
+      setPrefix("leader");
+      return;
+    }
+    if (event.key === ":" && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      setPrefix("");
+      onCommandLine({ restoreFocus: () => root.current?.focus() });
+      return;
+    }
+    if (event.ctrlKey && shortcutKey === "o") {
+      event.preventDefault();
+      setPrefix("");
+      void runtime.returnFromImage(windowId).then((result) => {
+        if (!result.handled) {
+          onMessage("Ctrl-o · 戻り先がありません");
+          root.current?.focus();
+        }
+      });
+      return;
+    }
+    if (event.ctrlKey && shortcutKey === "w") {
+      event.preventDefault();
+      setPrefix("ctrl-w");
+      return;
+    }
+    if (prefix === "ctrl-w") {
+      const command = EMPTY_WINDOW_CTRL_W_COMMANDS[shortcutKey];
+      setPrefix("");
+      if (!command) return;
+      event.preventDefault();
+      void onWindowCommand(windowId, command);
+      return;
+    }
+    if (prefix === "g") {
+      setPrefix("");
+      const command =
+        event.key === "t"
+          ? "tab.next"
+          : event.key === "T"
+            ? "tab.previous"
+            : null;
+      if (!command) return;
+      event.preventDefault();
+      void onWindowCommand(windowId, command);
+      return;
+    }
+    if (prefix === "tab") {
+      const command =
+        EMPTY_WINDOW_TAB_COMMANDS[event.key] ??
+        tabDirectCommandForKey(event.key);
+      setPrefix("");
+      if (!command) return;
+      event.preventDefault();
+      void onWindowCommand(windowId, command);
+      return;
+    }
+    if (prefix === "leader") {
+      setPrefix("");
+      event.preventDefault();
+      const resolution = resolveLeaderShortcut(event.key, "empty-window");
+      if (resolution.kind === "execute") {
+        onLeaderCommand(resolution.command, () => root.current?.focus());
+      } else {
+        onLeaderResolution(resolution);
+      }
+      return;
+    }
+    if (event.key === "g" && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      setPrefix("g");
+      return;
+    }
+    if (event.key === "t" && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      setPrefix("tab");
+    }
+  };
+
+  const filename = metadata?.originalFilename || "Image";
+  const available =
+    metadata?.available === true && metadata.previewable && !loadFailed;
+  return (
+    <article
+      ref={root}
+      className={`editor-window image-viewer-window focus-surface${focused ? " focus-surface--focused" : ""}`}
+      data-window-id={windowId}
+      data-buffer-state="image"
+      data-vim-action={prefix || "image viewer"}
+      data-memoka-focus-surface={`window:${windowId}`}
+      tabIndex={0}
+      onFocusCapture={onFocus}
+      onMouseDownCapture={(event) => {
+        onPointerFocusIntent();
+        focusSurfaceFromPointer(event.target, root.current);
+      }}
+      onKeyDown={handleKeyDown}
+    >
+      <div className="image-viewer-window__body">
+        {available ? (
+          <img
+            src={attachmentRepository.previewUrl(attachmentId) ?? undefined}
+            alt={filename}
+            draggable={false}
+            onError={() => setLoadFailed(true)}
+          />
+        ) : (
+          <div className="image-viewer-window__missing">
+            {metadata === null && !loadFailed
+              ? "画像を確認中…"
+              : "画像が見つからないか、破損しています"}
+          </div>
+        )}
+      </div>
+      <div className="window-statusline">
+        <span className="window-title">{filename}</span>
+      </div>
+    </article>
   );
 }
 
@@ -3427,6 +3736,10 @@ function EditorWindow({
         onCommandPicker({
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
+      onOpenImage: (attachmentId, newTab, origin) =>
+        newTab
+          ? runtime.openImageInNewTab(attachmentId, origin)
+          : runtime.openImage(windowId, attachmentId, origin),
       onApplicationCommand,
       onWindowCommand: (command) => {
         void onWindowCommand(windowId, command);

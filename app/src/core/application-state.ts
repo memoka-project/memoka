@@ -6,7 +6,7 @@ import {
   type WindowViewState as LegacyWindowViewState,
 } from "./window-state";
 
-export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 7;
+export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 8;
 
 export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
 
@@ -65,6 +65,11 @@ export type BufferState =
       id: string;
       kind: "utility";
       utility: UtilityBufferKind;
+    }
+  | {
+      id: string;
+      kind: "image";
+      attachmentId: string;
     };
 
 export interface EditorWindowState {
@@ -144,6 +149,15 @@ export function utilityBufferId(utility: UtilityBufferKind): string {
 
 export function createNoteBuffer(noteId: string): BufferState {
   return { id: noteBufferId(noteId), kind: "note", noteId };
+}
+
+export function imageBufferId(attachmentId: string): string {
+  assertUuidV7(attachmentId, "image buffer attachmentId");
+  return `image:${attachmentId}`;
+}
+
+export function createImageBuffer(attachmentId: string): BufferState {
+  return { id: imageBufferId(attachmentId), kind: "image", attachmentId };
 }
 
 function bufferNoteId(buffer: BufferState | null): string | null {
@@ -682,7 +696,7 @@ export function migrateApplicationWindowState(value: unknown): {
     return { state: value, changed: false };
   }
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 5 && version !== 6) {
+  if (version !== 5 && version !== 6 && version !== 7) {
     return { state: value, changed: false };
   }
   const state = structuredClone(value) as {
@@ -718,8 +732,10 @@ export function migrateApplicationWindowState(value: unknown): {
       }
     }
   }
-  for (const window of Object.values(state.windows ?? {})) {
-    if (window.view) window.view.collapsedSectionIds = [];
+  if (version < 7) {
+    for (const window of Object.values(state.windows ?? {})) {
+      if (window.view) window.view.collapsedSectionIds = [];
+    }
   }
   state.schemaVersion = APPLICATION_WINDOW_STATE_SCHEMA_VERSION;
   return { state, changed: true };
@@ -895,6 +911,7 @@ function validateBufferState(value: unknown): asserts value is BufferState {
     kind?: unknown;
     noteId?: unknown;
     utility?: unknown;
+    attachmentId?: unknown;
   };
   assertNonEmptyId(buffer.id, "buffer id");
   if (buffer.kind === "note") {
@@ -911,6 +928,14 @@ function validateBufferState(value: unknown): asserts value is BufferState {
     }
     if (buffer.id !== utilityBufferId(buffer.utility)) {
       throw new Error(`Utility buffer has a non-canonical id: ${buffer.id}`);
+    }
+    return;
+  }
+  if (buffer.kind === "image") {
+    assertNonEmptyId(buffer.attachmentId, "image buffer attachmentId");
+    assertUuidV7(buffer.attachmentId, "image buffer attachmentId");
+    if (buffer.id !== imageBufferId(buffer.attachmentId)) {
+      throw new Error(`Image buffer has a non-canonical id: ${buffer.id}`);
     }
     return;
   }

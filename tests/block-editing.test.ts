@@ -972,6 +972,30 @@ describe("Memoka block editing boundaries", () => {
     destroy();
   });
 
+  it("uses the selected Image Block frame instead of a text caret", async () => {
+    const { destroy, editor } = await productEditor();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "image",
+          attrs: {
+            src: "/image-stub.svg",
+            alt: "image block stub",
+            attachmentId: "fixture-attachment",
+          },
+        },
+      ],
+    });
+    const image = firstNode(editor, "image");
+    editor.commands.setNodeSelection(image.position);
+
+    expect(
+      measureVimBlockCaretGeometry(editor.view, image.position),
+    ).toBeNull();
+    destroy();
+  });
+
   it("renders a selected Horizontal Rule as one block-sized Vim caret", async () => {
     const { destroy, editor } = await productEditor();
     editor.commands.setContent({

@@ -54,6 +54,7 @@ export const VIM_COMMANDS = [
   "cursor.document-start",
   "cursor.document-end",
   "navigation.follow-link",
+  "navigation.open-image-tab",
   "navigation.open-external-link",
   "navigation.jump-back",
   "navigation.jump-forward",
@@ -253,6 +254,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     gk: "cursor.display-up",
     gg: "cursor.document-start",
     gf: "navigation.follow-link",
+    "Ctrl+wgf": "navigation.open-image-tab",
     gx: "navigation.open-external-link",
     zf: "section.focus-current",
     zF: "section.focus-parent",
@@ -775,7 +777,10 @@ export function advanceVimInput(
 
   const prefixKey = leaderPrefixKey
     ? "leader"
-    : key === "g" && mode !== "insert" && mode !== "replace"
+    : key === "g" &&
+        mode !== "insert" &&
+        mode !== "replace" &&
+        !(state.pending?.kind === "prefix" && state.pending.key === "Ctrl+w")
       ? "g"
       : key === "z" && mode === "normal" && acceptsApplicationKeys
         ? "z"

@@ -10,7 +10,8 @@ import { yXmlTextVisibleText } from "./yxml-text";
 export type WorkspaceSearchScope = "title" | "body";
 export type WorkspaceSearchTarget = "workspace" | "buffers" | "trash";
 export type WorkspaceSearchBlockKind = "body";
-export type WorkspaceSearchResultKind = "title" | WorkspaceSearchBlockKind;
+export type WorkspaceSearchResultKind =
+  "title" | "image" | WorkspaceSearchBlockKind;
 
 export interface WorkspaceSearchSection {
   readonly sectionId: string;
@@ -73,6 +74,7 @@ export interface WorkspaceSearchResult {
   /** Text offset in lineText, used by search result and preview highlights. */
   readonly lineMatchOffset: number;
   readonly query: string;
+  readonly attachmentId?: string;
 }
 
 export interface WorkspaceSearchResponse {

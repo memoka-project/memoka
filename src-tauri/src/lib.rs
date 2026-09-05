@@ -462,6 +462,7 @@ pub fn run() {
         attachment::attachment_batch_commit,
         attachment::attachment_batch_cancel,
         attachment::attachment_import_native_paths,
+        attachment::attachment_import_clipboard_image,
         attachment::attachment_resolve,
         attachment::attachment_open,
         attachment::attachment_copy_files,

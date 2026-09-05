@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceSearchPalette } from "../app/src/components/WorkspaceSearchPalette";
+import {
+  AttachmentRepository,
+  MemoryAttachmentPort,
+} from "../app/src/core/attachments";
 import { readNotePlainText } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
@@ -673,6 +677,62 @@ describe("Memoka Workspace search palette", () => {
       nestedResult.querySelector(".workspace-search-title-hierarchy")
         ?.textContent,
     ).toBe("/");
+
+    view.unmount();
+    runtime.destroy();
+  });
+
+  it("includes persistent Image Buffers with a camera label", async () => {
+    const attachmentRepository = new AttachmentRepository(
+      new MemoryAttachmentPort(),
+      deterministicIds(),
+      () => "2026-09-05T00:00:00.000Z",
+    );
+    const bytes = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0,
+    ]);
+    const [attachment] = await attachmentRepository.importFiles([
+      {
+        name: "diagram.png",
+        type: "image/png",
+        size: bytes.byteLength,
+        slice: (start = 0, end = bytes.byteLength) => ({
+          arrayBuffer: async () => bytes.slice(start, end).buffer,
+        }),
+      } as unknown as File,
+    ]);
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "source note",
+    });
+    await runtime.openImage("window-1", attachment!.attachmentId);
+    const onClose = vi.fn();
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        attachmentRepository={attachmentRepository}
+        session={{
+          windowId: "window-1",
+          scope: "title",
+          target: "buffers",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={onClose}
+      />,
+    );
+    const input = screen.getByRole("combobox", {
+      name: "ワークスペースを検索",
+    });
+    fireEvent.change(input, { target: { value: "diagram" } });
+    const option = await screen.findByRole("option", { name: /diagram\.png/u });
+    expect(option.textContent).toContain("📷");
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(runtime.windows.get("window-1")?.attachmentId).toBe(
+      attachment!.attachmentId,
+    );
 
     view.unmount();
     runtime.destroy();

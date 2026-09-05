@@ -161,6 +161,11 @@ export interface TiptapEditorAdapterOptions {
   onNavigate?: (
     request: EditorNavigationRequest,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
+  onOpenImage?: (
+    attachmentId: string,
+    newTab: boolean,
+    origin: StableEditorPosition | null,
+  ) => unknown | Promise<unknown>;
   onNavigationDestination?: (
     destination: EditorNavigationDestination,
     detail: string,
@@ -382,6 +387,17 @@ export class TiptapEditorAdapter {
             : {},
         );
       },
+      onPasteImage: async (put) => {
+        await this.importClipboardImage(
+          put
+            ? {
+                position: put.position,
+                placement: put.direction,
+                count: put.count,
+              }
+            : {},
+        );
+      },
       onNavigate: options.onNavigate
         ? (intent) => this.handleNavigationIntent(intent)
         : undefined,
@@ -402,6 +418,14 @@ export class TiptapEditorAdapter {
         options.openExternalLink ?? ((href) => externalLinkPort.open(href)),
       onOpenAttachment: options.attachmentRepository
         ? (attachmentId) => options.attachmentRepository!.open(attachmentId)
+        : undefined,
+      onOpenImage: options.onOpenImage
+        ? (attachmentId, newTab) =>
+            options.onOpenImage!(
+              attachmentId,
+              newTab,
+              this.captureStablePosition(),
+            )
         : undefined,
       resolveInternalLinkTitle: options.resolveInternalLinkTitle,
       onMessage: options.onMessage,
@@ -513,6 +537,35 @@ export class TiptapEditorAdapter {
 
   requestInputMethodDeactivation(): void {
     this.vimSession.requestInputMethodDeactivation();
+  }
+
+  currentImageWidthPercent(): number | null {
+    const target = currentImageNode(this.currentEditor.state);
+    if (!target) return null;
+    const width = Number(target.node.attrs.width);
+    return Number.isFinite(width) && width >= 10 && width <= 100
+      ? Math.round(width)
+      : 100;
+  }
+
+  setCurrentImageWidthPercent(width: number): boolean {
+    if (this.currentEditor.isDestroyed) return false;
+    const target = currentImageNode(this.currentEditor.state);
+    if (!target) return false;
+    const normalized = Math.max(10, Math.min(100, Math.round(width)));
+    const current = this.currentImageWidthPercent();
+    if (current === normalized) return true;
+    const document = this.handle.current;
+    if (document.kind !== "note") return false;
+    document.undoManager.stopCapturing();
+    this.currentEditor.view.dispatch(
+      this.currentEditor.state.tr.setNodeMarkup(target.position, undefined, {
+        ...target.node.attrs,
+        width: normalized === 100 ? null : normalized,
+      }),
+    );
+    document.undoManager.stopCapturing();
+    return true;
   }
 
   transformBlock(
@@ -774,6 +827,45 @@ export class TiptapEditorAdapter {
         `添付ファイルを読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`,
       );
       this.currentEditor.commands.focus();
+      return "failed";
+    }
+  }
+
+  async importClipboardImage(
+    target: AttachmentInsertTarget & { count?: number } = {},
+  ): Promise<"changed" | "stale" | "failed"> {
+    const repository = this.options.attachmentRepository;
+    const editor = this.currentEditor;
+    if (!repository || editor.isDestroyed) return "failed";
+    const document = editor.state.doc;
+    const selection = editor.state.selection;
+    try {
+      const attachment = await repository.importClipboardImage();
+      if (!attachment) return "failed";
+      if (
+        editor !== this.currentEditor ||
+        editor.isDestroyed ||
+        (!target.blockId &&
+          (!editor.state.doc.eq(document) ||
+            !editor.state.selection.eq(selection)))
+      ) {
+        this.options.onMessage?.(
+          "Clipboard画像の読み込み中に編集位置が変わったため、本文には挿入しませんでした",
+        );
+        return "stale";
+      }
+      return this.insertImportedAttachments(
+        Array.from(
+          { length: Math.max(1, target.count ?? 1) },
+          () => attachment,
+        ),
+        target,
+      );
+    } catch (error) {
+      this.options.onMessage?.(
+        `Clipboard画像を読み込めませんでした: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      editor.commands.focus();
       return "failed";
     }
   }
@@ -1065,13 +1157,23 @@ export class TiptapEditorAdapter {
         this.currentEditor.schema,
         this.options.resolveInternalLinkTitle,
       );
-      return this.options.attachmentRepository
-        .copyFiles(attachmentIds, {
-          internal: formats[MEMOKA_CLIPBOARD_MIME],
-          html: formats["text/html"],
-          markdown: formats[MARKDOWN_CLIPBOARD_MIME],
-          plain: formats["text/plain"],
-        })
+      const clipboardFormats = {
+        internal: formats[MEMOKA_CLIPBOARD_MIME],
+        html: formats["text/html"],
+        markdown: formats[MARKDOWN_CLIPBOARD_MIME],
+        plain: formats["text/plain"],
+      };
+      const copied = singleImageAttachmentIdFromRegister(register)
+        ? this.options.attachmentRepository.copyFiles(
+            attachmentIds,
+            clipboardFormats,
+            true,
+          )
+        : this.options.attachmentRepository.copyFiles(
+            attachmentIds,
+            clipboardFormats,
+          );
+      return copied
         .then(() => "rich" as const)
         .catch(() =>
           this.clipboard.write(
@@ -1652,6 +1754,26 @@ export class TiptapEditorAdapter {
   };
 }
 
+function currentImageNode(state: Editor["state"]): {
+  node: ProseMirrorNode;
+  position: number;
+} | null {
+  const { selection, doc } = state;
+  const direct = doc.nodeAt(selection.from);
+  if (direct?.type.name === "image") {
+    return { node: direct, position: selection.from };
+  }
+  const after = selection.$from.nodeAfter;
+  if (after?.type.name === "image") {
+    return { node: after, position: selection.from };
+  }
+  const before = selection.$from.nodeBefore;
+  if (before?.type.name === "image") {
+    return { node: before, position: selection.from - before.nodeSize };
+  }
+  return null;
+}
+
 function blockTypeSlashTrigger(options: {
   enabled: () => boolean;
   onTrigger: (blockId: string) => void;
@@ -1706,6 +1828,26 @@ function blockTypeSlashTrigger(options: {
       ];
     },
   });
+}
+
+function singleImageAttachmentIdFromRegister(
+  register: VimRegister,
+): string | null {
+  const slice = "slice" in register ? register.slice : undefined;
+  if (!slice || slice.content.childCount !== 1) return null;
+  let node = slice.content.firstChild;
+  while (
+    node &&
+    ["sectionBody", "bodyChunk"].includes(node.type.name) &&
+    node.childCount === 1
+  ) {
+    node = node.firstChild;
+  }
+  if (!node || node.type.name !== "image") return null;
+  const value = node.attrs.attachmentId;
+  return typeof value === "string" && value !== "attachment:missing"
+    ? value.replace(/^attachment:/u, "")
+    : null;
 }
 
 function attachmentIdsFromRegister(register: VimRegister): string[] {

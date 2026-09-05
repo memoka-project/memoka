@@ -1281,12 +1281,127 @@ const MemokaImage = Image.extend<
   },
   addNodeView() {
     const repository = this.options.repository;
+    const editor = this.editor;
     return ({ node }) => {
       const element = document.createElement("figure");
       element.className = "memoka-image-node";
       element.contentEditable = "false";
       element.draggable = false;
       let unsubscribe: (() => void) | null = null;
+      let resizing: {
+        blockId: string;
+        startX: number;
+        startWidth: number;
+        containerWidth: number;
+        pointerId: number;
+      } | null = null;
+
+      const normalizedWidth = (): number => {
+        const value = Number(node.attrs.width);
+        return Number.isFinite(value) && value >= 10 && value <= 100
+          ? Math.round(value)
+          : 100;
+      };
+
+      const finishResize = (commit: boolean): void => {
+        if (!resizing) return;
+        const pending = resizing;
+        resizing = null;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerCancel);
+        window.removeEventListener("keydown", onResizeKeyDown, true);
+        element.classList.remove("memoka-image-node--resizing");
+        if (!commit) {
+          element.style.width = `${pending.startWidth}%`;
+          element.dataset.imageWidth = String(pending.startWidth);
+          return;
+        }
+        const width = Number.parseInt(element.dataset.imageWidth ?? "100", 10);
+        let position: number | null = null;
+        editor.state.doc.descendants((candidate, candidatePosition) => {
+          if (
+            position === null &&
+            candidate.type.name === "image" &&
+            candidate.attrs.blockId === pending.blockId
+          ) {
+            position = candidatePosition;
+            return false;
+          }
+          return position === null;
+        });
+        if (position === null) {
+          element.style.width = `${pending.startWidth}%`;
+          element.dataset.imageWidth = String(pending.startWidth);
+          return;
+        }
+        const current = editor.state.doc.nodeAt(position);
+        if (!current || current.type.name !== "image") return;
+        editor.view.dispatch(
+          editor.state.tr.setNodeMarkup(position, undefined, {
+            ...current.attrs,
+            width: width >= 100 ? null : width,
+          }),
+        );
+      };
+
+      const onPointerMove = (event: PointerEvent): void => {
+        if (!resizing || event.pointerId !== resizing.pointerId) return;
+        const delta = event.clientX - resizing.startX;
+        const next = Math.max(
+          10,
+          Math.min(
+            100,
+            Math.round(
+              ((resizing.startWidth / 100) * resizing.containerWidth + delta) /
+                resizing.containerWidth /
+                0.01,
+            ),
+          ),
+        );
+        element.style.width = `${next}%`;
+        element.dataset.imageWidth = String(next);
+      };
+      const onPointerUp = (event: PointerEvent): void => {
+        if (resizing && event.pointerId === resizing.pointerId)
+          finishResize(true);
+      };
+      const onPointerCancel = (event: PointerEvent): void => {
+        if (resizing && event.pointerId === resizing.pointerId)
+          finishResize(false);
+      };
+      const onResizeKeyDown = (event: KeyboardEvent): void => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        finishResize(false);
+      };
+
+      const handle = document.createElement("button");
+      handle.type = "button";
+      handle.className = "memoka-image-resize-handle";
+      handle.tabIndex = -1;
+      handle.setAttribute("aria-label", "画像幅を変更");
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || resizing) return;
+        const containerWidth = element.parentElement?.clientWidth ?? 0;
+        const blockId = String(node.attrs.blockId ?? "");
+        if (!containerWidth || !blockId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        resizing = {
+          blockId,
+          startX: event.clientX,
+          startWidth: normalizedWidth(),
+          containerWidth,
+          pointerId: event.pointerId,
+        };
+        element.dataset.imageWidth = String(resizing.startWidth);
+        element.classList.add("memoka-image-node--resizing");
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", onPointerUp);
+        window.addEventListener("pointercancel", onPointerCancel);
+        window.addEventListener("keydown", onResizeKeyDown, true);
+      });
 
       const render = (): void => {
         const attachmentId = String(node.attrs.attachmentId ?? "");
@@ -1312,8 +1427,6 @@ const MemokaImage = Image.extend<
         if (next instanceof HTMLImageElement && previewUrl) {
           next.className = "memoka-image-block";
           next.alt = String(node.attrs.alt ?? metadata?.originalFilename ?? "");
-          if (node.attrs.width)
-            next.style.width = `${Number(node.attrs.width)}px`;
           next.addEventListener(
             "error",
             () => {
@@ -1326,7 +1439,7 @@ const MemokaImage = Image.extend<
               missing.dataset.placeholder = "Missing or damaged Attachment";
               missing.setAttribute("data-memoka-image", "true");
               element.dataset.attachmentState = "missing";
-              element.replaceChildren(missing);
+              element.replaceChildren(missing, handle);
             },
             { once: true },
           );
@@ -1349,7 +1462,10 @@ const MemokaImage = Image.extend<
         );
         element.dataset.attachmentId = attachmentId;
         element.dataset.attachmentState = next.dataset.attachmentState;
-        element.replaceChildren(next);
+        const width = normalizedWidth();
+        element.dataset.imageWidth = String(width);
+        element.style.width = `${width}%`;
+        element.replaceChildren(next, handle);
         requestAttachmentMetadata(repository, attachmentId, render);
       };
       unsubscribe =
@@ -1368,7 +1484,10 @@ const MemokaImage = Image.extend<
           return true;
         },
         ignoreMutation: () => true,
-        destroy: () => unsubscribe?.(),
+        destroy: () => {
+          finishResize(false);
+          unsubscribe?.();
+        },
       };
     };
   },

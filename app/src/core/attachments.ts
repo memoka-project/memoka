@@ -79,6 +79,12 @@ export interface AttachmentPort {
     createdAt: string,
     items: readonly AttachmentNativePathItem[],
   ): Promise<AttachmentBatchResponse>;
+  importClipboardImage(
+    operationId: string,
+    attachmentId: string,
+    createdAt: string,
+    originalFilename: string,
+  ): Promise<AttachmentBatchResponse>;
   resolve(
     attachmentIds: readonly string[],
   ): Promise<readonly AttachmentMetadata[]>;
@@ -87,6 +93,7 @@ export interface AttachmentPort {
   copyFiles(
     attachmentIds: readonly string[],
     formats: AttachmentClipboardFormats,
+    publishImage?: boolean,
   ): Promise<void>;
 }
 
@@ -226,10 +233,30 @@ export class MemoryAttachmentPort implements AttachmentPort {
     batch.chunks.clear();
   }
 
-  async importNativePaths(): Promise<AttachmentBatchResponse> {
+  async importNativePaths(
+    operationId: string,
+    createdAt: string,
+    items: readonly AttachmentNativePathItem[],
+  ): Promise<AttachmentBatchResponse> {
+    void operationId;
+    void createdAt;
+    void items;
     throw new Error(
       "native path attachment import is unavailable in browser mode",
     );
+  }
+
+  async importClipboardImage(
+    operationId: string,
+    attachmentId: string,
+    createdAt: string,
+    originalFilename: string,
+  ): Promise<AttachmentBatchResponse> {
+    void operationId;
+    void attachmentId;
+    void createdAt;
+    void originalFilename;
+    throw new Error("native image Clipboard is unavailable in browser mode");
   }
 
   async resolve(
@@ -264,9 +291,11 @@ export class MemoryAttachmentPort implements AttachmentPort {
   async copyFiles(
     attachmentIds: readonly string[],
     formats: AttachmentClipboardFormats,
+    publishImage = false,
   ): Promise<void> {
     void attachmentIds;
     void formats;
+    void publishImage;
     throw new Error("native file Clipboard is unavailable in browser mode");
   }
 
@@ -317,6 +346,17 @@ export class TauriAttachmentPort implements AttachmentPort {
     });
   }
 
+  async importClipboardImage(
+    operationId: string,
+    attachmentId: string,
+    createdAt: string,
+    originalFilename: string,
+  ): Promise<AttachmentBatchResponse> {
+    return invoke("attachment_import_clipboard_image", {
+      request: { operationId, attachmentId, createdAt, originalFilename },
+    });
+  }
+
   async resolve(
     attachmentIds: readonly string[],
   ): Promise<readonly AttachmentMetadata[]> {
@@ -334,8 +374,13 @@ export class TauriAttachmentPort implements AttachmentPort {
   async copyFiles(
     attachmentIds: readonly string[],
     formats: AttachmentClipboardFormats,
+    publishImage = false,
   ): Promise<void> {
-    return invoke("attachment_copy_files", { attachmentIds, formats });
+    return invoke("attachment_copy_files", {
+      attachmentIds,
+      formats,
+      publishImage,
+    });
   }
 }
 
@@ -471,6 +516,26 @@ export class AttachmentRepository {
     }
   }
 
+  async importClipboardImage(): Promise<AttachmentMetadata | null> {
+    const operationId = this.idFactory();
+    const attachmentId = this.idFactory();
+    const createdAt = this.clock();
+    const stamp = createdAt.replaceAll(/[^0-9]/gu, "").slice(0, 14);
+    try {
+      const response = await this.port.importClipboardImage(
+        operationId,
+        attachmentId,
+        createdAt,
+        `clipboard-image-${stamp}.png`,
+      );
+      this.remember(response.attachments);
+      return response.attachments[0] ?? null;
+    } catch (error) {
+      await this.port.cancelBatch(operationId).catch(() => undefined);
+      throw error;
+    }
+  }
+
   open(attachmentId: string): Promise<void> {
     return this.port.open(attachmentId);
   }
@@ -478,8 +543,11 @@ export class AttachmentRepository {
   copyFiles(
     attachmentIds: readonly string[],
     formats: AttachmentClipboardFormats,
+    publishImage = false,
   ): Promise<void> {
-    return this.port.copyFiles(attachmentIds, formats);
+    return publishImage
+      ? this.port.copyFiles(attachmentIds, formats, true)
+      : this.port.copyFiles(attachmentIds, formats);
   }
 
   private remember(entries: readonly AttachmentMetadata[]): void {

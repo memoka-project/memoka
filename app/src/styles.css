@@ -1371,18 +1371,66 @@ textarea {
 }
 
 .memoka-image-node {
+  position: relative;
   display: flex;
+  max-width: calc(100% - var(--memoka-indent-guide-offset));
   min-height: 64px;
   align-items: center;
   justify-content: center;
-  padding: 10px;
+  margin-left: var(--memoka-indent-guide-offset);
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  background: transparent;
+}
+
+.memoka-image-node:hover,
+.memoka-image-node.ProseMirror-selectednode,
+.memoka-image-node.memoka-visual-line-selected,
+.memoka-image-node--resizing {
+  outline-color: var(--memoka-color-caret-normal);
+}
+
+.memoka-image-node.memoka-visual-line-selected {
+  outline-color: var(--memoka-color-caret-visual);
+}
+
+.memoka-image-node:hover,
+.memoka-image-node--resizing {
+  background: var(--memoka-color-surface-raised);
 }
 
 .memoka-image-block {
   display: block;
+  width: 100%;
   max-width: 100%;
   max-height: 70vh;
   object-fit: contain;
+}
+
+.memoka-image-resize-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: none;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border: 1px solid var(--memoka-color-focus);
+  border-radius: 2px;
+  background: var(--memoka-color-surface-raised);
+  cursor: nwse-resize;
+}
+
+.memoka-image-node:hover .memoka-image-resize-handle,
+.memoka-image-node--resizing .memoka-image-resize-handle {
+  display: block;
+}
+
+.memoka-image-node--resizing {
+  user-select: none;
 }
 
 .memoka-image-stub {
@@ -1392,6 +1440,51 @@ textarea {
 
 .memoka-image-stub::before {
   content: attr(data-placeholder);
+}
+
+.image-viewer-window {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  outline: none;
+}
+
+.image-viewer-window__body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+  padding: 18px;
+  background: var(--memoka-color-canvas);
+}
+
+.image-viewer-window__body img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.image-viewer-window__missing {
+  color: var(--memoka-color-text-subtle);
+  font-size: 13px;
+}
+
+.workspace-search-image-preview {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.workspace-search-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .memoka-attachment-card {
@@ -1427,8 +1520,11 @@ textarea {
 }
 
 .memoka-image-node.ProseMirror-selectednode,
+.memoka-image-node.memoka-visual-line-selected {
+  background: var(--memoka-color-selection);
+}
+
 .memoka-attachment-card.ProseMirror-selectednode,
-.memoka-image-node.memoka-visual-line-selected,
 .memoka-attachment-card.memoka-visual-line-selected {
   border-color: var(--memoka-color-selection-border);
   background: var(--memoka-color-selection);
@@ -2347,6 +2443,14 @@ textarea {
 .memoka-editor .memoka-visual-line-selected:not(.memoka-table-row-selected) {
   background: var(--memoka-color-selection);
   box-shadow: inset 0 0 0 1px var(--memoka-color-selection-border);
+}
+
+.memoka-editor
+  .memoka-image-node.memoka-visual-line-selected:not(
+    .memoka-table-row-selected
+  ) {
+  outline-color: var(--memoka-color-caret-visual);
+  box-shadow: none;
 }
 
 .memoka-editor hr.memoka-visual-line-selected:not(.memoka-table-row-selected) {

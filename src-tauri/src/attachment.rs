@@ -50,6 +50,15 @@ pub(crate) struct AttachmentNativeImportRequest {
     items: Vec<AttachmentNativePathItem>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentClipboardImageImportRequest {
+    operation_id: String,
+    attachment_id: String,
+    created_at: String,
+    original_filename: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachmentMetadata {
@@ -905,6 +914,65 @@ pub(crate) fn attachment_import_native_paths(
 }
 
 #[tauri::command]
+pub(crate) async fn attachment_import_clipboard_image(
+    app: AppHandle,
+    state: State<'_, ProductPersistenceState>,
+    request: AttachmentClipboardImageImportRequest,
+) -> Result<AttachmentBatchResponse, String> {
+    validate_uuid_v7(&request.operation_id, "operation_id").map_err(|error| error.to_string())?;
+    validate_uuid_v7(&request.attachment_id, "attachment_id").map_err(|error| error.to_string())?;
+    validate_filename(&request.original_filename).map_err(|error| error.to_string())?;
+    if request.created_at.is_empty() || request.created_at.len() > 64 {
+        return Err("created_at must be a non-empty timestamp".to_owned());
+    }
+    let bytes = crate::clipboard::read_image_png(app.clone())
+        .await?
+        .ok_or_else(|| "Clipboard does not contain an image".to_owned())?;
+    validate_file_size(bytes.len() as u64).map_err(|error| error.to_string())?;
+    state
+        .with_store(&app, |store| {
+            let batch = AttachmentBatchBeginRequest {
+                operation_id: request.operation_id.clone(),
+                created_at: request.created_at.clone(),
+                items: vec![AttachmentBatchItemInput {
+                    attachment_id: request.attachment_id.clone(),
+                    original_filename: request.original_filename.clone(),
+                    declared_mime_type: "image/png".to_owned(),
+                    expected_size: bytes.len() as u64,
+                }],
+            };
+            attachment_batch_begin_store(store, &batch)?;
+            let imported = (|| {
+                if bytes.is_empty() {
+                    write_chunk_store(
+                        store,
+                        &request.operation_id,
+                        &request.attachment_id,
+                        0,
+                        &[],
+                    )?;
+                } else {
+                    for (index, chunk) in bytes.chunks(MAX_CHUNK_BYTES).enumerate() {
+                        write_chunk_store(
+                            store,
+                            &request.operation_id,
+                            &request.attachment_id,
+                            (index * MAX_CHUNK_BYTES) as u64,
+                            chunk,
+                        )?;
+                    }
+                }
+                attachment_batch_commit_store(store, &request.operation_id)
+            })();
+            if imported.is_err() {
+                let _ = attachment_batch_cancel_store(store, &request.operation_id);
+            }
+            imported
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn attachment_resolve(
     app: AppHandle,
     state: State<'_, ProductPersistenceState>,
@@ -958,24 +1026,57 @@ pub(crate) async fn attachment_copy_files(
     state: State<'_, ProductPersistenceState>,
     attachment_ids: Vec<String>,
     formats: crate::clipboard::RichClipboardFormats,
+    publish_image: bool,
 ) -> Result<(), String> {
     if attachment_ids.is_empty() || attachment_ids.len() > MAX_BATCH_FILES {
         return Err(format!(
             "file Clipboard requires 1..={MAX_BATCH_FILES} attachments"
         ));
     }
-    let paths = state
+    let (paths, image_png) = state
         .with_store(&app, |store| {
-            attachment_ids
+            let paths = attachment_ids
                 .iter()
                 .map(|attachment_id| {
                     materialize_attachment(store, attachment_id)
                         .map(|(_, path)| path.to_string_lossy().into_owned())
                 })
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, _>>()?;
+            let image_png = if publish_image && attachment_ids.len() == 1 {
+                let (_, bytes) = protocol_response_store(store, &attachment_ids[0])?;
+                Some(normalize_image_png(&bytes)?)
+            } else {
+                None
+            };
+            Ok((paths, image_png))
         })
         .map_err(|error| error.to_string())?;
-    crate::clipboard::write_rich_file_paths(app, paths, formats).await
+    crate::clipboard::write_rich_file_paths(app, paths, formats, image_png).await
+}
+
+fn normalize_image_png(bytes: &[u8]) -> Result<Vec<u8>, PersistenceError> {
+    use image::GenericImageView;
+    let image = image::load_from_memory(bytes).map_err(|error| {
+        PersistenceError::InvalidInput(format!("attachment image cannot be decoded: {error}"))
+    })?;
+    let (width, height) = image.dimensions();
+    if width == 0
+        || height == 0
+        || width > 32_768
+        || height > 32_768
+        || u64::from(width).saturating_mul(u64::from(height)) > 100_000_000
+    {
+        return Err(PersistenceError::InvalidInput(
+            "attachment image dimensions are unsafe".to_owned(),
+        ));
+    }
+    let mut output = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|error| {
+            PersistenceError::InvalidInput(format!("attachment image cannot be encoded: {error}"))
+        })?;
+    Ok(output.into_inner())
 }
 
 pub(crate) fn attachment_protocol_response(

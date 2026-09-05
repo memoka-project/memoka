@@ -45,6 +45,7 @@ pub(crate) struct PreferredClipboardFormats {
     tsv: Option<String>,
     plain: Option<String>,
     file_paths: Vec<String>,
+    image_available: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -202,13 +203,14 @@ fn write_linux_rich_clipboard(formats: RichClipboardFormats) -> Result<(), Strin
         .into_iter()
         .map(|(mime_type, content)| (mime_type.to_owned(), content.to_owned()))
         .collect::<Vec<_>>();
-    write_linux_clipboard_payloads(payloads, None, "rich")
+    write_linux_clipboard_payloads(payloads, None, None, "rich")
 }
 
 #[cfg(target_os = "linux")]
 fn write_linux_clipboard_payloads(
     payloads: Vec<(String, String)>,
     uri_payload: Option<Vec<String>>,
+    image: Option<gdk_pixbuf::Pixbuf>,
     ownership_kind: &str,
 ) -> Result<(), String> {
     let mut targets = payloads
@@ -222,8 +224,24 @@ fn write_linux_clipboard_payloads(
     if let Some(uri_info) = uri_info {
         targets.extend(linux_uri_target_entries(uri_info));
     }
+    let image_info = image
+        .as_ref()
+        .map(|_| payloads.len() as u32 + u32::from(uri_info.is_some()));
+    if let Some(image_info) = image_info {
+        targets.push(gtk::TargetEntry::new(
+            "image/png",
+            gtk::TargetFlags::empty(),
+            image_info,
+        ));
+    }
     let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
     let wrote = clipboard.set_with_data(&targets, move |_clipboard, selection, index| {
+        if image_info == Some(index) {
+            if let Some(image) = &image {
+                selection.set_pixbuf(image);
+            }
+            return;
+        }
         if uri_info == Some(index) {
             if let Some(uris) = &uri_payload {
                 let uris = uris.iter().map(String::as_str).collect::<Vec<_>>();
@@ -288,7 +306,8 @@ fn read_linux_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>,
     let preferred = preferred_mime_types(&available_types);
     let file_mime = preferred_file_mime(&available_types);
     let plain_mime = preferred_plain_fallback_mime(&available_types);
-    if preferred.is_empty() && file_mime.is_none() && plain_mime.is_none() {
+    let image_available = clipboard.wait_is_image_available();
+    if preferred.is_empty() && file_mime.is_none() && plain_mime.is_none() && !image_available {
         return Ok(None);
     }
 
@@ -327,7 +346,65 @@ fn read_linux_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>,
         tsv,
         plain,
         file_paths,
+        image_available,
     }))
+}
+
+pub(crate) async fn read_image_png(app: AppHandle) -> Result<Option<Vec<u8>>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        app.run_on_main_thread(move || {
+            let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+            let result = clipboard
+                .wait_for_image()
+                .map(|pixbuf| {
+                    let width = pixbuf.width();
+                    let height = pixbuf.height();
+                    validate_image_dimensions(width, height)?;
+                    pixbuf
+                        .save_to_bufferv("png", &[])
+                        .map_err(|error| format!("cannot encode Clipboard image as PNG: {error}"))
+                })
+                .transpose();
+            let _ = sender.try_send(result);
+        })
+        .map_err(|error| format!("cannot schedule GTK image Clipboard read: {error}"))?;
+        return receiver
+            .recv()
+            .await
+            .ok_or_else(|| "GTK image Clipboard read ended without a result".to_owned())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        return tauri::async_runtime::spawn_blocking(windows_clipboard::read_image_png)
+            .await
+            .map_err(|error| format!("Windows image Clipboard read task failed: {error}"))?;
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
+fn validate_image_dimensions(width: i32, height: i32) -> Result<(), String> {
+    const MAX_SIDE: i64 = 32_768;
+    const MAX_PIXELS: i64 = 100_000_000;
+    let width = i64::from(width);
+    let height = i64::from(height);
+    if width <= 0
+        || height <= 0
+        || width > MAX_SIDE
+        || height > MAX_SIDE
+        || width.saturating_mul(height) > MAX_PIXELS
+    {
+        return Err("Clipboard image dimensions are unsafe".to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -335,10 +412,11 @@ pub(crate) async fn write_rich_file_paths(
     app: AppHandle,
     paths: Vec<String>,
     formats: RichClipboardFormats,
+    image_png: Option<Vec<u8>>,
 ) -> Result<(), String> {
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
     app.run_on_main_thread(move || {
-        let _ = sender.try_send(write_linux_rich_file_clipboard(paths, formats));
+        let _ = sender.try_send(write_linux_rich_file_clipboard(paths, formats, image_png));
     })
     .map_err(|error| format!("cannot schedule GTK rich file Clipboard write: {error}"))?;
     receiver
@@ -352,20 +430,21 @@ pub(crate) async fn write_rich_file_paths(
     app: AppHandle,
     paths: Vec<String>,
     formats: RichClipboardFormats,
+    image_png: Option<Vec<u8>>,
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let _ = app;
         validate_rich_clipboard_formats(&formats)?;
         return tauri::async_runtime::spawn_blocking(move || {
-            windows_clipboard::write_rich_file_clipboard(paths, formats)
+            windows_clipboard::write_rich_file_clipboard(paths, formats, image_png)
         })
         .await
         .map_err(|error| format!("Windows file Clipboard write task failed: {error}"))?;
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, paths, formats);
+        let _ = (app, paths, formats, image_png);
         Err("native file Clipboard is not implemented on this platform".to_owned())
     }
 }
@@ -374,9 +453,25 @@ pub(crate) async fn write_rich_file_paths(
 fn write_linux_rich_file_clipboard(
     paths: Vec<String>,
     formats: RichClipboardFormats,
+    image_png: Option<Vec<u8>>,
 ) -> Result<(), String> {
+    use gdk_pixbuf::prelude::PixbufLoaderExt;
     let payloads = rich_file_clipboard_payloads(paths, &formats)?;
-    write_linux_clipboard_payloads(payloads.strings, Some(payloads.uris), "rich file")
+    let image = image_png
+        .map(|bytes| {
+            let loader = gdk_pixbuf::PixbufLoader::new();
+            loader
+                .write(&bytes)
+                .map_err(|error| format!("cannot decode copied image: {error}"))?;
+            loader
+                .close()
+                .map_err(|error| format!("cannot finish copied image decode: {error}"))?;
+            loader
+                .pixbuf()
+                .ok_or_else(|| "copied image has no decoded pixels".to_owned())
+        })
+        .transpose()?;
+    write_linux_clipboard_payloads(payloads.strings, Some(payloads.uris), image, "rich file")
 }
 
 #[cfg(target_os = "linux")]

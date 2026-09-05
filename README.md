@@ -123,6 +123,23 @@ Section表示はNormal modeの`zo` / `zO`、`zc` / `zC`、`za` / `zA`で展開�
 この表示状態はWindowごとに保存され、Note本文やMarkdownには書き込みません。折り畳んだ本文も`/`検索の対象で、
 一致へ移動すると必要なSectionが自動展開されます。これは上記AlertのMarkdown折り畳み指定とは別の機能です。
 
+## 画像と添付
+
+file picker、drop、file Clipboardに加え、Linux / WindowsのClipboard上にあるraster画像dataをInsert modeの
+pasteとNormal modeの`p` / `P`で取り込めます。Clipboard画像は安全な寸法を検証してPNGへ正規化し、他の添付と
+同じSHA-256 CASへ保存します。Count付きputでもCAS取り込みは1回だけです。
+
+画像1 blockだけをyankすると、Memoka内部構造、HTML、Markdown、materialize済みfileに加えてOSの画像dataも
+同時に公開します。画像と別blockを一緒にyankした場合は画像dataを公開しません。Normal modeで画像を選択または
+hoverすると右下のhandleをdragして表示幅を変更できます。`:image-width`で現在値を確認し、
+`:image-width 50`または`:image-width 50%`でノート表示幅の10〜100%を指定できます。既定の100%は通常の
+Markdown画像、狭めた画像は幅を保つ限定的な`<img width="50%">`としてClipboardと可搬mirrorへ出力されます。
+
+画像上の`gf`は現在Window、`Ctrl-w gf`は新しいTabPageへ永続的な画像Bufferを開きます。画像Bufferでは元画像を
+拡大せずWindow内へ収めて中央表示し、同じsession中は`Ctrl-o`で開く前の編集位置へ戻れます。画像Bufferは
+Application Window stateとして再起動後にも復元され、`:buffers`では📷付きで選択できます。`gx`は従来どおり
+安全な添付をOS既定applicationで開きます。
+
 ## 開発
 
 必要な環境はNode.js、Corepack、Rust、Tauri 2のLinuxまたはWindows向け依存パッケージです。

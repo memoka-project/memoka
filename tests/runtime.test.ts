@@ -893,4 +893,43 @@ describe("Memoka Core Section-model vertical slice", () => {
     }
     runtime.destroy();
   });
+
+  it("persists image buffers in the current Window and in a new TabPage", async () => {
+    const persistence = new MemoryPersistencePort();
+    const ids = deterministicIds();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: ids,
+      clock,
+    });
+    const firstImage = ids();
+    const secondImage = ids();
+
+    await runtime.openImage("window-1", firstImage);
+    expect(runtime.windows.get("window-1")).toMatchObject({
+      noteId: null,
+      attachmentId: firstImage,
+      bufferKind: "image",
+    });
+    const openedTab = await runtime.openImageInNewTab(secondImage);
+    expect(runtime.windows.get(openedTab.windowId)).toMatchObject({
+      noteId: null,
+      attachmentId: secondImage,
+      bufferKind: "image",
+    });
+    expect(runtime.imageBufferAttachmentIds()).toEqual(
+      [firstImage, secondImage].sort(),
+    );
+    await runtime.flush();
+    runtime.destroy();
+
+    const reopened = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      clock,
+    });
+    expect(reopened.windows.get("window-1")?.attachmentId).toBe(firstImage);
+    expect(reopened.windows.get(openedTab.windowId)?.attachmentId).toBe(
+      secondImage,
+    );
+    reopened.destroy();
+  });
 });

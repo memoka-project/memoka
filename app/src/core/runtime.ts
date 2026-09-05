@@ -76,6 +76,7 @@ import {
   closeTabPage,
   closeWindow,
   createApplicationWindowState,
+  createImageBuffer,
   createNoteBuffer,
   createTabPage,
   focusWindow,
@@ -219,6 +220,8 @@ export interface RuntimeSectionBreadcrumbEntry {
 export interface RuntimeWindowState extends WindowLocalViewState {
   windowId: string;
   noteId: string | null;
+  attachmentId: string | null;
+  bufferKind: "note" | "image" | null;
 }
 
 type RuntimeListener = (snapshot: RuntimeSnapshot) => void;
@@ -314,6 +317,7 @@ export class CoreRuntime {
     PendingSectionIdentityRepair
   >();
   private readonly jumpLists = new Map<string, WindowJumpList>();
+  private readonly imageReturnOrigins = new Map<string, StableEditorPosition>();
   private readonly pendingNavigations = new Map<
     string,
     { destination: EditorNavigationDestination; detail: string }
@@ -556,6 +560,16 @@ export class CoreRuntime {
 
   get applicationWindow(): ApplicationWindowState {
     return structuredClone(this.requireApplicationWindowState());
+  }
+
+  imageBufferAttachmentIds(): string[] {
+    return [
+      ...new Set(
+        Object.values(this.requireApplicationWindowState().buffers)
+          .filter((buffer) => buffer.kind === "image")
+          .map((buffer) => buffer.attachmentId),
+      ),
+    ].sort();
   }
 
   get windows(): ReadonlyMap<string, RuntimeWindowState> {
@@ -867,6 +881,72 @@ export class CoreRuntime {
       source: "ui",
       payload: { noteId, windowId },
     });
+  }
+
+  async openImage(
+    windowId: string,
+    attachmentId: string,
+    origin?: StableEditorPosition | null,
+  ): Promise<{ windowId: string; attachmentId: string }> {
+    const buffer = createImageBuffer(attachmentId);
+    const result = await this.commitApplicationWindowMutation(
+      this.idFactory(),
+      undefined,
+      (current) => ({
+        state: openBufferInWindow(current, windowId, buffer, {
+          mode: "normal",
+        }),
+        changed:
+          current.windows[windowId]?.bufferId !== buffer.id ||
+          current.focusOwner.area !== "window" ||
+          current.focusOwner.windowId !== windowId,
+        result: { windowId, attachmentId },
+      }),
+    );
+    if (origin) this.imageReturnOrigins.set(windowId, origin);
+    else this.imageReturnOrigins.delete(windowId);
+    return result;
+  }
+
+  async openImageInNewTab(
+    attachmentId: string,
+    origin?: StableEditorPosition | null,
+  ): Promise<{ tabId: string; windowId: string; attachmentId: string }> {
+    const operationId = this.idFactory();
+    const tabId = `tab:${operationId}`;
+    const windowId = `window:${operationId}`;
+    const buffer = createImageBuffer(attachmentId);
+    const result = await this.commitApplicationWindowMutation(
+      operationId,
+      undefined,
+      (current) => {
+        const withBuffer = structuredClone(current);
+        withBuffer.buffers[buffer.id] = buffer;
+        return {
+          state: createTabPage(withBuffer, {
+            tabId,
+            windowId,
+            bufferId: buffer.id,
+          }),
+          changed: true,
+          result: { tabId, windowId, attachmentId },
+        };
+      },
+    );
+    if (origin) this.imageReturnOrigins.set(windowId, origin);
+    return result;
+  }
+
+  async returnFromImage(windowId: string): Promise<EditorNavigationResult> {
+    const origin = this.imageReturnOrigins.get(windowId);
+    if (!origin) return { handled: false, detail: "image:return:empty" };
+    const result = await this.openNavigationDestination(
+      windowId,
+      { kind: "stable", noteId: origin.noteId, saved: origin },
+      "image:return:changed",
+      () => this.imageReturnOrigins.delete(windowId),
+    );
+    return result;
   }
 
   openHelpNote(
@@ -1895,6 +1975,7 @@ export class CoreRuntime {
       | "onApplicationCommand"
       | "onWindowCommand"
       | "onNavigationDestination"
+      | "onOpenImage"
       | "keyConfig"
       | "readPreferredClipboard"
       | "readExplicitClipboard"
@@ -1950,6 +2031,7 @@ export class CoreRuntime {
       scrollElement: options.scrollElement,
       onNavigate: (request) => this.navigateEditor(windowId, request),
       onNavigationDestination: options.onNavigationDestination,
+      onOpenImage: options.onOpenImage,
       onWorkspaceSearch: options.onWorkspaceSearch,
       onNoteSearch: options.onNoteSearch,
       onBlockTypePicker: options.onBlockTypePicker,
@@ -2039,6 +2121,7 @@ export class CoreRuntime {
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
       | "onTableActionPicker"
+      | "onOpenImage"
       | "onCommandLine"
       | "onCommandPicker"
       | "onApplicationCommand"
@@ -2122,6 +2205,7 @@ export class CoreRuntime {
     for (const handle of this.notes.values()) handle.current.doc.destroy();
     this.workspace.current.doc.destroy();
     this.jumpLists.clear();
+    this.imageReturnOrigins.clear();
     this.pendingNavigations.clear();
     this.pendingSectionIdentityRepairs.clear();
     this.repeatStores.clear();
@@ -3378,6 +3462,7 @@ export class CoreRuntime {
     for (const windowId of Object.keys(previous.windows)) {
       if (next.windows[windowId]) continue;
       this.jumpLists.delete(windowId);
+      this.imageReturnOrigins.delete(windowId);
       this.pendingNavigations.delete(windowId);
       this.repeatStores.delete(windowId);
       this.visualSelectionStores.delete(windowId);
@@ -4513,7 +4598,8 @@ export class CoreRuntime {
     const buffer =
       window.bufferId === null ? undefined : state.buffers[window.bufferId];
     const noteId = this.contentBufferNoteId(buffer);
-    if (window.bufferId !== null && !noteId) {
+    const attachmentId = buffer?.kind === "image" ? buffer.attachmentId : null;
+    if (window.bufferId !== null && !noteId && !attachmentId) {
       throw new Error(
         `Window ${windowId} cannot display utility buffer ${window.bufferId}`,
       );
@@ -4528,6 +4614,11 @@ export class CoreRuntime {
     return {
       windowId,
       noteId,
+      attachmentId,
+      bufferKind:
+        buffer?.kind === "note" || buffer?.kind === "image"
+          ? buffer.kind
+          : null,
       ...view,
     };
   }
@@ -4574,7 +4665,9 @@ export class CoreRuntime {
     buffer: BufferState | undefined,
     liveNoteIds: ReadonlySet<string>,
   ): boolean {
-    return this.isLiveContentBuffer(buffer, liveNoteIds);
+    return (
+      this.isLiveContentBuffer(buffer, liveNoteIds) || buffer?.kind === "image"
+    );
   }
 
   private syncActiveNoteFromApplicationWindow(): void {

@@ -117,6 +117,7 @@ export interface PreferredClipboardFormats {
   tsv?: string | null;
   plain?: string | null;
   filePaths?: string[];
+  imageAvailable?: boolean;
 }
 
 export type ExplicitClipboardFormat = "markdown" | "html";
@@ -353,6 +354,10 @@ function nodeMarkdown(
     const target = attachmentMarkdownTarget(
       node.attrs.attachmentId ?? node.attrs.src,
     );
+    const width = Number(node.attrs.width);
+    if (Number.isFinite(width) && width >= 10 && width < 100) {
+      return `<img src="${escapeHtmlAttribute(target)}" alt="${escapeHtmlAttribute(String(node.attrs.alt ?? ""))}" width="${Math.round(width)}%">\n`;
+    }
     return `![${alt}](${target})\n`;
   }
   if (node.type.name === "attachment") {
@@ -420,6 +425,14 @@ function nodeMarkdown(
     result += nodeMarkdown(child, indentation, resolveInternalLinkTitle);
   });
   return result;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function attachmentMarkdownTarget(value: unknown): string {
@@ -1276,7 +1289,9 @@ function validatePreferredClipboardFormats(
       typeof value.plain !== "string") ||
     (value.filePaths !== undefined &&
       (!Array.isArray(value.filePaths) ||
-        !value.filePaths.every((path) => typeof path === "string")))
+        !value.filePaths.every((path) => typeof path === "string"))) ||
+    (value.imageAvailable !== undefined &&
+      typeof value.imageAvailable !== "boolean")
   ) {
     return null;
   }
@@ -1288,6 +1303,7 @@ function validatePreferredClipboardFormats(
     tsv: value.tsv ?? null,
     plain: value.plain ?? null,
     filePaths: value.filePaths ?? [],
+    imageAvailable: value.imageAvailable === true,
   };
 }
 

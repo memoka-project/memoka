@@ -35,6 +35,19 @@ const INTERNAL_NOTE_LINK_NODE_NAMES = new Set([
   "internalSectionLink",
   "internal_note_link",
 ]);
+const SELF_HIGHLIGHTED_BLOCK_NODE_NAMES = new Set(["attachment", "image"]);
+
+function usesSelectedNodeFrameAsCaret(
+  view: VimCaretView,
+  position: number,
+): boolean {
+  const selection = view.state.selection;
+  return (
+    selection instanceof NodeSelection &&
+    selection.from === position &&
+    SELF_HIGHLIGHTED_BLOCK_NODE_NAMES.has(selection.node.type.name)
+  );
+}
 
 function measureSelectedHorizontalRule(
   view: VimCaretView,
@@ -346,6 +359,10 @@ export function measureVimBlockCaretGeometry(
   cursor: number,
 ): VimCaretGeometry | null {
   const position = Math.max(0, Math.min(cursor, view.state.doc.content.size));
+  // Image and Attachment NodeViews paint their own full-node selection frame.
+  // coordsAtPos() reports their boundary as a zero-height rectangle in
+  // WebKitGTK, which otherwise leaves a short text-caret line at the top-left.
+  if (usesSelectedNodeFrameAsCaret(view, position)) return null;
   const selectedHorizontalRule = measureSelectedHorizontalRule(view, position);
   if (selectedHorizontalRule) {
     return { cursor: position, ...selectedHorizontalRule };

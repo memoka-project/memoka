@@ -20,12 +20,17 @@ function deterministicIds(): () => string {
   return () => createUuidV7(1_795_435_200_000 + counter++);
 }
 
-function press(editor: Editor, key: string): KeyboardEvent {
+function press(
+  editor: Editor,
+  key: string,
+  init: KeyboardEventInit = {},
+): KeyboardEvent {
   const event = new KeyboardEvent("keydown", {
     key,
     code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
     bubbles: true,
     cancelable: true,
+    ...init,
   });
   editor.view.dom.dispatchEvent(event);
   return event;
@@ -412,6 +417,122 @@ describe("Memoka attachment boundary", () => {
       );
       expect(readPreferredClipboard).toHaveBeenCalledTimes(2);
       expect(importNativePaths.mock.calls[2]![2]).toHaveLength(2);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
+  it("imports a raw Clipboard image once for a counted put and publishes exact image yanks", async () => {
+    const port = new MemoryAttachmentPort();
+    const imageAttachmentId = "01900000-0004-7000-8000-000000000004";
+    const importClipboardImage = vi.fn(
+      async (
+        operationId: string,
+        attachmentId: string,
+        createdAt: string,
+        originalFilename: string,
+      ) => ({
+        operationId,
+        deduplicated: false,
+        attachments: [
+          {
+            attachmentId: imageAttachmentId || attachmentId,
+            sha256: "d".repeat(64),
+            size: png.length,
+            originalFilename,
+            mimeType: "image/png",
+            createdAt,
+            available: true,
+            previewable: true,
+          },
+        ],
+      }),
+    );
+    const copyFiles = vi.fn(async () => undefined);
+    const openImage = vi.fn(async () => undefined);
+    port.importClipboardImage = importClipboardImage;
+    port.copyFiles = copyFiles;
+    const repository = new AttachmentRepository(
+      port,
+      deterministicIds(),
+      () => "2026-09-05T12:34:56.000Z",
+    );
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      attachmentRepository: repository,
+      readPreferredClipboard: async () => ({
+        availableTypes: ["image/png"],
+        internal: null,
+        markdown: null,
+        imageAvailable: true,
+      }),
+      onOpenImage: openImage,
+    });
+    try {
+      editor.commands.setContent({
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "before" }] },
+          { type: "paragraph", content: [{ type: "text", text: "after" }] },
+        ],
+      });
+      editor.commands.setTextSelection(1);
+      press(editor, "Escape");
+      press(editor, "2");
+      press(editor, "p");
+      await vi.waitFor(() =>
+        expect(importClipboardImage).toHaveBeenCalledTimes(1),
+      );
+      await vi.waitFor(() => {
+        const images = editor.state.doc.content.content.filter(
+          (node) => node.type.name === "image",
+        );
+        expect(images).toHaveLength(2);
+        expect(
+          images.every((node) => node.attrs.attachmentId === imageAttachmentId),
+        ).toBe(true);
+      });
+      const imagePosition = editor.state.doc.firstChild?.nodeSize ?? -1;
+      editor.commands.setNodeSelection(imagePosition);
+      expect(adapter.currentImageWidthPercent()).toBe(100);
+      expect(adapter.setCurrentImageWidthPercent(50)).toBe(true);
+      expect(editor.state.doc.nodeAt(imagePosition)?.attrs.width).toBe(50);
+
+      press(editor, "g");
+      press(editor, "f");
+      await vi.waitFor(() =>
+        expect(openImage).toHaveBeenCalledWith(
+          imageAttachmentId,
+          false,
+          expect.objectContaining({ noteId: runtime.noteId }),
+        ),
+      );
+      press(editor, "w", { ctrlKey: true });
+      press(editor, "g");
+      press(editor, "f");
+      await vi.waitFor(() =>
+        expect(openImage).toHaveBeenCalledWith(
+          imageAttachmentId,
+          true,
+          expect.objectContaining({ noteId: runtime.noteId }),
+        ),
+      );
+
+      press(editor, "y");
+      press(editor, "y");
+      await vi.waitFor(() =>
+        expect(copyFiles).toHaveBeenCalledWith(
+          [imageAttachmentId],
+          expect.objectContaining({
+            markdown: expect.stringContaining('width="50%"'),
+          }),
+          true,
+        ),
+      );
     } finally {
       adapter.destroy();
       runtime.destroy();

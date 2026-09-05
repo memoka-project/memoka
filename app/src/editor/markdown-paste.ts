@@ -83,6 +83,7 @@ const ORDERED_LIST_LINE = /^( *)(\d{1,9})[.)]([ \t]+)(.+)$/u;
 const HEADING_LINE = /^(#{1,6})[ \t]+(.+)$/u;
 const IMAGE_LINE =
   /^!\[((?:\\.|[^\]\\\n])*)\]\(([^)\s]+)(?:[ \t]+"[^"\n]*")?\)$/u;
+const HTML_IMAGE_LINE = /^ {0,3}<img\s+([^<>]+?)\s*\/?>(?:\s*)$/iu;
 const ATTACHMENT_LINE =
   /^\[((?:\\.|[^\]\\\n])+)\]\(attachment:([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\)$/iu;
 const TASK_LIST_LINE = /^ *[-+*][ \t]+\[[ xX]\][ \t]+/u;
@@ -221,6 +222,20 @@ export function parseMarkdownPaste(
       if (node) nodes.push(node);
       else if (!appendSource(index, table.end)) return null;
       index = table.end;
+      continue;
+    }
+
+    const htmlImage = parseHtmlImageLine(lines[index] ?? "");
+    if (htmlImage) {
+      const node = imageBlock(
+        schema,
+        htmlImage.alt,
+        htmlImage.target,
+        htmlImage.width,
+      );
+      if (node) nodes.push(node);
+      else if (!appendSource(index, index + 1)) return null;
+      index += 1;
       continue;
     }
 
@@ -531,6 +546,7 @@ function isBlockStart(lines: string[], index: number): boolean {
     HEADING_LINE.test(line) ||
     IMAGE_LINE.test(line) ||
     ATTACHMENT_LINE.test(line) ||
+    HTML_IMAGE_LINE.test(line) ||
     parseListLine(line) !== null ||
     parsedTableRange(lines, index) !== null ||
     unsupportedBlockEnd(lines, index) !== null
@@ -1141,6 +1157,7 @@ function imageBlock(
   schema: Schema,
   alt: string,
   target: string,
+  width: number | null = null,
 ): ProseMirrorNode | null {
   const type = schema.nodes.image;
   if (!type || !safeResourceTarget(target)) return null;
@@ -1154,8 +1171,39 @@ function imageBlock(
         : target.slice("attachment:".length).toLocaleLowerCase()
       : null,
     alignment: "center",
-    width: null,
+    width,
   });
+}
+
+function parseHtmlImageLine(
+  line: string,
+): { target: string; alt: string; width: number } | null {
+  const match = HTML_IMAGE_LINE.exec(line);
+  if (!match) return null;
+  const attributes = new Map<string, string>();
+  const pattern = /([a-z][a-z0-9_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/giu;
+  let attribute: RegExpExecArray | null;
+  while ((attribute = pattern.exec(match[1] ?? ""))) {
+    attributes.set(
+      attribute[1]!.toLocaleLowerCase(),
+      decodeHtmlAttribute(attribute[2] ?? attribute[3] ?? ""),
+    );
+  }
+  const target = attributes.get("src") ?? "";
+  const widthMatch = /^(\d{1,3})%$/u.exec(attributes.get("width") ?? "");
+  if (!safeResourceTarget(target) || !widthMatch) return null;
+  const width = Number(widthMatch[1]);
+  if (width < 10 || width >= 100) return null;
+  return { target, alt: attributes.get("alt") ?? "", width };
+}
+
+function decodeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll(/&quot;/giu, '"')
+    .replaceAll(/&#39;|&apos;/giu, "'")
+    .replaceAll(/&lt;/giu, "<")
+    .replaceAll(/&gt;/giu, ">")
+    .replaceAll(/&amp;/giu, "&");
 }
 
 function attachmentBlock(

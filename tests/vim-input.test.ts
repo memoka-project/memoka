@@ -399,6 +399,21 @@ describe("Memoka Vim input grammar", () => {
       sequence: "Ctrl+wv",
       resolvedCommand: "window.split-vertical",
     });
+    const windowG = advanceVimInput(
+      windowPrefix.state,
+      "normal",
+      "g",
+      noteContext,
+    );
+    expect(windowG).toMatchObject({
+      state: { pending: { kind: "custom-prefix", sequence: "Ctrl+wg" } },
+    });
+    expect(
+      advanceVimInput(windowG.state, "normal", "f", noteContext),
+    ).toMatchObject({
+      sequence: "Ctrl+wgf",
+      resolvedCommand: "navigation.open-image-tab",
+    });
     for (const [key, command] of [
       ["s", "window.split-horizontal"],
       ["h", "window.focus-left"],

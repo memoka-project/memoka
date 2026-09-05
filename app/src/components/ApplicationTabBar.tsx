@@ -16,6 +16,7 @@ import {
 export function ApplicationTabBar({
   state,
   notes,
+  imageLabel = () => "Image",
   onSwitch,
   onCreate,
   onClose,
@@ -24,6 +25,7 @@ export function ApplicationTabBar({
 }: {
   state: ApplicationWindowState;
   notes: readonly NoteMetadata[];
+  imageLabel?: (attachmentId: string) => string;
   onSwitch: (tabId: string) => void;
   onCreate: () => void;
   onClose: (tabId: string) => void;
@@ -37,7 +39,7 @@ export function ApplicationTabBar({
           {state.tabs.map((tab, index) => {
             const active = tab.id === state.activeTabId;
             const windowCount = listTabWindowIds(state, tab.id).length;
-            const label = tabLabel(tab, state, notes);
+            const label = tabLabel(tab, state, notes, imageLabel);
             const shortcutKey = tabShortcutKeyAtIndex(index);
             return (
               <div
@@ -107,6 +109,7 @@ function tabLabel(
   tab: TabPageState,
   state: ApplicationWindowState,
   notes: readonly NoteMetadata[],
+  imageLabel: (attachmentId: string) => string,
 ): string {
   const window = state.windows[tab.activeWindowId];
   if (!window || window.bufferId === null) return "[No Buffer]";
@@ -117,6 +120,7 @@ function tabLabel(
     ? notes.find((note) => note.noteId === noteId)?.title
     : null;
   if (buffer.kind === "utility") return buffer.utility.toUpperCase();
+  if (buffer.kind === "image") return imageLabel(buffer.attachmentId);
   return title === null || title === undefined
     ? "Unknown note"
     : noteDisplayTitle(title);

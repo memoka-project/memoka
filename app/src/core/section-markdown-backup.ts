@@ -420,6 +420,10 @@ function renderBlock(
     const attachment = options.resolveAttachment
       ? options.resolveAttachment(attachmentId, "image")
       : attachmentTarget(attachmentId);
+    const width = Number(node.attrs.width);
+    if (Number.isFinite(width) && width >= 10 && width < 100) {
+      return `<img src="${escapeHtmlAttribute(attachment)}" alt="${escapeHtmlAttribute(alt)}" width="${Math.round(width)}%">\n\n`;
+    }
     return `![${escapeInline(alt)}](${attachment})\n\n`;
   }
   if (node.type === "attachment") {
@@ -449,6 +453,14 @@ function renderBlock(
   return node.content
     .map((child) => renderBlock(child, indentation, options))
     .join("");
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 function renderListItem(

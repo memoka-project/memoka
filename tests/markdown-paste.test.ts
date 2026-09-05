@@ -420,6 +420,32 @@ describe("Memoka explicit Markdown paste parser", () => {
     });
   });
 
+  it("round-trips a narrowed image width from the portable Markdown form", () => {
+    withEditor((editor) => {
+      const parsed = parseMarkdownPaste(
+        '<img src="attachment:sha256-example" alt="diagram &amp; notes" width="45%">',
+        editor.schema,
+      );
+
+      expect(parsed?.sourceBlockCount).toBe(0);
+      expect(parsed?.slice.content.firstChild?.toJSON()).toMatchObject({
+        type: "image",
+        attrs: {
+          src: "attachment:sha256-example",
+          attachmentId: "sha256-example",
+          alt: "diagram & notes",
+          width: 45,
+        },
+      });
+      expect(
+        parseMarkdownPaste(
+          '<img src="javascript:alert(1)" alt="unsafe" width="45%">',
+          editor.schema,
+        )?.slice.content.firstChild?.type.name,
+      ).toBe("sourceBlock");
+    });
+  });
+
   it("keeps unsupported or unsafe regions losslessly inside Source Blocks", () => {
     withEditor((editor) => {
       const markdown = [

@@ -187,6 +187,7 @@ export interface ProductVimSessionOptions {
     paths: readonly string[],
     put?: VimNativeFilePutRequest,
   ) => void | Promise<void>;
+  onPasteImage?: (put?: VimNativeFilePutRequest) => void | Promise<void>;
   onNavigate?: (
     intent: EditorNavigationIntent,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
@@ -205,6 +206,10 @@ export interface ProductVimSessionOptions {
   onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
   onOpenAttachment?: (attachmentId: string) => void | Promise<void>;
+  onOpenImage?: (
+    attachmentId: string,
+    newTab: boolean,
+  ) => unknown | Promise<unknown>;
   resolveInternalLinkTitle?: (targetSectionId: string) => string | null;
   onMessage?: (message: string) => void;
   onInsertKey?: (key: "Backspace" | "Enter") => boolean;
@@ -896,6 +901,16 @@ export class ProductVimSession {
       ).catch((error) => {
         this.options.onMessage?.(
           `添付ファイルを貼り付けられませんでした: ${String(error)}`,
+        );
+      });
+      return;
+    }
+    if (formats?.imageAvailable && this.options.onPasteImage) {
+      this.action = "attachment:paste-image:importing";
+      this.emit();
+      void Promise.resolve(this.options.onPasteImage()).catch((error) => {
+        this.options.onMessage?.(
+          `Clipboard画像を貼り付けられませんでした: ${String(error)}`,
         );
       });
       return;
@@ -1619,6 +1634,33 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "navigation.open-image-tab") {
+      event.preventDefault();
+      const attachmentId = imageAttachmentIdAtPosition(
+        view.state.doc,
+        selectionCursor(view),
+      );
+      if (!attachmentId || !this.options.onOpenImage) {
+        this.action = "image:ctrl-w-gf:boundary";
+        this.options.onMessage?.(
+          "Ctrl-w gf · キャレット位置に画像がありません",
+        );
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
+      this.action = "image:ctrl-w-gf:opening";
+      this.emit();
+      void Promise.resolve(this.options.onOpenImage(attachmentId, true)).catch(
+        (error) => {
+          this.options.onMessage?.(
+            `Ctrl-w gf · 画像を開けませんでした: ${String(error)}`,
+          );
+        },
+      );
+      return true;
+    }
+
     if (
       command === "navigation.follow-link" ||
       command === "navigation.jump-back" ||
@@ -1989,6 +2031,10 @@ export class ProductVimSession {
       );
       return;
     }
+    if (formats?.imageAvailable && this.options.onPasteImage) {
+      this.putNativeClipboardImage(view, command, count);
+      return;
+    }
     const tabularRegister = formats
       ? registerFromTabularClipboard(formats, view.state.schema)
       : null;
@@ -2028,6 +2074,26 @@ export class ProductVimSession {
     void Promise.resolve(pending).catch((error) => {
       this.options.onMessage?.(
         `添付ファイルを貼り付けられませんでした: ${String(error)}`,
+      );
+    });
+    this.scheduleCaretRefresh(view);
+  }
+
+  private putNativeClipboardImage(
+    view: EditorView,
+    command: "put.after" | "put.before",
+    count: number,
+  ): void {
+    const paste = this.options.onPasteImage;
+    if (!paste) return;
+    const direction = command === "put.after" ? "after" : "before";
+    this.action = `attachment:put-image:${direction}:importing`;
+    this.emit();
+    void Promise.resolve(
+      paste({ direction, position: selectionCursor(view), count }),
+    ).catch((error) => {
+      this.options.onMessage?.(
+        `Clipboard画像を貼り付けられませんでした: ${String(error)}`,
       );
     });
     this.scheduleCaretRefresh(view);
@@ -2364,6 +2430,22 @@ export class ProductVimSession {
     if (command === "navigation.follow-link") {
       const target = internalSectionLinkAtPosition(view.state, cursor);
       if (!target) {
+        const attachmentId = imageAttachmentIdAtPosition(
+          view.state.doc,
+          cursor,
+        );
+        if (attachmentId && this.options.onOpenImage) {
+          this.action = "image:gf:opening";
+          this.emit();
+          void Promise.resolve(
+            this.options.onOpenImage(attachmentId, false),
+          ).catch((error) => {
+            this.options.onMessage?.(
+              `gf · 画像を開けませんでした: ${String(error)}`,
+            );
+          });
+          return;
+        }
         this.action = "jump:gf:boundary";
         this.emit();
         this.scheduleCaretRefresh(view);
@@ -3144,6 +3226,7 @@ function shouldReadPreferredClipboard(
       type === "text/plain" ||
       type.startsWith("text/plain;") ||
       type === "Files" ||
+      type.startsWith("image/") ||
       type === "text/uri-list" ||
       type === "x-special/gnome-copied-files",
   );
@@ -3175,6 +3258,30 @@ function attachmentIdAtPosition(
       return attachmentId.startsWith("attachment:")
         ? attachmentId.slice("attachment:".length)
         : attachmentId;
+    }
+  }
+  return null;
+}
+
+function imageAttachmentIdAtPosition(
+  doc: ProseMirrorNode,
+  position: number,
+): string | null {
+  const bounded = Math.max(0, Math.min(position, doc.content.size));
+  const $position = doc.resolve(bounded);
+  const candidates = [$position.nodeAfter, $position.nodeBefore];
+  for (let depth = $position.depth; depth > 0; depth -= 1) {
+    candidates.push($position.node(depth));
+  }
+  for (const node of candidates) {
+    if (!node || node.type.name !== "image") continue;
+    const attachmentId = node.attrs.attachmentId;
+    if (
+      typeof attachmentId === "string" &&
+      attachmentId !== "attachment:missing" &&
+      attachmentId.length > 0
+    ) {
+      return attachmentId.replace(/^attachment:/u, "");
     }
   }
   return null;

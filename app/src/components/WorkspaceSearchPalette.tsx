@@ -7,9 +7,12 @@ import type { EditorNavigationDestination } from "../core/editor-navigation";
 import { contentOffsetAtTextOffset } from "../core/stable-position";
 import type { StableEditorPosition } from "../core/stable-position";
 import type { CoreRuntime } from "../core/runtime";
+import type { AttachmentRepository } from "../core/attachments";
 import {
   formatWorkspaceSearchAge,
+  normalizeWorkspaceSearchText,
   workspaceSearchMatchRanges,
+  workspaceSearchTerms,
   type WorkspaceSearchResponse,
   type WorkspaceSearchResult,
   type WorkspaceSearchScope,
@@ -35,11 +38,13 @@ export function WorkspaceSearchPalette({
   session,
   onClose,
   focused = true,
+  attachmentRepository,
 }: {
   runtime: CoreRuntime;
   session: WorkspaceSearchSession;
   onClose: () => void;
   focused?: boolean;
+  attachmentRepository?: AttachmentRepository;
 }) {
   const [searchState, setSearchState] = useState<{
     query: string;
@@ -63,6 +68,52 @@ export function WorkspaceSearchPalette({
     const sequence = ++requestSequence.current;
     void runtime
       .searchWorkspace(debouncedQuery, session.scope, 20, session.target)
+      .then(async (response) => {
+        if (session.target !== "buffers" || !attachmentRepository) {
+          return response;
+        }
+        const attachmentIds = runtime.imageBufferAttachmentIds();
+        await attachmentRepository.resolve(attachmentIds);
+        const attachments = attachmentIds.flatMap((attachmentId) => {
+          const attachment = attachmentRepository.cached(attachmentId);
+          return attachment ? [attachment] : [];
+        });
+        const terms = workspaceSearchTerms(debouncedQuery);
+        const imageResults: WorkspaceSearchResult[] = attachments
+          .filter((attachment) => {
+            const value = normalizeWorkspaceSearchText(
+              attachment.originalFilename,
+            );
+            return terms.every((term) => value.includes(term));
+          })
+          .map((attachment) => ({
+            resultId: `image:${attachment.attachmentId}`,
+            noteId: attachment.attachmentId,
+            sectionId: attachment.attachmentId,
+            title: attachment.originalFilename,
+            parentPath: "/",
+            updatedAt: attachment.createdAt,
+            kind: "image",
+            preview: "",
+            lineText: "",
+            blockId: null,
+            logicalLineNumber: null,
+            sectionLineNumber: null,
+            lineIndex: 0,
+            matchOffset: 0,
+            lineMatchOffset: 0,
+            query: debouncedQuery,
+            attachmentId: attachment.attachmentId,
+          }));
+        return {
+          ...response,
+          results: [...response.results, ...imageResults]
+            .sort((left, right) =>
+              right.updatedAt.localeCompare(left.updatedAt),
+            )
+            .slice(0, 20),
+        };
+      })
       .then(
         (next) => {
           if (requestSequence.current === sequence) {
@@ -75,13 +126,29 @@ export function WorkspaceSearchPalette({
           }
         },
       );
-  }, [runtime, session.scope, session.target, debouncedQuery, refreshVersion]);
+  }, [
+    attachmentRepository,
+    runtime,
+    session.scope,
+    session.target,
+    debouncedQuery,
+    refreshVersion,
+  ]);
 
   const openResult = async (result: WorkspaceSearchResult): Promise<void> => {
     if (busy || session.target === "trash") return;
     setBusy(true);
     setError(null);
     try {
+      if (result.kind === "image" && result.attachmentId) {
+        await runtime.openImage(
+          session.windowId,
+          result.attachmentId,
+          session.origin,
+        );
+        onClose();
+        return;
+      }
       const navigation = await runtime.navigateWorkspaceSearchResult(
         session.windowId,
         session.origin,
@@ -142,7 +209,7 @@ export function WorkspaceSearchPalette({
               {formatWorkspaceSearchAge(result.updatedAt)}
             </span>
             <span className="workspace-search-icon" aria-hidden="true">
-              📄
+              {result.kind === "image" ? "📷" : "📄"}
             </span>
             {session.scope === "title" ? (
               <span className="workspace-search-note-title">
@@ -167,14 +234,25 @@ export function WorkspaceSearchPalette({
           )}
         </>
       )}
-      renderPreview={(result) => (
-        <WorkspaceSearchPreview
-          runtime={runtime}
-          result={result}
-          highlight={session.scope === "body"}
-          includeDeleted={session.target === "trash"}
-        />
-      )}
+      renderPreview={(result) =>
+        result?.kind === "image" &&
+        result.attachmentId &&
+        attachmentRepository ? (
+          <BufferImagePreview
+            key={result.attachmentId}
+            attachmentId={result.attachmentId}
+            title={result.title}
+            repository={attachmentRepository}
+          />
+        ) : result ? (
+          <WorkspaceSearchPreview
+            runtime={runtime}
+            result={result}
+            highlight={session.scope === "body"}
+            includeDeleted={session.target === "trash"}
+          />
+        ) : null
+      }
       prompt={workspaceSearchPrompt(session.target, session.scope)}
       countLabel={response ? `${results.length} results` : "searching…"}
       onAccept={(result) => void openResult(result)}
@@ -419,6 +497,32 @@ function workspaceSearchLabel(
   if (target === "buffers") return "バッファ検索";
   if (target === "trash") return "ゴミ箱検索";
   return scope === "title" ? "ノート名検索" : "本文検索";
+}
+
+function BufferImagePreview({
+  attachmentId,
+  title,
+  repository,
+}: {
+  attachmentId: string;
+  title: string;
+  repository: AttachmentRepository;
+}) {
+  const [failed, setFailed] = useState(false);
+  const url = repository.previewUrl(attachmentId);
+  if (!url || failed) {
+    return <div className="workspace-search-preview-empty" />;
+  }
+  return (
+    <div className="workspace-search-image-preview">
+      <img
+        src={url}
+        alt={title}
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 function workspaceSearchPrompt(
