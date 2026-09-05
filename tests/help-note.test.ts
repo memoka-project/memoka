@@ -6,7 +6,10 @@ import {
   readNotePlainText,
   type NoteDocument,
 } from "../app/src/core/documents";
-import { MEMOKA_HELP_TITLE } from "../app/src/core/help-note";
+import {
+  MEMOKA_HELP_MARKDOWN,
+  MEMOKA_HELP_TITLE,
+} from "../app/src/core/help-note";
 import { createUuidV7 } from "../app/src/core/ids";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
@@ -46,61 +49,47 @@ describe("managed Memoka help note", () => {
         .snapshot()
         .notes.filter(({ title }) => title === MEMOKA_HELP_TITLE),
     ).toHaveLength(2);
+    expect(MEMOKA_HELP_MARKDOWN).toMatch(/^# Memoka help$/mu);
+    expect(MEMOKA_HELP_MARKDOWN).toContain("## Command-lineと設定");
 
     const note = runtime.getNoteHandle(first.noteId).current as NoteDocument;
     expect(noteSectionCatalog(note).map(({ title }) => title)).toEqual(
-      expect.arrayContaining(["最初に覚える", "移動と編集", "Command-line"]),
+      expect.arrayContaining([
+        "最初に覚える",
+        "Insert mode",
+        "移動と編集",
+        "Visual選択と文字装飾",
+        "Table編集",
+        "Command-lineと設定",
+        "データと復旧",
+      ]),
     );
     expect(collectNodeNames(note)).toEqual(
-      expect.arrayContaining(["section", "bulletList", "table", "codeBlock"]),
+      expect.arrayContaining([
+        "section",
+        "blockquote",
+        "bulletList",
+        "table",
+        "codeBlock",
+      ]),
     );
     const helpText = readNotePlainText(note);
-    expect(helpText).toContain("最初に覚える");
-    expect(helpText).toContain("[count]j/k");
-    expect(helpText).toContain("左右Sidebarを閉じる");
-    expect(helpText).toContain("t1〜t9 / t0");
-    expect(helpText).toContain("Enter / Tabは無効");
-    expect(helpText).toContain("Ctrl-t / Ctrl-d");
-    expect(helpText).toContain("Root表示中はNoteDoc全体");
-    expect(helpText).toContain("ステータスライン");
-    expect(helpText).toContain("h/lで折り畳み");
-    expect(helpText).toContain("config.toml");
-    expect(helpText).toContain("wait_for_mirror = false");
-    expect(helpText).toContain("既存Windowを前面へ戻します");
-    expect(helpText).toContain("[count]n / N");
-    expect(helpText).toContain("Focused Section subtree");
-    expect(helpText).toContain("zfはcaret位置を保って1階層深く");
-    expect(helpText).toContain("現在Focusから親へ1階層戻ります");
-    expect(helpText).toContain("zo / zO / zc / zC / za / zA");
-    expect(helpText).toContain(
-      "一致へ移動すると必要な祖先Sectionだけを自動展開",
-    );
-    expect(helpText).toContain("Section折り畳みはWindowごとの表示状態");
-    expect(helpText).toContain("whichwrap有効時は行端から前後論理行へ移動");
-    expect(helpText).toContain("全block共通で制御");
-    expect(helpText).toContain(":note-width 1200");
-    expect(helpText).toContain("最大1000 CSS px");
-    expect(helpText).toContain("<Leader>C");
-    expect(helpText).toContain("Config / Settings");
-    expect(helpText).toContain("予約済み（未実装）");
-    expect(helpText).toContain("共通検索ペインでCommandを選び");
-    expect(helpText).toContain("/または,s");
-    expect(helpText).toContain("Image Block stub、Attachment Fileを選べます");
-    expect(helpText).toContain("Attachment Fileまたは:attach");
-    expect(helpText).toContain("取り消すと「/」は本文に残ります");
-    expect(helpText).toContain("Ctrl-h");
-    expect(helpText).toContain("Ctrl-j / Ctrl-m");
-    expect(helpText).toContain("行頭からcaret直前まで削除");
-    expect(helpText).toContain("BudouX文節を基礎");
-    expect(helpText).toContain("日本語の折り返し");
-    expect(helpText).toContain(":word-segmentation");
-    expect(helpText).toContain("line_break_segmentation");
-    expect(helpText).toContain("日本語句読点に接する境界");
-    expect(helpText).toContain("直接本文ParagraphのSection化");
-    expect(helpText).toContain("兄弟化では表示順を守るため");
-    expect(helpText).toContain("一時的な逆変換");
-    expect(helpText).toContain("唯一の利用者向けマニュアル");
-    expect(helpText).toContain(":help");
+    for (const expected of [
+      "通常は保存操作を行う必要がありません",
+      "[count]h/j/k/l",
+      "Ctrl-t",
+      "BudouXの文節",
+      "Visual Block",
+      "Focused Section subtree",
+      "Table編集",
+      "既定Leaderは,です",
+      "config.toml",
+      "wait_for_mirror = false",
+      "portable mirror",
+      ":help",
+    ]) {
+      expect(helpText).toContain(expected);
+    }
     expect(helpText).not.toContain("<code>");
     expect(helpText).not.toContain("<link");
     const helpSnapshot = sectionSnapshot(note.rootSection);
@@ -113,7 +102,7 @@ describe("managed Memoka help note", () => {
       helpSnapshot,
       "internalSectionLink",
     );
-    expect(internalLinks.length).toBeGreaterThanOrEqual(8);
+    expect(internalLinks.length).toBeGreaterThanOrEqual(14);
     const sectionIds = new Set(
       noteSectionCatalog(note).map(({ sectionId }) => sectionId),
     );
@@ -130,6 +119,7 @@ describe("managed Memoka help note", () => {
       }),
     ).toBe(true);
     const blockIds = collectBlockIds(note);
+    const stableSectionIds = [...sectionIds];
 
     await runtime.renameNote(first.noteId, "書き換えたHelp");
     await runtime.executeCommand({
@@ -150,6 +140,9 @@ describe("managed Memoka help note", () => {
     ).toBe(MEMOKA_HELP_TITLE);
     expect(readNotePlainText(note)).not.toContain("利用者の一時編集");
     expect(collectBlockIds(note)).toEqual(blockIds);
+    expect(noteSectionCatalog(note).map(({ sectionId }) => sectionId)).toEqual(
+      stableSectionIds,
+    );
     runtime.destroy();
   });
 
@@ -254,7 +247,7 @@ describe("managed Memoka help note", () => {
       reopened.snapshot().notes.find(({ systemRole }) => systemRole === "help")
         ?.noteId,
     ).toBe(created.noteId);
-    const search = await reopened.searchWorkspace("操作説明", "body");
+    const search = await reopened.searchWorkspace("自動保存", "body");
     expect(search.results.some(({ noteId }) => noteId === created.noteId)).toBe(
       true,
     );

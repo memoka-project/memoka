@@ -9,6 +9,7 @@ const repositoryRoot = path.resolve(
 );
 const entryPath = path.join(repositoryRoot, "doc", "specification.md");
 const categoryDirectory = path.join(repositoryRoot, "doc", "specification");
+const helpPath = path.join(repositoryRoot, "doc", "help.md");
 const commandCatalogPath = path.join(
   repositoryRoot,
   "app",
@@ -25,6 +26,14 @@ const leaderCatalogPath = path.join(
 );
 
 const failures = [];
+const helpSource = (await exists(helpPath))
+  ? await readFile(helpPath, "utf8")
+  : "";
+if (!helpSource) {
+  failures.push("missing user help source: doc/help.md");
+} else if (!/^# Memoka help(?:\r?\n|$)/u.test(helpSource)) {
+  failures.push("doc/help.md must start with the managed Help Note title");
+}
 
 async function markdownFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -121,6 +130,9 @@ if (!(await exists(entryPath))) {
         "application command is missing from the specification: :" + command,
       );
     }
+    if (command && !helpSource.includes("`:" + command)) {
+      failures.push("application command is missing from Help: :" + command);
+    }
   }
 
   const leaderCatalog = await readFile(leaderCatalogPath, "utf8");
@@ -136,6 +148,9 @@ if (!(await exists(entryPath))) {
       failures.push(
         "Leader category is missing from the specification: <Leader>" + key,
       );
+    }
+    if (key && !helpSource.includes("`<Leader>" + key + "`")) {
+      failures.push("Leader category is missing from Help: <Leader>" + key);
     }
   }
 

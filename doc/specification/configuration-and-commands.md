@@ -206,8 +206,14 @@ validなmodeを指定すると即時反映して`config.toml`へ保存する。
 
 ## 11. Help Note
 
-`:help`はsystem roleを持つ「Memoka help」Noteを作成または同期して現在Windowへ開く。
-同じ安定IDを使って最新版へ置換するため、Help Noteへの手動編集は次回`:help`で上書きされる。
+利用者向けHelpの原稿はrepositoryの[`doc/help.md`](../help.md)を唯一のsourceとする。
+`:help`はこのMarkdownを通常のwhole-note Markdownと同じschema/parserで取り込み、system roleを持つ
+「Memoka help」Noteを作成または同期して現在Windowへ開く。見出し階層、List、Table、Alert、inline mark、
+外部linkを対応するMemoka構造へ変換し、Help内の見出しanchor linkはInternal Section Linkへ変換する。
+
+SectionとblockにはNote ID、見出しpath、block位置から導出した安定IDを使う。同じ原稿を再同期してもidentityを
+維持し、Help Noteへの手動編集は次回`:help`で原稿の内容へ置き換える。原稿のH1不一致、重複見出しanchor、
+未解決anchor、未対応Markdown blockは同期errorとして扱い、不完全なHelpへ黙って置き換えない。
 
 Help Noteは利用者向け操作情報の正本表示であり、user-visibleなkey、command、設定、制約を変更した場合は
-この仕様と同じcommitで更新する。
+この仕様と`doc/help.md`を実装と同じcommitで更新する。

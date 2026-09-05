@@ -17,7 +17,8 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - local Markdown linkのtargetが存在すること。
 - 固定版、Phase差分、外部private文書を理解しないと読めない記述を現行仕様に入れないこと。
 - schema、command、設定既定値、Leader category、対応platformを実装と照合すること。
-- user-visible操作を変えた場合は管理Help Noteも照合すること。
+- `doc/help.md`のH1、Application Command、Leader categoryを実装と照合すること。
+- user-visible操作を変えた場合は管理Help Note原稿も同じ変更で更新すること。
 
 `corepack pnpm spec:check`を通常の`verify`に含める。
 

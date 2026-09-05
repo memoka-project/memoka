@@ -3583,6 +3583,10 @@ export class CoreRuntime {
       createNoteBuffer(noteId),
       { mode: "normal" },
     );
+    // Parse and validate the bundled Markdown before entering the persistence
+    // transaction. An invalid Help resource must not partially mutate either
+    // the managed NoteDoc or Workspace metadata.
+    const helpSnapshot = createMemokaHelpSectionSnapshot(noteId);
 
     this.setSaving();
     try {
@@ -3641,7 +3645,7 @@ export class CoreRuntime {
           }, CORE_TRANSACTION_ORIGIN);
           replaceNoteSectionTree(
             prepared.handle.current as NoteDocument,
-            createMemokaHelpSectionSnapshot(noteId),
+            helpSnapshot,
             synchronizedAt,
             CORE_TRANSACTION_ORIGIN,
           );

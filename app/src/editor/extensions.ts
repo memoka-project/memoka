@@ -1,5 +1,6 @@
 import {
   Extension,
+  getSchema,
   Mark,
   mergeAttributes,
   Node,
@@ -15,6 +16,7 @@ import {
   Fragment,
   Slice,
   type Node as ProseMirrorNode,
+  type Schema,
 } from "@tiptap/pm/model";
 import {
   Plugin,
@@ -46,7 +48,11 @@ import {
   nextMarkupHeadingLevel,
   type MarkupHeadingLevel,
 } from "../core/application-theme";
-import { NOTE_BLOCK_NODE_NAMES, type NoteDocument } from "../core/documents";
+import {
+  createNoteDocument,
+  NOTE_BLOCK_NODE_NAMES,
+  type NoteDocument,
+} from "../core/documents";
 import {
   BODY_CHUNK_HARD_BLOCKS,
   BODY_CHUNK_HARD_BYTES,
@@ -2424,6 +2430,29 @@ export function productEditorExtensions(
       },
     }),
   ];
+}
+
+const MARKDOWN_IMPORT_SCHEMA_NOTE_ID = "00000000-0000-7000-8000-000000000000";
+let markdownImportSchema: Schema | null = null;
+
+/**
+ * Return the exact document schema used by production editors without
+ * mounting an Editor. Build-time Markdown resources such as doc/help.md use
+ * this path so their import semantics cannot drift from normal Markdown
+ * paste.
+ */
+export function productMarkdownImportSchema(): Schema {
+  if (markdownImportSchema) return markdownImportSchema;
+  const note = createNoteDocument(MARKDOWN_IMPORT_SCHEMA_NOTE_ID);
+  try {
+    markdownImportSchema = getSchema(
+      productEditorExtensions(note, { readOnly: true }),
+    );
+    return markdownImportSchema;
+  } finally {
+    note.undoManager.destroy();
+    note.doc.destroy();
+  }
 }
 
 const DIRECT_BODY_TEST_FRAGMENT = "__memoka_vim_test_body";

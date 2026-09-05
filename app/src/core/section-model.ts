@@ -1197,35 +1197,7 @@ function yValueFromJson(value: unknown): Y.XmlElement | Y.XmlText {
     content?: unknown;
   };
   if (record.type === "text") {
-    const text = new Y.XmlText();
-    if (typeof record.text === "string" && record.text) {
-      const attributes: Record<string, unknown> = {};
-      if (Array.isArray(record.marks)) {
-        for (const value of record.marks) {
-          if (!value || typeof value !== "object") {
-            throw new Error("Invalid serialized Section body mark");
-          }
-          const mark = value as { type?: unknown; attrs?: unknown };
-          if (typeof mark.type !== "string" || !mark.type) {
-            throw new Error("Invalid serialized Section body mark");
-          }
-          if (
-            mark.attrs !== undefined &&
-            (!mark.attrs || typeof mark.attrs !== "object")
-          ) {
-            throw new Error("Invalid serialized Section body mark attributes");
-          }
-          attributes[mark.type] = mark.attrs ?? {};
-        }
-      }
-      text.applyDelta([
-        {
-          insert: record.text,
-          ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
-        },
-      ]);
-    }
-    return text;
+    return yTextFromJson([record]);
   }
   if (typeof record.type !== "string" || record.type === SECTION_NODE) {
     throw new Error("Invalid serialized Section body node");
@@ -1237,9 +1209,84 @@ function yValueFromJson(value: unknown): Y.XmlElement | Y.XmlText {
     }
   }
   if (Array.isArray(record.content)) {
-    element.insert(0, record.content.map(yValueFromJson));
+    element.insert(0, yChildrenFromJson(record.content));
   }
   return element;
+}
+
+/**
+ * y-prosemirror represents all adjacent ProseMirror text nodes in one
+ * Y.XmlText, with mark changes encoded as Delta attributes. Keeping each
+ * serialized text node in a separate Y.XmlText makes the collaboration
+ * binding stop rendering after some mark boundaries.
+ */
+function yChildrenFromJson(
+  content: readonly unknown[],
+): Array<Y.XmlElement | Y.XmlText> {
+  const children: Array<Y.XmlElement | Y.XmlText> = [];
+  let adjacentText: Array<Record<string, unknown>> = [];
+  const flushText = (): void => {
+    if (adjacentText.length === 0) return;
+    children.push(yTextFromJson(adjacentText));
+    adjacentText = [];
+  };
+  for (const child of content) {
+    if (
+      child &&
+      typeof child === "object" &&
+      (child as { type?: unknown }).type === "text"
+    ) {
+      adjacentText.push(child as Record<string, unknown>);
+      continue;
+    }
+    flushText();
+    children.push(yValueFromJson(child));
+  }
+  flushText();
+  return children;
+}
+
+function yTextFromJson(records: readonly Record<string, unknown>[]): Y.XmlText {
+  const text = new Y.XmlText();
+  const delta: Array<{
+    insert: string;
+    attributes?: Record<string, unknown>;
+  }> = [];
+  for (const record of records) {
+    if (record.type !== "text") {
+      throw new Error("Invalid serialized Section body text");
+    }
+    if (record.text !== undefined && typeof record.text !== "string") {
+      throw new Error("Invalid serialized Section body text");
+    }
+    if (!record.text) continue;
+    const attributes: Record<string, unknown> = {};
+    if (record.marks !== undefined && !Array.isArray(record.marks)) {
+      throw new Error("Invalid serialized Section body marks");
+    }
+    for (const value of Array.isArray(record.marks) ? record.marks : []) {
+      if (!value || typeof value !== "object") {
+        throw new Error("Invalid serialized Section body mark");
+      }
+      const mark = value as { type?: unknown; attrs?: unknown };
+      if (typeof mark.type !== "string" || !mark.type) {
+        throw new Error("Invalid serialized Section body mark");
+      }
+      if (
+        mark.attrs !== undefined &&
+        (!mark.attrs || typeof mark.attrs !== "object")
+      ) {
+        throw new Error("Invalid serialized Section body mark attributes");
+      }
+      attributes[mark.type] = mark.attrs ?? {};
+    }
+    delta.push({
+      insert: record.text,
+      ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
+    });
+  }
+  if (delta.length > 0) text.applyDelta(delta);
+  return text;
 }
 
 function remapSectionSnapshot(

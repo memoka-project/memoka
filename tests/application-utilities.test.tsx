@@ -1034,7 +1034,11 @@ describe("Memoka Application utilities", () => {
       return mounted;
     });
     expect(helpEditor.querySelector(".memoka-body-chunk--static")).toBeTruthy();
-    expect(helpEditor.textContent).toContain("基本移動");
+    expect(helpEditor.textContent).toContain("ローカルファースト");
+    expect(helpEditor.textContent).toContain(
+      "通常は保存操作を行う必要がありません",
+    );
+    expect(helpEditor.textContent).toContain("移動と編集");
     expect(helpEditor.textContent).toContain(":tree");
     expect(document.activeElement).toBe(helpEditor);
 
