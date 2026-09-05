@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-05
+
+- 巨大なplain text貼り付けのUUID乱数生成をbatch化し、変更blockの再検索を省いてLinux release gateを安定化。
+
 ## [0.1.7] - 2026-09-05
 
 - Clipboard上の画像dataを貼り付け、画像blockを画像dataとしてyankできるようにし、外部applicationとの画像copy／pasteを強化。
@@ -11,6 +15,7 @@
 - 画像の選択枠、resize handle、配置を整理し、通常時は画像だけを表示するように調整。
 - WebKitGTKで空のListItemへ日本語入力を確定した際、ListItemが分割されて確定文字列の一部が重複する問題を修正。
 - 巨大なplain text貼り付けを事前にBodyChunkへ分割し、不要なblock identity全走査を省いて処理時間とmemory使用量を削減。
+- Linux release draftの巨大Note性能gateを安定して通過できなかったため、GitHub Releaseは未公開。
 
 ## [0.1.6] - 2026-09-05
 
@@ -69,7 +74,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/memoka-project/memoka/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/memoka-project/memoka/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/memoka-project/memoka/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/memoka-project/memoka/compare/v0.1.4...v0.1.5
