@@ -7,7 +7,7 @@ use crate::{
 use fs2::FileExt;
 use interprocess::ConnectWaitMode;
 use interprocess::local_socket::{
-    ConnectOptions, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Stream, prelude::*,
+    GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Stream, prelude::*,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -358,17 +358,12 @@ pub fn request(
     mut output: Option<&mut dyn Write>,
 ) -> Result<Value, ReadError> {
     let name = endpoint(workspace)?;
-    let mut stream = ConnectOptions::new()
-        .name(name.to_ns_name::<GenericNamespaced>()?)
-        .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
-        .nonblocking_stream(true)
-        .connect_sync()
-        .map_err(|_| {
-            ReadError::new(
-                "OWNER_UNAVAILABLE",
-                "Workspace owner is starting, busy or unavailable; retry the command",
-            )
-        })?;
+    let mut stream = connect_owner(&name).map_err(|_| {
+        ReadError::new(
+            "OWNER_UNAVAILABLE",
+            "Workspace owner is starting, busy or unavailable; retry the command",
+        )
+    })?;
     authenticate(&stream)?;
     let deadline = Instant::now() + request.timeout();
     write_frame(
@@ -414,6 +409,60 @@ pub fn request(
         .result
         .ok_or_else(|| ReadError::new("IPC_PROTOCOL", "Missing IPC result"))
 }
+fn connect_owner(name: &str) -> std::io::Result<Stream> {
+    #[cfg(windows)]
+    {
+        use interprocess::os::windows::named_pipe::{
+            DuplexPipeStream, local_socket, pipe_mode::Bytes,
+        };
+        // interprocess 2.4.2's local-socket adapter ignores ConnectOptions'
+        // wait_mode on Windows. Its underlying pipe API honors the deadline.
+        let pipe = DuplexPipeStream::<Bytes>::connect_by_path_with_wait_mode(
+            format!(r"\\.\pipe\{name}"),
+            ConnectWaitMode::Timeout(Duration::from_secs(2)),
+        )?;
+        pipe.set_nonblocking(true)?;
+        Ok(Stream::from(local_socket::Stream::from(pipe)))
+    }
+    #[cfg(not(windows))]
+    interprocess::local_socket::ConnectOptions::new()
+        .name(name.to_ns_name::<GenericNamespaced>()?)
+        .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
+        .nonblocking_stream(true)
+        .connect_sync()
+}
+
+#[cfg(windows)]
+fn readable_pipe_bytes(stream: &Stream) -> Result<usize, ReadError> {
+    use std::os::windows::io::{AsHandle, AsRawHandle};
+    use windows_sys::Win32::{Foundation::ERROR_PIPE_NOT_CONNECTED, System::Pipes::PeekNamedPipe};
+    let Stream::NamedPipe(pipe) = stream;
+    let mut available = 0;
+    let ready = unsafe {
+        PeekNamedPipe(
+            pipe.as_handle().as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    };
+    if ready == 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::BrokenPipe
+            || error.raw_os_error() == Some(ERROR_PIPE_NOT_CONNECTED as i32)
+        {
+            return Err(ReadError::new(
+                "IPC_DISCONNECTED",
+                "Workspace owner disconnected",
+            ));
+        }
+        return Err(error.into());
+    }
+    Ok(available as usize)
+}
+
 fn pause(deadline: Instant) -> Result<(), ReadError> {
     if Instant::now() >= deadline {
         return Err(ReadError::new(
@@ -430,7 +479,22 @@ fn read_exact(
     deadline: Instant,
 ) -> Result<(), ReadError> {
     while !bytes.is_empty() {
-        match stream.read(bytes) {
+        #[cfg(windows)]
+        let count = {
+            // PIPE_NOWAIT reports ERROR_NO_DATA while still connected, but
+            // interprocess maps that to EOF. A single reader owns this stream;
+            // peek before reading so an idle connection remains distinguishable
+            // from an actual disconnect, and the deadline can still run.
+            let available = readable_pipe_bytes(stream)?;
+            if available == 0 {
+                pause(deadline)?;
+                continue;
+            }
+            bytes.len().min(available)
+        };
+        #[cfg(not(windows))]
+        let count = bytes.len();
+        match stream.read(&mut bytes[..count]) {
             Ok(0) => {
                 return Err(ReadError::new(
                     "IPC_DISCONNECTED",
@@ -450,6 +514,9 @@ fn read_exact(
 fn write_all(stream: &mut Stream, mut bytes: &[u8], deadline: Instant) -> Result<(), ReadError> {
     while !bytes.is_empty() {
         match stream.write(bytes) {
+            #[cfg(windows)]
+            Ok(0) => pause(deadline)?, // PIPE_NOWAIT byte pipe has no free buffer yet.
+            #[cfg(not(windows))]
             Ok(0) => {
                 return Err(ReadError::new(
                     "IPC_DISCONNECTED",
@@ -569,6 +636,31 @@ fn windows_user_sid(pid: Option<u32>) -> Result<String, ReadError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn idle_pipe_reaches_its_deadline_and_detects_a_real_disconnect() {
+        let name = format!("memoka-ipc-test-{}", uuid::Uuid::now_v7());
+        let listener = ListenerOptions::new()
+            .name(name.to_ns_name::<GenericNamespaced>().unwrap())
+            .nonblocking(ListenerNonblockingMode::Both)
+            .create_sync()
+            .unwrap();
+        let mut client = connect_owner(&name).unwrap();
+        let server = listener.accept().unwrap();
+        assert_eq!(
+            read_frame(&mut client, 100, Instant::now() + Duration::from_millis(30))
+                .unwrap_err()
+                .code,
+            "IPC_TIMEOUT"
+        );
+        drop(server);
+        assert_eq!(
+            read_frame(&mut client, 100, Instant::now() + Duration::from_secs(1))
+                .unwrap_err()
+                .code,
+            "IPC_DISCONNECTED"
+        );
+    }
     #[test]
     fn lock_and_ipc_are_scoped_to_one_workspace() {
         let temp = tempfile::tempdir().unwrap();
@@ -583,16 +675,33 @@ mod tests {
         );
         let server = Server::start(
             lease.clone(),
-            Arc::new(|_| Ok(Reply::Json(serde_json::json!({"same_user":true})))),
+            Arc::new(|_| {
+                // Force an idle-but-connected read and a response larger than
+                // the pipe buffer, rather than depending on a scheduling race.
+                thread::sleep(Duration::from_millis(30));
+                Ok(Reply::Json(serde_json::json!({
+                    "same_user":true, "payload":"x".repeat(256 * 1024)
+                })))
+            }),
         )
         .unwrap();
-        assert_eq!(
-            request(temp.path(), &Request::Activate, None).unwrap()["same_user"],
-            true
-        );
+        let reply = request(temp.path(), &Request::Activate, None).unwrap();
+        assert_eq!(reply["same_user"], true);
+        assert_eq!(reply["payload"].as_str().unwrap().len(), 256 * 1024);
         drop(server);
         drop(lease);
-        assert!(WorkspaceLease::acquire(temp.path()).is_ok());
+        // Receiving the reply does not join its worker: that worker owns the
+        // lease until its final write/cleanup returns, including on Windows.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match WorkspaceLease::acquire(temp.path()) {
+                Ok(_) => break,
+                Err(error) if error.code == "WORKSPACE_LOCKED" && Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("Workspace lease was not released: {error:?}"),
+            }
+        }
     }
     #[test]
     fn rejects_unknown_commands_and_host_paths() {

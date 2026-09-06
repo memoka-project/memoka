@@ -563,7 +563,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let workspace = temp.path().join("workspace");
         crate::backup::tests::fixture(&workspace);
-        let restic = Restic::discover(crate::restic::cancellation()).unwrap();
+        let mut restic = Restic::discover(crate::restic::cancellation()).unwrap();
+        // This tiny local fixture must not inherit the production one-hour
+        // per-command limit when a subprocess/pipe regression stops progress.
+        restic.timeout = Duration::from_secs(30);
         let first = backup::run_local(&workspace, &restic).unwrap().unwrap();
         let credentials = TestCredentials::default();
         for name in ["a", "b", "c"] {

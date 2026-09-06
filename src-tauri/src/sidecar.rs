@@ -21,6 +21,21 @@ pub(crate) fn install_cli_interrupt_handler() -> Result<(), ReadError> {
     .map_err(|_| ReadError::new("SIDECAR_IO", "Cannot install CLI cancellation handler"))
 }
 struct ChildGuard(Box<dyn ChildWrapper>);
+impl ChildGuard {
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        #[cfg(windows)]
+        {
+            // process-wrap 10's JobObject::try_wait consumes a completion-port
+            // notification without remembering it for wait(). Consuming the
+            // final notification here can make Drop's wait block forever.
+            // Poll only the leader; keep the Job Object for kill/wait/drop so
+            // all descendants are still terminated before draining the pipes.
+            self.0.inner_mut().try_wait()
+        }
+        #[cfg(not(windows))]
+        self.0.try_wait()
+    }
+}
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.start_kill();
@@ -120,7 +135,7 @@ fn run_with_cleanup(
     });
     let began = Instant::now();
     let result = loop {
-        match child.0.try_wait() {
+        match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Err(_) => {
                 break Err(ReadError::new(
@@ -185,7 +200,7 @@ fn finish_before_kill(child: &mut ChildGuard, grace: Duration) {
     // do not pretend forced Job Object termination can clean repository locks.
     let began = Instant::now();
     while began.elapsed() < grace {
-        match child.0.try_wait() {
+        match child.try_wait() {
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             _ => break,
         }
@@ -271,25 +286,29 @@ mod tests {
     use super::*;
     #[cfg(windows)]
     #[test]
-    fn windows_no_console_child_runs_and_exits_inside_its_job() {
-        let mut command = Command::new("cmd.exe");
-        command
-            .args(["/D", "/C", "echo", "sidecar-ok"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let result = run(
-            command,
-            &crate::restic::cancellation(),
-            Duration::from_secs(10),
-            None,
-        )
-        .unwrap();
-        assert!(result.status.success());
-        assert_eq!(
-            String::from_utf8(result.stdout).unwrap().trim(),
-            "sidecar-ok"
-        );
-        assert!(result.stderr.is_empty());
+    fn windows_no_console_children_run_and_exit_inside_their_jobs() {
+        // Repeated short-lived children exercise polling followed by teardown,
+        // the same sequence used by a multi-command Restic transfer.
+        for _ in 0..16 {
+            let mut command = Command::new("cmd.exe");
+            command
+                .args(["/D", "/C", "echo", "sidecar-ok"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let result = run(
+                command,
+                &crate::restic::cancellation(),
+                Duration::from_secs(10),
+                None,
+            )
+            .unwrap();
+            assert!(result.status.success());
+            assert_eq!(
+                String::from_utf8(result.stdout).unwrap().trim(),
+                "sidecar-ok"
+            );
+            assert!(result.stderr.is_empty());
+        }
     }
     #[cfg(unix)]
     #[test]
