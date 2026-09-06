@@ -668,7 +668,9 @@ export async function runNamespaceHistory({
       "centered-backup-modals-and-bounded-small-window-scrolling",
       "backup-modal-tab-cycle-and-editor-focus-restoration",
       "backup-settings-native-save-without-capture-or-modal-dismissal",
-      "unconfigured-google-native-panel-and-typed-destination-chooser",
+      process.env.MEMOKA_E2E_GOOGLE_CONFIGURED === "1"
+        ? "bundled-google-native-panel-and-typed-destination-chooser"
+        : "unconfigured-google-native-panel-and-typed-destination-chooser",
       "history-absolute-local-datetime-with-ago",
       "manual-backup-captures-latest-note",
       "qa-during-backup-saves-core-and-releases-lease-without-final-capture",

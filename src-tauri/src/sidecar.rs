@@ -89,7 +89,9 @@ fn run_with_cleanup(
     command.wrap(process_wrap::std::ProcessGroup::leader());
     #[cfg(windows)]
     {
-        command.wrap(process_wrap::std::CreationFlags(0x08000000));
+        command.wrap(process_wrap::std::CreationFlags(
+            windows::Win32::System::Threading::CREATE_NO_WINDOW,
+        ));
         command.wrap(process_wrap::std::JobObject);
     }
     if input.is_some() {
@@ -267,6 +269,28 @@ pub(crate) fn sanitized(command: &mut Command) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn windows_no_console_child_runs_and_exits_inside_its_job() {
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/D", "/C", "echo", "sidecar-ok"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let result = run(
+            command,
+            &crate::restic::cancellation(),
+            Duration::from_secs(10),
+            None,
+        )
+        .unwrap();
+        assert!(result.status.success());
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap().trim(),
+            "sidecar-ok"
+        );
+        assert!(result.stderr.is_empty());
+    }
     #[cfg(unix)]
     #[test]
     fn graceful_stop_keeps_transport_alive_for_cleanup_then_reaps_descendants() {

@@ -74,6 +74,7 @@ webkit2gtk = "=2.0.2"
 [target.'cfg(target_os = "windows")'.dependencies]
 widestring = "1.2.1"
 keyring = { version = "=3.6.3", features = ["windows-native"] }
+windows = { version = "=0.62.2", default-features = false, features = ["Win32_System_Threading"] }
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",
