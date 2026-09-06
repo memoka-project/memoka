@@ -16,6 +16,8 @@
 - バックアップ設定・終了準備等のダイアログを中央floating modalへ統一。日時は`YYYY/MM/DD HH:mm:ss`、過去のイベントは相対経過時間も併記。
 - ユーザー向け`:help`を`doc/help.md`から取り込むよう変更し、カテゴリ別の現行仕様書を`doc/`へ整理。Carbonfoxの配色も調整。
 - `doc/development`の開発記録から現行の契約・設定・検証条件をカテゴリ別仕様書へ統合し、開発記録を削除。
+- Table候補の判定時、pipeを含まないplain textのMarkdown全文解析を省き、巨大貼り付けの同期処理を短縮。
+- Windowsの子プロセス起動、Workspaceロック競合の識別、履歴復旧時のファイルhandle解放を修正。
 
 ## [0.1.8] - 2026-09-05
 

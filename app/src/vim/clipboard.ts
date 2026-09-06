@@ -987,6 +987,10 @@ export function registerFromMarkdownTable(
   markdown: string,
   schema: Schema,
 ): Extract<VimRegister, { kind: "table-cells" }> | null {
+  // A table requires a pipe. Plain-text paste probes this path before its
+  // large-paste worker: do not parse/allocate a whole prose document merely
+  // to discover that it is not a table.
+  if (!markdown.includes("|")) return null;
   const parsed = parseMarkdownPaste(markdown, schema);
   const table =
     parsed?.slice.content.childCount === 1 &&

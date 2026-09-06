@@ -1519,6 +1519,29 @@ describe("Memoka structured Clipboard", () => {
     note.doc.destroy();
   });
 
+  it("does not allocate Markdown nodes when probing plain prose for a table", () => {
+    const note = createNoteDocument("01900000-0000-7000-8000-000000000001");
+    const editor = new Editor({ extensions: productEditorExtensions(note) });
+    const text = paragraphPasteFixture({
+      paragraphCount: 1_000,
+      approximateParagraphBytes: 112,
+    });
+    const createParagraph = vi.spyOn(editor.schema.nodes.paragraph!, "create");
+    try {
+      expect(
+        registerFromTabularClipboard(
+          { html: null, tsv: null, markdown: null, plain: text },
+          editor.schema,
+        ),
+      ).toBeNull();
+      expect(createParagraph).not.toHaveBeenCalled();
+    } finally {
+      createParagraph.mockRestore();
+      editor.destroy();
+      note.doc.destroy();
+    }
+  });
+
   it("puts an external TSV rectangle with p and synthesizes a header outside a Table", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");

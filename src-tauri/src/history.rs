@@ -326,6 +326,9 @@ pub fn restore(
         .open(internal.join("data-area.json"))?;
     file.write_all(&serde_json::to_vec(&marker)?)?;
     file.sync_all()?;
+    // Windows cannot rename the containing directory while a descendant
+    // file is still open. Close the marker before publishing the Workspace.
+    drop(file);
     crate::persistence::sync_file(&internal.join("memoka.sqlite3"))?;
     crate::persistence::sync_directory(&internal)?;
     crate::persistence::sync_directory(&restored)?;

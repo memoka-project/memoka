@@ -76,7 +76,9 @@ impl WorkspaceLease {
         #[cfg(not(unix))]
         let _ = metadata;
         file.try_lock_exclusive().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::WouldBlock {
+            // LockFileEx reports ERROR_LOCK_VIOLATION on Windows, whose
+            // ErrorKind is not WouldBlock. Use fs2's platform-specific code.
+            if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
                 ReadError::new(
                     "WORKSPACE_LOCKED",
                     "The Workspace is owned by another Memoka process",
@@ -572,8 +574,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         crate::data_area::prepare_data_area(temp.path()).unwrap();
         let lease = WorkspaceLease::acquire(temp.path()).unwrap();
-        assert!(
-            matches!(WorkspaceLease::acquire(temp.path()), Err(ReadError { code, .. }) if code == "WORKSPACE_LOCKED")
+        assert_eq!(
+            WorkspaceLease::acquire(temp.path())
+                .err()
+                .expect("a second owner must not acquire the Workspace")
+                .code,
+            "WORKSPACE_LOCKED"
         );
         let server = Server::start(
             lease.clone(),
