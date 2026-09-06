@@ -55,7 +55,10 @@ export async function runNamespaceHistory({
     );
     assert.equal(stderr, "", "Successful reads must not leak diagnostics");
     const result = JSON.parse(stdout);
-    assert.equal(result.schema_version, 1);
+    const backupStateV2 =
+      args[0] === "backup" &&
+      ["status", "run", "copy", "maintain"].includes(args[1]);
+    assert.equal(result.schema_version, backupStateV2 ? 2 : 1);
     return result;
   };
   const command = async (name) => {
@@ -92,11 +95,12 @@ export async function runNamespaceHistory({
   );
 
   const originalRect = await windowRect();
+  const originalBackup = await cli("backup", "status");
   const modalLayouts = [];
   try {
     for (const size of [null, { width: 620, height: 460 }]) {
       if (size) await windowRect(size);
-      for (const name of ["backup-status", "backup-settings"]) {
+      for (const name of ["backup-settings"]) {
         await command(name);
         await waitForElement(sessionId, ".backup-dialog");
         await waitFor(
@@ -106,6 +110,46 @@ export async function runNamespaceHistory({
             && (dialog.querySelector('input')?.matches(':enabled') ?? true);`,
           Boolean,
         );
+        if (!size) {
+          // Exercise the real settings IPC, not only mocked dialog forms.
+          // Retention changes are configuration-only and must not capture or
+          // alter the Note's epoch; the modal stays open after saving.
+          for (const [index, value] of [17, 49, 31, 13].entries()) {
+            const input = await waitForElement(
+              sessionId,
+              index === 0
+                ? '.backup-dialog input[type="number"]'
+                : `.backup-retention-fields label:nth-child(${index}) input`,
+            );
+            await clickElement(sessionId, input);
+            await sendActiveChord(sessionId, CONTROL, "a");
+            await sendKeys(sessionId, input, String(value));
+          }
+          await clickElement(
+            sessionId,
+            await waitForElement(
+              sessionId,
+              '.backup-dialog button[type="submit"]',
+            ),
+          );
+          await waitFor(
+            sessionId,
+            `return document.querySelector('.backup-dialog')?.getAttribute('aria-busy') === 'false';`,
+            Boolean,
+          );
+          const saved = await cli("backup", "status");
+          assert.equal(saved.config.interval_minutes, 17);
+          assert.deepEqual(saved.config.local_retention, {
+            last: 49,
+            daily: 31,
+            monthly: 13,
+          });
+          assert.equal(saved.content_epoch, originalBackup.content_epoch);
+          assert.equal(
+            saved.status.last_local_capture_at,
+            originalBackup.status.last_local_capture_at,
+          );
+        }
         const geometry = await execute(
           sessionId,
           `const dialog = document.querySelector('.backup-dialog');
@@ -134,18 +178,20 @@ export async function runNamespaceHistory({
         // scrolling this panel, even when the complete form cannot fit.
         for (let index = 0; index <= geometry.controls; index++) {
           await sendActiveKey(sessionId, "\uE004");
-          assert.equal(
-            await execute(
-              sessionId,
-              `const dialog = document.querySelector('.backup-dialog');
+          const focusGeometry = await execute(
+            sessionId,
+            `const dialog = document.querySelector('.backup-dialog');
               const active = document.activeElement;
               const panel = dialog.getBoundingClientRect();
               const control = active.getBoundingClientRect();
-              return dialog.contains(active) && control.top >= panel.top
-                && control.bottom <= panel.bottom;`,
-            ),
-            true,
-            "Tab focus must remain visible inside the modal",
+              return { visible: dialog.contains(active) && control.top >= panel.top
+                && control.bottom <= panel.bottom,
+                control: active.outerHTML, top: control.top, bottom: control.bottom,
+                panelTop: panel.top, panelBottom: panel.bottom, scrollTop: dialog.scrollTop };`,
+          );
+          assert.ok(
+            focusGeometry.visible,
+            `Tab focus must remain visible inside the modal: ${JSON.stringify(focusGeometry)}`,
           );
         }
         assert.equal(
@@ -162,8 +208,7 @@ export async function runNamespaceHistory({
           "document.querySelector('.backup-dialog').scrollTop = 0; return true;",
         );
         await screenshot(`${name}${size ? "-small" : ""}.png`);
-        if (name === "backup-settings")
-          await sendActiveChord(sessionId, CONTROL, "c");
+        if (size) await sendActiveChord(sessionId, CONTROL, "c");
         else await sendActiveKey(sessionId, ESCAPE);
         await waitFor(
           sessionId,
@@ -407,6 +452,17 @@ export async function runNamespaceHistory({
   );
   const previewMs = Math.round(performance.now() - previewStart);
   assert.ok(!preview.includes("after capture"));
+  const displayedDates = await execute(
+    sessionId,
+    `return [...document.querySelectorAll('[data-memoka-focus-surface="history"] time')]
+      .map(element => element.textContent);`,
+  );
+  assert.ok(displayedDates.length > 0);
+  for (const value of displayedDates)
+    assert.match(
+      value,
+      /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} \(\d+[a-z]+ ago\)$/u,
+    );
   assert.equal(
     await execute(
       sessionId,
@@ -493,6 +549,8 @@ export async function runNamespaceHistory({
     checks: [
       "centered-backup-modals-and-bounded-small-window-scrolling",
       "backup-modal-tab-cycle-and-editor-focus-restoration",
+      "backup-settings-native-save-without-capture-or-modal-dismissal",
+      "history-absolute-local-datetime-with-ago",
       "centered-native-shutdown-progress-and-cancel-focus-restoration",
       "group-create-and-rename-without-note-mutation",
       "child-note-placement-and-distinct-entry-id",

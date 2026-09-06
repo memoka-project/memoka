@@ -29,7 +29,7 @@ themeなどをCommandから確定した場合は、既存commentと無関係な�
 | `japanese.line_break_segmentation` | fine                                     | fine/budoux/native                                        |
 
 旧設定`shutdown.wait_for_mirror`は既知の無視キーとして受け付ける。値に関係なく旧mirrorを動かさず、
-このキーだけを理由に他の有効な設定を既定へ戻さない。バックアップの保存間隔・追加先は
+このキーだけを理由に他の有効な設定を既定へ戻さない。バックアップの保存間隔・複数追加先・有効状態・保存先ごとの直近/日次/月次保持数は
 Workspaceごとの設定であり、`:backup-settings`から変更する。パスワードはOS資格情報ストアのみへ保存する。
 
 既定font stackは次である。
@@ -145,44 +145,43 @@ Sidebar focus中も利用できる。
 
 ## 7. Command catalog
 
-| Command                                           | 動作                                              |
-| ------------------------------------------------- | ------------------------------------------------- |
-| `:tree`                                           | Treeを開いてfocus                                 |
-| `:group`                                          | 選択Entryの子（選択なしならtop-level）にgroup作成 |
-| `:rename-group`                                   | 選択groupのname変更                               |
-| `:backup`                                         | 保存barrier後にlocal captureと追加先copyを要求    |
-| `:backup-status`                                  | local・追加先・pending/expired・errorを表示       |
-| `:backup-settings`                                | Workspace別間隔・追加先・OS資格情報の設定         |
-| `:history`                                        | 現在resourceまたはWorkspaceのread-only履歴        |
-| `:trash`                                          | deleted Note検索                                  |
-| `:buffers` / `:ls`                                | load済みBuffer検索                                |
-| `:outline`                                        | active WindowのOutlineを開いてfocus               |
-| `:split` / `:sp`                                  | 現在Windowを上下分割                              |
-| `:vsplit` / `:vs`                                 | 現在Windowを左右分割                              |
-| `:close` / `:clo`                                 | 現在Windowを閉じる                                |
-| `:bdelete` / `:bd`                                | 現在Bufferを閉じてWindowを空にする                |
-| `:tabnew`                                         | Sidebar非表示の空TabPageを作る                    |
-| `:tabclose` / `:tabc`                             | 現在TabPageを閉じる                               |
-| `:tabnext` / `:tabn`                              | 次Tabへ循環移動                                   |
-| `:tabprevious` / `:tabp`                          | 前Tabへ循環移動                                   |
-| `:paste-markdown`                                 | ClipboardをMarkdownとして現在位置へpaste          |
-| `:paste-html`                                     | ClipboardをHTMLとして現在位置へpaste              |
-| `:attach`                                         | file pickerから現在位置へ添付                     |
-| `:image-width [10..100%]`                         | 現在画像の幅を表示/変更                           |
-| `:switch-workspace`                               | 別Workspaceデータ領域へ切替                       |
-| `:update`                                         | signed updateを確認/適用                          |
-| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示             |
-| `:diagnostics` / `:diag`                          | local診断情報とlog directoryを表示                |
-| `:colorscheme [name]` / `:colo`                   | Nightfox themeを選択/直接変更                     |
-| `:font`                                           | application fontを選択                            |
-| `:zoom [50..200]`                                 | Zoomを表示/変更                                   |
-| `:note-width [px/off]`                            | Note最大表示幅を表示/変更/解除                    |
-| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を表示/変更           |
-| `:indent-width [16..64]`                          | 共通indent幅を表示/変更                           |
-| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を表示/変更                         |
-| `:line-break-segmentation [mode]` / `:line-break` | 日本語表示改行を表示/変更                         |
-| `:quit` / `:q` / `:qa`                            | 確定編集と必要なlocal履歴を保存後に終了           |
-| `:help`                                           | 管理Help Noteを同期して開く                       |
+| Command                                           | 動作                                                                          |
+| ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `:tree`                                           | Treeを開いてfocus                                                             |
+| `:group`                                          | 選択Entryの子（選択なしならtop-level）にgroup作成                             |
+| `:rename-group`                                   | 選択groupのname変更                                                           |
+| `:backup`                                         | 保存barrier後にlocal captureと追加先copyを要求                                |
+| `:backup-settings`                                | 保存状態表示とWorkspace別間隔・複数追加先・有効状態・保持数・OS資格情報の設定 |
+| `:history`                                        | 現在resourceまたはWorkspaceのread-only履歴                                    |
+| `:trash`                                          | deleted Note検索                                                              |
+| `:buffers` / `:ls`                                | load済みBuffer検索                                                            |
+| `:outline`                                        | active WindowのOutlineを開いてfocus                                           |
+| `:split` / `:sp`                                  | 現在Windowを上下分割                                                          |
+| `:vsplit` / `:vs`                                 | 現在Windowを左右分割                                                          |
+| `:close` / `:clo`                                 | 現在Windowを閉じる                                                            |
+| `:bdelete` / `:bd`                                | 現在Bufferを閉じてWindowを空にする                                            |
+| `:tabnew`                                         | Sidebar非表示の空TabPageを作る                                                |
+| `:tabclose` / `:tabc`                             | 現在TabPageを閉じる                                                           |
+| `:tabnext` / `:tabn`                              | 次Tabへ循環移動                                                               |
+| `:tabprevious` / `:tabp`                          | 前Tabへ循環移動                                                               |
+| `:paste-markdown`                                 | ClipboardをMarkdownとして現在位置へpaste                                      |
+| `:paste-html`                                     | ClipboardをHTMLとして現在位置へpaste                                          |
+| `:attach`                                         | file pickerから現在位置へ添付                                                 |
+| `:image-width [10..100%]`                         | 現在画像の幅を表示/変更                                                       |
+| `:switch-workspace`                               | 別Workspaceデータ領域へ切替                                                   |
+| `:update`                                         | signed updateを確認/適用                                                      |
+| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示                                         |
+| `:diagnostics` / `:diag`                          | local診断情報とlog directoryを表示                                            |
+| `:colorscheme [name]` / `:colo`                   | Nightfox themeを選択/直接変更                                                 |
+| `:font`                                           | application fontを選択                                                        |
+| `:zoom [50..200]`                                 | Zoomを表示/変更                                                               |
+| `:note-width [px/off]`                            | Note最大表示幅を表示/変更/解除                                                |
+| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を表示/変更                                       |
+| `:indent-width [16..64]`                          | 共通indent幅を表示/変更                                                       |
+| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を表示/変更                                                     |
+| `:line-break-segmentation [mode]` / `:line-break` | 日本語表示改行を表示/変更                                                     |
+| `:quit` / `:q` / `:qa`                            | 確定編集と必要なlocal履歴を保存後に終了                                       |
+| `:help`                                           | 管理Help Noteを同期して開く                                                   |
 
 ## 8. live setting picker
 

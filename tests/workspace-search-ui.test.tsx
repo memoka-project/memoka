@@ -160,6 +160,9 @@ describe("Memoka Workspace search palette", () => {
       document.querySelector(".workspace-search-input-row")?.textContent,
     ).toContain("1 results");
     expect(
+      document.querySelector(".workspace-search-timestamp time")?.textContent,
+    ).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} \(\d+[a-z]+ ago\)$/u);
+    expect(
       document
         .querySelector(".workspace-search-overlay")
         ?.getAttribute("data-search-diagnostic"),

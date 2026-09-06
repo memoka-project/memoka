@@ -9,7 +9,6 @@ import type { StableEditorPosition } from "../core/stable-position";
 import type { CoreRuntime } from "../core/runtime";
 import type { AttachmentRepository } from "../core/attachments";
 import {
-  formatWorkspaceSearchAge,
   normalizeWorkspaceSearchText,
   workspaceSearchMatchRanges,
   workspaceSearchTerms,
@@ -20,6 +19,7 @@ import {
 } from "../core/workspace-search";
 import { productEditorExtensions } from "../editor/extensions";
 import { SearchPane } from "./SearchPane";
+import { EventDateTime } from "./EventDateTime";
 
 export interface WorkspaceSearchSession {
   readonly windowId: string;
@@ -207,9 +207,6 @@ export function WorkspaceSearchPalette({
       renderItem={(result, currentQuery) => (
         <>
           <span className="workspace-search-row-heading">
-            <span className="workspace-search-age">
-              {formatWorkspaceSearchAge(result.updatedAt)}
-            </span>
             <span className="workspace-search-icon" aria-hidden="true">
               {result.kind === "image"
                 ? "📷"
@@ -224,6 +221,9 @@ export function WorkspaceSearchPalette({
             ) : (
               <SearchResultPath result={result} query={currentQuery} />
             )}
+          </span>
+          <span className="workspace-search-timestamp">
+            <EventDateTime value={result.updatedAt} />
           </span>
           {session.scope === "title" && (
             <span className="workspace-search-title-hierarchy">

@@ -24,11 +24,11 @@ import { CoreRuntime } from "../app/src/core/runtime";
 import { saveStableEditorPosition } from "../app/src/core/stable-position";
 import {
   deriveWorkspaceSearchDocument,
-  formatWorkspaceSearchAge,
   filterWorkspaceSearchCatalog,
   workspaceSearchMatchRanges,
   type WorkspaceSearchCatalog,
 } from "../app/src/core/workspace-search";
+import { formatElapsedTime } from "../app/src/core/display-datetime";
 import { addSecondWindow } from "./helpers/runtime";
 
 function deterministicIds() {
@@ -407,39 +407,27 @@ describe("Memoka Workspace search", () => {
       { from: 11, to: 16 },
     ]);
     expect(
-      formatWorkspaceSearchAge(
+      formatElapsedTime(
         "2026-08-09T23:59:50.000Z",
         Date.parse("2026-08-10T00:00:00.000Z"),
       ),
-    ).toBe("10s");
+    ).toBe("10s ago");
     const now = Date.parse("2026-08-10T00:00:00.000Z");
     expect(
-      formatWorkspaceSearchAge(new Date(now - 8 * 60_000).toISOString(), now),
-    ).toBe("8m");
+      formatElapsedTime(new Date(now - 8 * 60_000).toISOString(), now),
+    ).toBe("8m ago");
     expect(
-      formatWorkspaceSearchAge(
-        new Date(now - 5 * 3_600_000).toISOString(),
-        now,
-      ),
-    ).toBe("5h");
+      formatElapsedTime(new Date(now - 5 * 3_600_000).toISOString(), now),
+    ).toBe("5h ago");
     expect(
-      formatWorkspaceSearchAge(
-        new Date(now - 9 * 86_400_000).toISOString(),
-        now,
-      ),
-    ).toBe("9d");
+      formatElapsedTime(new Date(now - 9 * 86_400_000).toISOString(), now),
+    ).toBe("9d ago");
     expect(
-      formatWorkspaceSearchAge(
-        new Date(now - 90 * 86_400_000).toISOString(),
-        now,
-      ),
-    ).toBe("3mo");
+      formatElapsedTime(new Date(now - 90 * 86_400_000).toISOString(), now),
+    ).toBe("3mo ago");
     expect(
-      formatWorkspaceSearchAge(
-        new Date(now - 730 * 86_400_000).toISOString(),
-        now,
-      ),
-    ).toBe("2y");
+      formatElapsedTime(new Date(now - 730 * 86_400_000).toISOString(), now),
+    ).toBe("2y ago");
     note.doc.destroy();
   });
 

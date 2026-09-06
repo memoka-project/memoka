@@ -127,8 +127,12 @@ describe("Memoka Application Command-line", () => {
       kind: "error",
       message: "未対応のCommandです: notes",
     });
+    expect(parseApplicationCommand("backup-status")).toEqual({
+      kind: "error",
+      message: "未対応のCommandです: backup-status",
+    });
     expect(applicationCommandHelp()).toBe(
-      ":backup · :backup-status · :backup-settings · :history · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":backup · :backup-settings · :history · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

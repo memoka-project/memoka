@@ -5,7 +5,6 @@ import {
 
 export type ApplicationCommandId =
   | "workspace.backup"
-  | "workspace.backup_status"
   | "workspace.backup_settings"
   | "workspace.history"
   | "namespace.group"
@@ -58,17 +57,11 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     argument: "none",
   },
   {
-    id: "workspace.backup_status",
-    name: "backup-status",
-    aliases: [],
-    description: "履歴の保存状態と追加先の保護状態を確認する",
-    argument: "none",
-  },
-  {
     id: "workspace.backup_settings",
     name: "backup-settings",
     aliases: [],
-    description: "バックアップ間隔・追加保存先・資格情報を設定する",
+    description:
+      "バックアップの状態を確認し、保存先・保持数・資格情報を設定する",
     argument: "none",
   },
   {

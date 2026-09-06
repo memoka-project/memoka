@@ -92,7 +92,7 @@ exit 3、不明file、未知schema、path traversal、symlinkは正常世代に�
 
 ## 6. 追加ローカル保存先
 
-ローカル履歴を残したまま、追加先を1つ設定できる。
+ローカル履歴を常時有効・パスワードなしで残したまま、追加先を件数上限なく設定できる。
 `:backup-settings`でWorkspace外の親directoryを選び、その下の専用`memoka-<workspace-id>`へ保存する。
 Workspaceとの相互包含、既存の不明repository、空パスワードを拒否する。
 
@@ -100,24 +100,42 @@ Workspaceとの相互包含、既存の不明repository、空パスワードを�
 ローカルrepositoryのfile copyとパスワード変更で代用しない。
 パスワードはOS資格情報ストアへ保存し、必要なRestic childだけの環境変数へ渡す。
 argv、設定file、通常log、Command-line履歴には入れない。既存パスワードの再登録UIを持つ。
+保存先ごとに独立した資格情報を使う。再登録は入力した既存パスワードとrepository IDを検証してから更新し、誤パスワードで既存資格情報を上書きしない。
+作成済みrepositoryのパスワード変更機能は含めない。
+
+保存先は安定したIDを持ち、有効状態と保持設定を個別に保存する。無効状態は再起動後も保持する。
+無効な保存先は転送・保持整理・prune・終了待ちから除外する。実行中の処理単位は完了させ、次の処理単位を開始しない。
+設定、資格情報、保存済みrepositoryは維持する。再有効化時は残存local世代を新しい順に転送し、停止中にlocalから整理された未転送世代は期限切れとして記録する。
 
 追加先がoffline、鍵が取得不能、容量不足でも編集とローカル履歴は継続する。
 転送は新しいcaptureから試み、GUIの1回の転送試行には時間上限を設ける。
+転送は直列のbackground処理とし、GUIでは保存先全体に30秒の予算を適用する。試行後に次回開始先を巡回させ、未接続・低速な保存先が他の保存先を恒久的に妨げない。
+時間切れや未処理の保存先を成功扱いしない。CLIの明示copyは従来どおり1時間の予算を持つ。
 同じgenerationを重複作成せず、元のcapture時刻を維持する。
 転送待ち、転送機会の期限切れ、追加先で保護済みのcapture時刻を区別して表示する。
 追加先を変更したとき、以前の保存先への転送済み判定を流用しない。
+転送台帳、保護済みcapture日時、最終転送日時、転送待ち・期限切れ件数、エラー、整理状態は保存先IDごとに独立管理する。
+status取得はSQLiteの運用stateだけを読み、保存先やOS資格情報ストアへ接続しない。
+
+backup設定schema 2は`local_retention`と`destinations`配列を持つ。旧単一`additional`、status、転送台帳、初期化途中のintentは1 transactionで移行し、repository ID・資格情報・運用履歴を維持する。
+設定の移行だけでNote、content_epoch、バックアップ形式を変更せず、repositoryを再初期化しない。設定のない新規・復旧Workspaceのstatus/config取得は書き込みを行わない。
+初期化成功後に資格情報保存が失敗してもintentを保持し、再試行時に同じrepositoryを検証して登録する。
 
 解除はrepository自体を削除しない。別PCでの復旧に備えパスワードを別途保管する必要がある。
 同じ物理媒体にある2つのrepositoryは、その媒体の故障に対する二重化ではない。
 
 ## 7. 保持と容量回収
 
-正常世代へ「直近48世代 OR 日次30世代 OR 月次12世代」を各repositoryで独立適用する。
+正常世代へ直近・日次・月次のOR条件を各repositoryで独立適用する。既定は直近48世代・日次30世代・月次12世代である。
+ローカルを含めrepositoryごとに変更できる。直近は1以上、日次・月次は0以上の整数（u32）、0はその条件を無効にする。
+日次・月次は保存のある日・月について最新を保持する。設定保存では削除せず、次の保持整理から適用する。
 Resticのcalendar policyを使い、Workspaceごとに1つの集合として扱う。
 hostname、capture一時path、generation tagごとに保持集合を分割しない。
 
 dry-runのkeep/remove集合を確認済みsnapshot集合と照合し、最新正常世代が残ることを検証してから、
 明示したsnapshot IDだけをforgetする。追加先にしかない世代を、localから消えたという理由では削除しない。
+候補はWorkspace tagで絞り、引数長が世代数に比例しないようにする。不明なmatching snapshot等で集合が一致しない場合は削除を中止する。
+実際のforgetは検証済みIDを128件ずつ指定する。
 copy中はsource repositoryのleaseを保持し、retention/pruneと競合させない。
 
 forgetとpruneは別処理である。pruneは30秒以上入力操作がないidle時に開始し、各repositoryで24時間に1回まで行う。
@@ -183,6 +201,9 @@ memoka-cli backup restore --repository <repo-dir> --generation <generation-id> -
 ```
 
 GUI所有中の運用commandもownerへ依頼し、同じschedulerとrepository leaseを使う。
+`backup status`・`run`・`copy`・`maintain`のJSON応答は複数保存先に対応する`schema_version: 2`である。
+statusは`config.destinations`配列と`status.destinations`のID別state、run/copy/maintainは保存先ID別の結果を返す。
+GUIの`:backup-status`は廃止し、`:backup-settings`へ統合する。CLIの`backup status`は維持する。
 repository単独でlist/check/restoreでき、現在DBが壊れていても復旧できる。
 追加先では`--insecure-no-password`の代わりに`--password-stdin`または対話入力を使う。
 パスワード文字列を引数で渡すoptionはない。誤パスワードから空パスワードへfallbackしない。

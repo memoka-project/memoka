@@ -41,11 +41,11 @@ Internal Linkも現在表示されるtitle textを対象にし、atomic node全�
 非Root titleも独立した検索結果になる。
 
 - 1行目に一致したRoot/Section titleを表示する。
-- 2行目にNamespace祖先（グループを含む）とNote内Section祖先をつないだ親階層を表示し、Workspace直下のRootは`/`とする。
+- titleの下に更新日時とNamespace祖先（グループを含む）・Note内Section祖先をつないだ親階層を補助行として表示し、Workspace直下のRootは`/`とする。
 - 階層は小さく暗いtextにする。
 - 長い表示はNote titleを優先し、祖先側を省略する。
 - 更新日時の新しい順にsortする。
-- 時刻は現在との差を秒、分、時、日、月、年へ丸め、`10s`、`8m`のように表示する。
+- 更新日時は`YYYY/MM/DD HH:mm:ss (8m ago)`のように絶対日時と経過時間を常時併記し、狭い幅では折り返す。
 - file iconには`📄`を使う。
 
 各tokenは対象titleまたはいずれかの祖先titleに一致すればよい。title自体が一致しなくても、
@@ -60,7 +60,7 @@ ancestorを含む全tokenのAND条件を満たせば結果に含める。
 - Note title
 - title直後のヒット論理行番号
 - 一致周辺の短い本文
-- 現在からの更新時間
+- 更新日時と現在からの経過時間（title検索と同じ日時部品）
 - Note Treeから解決した現在の祖先path
 
 previewでは一致部分が上下中央付近に見えるようscrollし、すべての一致をhighlightする。

@@ -72,9 +72,31 @@ describe("shared quit/switch/update durability barrier", () => {
     const state = await options.backup.status();
     options.backup.status = async () => ({
       ...state,
+      config: {
+        ...state.config,
+        destinations: [
+          {
+            id: "offline",
+            path: "/offline",
+            repository_id: "repo",
+            enabled: true,
+            retention: state.config.local_retention,
+          },
+        ],
+      },
       status: {
         ...state.status,
-        additional_error: { code: "OFFLINE", message: "Target disconnected" },
+        destinations: {
+          offline: {
+            phase: "error",
+            protected_capture_at: null,
+            last_copy_at: null,
+            maintenance_error: null,
+            pending_copy_count: 1,
+            expired_copy_count: 0,
+            error: { code: "OFFLINE", message: "Target disconnected" },
+          },
+        },
       },
     });
     const result = coordinator.start({ ...options, kind: "switch-workspace" });
@@ -84,6 +106,42 @@ describe("shared quit/switch/update durability barrier", () => {
     await coordinator.leave(true);
     expect(await result).toBe(true);
     expect(options.controller.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("does not wait for disabled destinations with old errors", async () => {
+    const { coordinator, options } = fixture();
+    const state = await options.backup.status();
+    options.backup.status = async () => ({
+      ...state,
+      config: {
+        ...state.config,
+        destinations: [
+          {
+            id: "disabled",
+            path: "/offline",
+            repository_id: "repo",
+            enabled: false,
+            retention: state.config.local_retention,
+          },
+        ],
+      },
+      status: {
+        ...state.status,
+        destinations: {
+          disabled: {
+            phase: "disabled",
+            protected_capture_at: null,
+            last_copy_at: null,
+            error: { code: "OFFLINE", message: "not connected" },
+            maintenance_error: null,
+            pending_copy_count: 10,
+            expired_copy_count: 3,
+          },
+        },
+      },
+    });
+    expect(await coordinator.start(options)).toBe(true);
+    expect(options.complete).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])(

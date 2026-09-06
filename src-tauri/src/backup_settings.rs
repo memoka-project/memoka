@@ -1,0 +1,476 @@
+//! Workspace-local backup configuration and operational state. Never advances
+//! content_epoch, and never contains passwords.
+use crate::{document_model::ReadError, read_service::plain_file};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Retention {
+    pub last: u32,
+    pub daily: u32,
+    pub monthly: u32,
+}
+impl Default for Retention {
+    fn default() -> Self {
+        Self {
+            last: 48,
+            daily: 30,
+            monthly: 12,
+        }
+    }
+}
+impl Retention {
+    pub fn validate(&self) -> Result<(), ReadError> {
+        if self.last == 0 {
+            return Err(ReadError::new(
+                "INVALID_ARGUMENT",
+                "Keep at least one recent generation",
+            ));
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdditionalTarget {
+    pub id: String,
+    pub path: PathBuf,
+    pub repository_id: String,
+    pub credential: String,
+    pub enabled: bool,
+    pub retention: Retention,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupConfig {
+    pub schema_version: u32,
+    pub interval_minutes: u32,
+    pub local_repository_id: Option<String>,
+    pub local_retention: Retention,
+    pub destinations: Vec<AdditionalTarget>,
+}
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: 2,
+            interval_minutes: 15,
+            local_repository_id: None,
+            local_retention: Retention::default(),
+            destinations: Vec::new(),
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DestinationStatus {
+    pub phase: String,
+    pub last_copy_at: Option<String>,
+    pub protected_capture_at: Option<String>,
+    pub error: Option<ReadError>,
+    pub maintenance_error: Option<ReadError>,
+    pub pending_copy_count: usize,
+    pub expired_copy_count: usize,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupStatus {
+    pub phase: String,
+    pub maintenance_error: Option<ReadError>,
+    pub local_error: Option<ReadError>,
+    pub last_local_captured_epoch: i64,
+    pub last_local_capture_at: Option<String>,
+    pub known_missing_count: usize,
+    pub destinations: BTreeMap<String, DestinationStatus>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TransferLedger {
+    pub repository_id: Option<String>,
+    pub pending: BTreeMap<String, String>,
+    pub expired: BTreeMap<String, String>,
+    pub delivered: BTreeSet<String>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct InitIntent {
+    pub id: String,
+    pub workspace_id: String,
+    pub path: PathBuf,
+    pub repository_id: Option<String>,
+}
+pub fn ledger_key(id: &str) -> String {
+    format!("backup.transfers.{id}")
+}
+
+pub(crate) fn connection(workspace: &Path) -> Result<Connection, ReadError> {
+    let path = workspace.join(".memoka/memoka.sqlite3");
+    plain_file(&path)?;
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.busy_timeout(Duration::from_secs(5))?;
+    Ok(connection)
+}
+fn read<T: serde::de::DeserializeOwned + Default>(
+    db: &Connection,
+    key: &str,
+) -> Result<T, ReadError> {
+    let value: Option<String> = db
+        .query_row("SELECT value FROM settings WHERE key=?1", [key], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    value.map_or_else(
+        || Ok(T::default()),
+        |value| serde_json::from_str(&value).map_err(Into::into),
+    )
+}
+fn write<T: Serialize>(db: &Connection, key: &str, value: &T) -> Result<(), ReadError> {
+    db.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, serde_json::to_string(value)?])?;
+    Ok(())
+}
+pub(crate) fn setting<T: serde::de::DeserializeOwned + Default>(
+    workspace: &Path,
+    key: &str,
+) -> Result<T, ReadError> {
+    read(&connection(workspace)?, key)
+}
+pub(crate) fn save_setting<T: Serialize>(
+    workspace: &Path,
+    key: &str,
+    value: &T,
+) -> Result<(), ReadError> {
+    write(&connection(workspace)?, key, value)
+}
+
+/// One transaction moves the old singleton, ledger, status and unfinished init.
+/// No Restic or credential-store access is needed, including when offline.
+fn migrate(db: &mut Connection) -> Result<(), ReadError> {
+    let raw: Value = read(db, "backup.config")?;
+    // A fresh/restored Workspace has nothing to migrate. Pure config/status
+    // reads must stay read-only, including while a history reader holds a
+    // SQLite read transaction. The first settings write creates schema 2.
+    if raw.is_null() {
+        return Ok(());
+    }
+    if raw["schema_version"] == 2 {
+        return Ok(());
+    }
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let raw: Value = read(&tx, "backup.config")?;
+    if raw["schema_version"] == 2 {
+        return Ok(());
+    }
+    if raw.get("schema_version").is_some_and(|v| v != 1) {
+        return Err(ReadError::new(
+            "UNSUPPORTED_SCHEMA",
+            "Unsupported backup configuration version",
+        ));
+    }
+    let mut config: BackupConfig = if raw.is_null() {
+        BackupConfig::default()
+    } else {
+        serde_json::from_value(raw.clone())?
+    };
+    let previous: Value = read(&tx, "backup.status")?;
+    let mut status: BackupStatus = if previous.is_null() {
+        BackupStatus::default()
+    } else {
+        serde_json::from_value(previous.clone())?
+    };
+    if let Some(target) = raw.get("additional").filter(|v| !v.is_null()) {
+        let mut target = target.clone();
+        let id = uuid::Uuid::now_v7().to_string();
+        target["id"] = json!(id);
+        target["enabled"] = json!(true);
+        target["retention"] = serde_json::to_value(Retention::default())?;
+        config.destinations.push(serde_json::from_value(target)?);
+        let mut migrated = json!({});
+        for (old, new) in [
+            ("additional_phase", "phase"),
+            ("last_additional_copy_at", "last_copy_at"),
+            ("additional_protected_capture_at", "protected_capture_at"),
+            ("additional_error", "error"),
+            ("pending_copy_count", "pending_copy_count"),
+            ("expired_copy_count", "expired_copy_count"),
+        ] {
+            if let Some(value) = previous.get(old) {
+                migrated[new] = value.clone();
+            }
+        }
+        status
+            .destinations
+            .insert(id.clone(), serde_json::from_value(migrated)?);
+        let ledger: TransferLedger = read(&tx, "backup.transfers")?;
+        write(&tx, &ledger_key(&id), &ledger)?;
+    }
+    let pending: Value = read(&tx, "backup.additional_init_pending")?;
+    if !pending.is_null() {
+        let mut pending = pending;
+        pending["id"] = json!(uuid::Uuid::now_v7().to_string());
+        let pending: InitIntent = serde_json::from_value(pending)?;
+        write(&tx, "backup.init_intents", &vec![pending])?;
+    }
+    config.schema_version = 2;
+    write(&tx, "backup.config", &config)?;
+    write(&tx, "backup.status", &status)?;
+    tx.execute(
+        "DELETE FROM settings WHERE key IN ('backup.transfers','backup.additional_init_pending')",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+pub fn config(workspace: &Path) -> Result<BackupConfig, ReadError> {
+    let mut db = connection(workspace)?;
+    migrate(&mut db)?;
+    read(&db, "backup.config")
+}
+/// History/CLI reads need only the unchanged local identity. Do not migrate
+/// operational settings or allocate destination IDs just to read a generation.
+pub(crate) fn read_local_repository_id(workspace: &Path) -> Result<Option<String>, ReadError> {
+    let raw: Value = setting(workspace, "backup.config")?;
+    if raw.get("schema_version").is_some_and(|v| v != 1 && v != 2) {
+        return Err(ReadError::new(
+            "UNSUPPORTED_SCHEMA",
+            "Unsupported backup configuration version",
+        ));
+    }
+    serde_json::from_value(raw["local_repository_id"].clone()).map_err(Into::into)
+}
+pub fn status(workspace: &Path) -> Result<BackupStatus, ReadError> {
+    let mut db = connection(workspace)?;
+    migrate(&mut db)?;
+    read(&db, "backup.status")
+}
+pub(crate) fn update_config(
+    workspace: &Path,
+    update: impl FnOnce(&mut BackupConfig) -> Result<(), ReadError>,
+) -> Result<(), ReadError> {
+    let mut db = connection(workspace)?;
+    migrate(&mut db)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let mut value = read(&tx, "backup.config")?;
+    update(&mut value)?;
+    write(&tx, "backup.config", &value)?;
+    tx.commit()?;
+    Ok(())
+}
+pub(crate) fn update_status(
+    workspace: &Path,
+    update: impl FnOnce(&mut BackupStatus),
+) -> Result<(), ReadError> {
+    let mut db = connection(workspace)?;
+    migrate(&mut db)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let mut value = read(&tx, "backup.status")?;
+    update(&mut value);
+    write(&tx, "backup.status", &value)?;
+    tx.commit()?;
+    Ok(())
+}
+pub fn set_local(workspace: &Path, minutes: u32, retention: Retention) -> Result<(), ReadError> {
+    if !(1..=1440).contains(&minutes) {
+        return Err(ReadError::new(
+            "INVALID_ARGUMENT",
+            "Backup interval must be 1–1440 minutes",
+        ));
+    }
+    retention.validate()?;
+    update_config(workspace, |config| {
+        config.interval_minutes = minutes;
+        config.local_retention = retention;
+        Ok(())
+    })
+}
+pub fn destination(workspace: &Path, id: &str) -> Result<AdditionalTarget, ReadError> {
+    config(workspace)?
+        .destinations
+        .into_iter()
+        .find(|item| item.id == id)
+        .ok_or_else(|| ReadError::new("NOT_FOUND", "Backup destination not found"))
+}
+pub fn update_destination(
+    workspace: &Path,
+    id: &str,
+    update: impl FnOnce(&mut AdditionalTarget),
+) -> Result<(), ReadError> {
+    update_config(workspace, |config| {
+        let target = config
+            .destinations
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| ReadError::new("NOT_FOUND", "Backup destination not found"))?;
+        update(target);
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".memoka")).unwrap();
+        Connection::open(dir.path().join(".memoka/memoka.sqlite3"))
+            .unwrap()
+            .execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);")
+            .unwrap();
+        dir
+    }
+    #[test]
+    fn singleton_migration_preserves_credentials_and_state_once() {
+        let dir = fixture();
+        let path = dir.path();
+        save_setting(path, "backup.config", &json!({"interval_minutes":23,"local_repository_id":"local","additional":{"path":"/offline/repo","repository_id":"other","credential":"repo:other"}})).unwrap();
+        save_setting(path, "backup.status", &json!({"phase":"idle","last_local_captured_epoch":9,"additional_phase":"error","pending_copy_count":2,"expired_copy_count":1,"additional_error":{"code":"OFFLINE","message":"offline","details":null},"additional_protected_capture_at":"2026-09-01T00:00:00Z"})).unwrap();
+        save_setting(
+            path,
+            "backup.transfers",
+            &json!({"repository_id":"other","pending":{"a":"time"},"expired":{},"delivered":["b"]}),
+        )
+        .unwrap();
+        save_setting(
+            path,
+            "backup.additional_init_pending",
+            &json!({"workspace_id":"workspace","path":"/other/repo","repository_id":"interrupted"}),
+        )
+        .unwrap();
+        let migrated = config(path).unwrap();
+        let target = &migrated.destinations[0];
+        assert_eq!(migrated.interval_minutes, 23);
+        assert_eq!(target.credential, "repo:other");
+        assert!(target.enabled);
+        assert_eq!(target.retention, Retention::default());
+        assert_eq!(config(path).unwrap().destinations[0].id, target.id);
+        let status = status(path).unwrap();
+        assert_eq!(status.last_local_captured_epoch, 9);
+        assert_eq!(status.destinations[&target.id].pending_copy_count, 2);
+        let ledger: TransferLedger = setting(path, &ledger_key(&target.id)).unwrap();
+        assert!(ledger.delivered.contains("b"));
+        assert_eq!(ledger.pending["a"], "time");
+        let intents: Vec<InitIntent> = setting(path, "backup.init_intents").unwrap();
+        assert_eq!(intents[0].repository_id.as_deref(), Some("interrupted"));
+    }
+    #[test]
+    fn rejects_unknown_versions_and_invalid_retention_without_resetting() {
+        let dir = fixture();
+        assert!(
+            set_local(
+                dir.path(),
+                15,
+                Retention {
+                    last: 0,
+                    daily: 1,
+                    monthly: 1
+                }
+            )
+            .is_err()
+        );
+        set_local(
+            dir.path(),
+            15,
+            Retention {
+                last: 1,
+                daily: 0,
+                monthly: 0,
+            },
+        )
+        .unwrap();
+        save_setting(dir.path(), "backup.config", &json!({"schema_version":99})).unwrap();
+        assert_eq!(config(dir.path()).unwrap_err().code, "UNSUPPORTED_SCHEMA");
+        assert_eq!(
+            setting::<Value>(dir.path(), "backup.config").unwrap()["schema_version"],
+            99
+        );
+    }
+
+    #[test]
+    fn fresh_settings_reads_are_read_only_and_metadata_can_change_during_work() {
+        let dir = fixture();
+        let path = dir.path();
+        let reader = connection(path).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT * FROM settings;")
+            .unwrap();
+        assert_eq!(config(path).unwrap().schema_version, 2);
+        assert!(status(path).unwrap().destinations.is_empty());
+        assert_eq!(
+            reader
+                .query_row("SELECT count(*) FROM settings", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        reader.execute_batch("COMMIT;").unwrap();
+
+        update_config(path, |config| {
+            config.destinations.push(AdditionalTarget {
+                id: "target".into(),
+                path: PathBuf::from("/offline/target"),
+                repository_id: "repository".into(),
+                credential: "test-credential-reference".into(),
+                enabled: true,
+                retention: Retention::default(),
+            });
+            Ok(())
+        })
+        .unwrap();
+        update_status(path, |state| {
+            state.destinations.entry("target".into()).or_default().phase = "copying".into();
+        })
+        .unwrap();
+        let service = crate::native_service::NativeService::new(path.to_owned());
+        service
+            .settings(crate::native_service::BackupSettingsRequest::Enabled {
+                id: "target".into(),
+                enabled: false,
+            })
+            .unwrap();
+        // A subsequent worker status write cannot restore stale configuration.
+        update_status(path, |state| {
+            state.destinations.get_mut("target").unwrap().phase = "idle".into();
+        })
+        .unwrap();
+        set_local(
+            path,
+            20,
+            Retention {
+                last: 7,
+                daily: 0,
+                monthly: 0,
+            },
+        )
+        .unwrap();
+        assert!(!destination(path, "target").unwrap().enabled);
+        assert_eq!(
+            destination(path, "target").unwrap().retention,
+            Retention::default()
+        );
+        assert_eq!(status(path).unwrap().destinations["target"].phase, "idle");
+    }
+
+    #[test]
+    fn history_identity_lookup_does_not_migrate_legacy_settings() {
+        let dir = fixture();
+        let path = dir.path();
+        let original = json!({"local_repository_id":"local","additional":{"path":"/offline","repository_id":"other","credential":"repo:other"}});
+        save_setting(path, "backup.config", &original).unwrap();
+        let reader = connection(path).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT * FROM settings;")
+            .unwrap();
+        assert_eq!(
+            read_local_repository_id(path).unwrap().as_deref(),
+            Some("local")
+        );
+        assert_eq!(setting::<Value>(path, "backup.config").unwrap(), original);
+        reader.execute_batch("COMMIT;").unwrap();
+    }
+}

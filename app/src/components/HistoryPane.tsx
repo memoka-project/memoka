@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { JSONContent } from "@tiptap/core";
 import { SearchPane } from "./SearchPane";
+import { EventDateTime } from "./EventDateTime";
+import { formatDisplayDateTime } from "../core/display-datetime";
 import {
   nativeErrorMessage,
   type BackupPort,
@@ -39,8 +41,10 @@ export function HistoryPane({
       active = false;
     };
   }, [port, session.id]);
-  const shown = items.filter((item) =>
-    item.descriptor.captured_at.includes(query),
+  const shown = items.filter(
+    (item) =>
+      item.descriptor.captured_at.includes(query) ||
+      formatDisplayDateTime(item.descriptor.captured_at).includes(query),
   );
   return (
     <SearchPane
@@ -53,7 +57,7 @@ export function HistoryPane({
       itemId={(item) => item.descriptor.generation_id}
       renderItem={(item) => (
         <span>
-          {new Date(item.descriptor.captured_at).toLocaleString()}{" "}
+          <EventDateTime value={item.descriptor.captured_at} />{" "}
           {item.descriptor.known_missing.length ? " · 添付欠損あり" : ""}
         </span>
       )}
@@ -305,7 +309,9 @@ function HistoryPreview({
   return (
     <div ref={previewRoot} className="workspace-search-preview-pane">
       <div className="workspace-search-preview-root">
-        <p>読み取り専用 · {new Date(capturedAt).toLocaleString()}</p>
+        <p>
+          読み取り専用 · <EventDateTime value={capturedAt} />
+        </p>
         {id && (
           <button onClick={() => navigate(null)}>この世代のノート一覧</button>
         )}

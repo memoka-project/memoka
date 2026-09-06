@@ -9,21 +9,74 @@ export interface NativeError {
 }
 export interface BackupState {
   readonly config: {
+    schema_version: 2;
     interval_minutes: number;
-    additional: { path: string } | null;
+    local_retention: BackupRetention;
+    destinations: readonly BackupDestination[];
   };
   readonly status: {
     phase: string;
-    additional_phase: string;
     last_local_capture_at: string | null;
-    additional_protected_capture_at: string | null;
     local_error: NativeError | null;
-    additional_error: NativeError | null;
     maintenance_error: NativeError | null;
-    pending_copy_count: number;
-    expired_copy_count: number;
     known_missing_count: number;
+    destinations: Readonly<Record<string, BackupDestinationStatus>>;
   };
+}
+export interface BackupRetention {
+  readonly last: number;
+  readonly daily: number;
+  readonly monthly: number;
+}
+export const DEFAULT_BACKUP_RETENTION: BackupRetention = {
+  last: 48,
+  daily: 30,
+  monthly: 12,
+};
+export interface BackupDestination {
+  readonly id: string;
+  readonly path: string;
+  readonly repository_id: string;
+  readonly enabled: boolean;
+  readonly retention: BackupRetention;
+}
+export interface BackupDestinationStatus {
+  readonly phase: string;
+  readonly protected_capture_at: string | null;
+  readonly last_copy_at: string | null;
+  readonly error: NativeError | null;
+  readonly maintenance_error: NativeError | null;
+  readonly pending_copy_count: number;
+  readonly expired_copy_count: number;
+}
+export type BackupSettingsRequest =
+  | { kind: "local"; intervalMinutes: number; retention: BackupRetention }
+  | {
+      kind: "add";
+      directory: string;
+      password: string;
+      retention: BackupRetention;
+    }
+  | { kind: "retention"; id: string; retention: BackupRetention }
+  | { kind: "enabled"; id: string; enabled: boolean }
+  | { kind: "remove"; id: string }
+  | { kind: "credential"; id: string; password: string };
+
+export function backupTransferFailures(
+  state: BackupState,
+): readonly { destination: BackupDestination; error: NativeError }[] {
+  return state.config.destinations.flatMap((destination) => {
+    const error = state.status.destinations[destination.id]?.error;
+    return destination.enabled && error ? [{ destination, error }] : [];
+  });
+}
+export function backupCopyingDestinations(
+  state: BackupState,
+): readonly BackupDestination[] {
+  return state.config.destinations.filter(
+    (destination) =>
+      state.status.destinations[destination.id]?.phase === "copying",
+  );
 }
 export interface HistoryGeneration {
   readonly descriptor: {
@@ -57,12 +110,7 @@ export interface BackupPort {
   cancel(): Promise<void>;
   resume(): Promise<void>;
   maintainIdle(): Promise<unknown>;
-  settings(value: {
-    intervalMinutes: number;
-    additionalDirectory: string | null;
-    password: string | null;
-    detach: boolean;
-  }): Promise<void>;
+  settings(value: BackupSettingsRequest): Promise<void>;
   chooseAdditional(): Promise<string | null>;
   history(
     id: string | null,
@@ -92,7 +140,7 @@ export function createDefaultBackupPort(): BackupPort | null {
     resume: () => invoke("workspace_backup_resume"),
     maintainIdle: () =>
       request({ operation: "backup", action: { kind: "idle-maintain" } }),
-    settings: (value) => invoke("workspace_backup_settings", value),
+    settings: (request) => invoke("workspace_backup_settings", { request }),
     chooseAdditional: async () => {
       const selected = await open({
         directory: true,

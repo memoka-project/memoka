@@ -172,10 +172,16 @@ Tab/Shift-Tabは有効なcontrol間を循環し、controlがないstageでもdia
 更新確認ではEnterまたは確認buttonで進め、取り消しbutton上のEnterは更新を実行しない。Esc/Ctrl-cは取り消し可能なstageだけ受け付ける。
 Command-line入力とNote内`/`検索入力、通常の通知messageは引き続き下部に表示する。
 
-`:backup-status`と`:backup-settings`はApplication Window中央のfloating modal dialogで表示し、同じ状態表示を使う。
+バックアップ設定と状態表示は`:backup-settings`へ統合し、Application Window中央のfloating modal dialogで表示する。
+localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別に保存する。成功後もdialogを開いたままにする。
+追加先の有効切替は即時保存し、解除は確認後に登録のみを削除する。保存先が多い場合も件数による登録制限を設けない。
 背景を覆って背後への操作を遮断し、Tab/Shift-Tabはdialog内を循環する。小さいWindowではdialog内をscrollする。
 閉じるbuttonまたはEsc/Ctrl-cで元の操作領域へfocusを戻す。背景clickでは閉じず、設定保存中は閉じる操作を受け付けない。
 設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
+
+GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。過去のeventは`(5m ago)`などを併記する。
+単位はs/m/h/d/mo/y、月は30日・年は365日換算で端数を切り捨てる。未来日時にagoを付けず、不正日時は`—`とする。
+日時部品のみが表示中に共通の1秒clockを購読し、Editor/preview本文全体を再描画しない。永続データ・CLI JSON・利用者のNote本文は変換しない。
 `:history`は共通検索ペインの読み取り専用previewを使い、過去Note、内部link、添付を選択世代の範囲で表示する。
 preview内のbuttonへfocusした後もEsc/Ctrl-cで閉じられる。現在Noteへの直接上書き機能はない。
 

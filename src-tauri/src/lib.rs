@@ -9,6 +9,7 @@ mod attachment;
 mod background_operation;
 pub mod backup;
 pub mod backup_management;
+pub mod backup_settings;
 pub mod cli;
 mod clipboard;
 mod data_area;

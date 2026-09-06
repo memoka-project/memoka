@@ -1,5 +1,6 @@
 import {
   nativeErrorMessage,
+  backupTransferFailures,
   type BackupPort,
   type BackupState,
 } from "./history";
@@ -121,11 +122,12 @@ export class ApplicationDeparture {
           if (!this.waiting(session)) return;
           const state = await backup.status();
           if (!this.waiting(session)) return;
-          if (state.status.additional_error) {
+          const failures = backupTransferFailures(state);
+          if (failures.length > 0) {
             this.show(
               session,
               "backup-error",
-              `ローカル履歴は保存済みですが、追加先への転送は未完了です: ${state.status.additional_error.message}`,
+              `ローカル履歴は保存済みですが、追加先への転送は未完了です: ${failures.map(({ destination, error }) => `${destination.path}: ${error.message}`).join(" / ")}`,
               state,
             );
             return;

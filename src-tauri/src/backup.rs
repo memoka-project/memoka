@@ -1,6 +1,12 @@
 //! Canonical SQLite + CAS capture and Restic history. All heavy operations run
 //! outside the GUI/persistence mutex. The only shared persistence writes here
 //! are operational settings and never advance content_epoch.
+pub use crate::backup_settings::{
+    AdditionalTarget, BackupConfig, BackupStatus, Retention, config, status,
+};
+pub(crate) use crate::backup_settings::{
+    connection, save_setting, setting, update_config, update_status,
+};
 use crate::{
     document_model::ReadError,
     read_service::{
@@ -8,7 +14,7 @@ use crate::{
     },
     restic::{Repository, Restic, args},
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -56,55 +62,6 @@ pub struct Generation {
     pub repository_id: String,
     pub descriptor: Descriptor,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AdditionalTarget {
-    pub path: PathBuf,
-    pub repository_id: String,
-    pub credential: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct BackupConfig {
-    pub interval_minutes: u32,
-    pub local_repository_id: Option<String>,
-    pub additional: Option<AdditionalTarget>,
-}
-impl Default for BackupConfig {
-    fn default() -> Self {
-        Self {
-            interval_minutes: 15,
-            local_repository_id: None,
-            additional: None,
-        }
-    }
-}
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct BackupStatus {
-    pub phase: String,
-    pub additional_phase: String,
-    pub maintenance_error: Option<ReadError>,
-    pub local_error: Option<ReadError>,
-    pub additional_error: Option<ReadError>,
-    pub last_local_captured_epoch: i64,
-    pub last_local_capture_at: Option<String>,
-    pub last_additional_copy_at: Option<String>,
-    pub additional_protected_capture_at: Option<String>,
-    pub pending_copy_count: usize,
-    pub expired_copy_count: usize,
-    pub known_missing_count: usize,
-}
-
-fn connection(workspace: &Path) -> Result<Connection, ReadError> {
-    let path = workspace.join(".memoka/memoka.sqlite3");
-    plain_file(&path)?;
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.busy_timeout(Duration::from_secs(5))?;
-    Ok(connection)
-}
 pub fn content_epoch(workspace: &Path) -> Result<i64, ReadError> {
     Ok(connection(workspace)?
         .query_row(
@@ -114,68 +71,6 @@ pub fn content_epoch(workspace: &Path) -> Result<i64, ReadError> {
         )
         .optional()?
         .unwrap_or(0))
-}
-pub(crate) fn setting<T: serde::de::DeserializeOwned + Default>(
-    workspace: &Path,
-    key: &str,
-) -> Result<T, ReadError> {
-    let value: Option<String> = connection(workspace)?
-        .query_row("SELECT value FROM settings WHERE key=?1", [key], |row| {
-            row.get(0)
-        })
-        .optional()?;
-    value.map_or_else(
-        || Ok(T::default()),
-        |value| serde_json::from_str(&value).map_err(Into::into),
-    )
-}
-pub(crate) fn save_setting<T: Serialize>(
-    workspace: &Path,
-    key: &str,
-    value: &T,
-) -> Result<(), ReadError> {
-    connection(workspace)?.execute("INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![key,serde_json::to_string(value)?])?;
-    Ok(())
-}
-pub fn config(workspace: &Path) -> Result<BackupConfig, ReadError> {
-    setting(workspace, "backup.config")
-}
-pub fn status(workspace: &Path) -> Result<BackupStatus, ReadError> {
-    setting(workspace, "backup.status")
-}
-pub(crate) fn update_status(
-    workspace: &Path,
-    update: impl FnOnce(&mut BackupStatus),
-) -> Result<(), ReadError> {
-    let mut connection = connection(workspace)?;
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let raw: Option<String> = transaction
-        .query_row(
-            "SELECT value FROM settings WHERE key='backup.status'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let mut value = raw
-        .map(|raw| serde_json::from_str(&raw))
-        .transpose()?
-        .unwrap_or_default();
-    update(&mut value);
-    transaction.execute("INSERT INTO settings(key,value) VALUES('backup.status',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[serde_json::to_string(&value)?])?;
-    transaction.commit()?;
-    Ok(())
-}
-pub fn set_interval(workspace: &Path, minutes: u32) -> Result<(), ReadError> {
-    if !(1..=1440).contains(&minutes) {
-        return Err(ReadError::new(
-            "INVALID_ARGUMENT",
-            "Backup interval must be 1–1440 minutes",
-        ));
-    }
-    let mut config = config(workspace)?;
-    config.interval_minutes = minutes;
-    save_setting(workspace, "backup.config", &config)
 }
 fn phase(workspace: &Path, name: &str) -> Result<(), ReadError> {
     update_status(workspace, |value| value.phase = name.into())
@@ -187,15 +82,19 @@ pub fn local_repository(
     initialize: bool,
 ) -> Result<Repository, ReadError> {
     let repo = Repository::local(workspace);
-    let mut config = config(workspace)?;
-    if let Some(expected) = &config.local_repository_id {
+    let expected = if initialize {
+        config(workspace)?.local_repository_id
+    } else {
+        crate::backup_settings::read_local_repository_id(workspace)?
+    };
+    if let Some(expected) = expected {
         if !repo.path.join("config").is_file() {
             return Err(ReadError::new(
                 "REPOSITORY_MISSING",
                 "Local history is missing; it will not be silently reinitialized",
             ));
         }
-        if &restic.repository_id(&repo)? != expected {
+        if restic.repository_id(&repo)? != expected {
             return Err(ReadError::new(
                 "REPOSITORY_MISMATCH",
                 "Local history repository identity changed",
@@ -228,8 +127,10 @@ pub fn local_repository(
         save_setting(workspace, "backup.local_init_pending", &true)?;
         restic.initialize(&repo, None)?
     };
-    config.local_repository_id = Some(id);
-    save_setting(workspace, "backup.config", &config)?;
+    update_config(workspace, |config| {
+        config.local_repository_id = Some(id);
+        Ok(())
+    })?;
     save_setting(workspace, "backup.local_init_pending", &false)?;
     Ok(repo)
 }
@@ -805,7 +706,7 @@ pub fn cleanup_stage(stage: &Path) -> Result<(), ReadError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::persistence::{PersistenceCommitRequest, ProductStore};
     pub fn fixture(workspace: &Path) {
@@ -1015,7 +916,10 @@ mod tests {
         let workspace = temporary.path().join("workspace");
         fixture(&workspace);
         let mut configured = config(&workspace).unwrap();
-        configured.additional = Some(AdditionalTarget {
+        configured.destinations.push(AdditionalTarget {
+            id: "offline".into(),
+            enabled: true,
+            retention: Retention::default(),
             path: temporary.path().join("disconnected-device"),
             repository_id: "a".repeat(64),
             credential: "not-used-while-offline".into(),
@@ -1026,19 +930,25 @@ mod tests {
             .run_cycle(std::time::Duration::from_secs(30))
             .unwrap();
         assert!(result["local_generation"].is_object());
-        assert_eq!(result["additional"]["error"]["code"], "ADDITIONAL_OFFLINE");
+        assert_eq!(
+            result["destinations"][0]["error"]["code"],
+            "ADDITIONAL_OFFLINE"
+        );
         assert!(result["maintenance"].is_null(), "{result}");
         let state = status(&workspace).unwrap();
         assert!(state.last_local_capture_at.is_some());
         assert!(state.local_error.is_none());
-        assert_eq!(state.additional_error.unwrap().code, "ADDITIONAL_OFFLINE");
+        assert_eq!(
+            state.destinations["offline"].error.as_ref().unwrap().code,
+            "ADDITIONAL_OFFLINE"
+        );
         // Later independent maintenance remains available, including when
         // the additional repository has been disconnected for a long time.
         let later = service
             .backup(crate::workspace_owner::BackupAction::Maintain { dry_run: true })
             .unwrap();
         assert_eq!(later["local"]["keep"].as_array().unwrap().len(), 1);
-        assert!(later["additional"].is_null());
+        assert!(later["destinations"].as_array().unwrap().is_empty());
     }
     #[test]
     fn real_restic_independent_key_copy_and_retention_contract() {
@@ -1077,7 +987,13 @@ mod tests {
             accepted[0].descriptor.captured_at,
             original.descriptor.captured_at
         );
-        let plan = crate::backup_management::retention_plan(&restic, &target, &accepted).unwrap();
+        let plan = crate::backup_management::retention_plan(
+            &restic,
+            &target,
+            &accepted,
+            &Retention::default(),
+        )
+        .unwrap();
         assert_eq!(plan.keep, vec![accepted[0].snapshot_id.clone()]);
         assert!(plan.remove.is_empty());
         assert!(

@@ -9,6 +9,16 @@ import {
 const CONTROL_SELECTOR =
   "input:not(:disabled),button:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex='-1'])";
 
+function revealControl(dialog: HTMLElement, control: HTMLElement): void {
+  if (control === dialog || dialog.clientHeight === 0) return;
+  const panel = dialog.getBoundingClientRect();
+  const rect = control.getBoundingClientRect();
+  const top = panel.top + dialog.clientTop + 8;
+  const bottom = panel.top + dialog.clientTop + dialog.clientHeight - 8;
+  if (rect.top < top) dialog.scrollTop += rect.top - top;
+  else if (rect.bottom > bottom) dialog.scrollTop += rect.bottom - bottom;
+}
+
 export function ModalDialog({
   ariaLabel,
   focusSurface,
@@ -45,6 +55,7 @@ export function ModalDialog({
         dialog.contains(event.target)
       ) {
         lastFocused = event.target;
+        revealControl(dialog, event.target);
         return;
       }
       // A background Editor may remount or recover focus while work is in
@@ -115,9 +126,11 @@ export function ModalDialog({
                   : 0
                 : (index + (event.shiftKey ? -1 : 1) + controls.length) %
                   controls.length;
-            // Let the panel scroll to reveal the focused control, while its
-            // fixed overlay leaves the background editor's scroll untouched.
-            (controls[next] ?? event.currentTarget).focus();
+            // WebKit may leave focused number inputs below an overflow panel.
+            // Scroll this panel explicitly, never the background editor.
+            const target = controls[next] ?? event.currentTarget;
+            target.focus({ preventScroll: true });
+            revealControl(event.currentTarget, target);
           } else if (
             event.key === "Escape" ||
             (event.ctrlKey && event.key.toLowerCase() === "c")

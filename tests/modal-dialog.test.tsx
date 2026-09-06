@@ -106,6 +106,36 @@ describe("shared floating modal dialogs", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  it("reveals controls by scrolling only the panel, including WebKit number inputs", () => {
+    render(
+      <ModalDialog ariaLabel="処理" focusSurface="test">
+        <input type="number" aria-label="先頭" />
+        <input type="number" aria-label="末尾" />
+      </ModalDialog>,
+    );
+    const dialog = screen.getByRole("dialog");
+    const first = screen.getByRole("spinbutton", { name: "先頭" });
+    const last = screen.getByRole("spinbutton", { name: "末尾" });
+    Object.defineProperty(dialog, "clientHeight", { value: 200 });
+    vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 20, 400, 200),
+    );
+    vi.spyOn(first, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 28 - dialog.scrollTop, 100, 36),
+    );
+    vi.spyOn(last, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 320 - dialog.scrollTop, 100, 36),
+    );
+    const pageScroll = document.documentElement.scrollTop;
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    expect(dialog.scrollTop).toBe(144);
+    fireEvent.keyDown(last, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(first);
+    expect(dialog.scrollTop).toBe(0);
+    expect(document.documentElement.scrollTop).toBe(pageScroll);
+  });
+
   it.each(["saving", "closing", "cancelling"] as const)(
     "does not cancel the protected %s stage or pass keys through to the editor",
     (stage) => {

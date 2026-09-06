@@ -2243,14 +2243,13 @@ export function App({
         void backupController.current.flush().then(
           () =>
             setCommandMessage(
-              "backup · 処理完了。追加先の保護状態は:backup-statusで確認できます",
+              "backup · 処理完了。各保存先の状態は:backup-settingsで確認できます",
             ),
           (error) => setCommandMessage(`backup · ${nativeErrorMessage(error)}`),
         );
         session?.restoreFocus();
         return;
       case "workspace.history":
-      case "workspace.backup_status":
       case "workspace.backup_settings": {
         if (!backup) {
           setCommandMessage("履歴はデスクトップ版で利用できます");
@@ -2270,7 +2269,6 @@ export function App({
           setHistorySession({ id: target?.noteId ?? null, restoreFocus });
         } else
           setBackupDialog({
-            settings: command === "workspace.backup_settings",
             restoreFocus,
           });
         return;
@@ -3062,7 +3060,13 @@ export function App({
           port={backup}
           session={backupDialog}
           onClose={() => setBackupDialog(null)}
-          onSaved={() => {
+          onSaved={(request) => {
+            if (
+              request.kind !== "add" &&
+              request.kind !== "credential" &&
+              !(request.kind === "enabled" && request.enabled)
+            )
+              return;
             void backupController.current
               ?.flush()
               .catch((error) =>

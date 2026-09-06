@@ -133,7 +133,9 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - 添付全件（未参照を含む）とknown_missing、破損・symlink・reparse拒否、1 GiB reserve不足
 - 独立repositoryのkey/id、password漏洩防止、repository消失・取り違え、crash後のaccepted世代再構築
 - 新しい世代からのcopy、capture日時保持、idempotence、未接続時のpending/expired/protected区別
-- 直近48 OR 日次30 OR 月次12、dry-runと実削除の一致、最新valid世代保護、24時間のidle prune
+- 保存先別の保持数（既定: 直近48 OR 日次30 OR 月次12）、0指定、dry-runと実削除の一致、最新valid世代保護、24時間のidle prune
+- 複数保存先の独立パスワード・再登録・無効化/再開・一部未接続・転送時間切れ、旧単一先/初期化intent移行
+- 統合backup-settings modalの状態pollと編集draft保持、絶対日時+ago、狭幅表示、日時clockによるEditor再描画がないこと
 - capture/copyとmaintenanceのlease、cancel後のphase開始禁止、timeout/cancel時の子process回収
 - 終了進捗・retry/cancel、Core保存失敗時はskip禁止、追加先待機時間上限
 - Native CLIとGUIの論理行契約、revision/query-bound cursor、Trash明示、同世代link/画像、URLをfetchしないこと

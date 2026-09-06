@@ -1,16 +1,17 @@
 //! Shared GUI/CLI application boundary. Repository work never holds the Core
 //! persistence mutex, and copy's source lease does not exclude local capture.
 use crate::{
-    backup, backup_management,
+    backup, backup_management, backup_settings,
     document_model::ReadError,
     history,
     read_service::WorkspaceReader,
     restic::{self, Restic},
     workspace_owner::{BackupAction, Reply, Request},
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex, RwLock, atomic::Ordering},
     time::Duration,
 };
@@ -124,12 +125,31 @@ impl NativeService {
     pub fn backup(&self, action: BackupAction) -> Result<Value, ReadError> {
         match action {
             BackupAction::Status => {
+                let config = backup::config(&self.workspace)?;
                 let mut status = backup::status(&self.workspace)?;
                 if status.phase.is_empty() {
                     status.phase = "uninitialized".into();
                 }
+                status
+                    .destinations
+                    .retain(|id, _| config.destinations.iter().any(|target| &target.id == id));
+                for target in &config.destinations {
+                    let value = status.destinations.entry(target.id.clone()).or_default();
+                    if !target.enabled {
+                        value.phase = if self.running()
+                            && matches!(value.phase.as_str(), "copying" | "maintaining")
+                        {
+                            "stopping"
+                        } else {
+                            "disabled"
+                        }
+                        .into();
+                    } else if value.phase.is_empty() {
+                        value.phase = "pending".into();
+                    }
+                }
                 Ok(
-                    json!({"schema_version":1,"config":backup::config(&self.workspace)?,"status":status,"content_epoch":backup::content_epoch(&self.workspace)?}),
+                    json!({"schema_version":2,"config":config,"status":status,"content_epoch":backup::content_epoch(&self.workspace)?}),
                 )
             }
             BackupAction::Run => self.run_cycle(Duration::from_secs(30)),
@@ -153,7 +173,7 @@ impl NativeService {
             BackupAction::IdleMaintain => {
                 let operation = self.operations.begin()?;
                 if !backup_management::idle_maintenance_due(&self.workspace)? {
-                    return Ok(json!({"schema_version":1,"skipped":true}));
+                    return Ok(json!({"schema_version":2,"skipped":true}));
                 }
                 self.maintain(false, true, operation.cancel.clone())
             }
@@ -182,34 +202,33 @@ impl NativeService {
                 "Backup stopped after confirmed local capture",
             ));
         }
-        let additional = if backup::config(&self.workspace)?.additional.is_some() {
-            Some(self.copy(copy_budget, operation.cancel.clone()))
-        } else {
-            None
-        };
+        let transfers = self.copy(copy_budget, operation.cancel.clone());
+        let transfer_failed = transfers.as_ref().map_or(true, |value| {
+            value["destinations"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item.get("error").is_some()))
+        });
         // A failed transfer is not a successful cycle. Do not immediately
         // delete retained generations as its "success cleanup". Independent
         // later idle/manual maintenance still applies local retention, so an
         // offline destination cannot pin pending generations indefinitely.
-        let maintenance = if local.is_some()
-            && !additional.as_ref().is_some_and(Result::is_err)
-            && !operation.cancel.load(Ordering::Acquire)
-        {
-            Some(
-                match self.maintain(false, false, operation.cancel.clone()) {
-                    Ok(value) => value,
-                    Err(error) => json!({"error":error}),
-                },
-            )
-        } else {
-            None
+        let maintenance =
+            if local.is_some() && !transfer_failed && !operation.cancel.load(Ordering::Acquire) {
+                Some(
+                    match self.maintain(false, false, operation.cancel.clone()) {
+                        Ok(value) => value,
+                        Err(error) => json!({"error":error}),
+                    },
+                )
+            } else {
+                None
+            };
+        let (destinations, error) = match transfers {
+            Ok(value) => (value["destinations"].clone(), None),
+            Err(error) => (json!([]), Some(error)),
         };
-        let additional = additional.map(|result| match result {
-            Ok(value) => value,
-            Err(error) => json!({"error":error}),
-        });
         Ok(
-            json!({"schema_version":1,"local_generation":local,"additional":additional,"maintenance":maintenance}),
+            json!({"schema_version":2,"local_generation":local,"destinations":destinations,"transfer_error":error,"maintenance":maintenance}),
         )
     }
     fn copy(&self, budget: Duration, cancel: restic::Cancellation) -> Result<Value, ReadError> {
@@ -218,15 +237,16 @@ impl NativeService {
         if cancel.load(Ordering::Acquire) {
             return Err(ReadError::new("CANCELLED", "Additional copy cancelled"));
         }
-        backup::update_status(&self.workspace, |status| {
-            status.additional_phase = "copying".into()
-        })?;
         let result = Restic::discover(cancel)
             .and_then(|restic| backup_management::copy(&self.workspace, &restic, budget));
         if let Err(error) = &result {
+            let targets = backup::config(&self.workspace)?.destinations;
             backup::update_status(&self.workspace, |status| {
-                status.additional_phase = "error".into();
-                status.additional_error = Some(error.clone());
+                for target in targets.iter().filter(|item| item.enabled) {
+                    let state = status.destinations.entry(target.id.clone()).or_default();
+                    state.phase = "error".into();
+                    state.error = Some(error.clone());
+                }
             })?;
         }
         result
@@ -251,21 +271,60 @@ impl NativeService {
                 dry_run,
                 prune,
             )?;
-            let additional = if backup::config(&self.workspace)?.additional.is_some()
-                && backup::status(&self.workspace)?.additional_error.is_none()
+            let mut destinations = Vec::new();
+            for target in backup::config(&self.workspace)?
+                .destinations
+                .into_iter()
+                .filter(|target| target.enabled)
             {
-                let target = backup_management::additional_repository(&self.workspace, &restic)?;
-                Some(backup_management::maintain_repository(
-                    &self.workspace,
-                    &restic,
-                    &target,
-                    dry_run,
-                    prune,
-                )?)
-            } else {
-                None
-            };
-            Ok(json!({"schema_version":1,"dry_run":dry_run,"local":local,"additional":additional}))
+                if restic.cancel.load(Ordering::Acquire) {
+                    return Err(ReadError::new("CANCELLED", "Maintenance cancelled"));
+                }
+                if !backup_settings::destination(&self.workspace, &target.id)?.enabled {
+                    continue;
+                }
+                let status = backup::status(&self.workspace)?;
+                if !status.destinations.get(&target.id).is_some_and(|state| {
+                    state.error.is_none() && state.protected_capture_at.is_some()
+                }) {
+                    continue;
+                }
+                backup::update_status(&self.workspace, |status| {
+                    status
+                        .destinations
+                        .entry(target.id.clone())
+                        .or_default()
+                        .phase = "maintaining".into();
+                })?;
+                let outcome =
+                    backup_management::additional_repository(&target, &restic).and_then(|repo| {
+                        backup_management::maintain_repository(
+                            &self.workspace,
+                            &restic,
+                            &repo,
+                            dry_run,
+                            prune,
+                        )
+                    });
+                let error = outcome
+                    .as_ref()
+                    .err()
+                    .filter(|error| error.code != "DESTINATION_DISABLED")
+                    .cloned();
+                backup::update_status(&self.workspace, |status| {
+                    let state = status.destinations.entry(target.id.clone()).or_default();
+                    state.phase = "idle".into();
+                    state.maintenance_error = error.clone();
+                })?;
+                destinations.push(match outcome {
+                    Ok(plan) => json!({"id":target.id,"plan":plan}),
+                    Err(_) if error.is_none() => json!({"id":target.id,"skipped":true}),
+                    Err(_) => json!({"id":target.id,"error":error}),
+                });
+            }
+            Ok(
+                json!({"schema_version":2,"dry_run":dry_run,"local":local,"destinations":destinations}),
+            )
         })();
         backup::update_status(&self.workspace, |status| {
             status.maintenance_error = result.as_ref().err().cloned();
@@ -273,21 +332,91 @@ impl NativeService {
         })?;
         result
     }
-    pub fn configure_additional(&self, parent: &Path, secret: String) -> Result<(), ReadError> {
-        let operation = self.operations.begin()?;
-        let _lease = self.repositories.try_write().map_err(|_| busy())?;
-        backup_management::configure_additional(
-            &self.workspace,
-            &Restic::discover(operation.cancel.clone())?,
-            parent,
-            secret,
-        )
+    pub fn settings(&self, request: BackupSettingsRequest) -> Result<(), ReadError> {
+        // Metadata-only settings remain usable during copy/maintenance. Each
+        // worker observes enabled state before starting the next unit of work.
+        match request {
+            BackupSettingsRequest::Local {
+                interval_minutes,
+                retention,
+            } => backup_settings::set_local(&self.workspace, interval_minutes, retention),
+            BackupSettingsRequest::Enabled { id, enabled } => {
+                backup_settings::update_destination(&self.workspace, &id, |target| {
+                    target.enabled = enabled
+                })
+            }
+            BackupSettingsRequest::Retention { id, retention } => {
+                retention.validate()?;
+                backup_settings::update_destination(&self.workspace, &id, |target| {
+                    target.retention = retention
+                })
+            }
+            request => {
+                let operation = self.operations.begin()?;
+                let _lease = self.repositories.try_write().map_err(|_| busy())?;
+                match request {
+                    BackupSettingsRequest::Add {
+                        directory,
+                        password,
+                        retention,
+                    } => backup_management::configure_additional(
+                        &self.workspace,
+                        &Restic::discover(operation.cancel.clone())?,
+                        &directory,
+                        password,
+                        retention,
+                    ),
+                    BackupSettingsRequest::Credential { id, password } => {
+                        backup_management::register_credential(
+                            &self.workspace,
+                            &Restic::discover(operation.cancel.clone())?,
+                            &id,
+                            password,
+                        )
+                    }
+                    BackupSettingsRequest::Remove { id } => {
+                        backup_management::detach_additional(&self.workspace, &id)
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
-    pub fn detach_additional(&self) -> Result<(), ReadError> {
-        let _operation = self.operations.begin()?;
-        let _lease = self.repositories.try_write().map_err(|_| busy())?;
-        backup_management::detach_additional(&self.workspace)
-    }
+}
+
+// Do not derive Debug: requests may carry passwords, never returned in state.
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum BackupSettingsRequest {
+    Local {
+        interval_minutes: u32,
+        retention: backup::Retention,
+    },
+    Add {
+        directory: PathBuf,
+        password: String,
+        retention: backup::Retention,
+    },
+    Retention {
+        id: String,
+        retention: backup::Retention,
+    },
+    Enabled {
+        id: String,
+        enabled: bool,
+    },
+    Remove {
+        id: String,
+    },
+    Credential {
+        id: String,
+        password: String,
+    },
 }
 
 #[tauri::command]
@@ -336,61 +465,15 @@ pub(crate) fn workspace_backup_resume(
 }
 #[tauri::command]
 pub(crate) async fn workspace_backup_settings(
-    interval_minutes: u32,
-    additional_directory: Option<PathBuf>,
-    password: Option<String>,
-    detach: bool,
+    request: BackupSettingsRequest,
     state: tauri::State<'_, crate::persistence::ProductPersistenceState>,
 ) -> Result<(), ReadError> {
     let service = state.native_service()?;
-    if !(1..=1440).contains(&interval_minutes) {
-        return Err(ReadError::new(
-            "INVALID_ARGUMENT",
-            "Backup interval must be 1–1440 minutes",
-        ));
-    }
-    if detach && additional_directory.is_some() {
-        return Err(ReadError::new(
-            "INVALID_ARGUMENT",
-            "Cannot attach and detach at the same time",
-        ));
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Some(directory) = additional_directory {
-            service.configure_additional(
-                &directory,
-                password.ok_or_else(|| {
-                    ReadError::new("CREDENTIALS", "A nonempty password is required")
-                })?,
-            )?;
-        } else if let Some(password) = password {
-            if detach {
-                return Err(ReadError::new(
-                    "INVALID_ARGUMENT",
-                    "Cannot replace credentials while detaching",
-                ));
-            }
-            let target = backup::config(&service.workspace)?
-                .additional
-                .ok_or_else(|| {
-                    ReadError::new(
-                        "ADDITIONAL_UNCONFIGURED",
-                        "No additional repository is configured",
-                    )
-                })?;
-            let parent = target.path.parent().ok_or_else(|| {
-                ReadError::new("UNSAFE_PATH", "Invalid additional repository path")
-            })?;
-            service.configure_additional(parent, password)?;
-        }
-        if detach {
-            service.detach_additional()?;
-        }
-        backup::set_interval(&service.workspace, interval_minutes)
-    })
-    .await
-    .map_err(|_| ReadError::new("BACKGROUND_FAILED", "Settings could not be saved"))?
+    tauri::async_runtime::spawn_blocking(move || service.settings(request))
+        .await
+        .map_err(|_| ReadError::new("BACKGROUND_FAILED", "Settings could not be saved"))?
 }
+
 #[tauri::command]
 pub(crate) async fn workspace_history_attachment_export(
     id: String,

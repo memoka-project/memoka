@@ -200,8 +200,8 @@ pub fn materialize_attachment(
     Ok(())
 }
 pub fn list(workspace: &Path, restic: &Restic, id: Option<&str>) -> Result<Value, ReadError> {
-    let reader = WorkspaceReader::open(workspace)?;
     let repo = backup::local_repository(workspace, restic, false)?;
+    let reader = WorkspaceReader::open(workspace)?;
     let generations =
         backup::generations(restic, &repo, Some(&reader.workspace_id), Some(workspace))?;
     Ok(

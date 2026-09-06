@@ -3,7 +3,12 @@ import {
   InputLatencyMonitor,
   type InputLatencySnapshot,
 } from "../core/development-diagnostics";
-import type { BackupPort, BackupState } from "../core/history";
+import {
+  backupCopyingDestinations,
+  backupTransferFailures,
+  type BackupPort,
+  type BackupState,
+} from "../core/history";
 import type {
   CoreRuntime,
   RuntimeBackgroundTaskSnapshot,
@@ -85,8 +90,22 @@ export function DevelopmentDebugTasks({
         data-background-task-phase={backupState?.status.phase ?? "off"}
       >
         backup {backupState?.status.phase || "off"} / copy{" "}
-        {backupState?.status.additional_phase || "off"} (
-        {backupState?.status.pending_copy_count ?? 0} pending)
+        {backupState ? backupCopyingDestinations(backupState).length : 0} active
+        /{" "}
+        {backupState?.config.destinations.filter((target) => target.enabled)
+          .length ?? 0}{" "}
+        enabled / {backupState ? backupTransferFailures(backupState).length : 0}{" "}
+        errors (
+        {backupState?.config.destinations
+          .filter((target) => target.enabled)
+          .reduce(
+            (sum, target) =>
+              sum +
+              (backupState.status.destinations[target.id]?.pending_copy_count ??
+                0),
+            0,
+          ) ?? 0}{" "}
+        pending)
       </span>
       <span
         data-input-latency-last-ms={formatDataNumber(input.lastMs)}
