@@ -109,7 +109,7 @@ argv、設定file、通常log、Command-line履歴には入れない。既存パ
 
 追加先がoffline、鍵が取得不能、容量不足でも編集とローカル履歴は継続する。
 転送は新しいcaptureから試み、GUIの1回の転送試行には時間上限を設ける。
-転送は直列のbackground処理とし、GUIでは保存先全体に30秒の予算を適用する。試行後に次回開始先を巡回させ、未接続・低速な保存先が他の保存先を恒久的に妨げない。
+ローカル追加先の転送は直列のbackground処理とし、GUIではローカル追加先全体に30秒の予算を適用する。Google Driveの通常転送は別workerで行う。試行後に次回開始先を巡回させ、未接続・低速な保存先が他の保存先を恒久的に妨げない。
 時間切れや未処理の保存先を成功扱いしない。CLIの明示copyは従来どおり1時間の予算を持つ。
 同じgenerationを重複作成せず、元のcapture時刻を維持する。
 転送待ち、転送機会の期限切れ、追加先で保護済みのcapture時刻を区別して表示する。
@@ -117,12 +117,43 @@ argv、設定file、通常log、Command-line履歴には入れない。既存パ
 転送台帳、保護済みcapture日時、最終転送日時、転送待ち・期限切れ件数、エラー、整理状態は保存先IDごとに独立管理する。
 status取得はSQLiteの運用stateだけを読み、保存先やOS資格情報ストアへ接続しない。
 
-backup設定schema 2は`local_retention`と`destinations`配列を持つ。旧単一`additional`、status、転送台帳、初期化途中のintentは1 transactionで移行し、repository ID・資格情報・運用履歴を維持する。
+backup設定schema 3は`local_retention`と`destinations`配列を持つ。各保存先は`location`判別unionと`credential_ref`を持ち、ローカルは`{kind:"local-directory",path}`、Googleは`{kind:"google-drive",connection_id,root_folder_id,display_name}`である。
+schema 2の`path`/`credential`、旧単一`additional`、status、転送台帳、初期化途中のintentは1 transactionで移行し、順序、有効状態、保持値、repository ID・資格情報参照・運用履歴を維持する。未知schema/locationは拒否する。
 設定の移行だけでNote、content_epoch、バックアップ形式を変更せず、repositoryを再初期化しない。設定のない新規・復旧Workspaceのstatus/config取得は書き込みを行わない。
 初期化成功後に資格情報保存が失敗してもintentを保持し、再試行時に同じrepositoryを検証して登録する。
 
 解除はrepository自体を削除しない。別PCでの復旧に備えパスワードを別途保管する必要がある。
 同じ物理媒体にある2つのrepositoryは、その媒体の故障に対する二重化ではない。
+
+### 6.1 Google Drive（実験的）
+
+同梱rclone 1.75.1の`serve restic --stdio`をResticの転送路として使う。ローカルの正常世代を
+独立した鍵のrepositoryへ`restic copy`する。repositoryのfile copy、sync、mount、常駐daemonは使わない。
+初版はマイドライブのMemoka専用新規folderに限定し、Shared Drive、service account、任意backendは受け付けない。
+表示名で場所を特定せず、作成応答で得たfolder IDと検証済みrepository IDを保持する。
+
+Google接続はOSユーザー単位でWorkspace外へ保存し、複数保存先から共有できる。OAuth tokenとResticパスワードは別の秘密である。
+専用Desktop OAuth client未設定時はGoogle接続だけを無効化する。OSブラウザ、loopback callback、state、PKCE S256を用い、
+要求scopeは`drive.file`のみ。これは専用folderだけのOAuth権限ではなく、アプリが扱えるfileへの権限である。
+再認証は別の暗号化configで行い、同じclient/account、scope、登録root・repository IDの検証後に切り替える。
+
+登録はWorkspace ID・destination ID・nonce・実folder ID・repository ID・phaseを持つintentで再開する。
+folder作成応答が不明な場合はnonce照合し、未発見/複数候補では再作成しない。init後の鍵保存失敗は同じパスワードで再試行する。
+既存root消失、権限不足、repository mismatchを自動initで隠さない。同一Workspaceの同一repository二重登録を拒否する。
+
+通常Google転送は1世代または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
+新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
+一時障害は指数backoff（最大1時間に0〜30秒のjitter）を持ち、認証失効・鍵取得不能・権限/容量不足・repository不一致や不明なlayoutは明示操作まで保留する。
+ネットワーク待ち中はCore mutexを持たず、copyのsource-reader leaseはCapture追加・履歴readを許可し、sourceのforget/pruneだけを除外する。
+無効化はGoogle workerへ中断も要求する。再接続、明示転送、中断、既存パスワード再登録、無効化、解除は独立した操作である。
+
+接続解除はこの端末の資格情報だけを除き、Googleのproject認可をrevokeしない。利用先がある場合は一覧を示し、
+先に各保存先を解除するか、共有接続の全利用先を停止すると明示確認する。後者は非秘密の接続/保存先参照を残し、再認証で復帰する。
+Google上のfolderと世代は削除しない。status/設定の通常表示はmetadataだけで、Googleや資格情報ストアへ問い合わせない。
+
+**実Driveの認証・token更新・認可取消後の再アクセス・別OSプロファイル復旧は未検証であり、正式提供可とは判定しない。**
+OAuth client変更で以前のbackupにアクセスできる保証はなく、scopeの自動拡大や空repositoryへの置換は行わない。
+設定手順と受け入れ試験の結果は[Google Drive開発・検証記録](../development/google-drive-backup.md)を参照する。
 
 ## 7. 保持と容量回収
 
@@ -143,6 +174,11 @@ forgetとpruneは別処理である。pruneは30秒以上入力操作がないid
 capture/copy失敗の直後に成功後cleanupとして世代を減らさない。
 prune失敗はaccepted backupを未作成へ戻さず、maintenance errorとして表示する。
 
+Googleは1世代のcopy後に別の整理単位を巡回する。整理前には専用root内の元のDrive metadataで
+同名object・shortcut・Google Docs・不明なrepository layoutを検査し、不整合があれば停止する。
+`drive_use_trash=true`を明示し、削除objectはDriveのゴミ箱へ送る。repository整理成功はGoogleの空き容量増加と同義ではない。
+`cleanup`、`emptyTrash`、自動dedupe、未確認の完全削除や強制unlockを実装しない。
+
 ## 8. 終了・切替・キャンセル
 
 OS close、`:quit`、`:q`、`:qa`は共通shutdown処理を使う。
@@ -152,6 +188,10 @@ OS close、`:quit`、`:q`、`:qa`は共通shutdown処理を使う。
 再試行、操作のキャンセル、バックアップだけを中断して続行する選択肢を用意する。
 省略はCore保存成功後に限り、正本保存の失敗を無視して終了する選択肢は提供しない。
 キャンセルは処理全体に属するtokenで後続phaseも停止し、Restic childをkill/reapしてから完了する。
+
+Googleの通常1時間deadlineと終了時の追加先待機は別である。追加先待機には30秒を基本とする上限を設ける。
+待機期限だけでは通常cloud転送をkillせず、再待機・終了操作取消・中断して続行を選ばせる。
+明示中断ではResticとrcloneの子孫まで終了し、lease解放を待つ。キャンセル後に遅れて届いたtickは再開操作まで拒否する。
 
 ローカル成功/追加先のみ失敗は別表示し、追加先未完了を自動的に無視して切替・更新へ進まない。
 `:switch-workspace`では旧EditorをCore保存とバックアップの完了までmountしたまま保ち、旧controllerは切替後に再開しない。
@@ -201,7 +241,7 @@ memoka-cli backup restore --repository <repo-dir> --generation <generation-id> -
 ```
 
 GUI所有中の運用commandもownerへ依頼し、同じschedulerとrepository leaseを使う。
-`backup status`・`run`・`copy`・`maintain`のJSON応答は複数保存先に対応する`schema_version: 2`である。
+`backup status`・`run`・`copy`・`maintain`のJSON応答はtyped locationに対応する`schema_version: 3`である。
 statusは`config.destinations`配列と`status.destinations`のID別state、run/copy/maintainは保存先ID別の結果を返す。
 GUIの`:backup-status`は廃止し、`:backup-settings`へ統合する。CLIの`backup status`は維持する。
 repository単独でlist/check/restoreでき、現在DBが壊れていても復旧できる。
@@ -213,6 +253,26 @@ allowlistだけをprivate stagingへ取り出し、DB integrity、Yjs replay、N
 完成してから公開する。IDとdocument revisionは維持する。
 復旧先のlocal repository設定、転送queue、accepted-state、lock、local UI、検索index等の運用派生stateはリセットする。
 次回GUI起動時に新しいローカル履歴を作る。GUIに`:restore`や一括export commandは設けない。
+
+### 11.1 Google接続とrepository単独復旧
+
+```bash
+memoka-cli cloud connect google-drive --name recovery --client-file /absolute/google-desktop-client.json
+memoka-cli cloud list --format json
+memoka-cli cloud reconnect --connection <id> --client-file /absolute/google-desktop-client.json
+memoka-cli cloud disconnect --connection <id>
+memoka-cli cloud disconnect --connection <id> --stop-destinations
+memoka-cli backup list --connection <id> --drive-folder-id <folder-id> --password-stdin
+memoka-cli backup check --connection <id> --drive-folder-id <folder-id> --password-stdin --full
+memoka-cli backup restore --connection <id> --drive-folder-id <folder-id> --generation <generation-id> --target <empty-data-area> --password-stdin
+```
+
+接続操作とpassword入力は別commandにし、stdinを競合させない。`--no-browser`はこの端末のloopback URLを自動openせず表示する。
+OOB code貼り付け認証ではない。GUIや元Workspaceを要求せず、OS資格情報ストアを使う。keyringなしで平文保存するfallbackはない。
+`--repository`とcloud locatorは排他的で、Googleへの`--insecure-no-password`を拒否する。
+復旧情報にはprovider/root ID/Workspace ID/repository ID/OAuth profile・client IDだけを明示コピーでき、秘密を含めない。
+元接続IDは端末ローカルなので同じ値でなくてよいが、同じOAuthアプリでの再認証後の実Drive復旧試験は上記のとおり未実行である。
+CLIのCtrl-C/SIGTERMは子孫の回収を伴う中断とする（SIGKILLやOS crashの正常回収は保証しない）。
 
 ## 12. 旧portable mirror互換
 

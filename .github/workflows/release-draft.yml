@@ -90,7 +90,7 @@ jobs:
         run: corepack pnpm release:verify-appimage
       - name: Build standalone read and recovery CLI
         run: corepack pnpm cli:build
-      - name: Stage CLI with its verified Restic sidecar
+      - name: Stage CLI with its verified Restic and rclone sidecars
         run: node scripts/stage-cli-release.mjs
       - name: Archive CLI on Linux
         shell: bash
@@ -121,8 +121,10 @@ jobs:
         shell: bash
         run: |
           find release-assets -type f -name '*.tar.gz' -print0 | xargs -0 gh release upload "v${{ needs.validate.outputs.version }}" --clobber
-      - name: Include the pinned Restic binary and its Go modules in the SBOM
-        run: node scripts/prepare-restic.mjs x86_64-unknown-linux-gnu
+      - name: Include pinned sidecars and their embedded Go modules in the SBOM
+        run: |
+          node scripts/prepare-restic.mjs x86_64-unknown-linux-gnu
+          node scripts/prepare-rclone.mjs x86_64-unknown-linux-gnu
       - uses: anchore/sbom-action@v0
         with:
           path: .

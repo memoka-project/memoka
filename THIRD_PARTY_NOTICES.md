@@ -77,6 +77,36 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## Bundled rclone
+
+[rclone 1.75.1](https://github.com/rclone/rclone/releases/tag/v1.75.1) is bundled unchanged as the Google Drive transport for Restic, under the MIT license.
+Archives and executable hashes are pinned in scripts/rclone-artifacts.mjs. The release SBOM inventories the executable's embedded Go modules.
+
+- rclone-v1.75.1-linux-amd64.zip: `982b5aa772841168f8e380f139e9e787b2a105403e32b94da8676a0e1c0a13ab`
+- rclone-v1.75.1-windows-amd64.zip: `200eb602c126d82aa38b51e0f6b9ae837473ff99b51278d3f6f837574c494d6e`
+
+```text
+Copyright (C) 2012 by Nick Craig-Wood http://www.craig-wood.com/nick/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ## JavaScript dependencies
 
 - @floating-ui/core@1.8.0 — MIT — https://floating-ui.com
@@ -310,6 +340,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - atk@0.18.2 — MIT — https://gtk-rs.org/
 - atomic-waker@1.1.2 — Apache-2.0 OR MIT — https://github.com/smol-rs/atomic-waker
 - autocfg@1.5.1 — Apache-2.0 OR MIT — https://github.com/cuviper/autocfg
+- aws-lc-rs@1.18.1 — ISC AND (Apache-2.0 OR ISC) — https://github.com/aws/aws-lc-rs
+- aws-lc-sys@0.45.0 — ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) — https://github.com/aws/aws-lc-rs
 - base64@0.21.7 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
 - base64@0.22.1 — MIT OR Apache-2.0 — https://github.com/marshallpierce/rust-base64
 - bit-set@0.8.0 — Apache-2.0 OR MIT — https://github.com/contain-rs/bit-set
@@ -342,8 +374,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - cfg_aliases@0.2.2 — MIT — https://github.com/katharostech/cfg_aliases
 - cfg-expr@0.15.8 — MIT OR Apache-2.0 — https://github.com/EmbarkStudios/cfg-expr
 - cfg-if@1.0.4 — MIT OR Apache-2.0 — https://github.com/rust-lang/cfg-if
+- chacha20@0.10.2 — MIT OR Apache-2.0 — https://github.com/RustCrypto/stream-ciphers
 - chrono@0.4.45 — MIT OR Apache-2.0 — https://github.com/chronotope/chrono
 - cipher@0.4.4 — MIT OR Apache-2.0 — https://github.com/RustCrypto/traits
+- cmake@0.1.58 — MIT OR Apache-2.0 — https://github.com/rust-lang/cmake-rs
 - color_quant@1.1.0 — MIT — https://github.com/image-rs/color_quant.git
 - combine@4.6.7 — MIT — https://github.com/Marwes/combine
 - concurrent-queue@2.5.0 — Apache-2.0 OR MIT — https://github.com/smol-rs/concurrent-queue
@@ -364,6 +398,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - cssparser@0.36.0 — MPL-2.0 — https://github.com/servo/rust-cssparser
 - ctor-proc-macro@0.0.7 — Apache-2.0 OR MIT — https://github.com/mmastrac/rust-ctor
 - ctor@0.8.0 — Apache-2.0 OR MIT — https://github.com/mmastrac/rust-ctor
+- ctrlc@3.5.2 — MIT/Apache-2.0 — https://github.com/Detegr/rust-ctrlc
 - darling_core@0.23.0 — MIT — https://github.com/TedDriggs/darling
 - darling_macro@0.23.0 — MIT — https://github.com/TedDriggs/darling
 - darling@0.23.0 — MIT — https://github.com/TedDriggs/darling
@@ -417,6 +452,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - foreign-types-shared@0.3.1 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
 - foreign-types@0.5.0 — MIT/Apache-2.0 — https://github.com/sfackler/foreign-types
 - form_urlencoded@1.2.2 — MIT OR Apache-2.0 — https://github.com/servo/rust-url
+- fs_extra@1.3.0 — MIT — https://github.com/webdesus/fs_extra
 - fs2@0.4.3 — MIT/Apache-2.0 — https://github.com/danburkert/fs2-rs
 - futures-channel@0.3.33 — MIT OR Apache-2.0 — https://rust-lang.github.io/futures-rs
 - futures-core@0.3.33 — MIT OR Apache-2.0 — https://rust-lang.github.io/futures-rs
@@ -501,6 +537,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - jni-sys@0.4.1 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-sys
 - jni@0.21.1 — MIT/Apache-2.0 — https://github.com/jni-rs/jni-rs
 - jni@0.22.4 — MIT OR Apache-2.0 — https://github.com/jni-rs/jni-rs
+- jobserver@0.1.35 — MIT OR Apache-2.0 — https://github.com/rust-lang/jobserver-rs
 - js-sys@0.3.103 — MIT OR Apache-2.0 — https://wasm-bindgen.github.io/wasm-bindgen/
 - json-patch@3.0.1 — MIT/Apache-2.0 — https://github.com/idubrov/json-patch
 - jsonptr@0.6.3 — MIT OR Apache-2.0 — https://github.com/chanced/jsonptr
@@ -517,6 +554,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - litemap@0.8.2 — Unicode-3.0 — https://github.com/unicode-org/icu4x
 - lock_api@0.4.14 — MIT OR Apache-2.0 — https://github.com/Amanieu/parking_lot
 - log@0.4.33 — MIT OR Apache-2.0 — https://github.com/rust-lang/log
+- lru-slab@0.1.2 — MIT OR Apache-2.0 OR Zlib — https://github.com/Ralith/lru-slab
 - markup5ever@0.38.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
 - memchr@2.8.3 — Unlicense OR MIT — https://github.com/BurntSushi/memchr
 - memoffset@0.9.1 — MIT — https://github.com/Gilnaa/memoffset
@@ -530,6 +568,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - ndk@0.9.0 — MIT OR Apache-2.0 — https://github.com/rust-mobile/ndk
 - new_debug_unreachable@1.0.6 — MIT — https://github.com/mbrubeck/rust-debug-unreachable
 - nix@0.29.0 — MIT — https://github.com/nix-rust/nix
+- nix@0.31.3 — MIT — https://github.com/nix-rust/nix
 - num_enum_derive@0.7.6 — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
 - num_enum@0.7.6 — BSD-3-Clause OR MIT OR Apache-2.0 — https://github.com/illicitonion/num_enum
 - num_threads@0.1.7 — MIT OR Apache-2.0 — https://github.com/jhpratt/num_threads
@@ -541,6 +580,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - num-rational@0.4.2 — MIT OR Apache-2.0 — https://github.com/rust-num/num-rational
 - num-traits@0.2.19 — MIT OR Apache-2.0 — https://github.com/rust-num/num-traits
 - num@0.4.3 — MIT OR Apache-2.0 — https://github.com/rust-num/num
+- oauth2@5.0.0 — MIT OR Apache-2.0 — https://github.com/ramosbugs/oauth2-rs
 - objc2-app-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
 - objc2-cloud-kit@0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
 - objc2-core-data@0.3.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/madsmtm/objc2
@@ -593,14 +633,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - proc-macro-error-attr@1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
 - proc-macro-error@1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
 - proc-macro2@1.0.107 — MIT OR Apache-2.0 — https://github.com/dtolnay/proc-macro2
+- process-wrap@10.0.0 — Apache-2.0 OR MIT — https://github.com/watchexec/process-wrap
 - pxfm@0.1.30 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/pxfm
 - quick-error@2.0.1 — MIT/Apache-2.0 — http://github.com/tailhook/quick-error
 - quick-xml@0.41.0 — MIT — https://github.com/tafia/quick-xml
+- quinn-proto@0.11.17 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
+- quinn-udp@0.5.15 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
+- quinn@0.11.11 — MIT OR Apache-2.0 — https://github.com/quinn-rs/quinn
 - quote@1.0.47 — MIT OR Apache-2.0 — https://github.com/dtolnay/quote
 - r-efi@5.3.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi/wiki
 - r-efi@6.0.0 — MIT OR Apache-2.0 OR LGPL-2.1-or-later — https://github.com/r-efi/r-efi/wiki
 - rand_chacha@0.3.1 — MIT OR Apache-2.0 — https://rust-random.github.io/book
+- rand_core@0.10.1 — MIT OR Apache-2.0 — https://rust-random.github.io/book
 - rand_core@0.6.4 — MIT OR Apache-2.0 — https://rust-random.github.io/book
+- rand_pcg@0.10.2 — MIT OR Apache-2.0 — https://rust-random.github.io/book
+- rand@0.10.2 — MIT OR Apache-2.0 — https://rust-random.github.io/book
 - rand@0.8.8 — MIT OR Apache-2.0 — https://rust-random.github.io/book
 - raw-window-handle@0.6.2 — MIT OR Apache-2.0 OR Zlib — https://github.com/rust-windowing/raw-window-handle
 - recvmsg@1.0.0 — 0BSD
@@ -644,6 +691,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - serde_derive_internals@0.29.1 — MIT OR Apache-2.0 — https://serde.rs
 - serde_derive@1.0.229 — MIT OR Apache-2.0 — https://serde.rs
 - serde_json@1.0.151 — MIT OR Apache-2.0 — https://github.com/serde-rs/json
+- serde_path_to_error@0.1.20 — MIT OR Apache-2.0 — https://github.com/dtolnay/path-to-error
 - serde_repr@0.1.21 — MIT OR Apache-2.0 — https://github.com/dtolnay/serde-repr
 - serde_spanned@0.6.9 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
 - serde_spanned@1.1.1 — MIT OR Apache-2.0 — https://github.com/toml-rs/toml
@@ -772,6 +820,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - wasm-streams@0.5.0 — MIT OR Apache-2.0 — https://github.com/MattiasBuelens/wasm-streams/
 - web_atoms@0.2.5 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
 - web-sys@0.3.103 — MIT OR Apache-2.0 — https://wasm-bindgen.github.io/wasm-bindgen/web-sys/index.html
+- web-time@1.1.0 — MIT OR Apache-2.0 — https://github.com/daxpedda/web-time
 - webkit2gtk-sys@2.0.2 — MIT — https://github.com/tauri-apps/webkit2gtk-rs
 - webkit2gtk@2.0.2 — MIT — https://github.com/tauri-apps/webkit2gtk-rs
 - webpki-root-certs@1.0.9 — CDLA-Permissive-2.0 — https://github.com/rustls/webpki-roots
@@ -809,14 +858,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - windows_x86_64_msvc@0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows_x86_64_msvc@0.53.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-collections@0.2.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+- windows-collections@0.3.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-core@0.61.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-core@0.62.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-future@0.2.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+- windows-future@0.3.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-implement@0.60.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-interface@0.59.3 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-link@0.1.3 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-link@0.2.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-numerics@0.2.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+- windows-numerics@0.3.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-result@0.3.4 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-result@0.4.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-strings@0.4.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
@@ -830,8 +882,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - windows-targets@0.52.6 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-targets@0.53.5 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-threading@0.1.0 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+- windows-threading@0.2.1 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows-version@0.1.7 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - windows@0.61.3 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
+- windows@0.62.2 — MIT OR Apache-2.0 — https://github.com/microsoft/windows-rs
 - winnow@0.5.40 — MIT — https://github.com/winnow-rs/winnow
 - winnow@0.7.15 — MIT — https://github.com/winnow-rs/winnow
 - winnow@1.0.4 — MIT — https://github.com/winnow-rs/winnow
@@ -872,3 +926,253 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - zvariant_utils@4.2.0 — MIT — https://github.com/z-galaxy/zbus/
 - zvariant@4.2.0 — MIT — https://github.com/dbus2/zbus/
 - zvariant@5.15.0 — MIT — https://github.com/z-galaxy/zbus/
+
+## Bundled rclone Go module inventory (linux-amd64)
+
+Read directly from the verified executable's Go build information. The Release SPDX SBOM includes this compiled dependency graph.
+Module licenses and source are available from each module's versioned source distribution; rclone's MIT license does not relicense its dependencies.
+
+- [bazil.org/fuse@v0.0.0-20230120002735-62a210ff1fd5](https://pkg.go.dev/bazil.org/fuse@v0.0.0-20230120002735-62a210ff1fd5?tab=licenses)
+- [cloud.google.com/go/auth@v0.20.0](https://pkg.go.dev/cloud.google.com/go/auth@v0.20.0?tab=licenses)
+- [cloud.google.com/go/auth/oauth2adapt@v0.2.8](https://pkg.go.dev/cloud.google.com/go/auth/oauth2adapt@v0.2.8?tab=licenses)
+- [cloud.google.com/go/compute/metadata@v0.9.0](https://pkg.go.dev/cloud.google.com/go/compute/metadata@v0.9.0?tab=licenses)
+- [github.com/Azure/azure-sdk-for-go/sdk/azcore@v1.22.0](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azcore@v1.22.0?tab=licenses)
+- [github.com/Azure/azure-sdk-for-go/sdk/azidentity@v1.14.0](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity@v1.14.0?tab=licenses)
+- [github.com/Azure/azure-sdk-for-go/sdk/internal@v1.12.0](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/internal@v1.12.0?tab=licenses)
+- [github.com/Azure/azure-sdk-for-go/sdk/storage/azblob@v1.8.0](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/storage/azblob@v1.8.0?tab=licenses)
+- [github.com/Azure/azure-sdk-for-go/sdk/storage/azfile@v1.7.0](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/storage/azfile@v1.7.0?tab=licenses)
+- [github.com/Azure/go-ntlmssp@v0.1.1](https://pkg.go.dev/github.com/Azure/go-ntlmssp@v0.1.1?tab=licenses)
+- [github.com/AzureAD/microsoft-authentication-library-for-go@v1.7.2](https://pkg.go.dev/github.com/AzureAD/microsoft-authentication-library-for-go@v1.7.2?tab=licenses)
+- [github.com/FilenCloudDienste/filen-sdk-go@v0.0.39](https://pkg.go.dev/github.com/FilenCloudDienste/filen-sdk-go@v0.0.39?tab=licenses)
+- [github.com/Files-com/files-sdk-go/v3@v3.3.194](https://pkg.go.dev/github.com/Files-com/files-sdk-go/v3@v3.3.194?tab=licenses)
+- [github.com/IBM/go-sdk-core/v5@v5.23.1](https://pkg.go.dev/github.com/IBM/go-sdk-core/v5@v5.23.1?tab=licenses)
+- [github.com/Max-Sum/base32768@v0.0.0-20230304063302-18e6ce5945fd](https://pkg.go.dev/github.com/Max-Sum/base32768@v0.0.0-20230304063302-18e6ce5945fd?tab=licenses)
+- [github.com/ProtonMail/bcrypt@v0.0.0-20211005172633-e235017c1baf](https://pkg.go.dev/github.com/ProtonMail/bcrypt@v0.0.0-20211005172633-e235017c1baf?tab=licenses)
+- [github.com/ProtonMail/gluon@v0.17.1-0.20230724134000-308be39be96e](https://pkg.go.dev/github.com/ProtonMail/gluon@v0.17.1-0.20230724134000-308be39be96e?tab=licenses)
+- [github.com/ProtonMail/go-crypto@v1.4.1](https://pkg.go.dev/github.com/ProtonMail/go-crypto@v1.4.1?tab=licenses)
+- [github.com/ProtonMail/go-srp@v0.0.7](https://pkg.go.dev/github.com/ProtonMail/go-srp@v0.0.7?tab=licenses)
+- [github.com/ProtonMail/gopenpgp/v3@v3.4.1](https://pkg.go.dev/github.com/ProtonMail/gopenpgp/v3@v3.4.1?tab=licenses)
+- [github.com/PuerkitoBio/goquery@v1.12.0](https://pkg.go.dev/github.com/PuerkitoBio/goquery@v1.12.0?tab=licenses)
+- [github.com/STARRY-S/zip@v0.2.3](https://pkg.go.dev/github.com/STARRY-S/zip@v0.2.3?tab=licenses)
+- [github.com/a1ex3/zstd-seekable-format-go/pkg@v0.10.0](https://pkg.go.dev/github.com/a1ex3/zstd-seekable-format-go/pkg@v0.10.0?tab=licenses)
+- [github.com/a8m/tree@v0.0.0-20240104212747-2c8764a5f17e](https://pkg.go.dev/github.com/a8m/tree@v0.0.0-20240104212747-2c8764a5f17e?tab=licenses)
+- [github.com/aalpar/deheap@v1.1.2](https://pkg.go.dev/github.com/aalpar/deheap@v1.1.2?tab=licenses)
+- [github.com/abbot/go-http-auth@v0.4.0](https://pkg.go.dev/github.com/abbot/go-http-auth@v0.4.0?tab=licenses)
+- [github.com/adrg/xdg@v0.5.3](https://pkg.go.dev/github.com/adrg/xdg@v0.5.3?tab=licenses)
+- [github.com/anacrolix/dms@v1.7.2](https://pkg.go.dev/github.com/anacrolix/dms@v1.7.2?tab=licenses)
+- [github.com/anacrolix/generics@v0.2.0](https://pkg.go.dev/github.com/anacrolix/generics@v0.2.0?tab=licenses)
+- [github.com/anacrolix/log@v0.17.0](https://pkg.go.dev/github.com/anacrolix/log@v0.17.0?tab=licenses)
+- [github.com/anchore/go-lzo@v0.1.1](https://pkg.go.dev/github.com/anchore/go-lzo@v0.1.1?tab=licenses)
+- [github.com/andybalholm/brotli@v1.2.2](https://pkg.go.dev/github.com/andybalholm/brotli@v1.2.2?tab=licenses)
+- [github.com/andybalholm/cascadia@v1.3.4](https://pkg.go.dev/github.com/andybalholm/cascadia@v1.3.4?tab=licenses)
+- [github.com/apache/arrow-go/v18@v18.7.0](https://pkg.go.dev/github.com/apache/arrow-go/v18@v18.7.0?tab=licenses)
+- [github.com/appscode/go-querystring@v0.0.0-20170504095604-0126cfb3f1dc](https://pkg.go.dev/github.com/appscode/go-querystring@v0.0.0-20170504095604-0126cfb3f1dc?tab=licenses)
+- [github.com/atotto/clipboard@v0.1.4](https://pkg.go.dev/github.com/atotto/clipboard@v0.1.4?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2@v1.43.7](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2@v1.43.7?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.18](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream@v1.7.18?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/config@v1.32.30](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/config@v1.32.30?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/credentials@v1.19.29](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/credentials@v1.19.29?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.18.30](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.18.30?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/feature/s3/manager@v1.22.34](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/feature/s3/manager@v1.22.34?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/internal/configsources@v1.4.38](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/internal/configsources@v1.4.38?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/internal/endpoints/v2@v2.7.38](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/internal/endpoints/v2@v2.7.38?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/internal/v4a@v1.4.39](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/internal/v4a@v1.4.39?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding@v1.13.17](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding@v1.13.17?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/internal/checksum@v1.9.31](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/internal/checksum@v1.9.31?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/internal/presigned-url@v1.13.38](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/internal/presigned-url@v1.13.38?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/internal/s3shared@v1.19.39](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/internal/s3shared@v1.19.39?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/s3@v1.107.3](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/s3@v1.107.3?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/signin@v1.4.1](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/signin@v1.4.1?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/sso@v1.32.1](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/sso@v1.32.1?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.37.1](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.37.1?tab=licenses)
+- [github.com/aws/aws-sdk-go-v2/service/sts@v1.44.1](https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/sts@v1.44.1?tab=licenses)
+- [github.com/aws/smithy-go@v1.27.8](https://pkg.go.dev/github.com/aws/smithy-go@v1.27.8?tab=licenses)
+- [github.com/bahlo/generic-list-go@v0.2.0](https://pkg.go.dev/github.com/bahlo/generic-list-go@v0.2.0?tab=licenses)
+- [github.com/beorn7/perks@v1.0.1](https://pkg.go.dev/github.com/beorn7/perks@v1.0.1?tab=licenses)
+- [github.com/bodgit/plumbing@v1.3.0](https://pkg.go.dev/github.com/bodgit/plumbing@v1.3.0?tab=licenses)
+- [github.com/bodgit/sevenzip@v1.6.5](https://pkg.go.dev/github.com/bodgit/sevenzip@v1.6.5?tab=licenses)
+- [github.com/bodgit/windows@v1.0.1](https://pkg.go.dev/github.com/bodgit/windows@v1.0.1?tab=licenses)
+- [github.com/boombuler/barcode@v1.1.0](https://pkg.go.dev/github.com/boombuler/barcode@v1.1.0?tab=licenses)
+- [github.com/bradenaw/juniper@v0.15.3](https://pkg.go.dev/github.com/bradenaw/juniper@v0.15.3?tab=licenses)
+- [github.com/buengese/sgzip@v0.1.1](https://pkg.go.dev/github.com/buengese/sgzip@v0.1.1?tab=licenses)
+- [github.com/buger/jsonparser@v1.2.0](https://pkg.go.dev/github.com/buger/jsonparser@v1.2.0?tab=licenses)
+- [github.com/calebcase/tmpfile@v1.0.3](https://pkg.go.dev/github.com/calebcase/tmpfile@v1.0.3?tab=licenses)
+- [github.com/cespare/xxhash/v2@v2.3.0](https://pkg.go.dev/github.com/cespare/xxhash/v2@v2.3.0?tab=licenses)
+- [github.com/chilts/sid@v0.0.0-20190607042430-660e94789ec9](https://pkg.go.dev/github.com/chilts/sid@v0.0.0-20190607042430-660e94789ec9?tab=licenses)
+- [github.com/clipperhouse/uax29/v2@v2.7.0](https://pkg.go.dev/github.com/clipperhouse/uax29/v2@v2.7.0?tab=licenses)
+- [github.com/cloudflare/circl@v1.6.4](https://pkg.go.dev/github.com/cloudflare/circl@v1.6.4?tab=licenses)
+- [github.com/cloudinary/cloudinary-go/v2@v2.16.0](https://pkg.go.dev/github.com/cloudinary/cloudinary-go/v2@v2.16.0?tab=licenses)
+- [github.com/cloudsoda/go-smb2@v0.0.0-20260701064823-d8c5600d73b8](https://pkg.go.dev/github.com/cloudsoda/go-smb2@v0.0.0-20260701064823-d8c5600d73b8?tab=licenses)
+- [github.com/cloudsoda/sddl@v0.0.0-20250224235906-926454e91efc](https://pkg.go.dev/github.com/cloudsoda/sddl@v0.0.0-20250224235906-926454e91efc?tab=licenses)
+- [github.com/colinmarc/hdfs/v2@v2.4.0](https://pkg.go.dev/github.com/colinmarc/hdfs/v2@v2.4.0?tab=licenses)
+- [github.com/coreos/go-semver@v0.3.1](https://pkg.go.dev/github.com/coreos/go-semver@v0.3.1?tab=licenses)
+- [github.com/coreos/go-systemd/v22@v22.6.0](https://pkg.go.dev/github.com/coreos/go-systemd/v22@v22.6.0?tab=licenses)
+- [github.com/cpuguy83/go-md2man/v2@v2.0.7](https://pkg.go.dev/github.com/cpuguy83/go-md2man/v2@v2.0.7?tab=licenses)
+- [github.com/creasty/defaults@v1.8.0](https://pkg.go.dev/github.com/creasty/defaults@v1.8.0?tab=licenses)
+- [github.com/cronokirby/saferith@v0.33.1-0.20250226174546-1f11f94ce488](https://pkg.go.dev/github.com/cronokirby/saferith@v0.33.1-0.20250226174546-1f11f94ce488?tab=licenses)
+- [github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc](https://pkg.go.dev/github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc?tab=licenses)
+- [github.com/diskfs/go-diskfs@v1.9.4](https://pkg.go.dev/github.com/diskfs/go-diskfs@v1.9.4?tab=licenses)
+- [github.com/dromara/dongle@v1.0.1](https://pkg.go.dev/github.com/dromara/dongle@v1.0.1?tab=licenses)
+- [github.com/dropbox/dropbox-sdk-go-unofficial/v6@v6.4.0](https://pkg.go.dev/github.com/dropbox/dropbox-sdk-go-unofficial/v6@v6.4.0?tab=licenses)
+- [github.com/dsnet/compress@v0.0.2-0.20230904184137-39efe44ab707](https://pkg.go.dev/github.com/dsnet/compress@v0.0.2-0.20230904184137-39efe44ab707?tab=licenses)
+- [github.com/emersion/go-message@v0.18.2](https://pkg.go.dev/github.com/emersion/go-message@v0.18.2?tab=licenses)
+- [github.com/emersion/go-vcard@v0.0.0-20260618161152-d854b7e0e2d3](https://pkg.go.dev/github.com/emersion/go-vcard@v0.0.0-20260618161152-d854b7e0e2d3?tab=licenses)
+- [github.com/felixge/httpsnoop@v1.1.0](https://pkg.go.dev/github.com/felixge/httpsnoop@v1.1.0?tab=licenses)
+- [github.com/flynn/noise@v1.1.0](https://pkg.go.dev/github.com/flynn/noise@v1.1.0?tab=licenses)
+- [github.com/gabriel-vasile/mimetype@v1.4.13](https://pkg.go.dev/github.com/gabriel-vasile/mimetype@v1.4.13?tab=licenses)
+- [github.com/gdamore/encoding@v1.0.1](https://pkg.go.dev/github.com/gdamore/encoding@v1.0.1?tab=licenses)
+- [github.com/gdamore/tcell/v2@v2.9.0](https://pkg.go.dev/github.com/gdamore/tcell/v2@v2.9.0?tab=licenses)
+- [github.com/geoffgarside/ber@v1.2.0](https://pkg.go.dev/github.com/geoffgarside/ber@v1.2.0?tab=licenses)
+- [github.com/go-chi/chi/v5@v5.3.1](https://pkg.go.dev/github.com/go-chi/chi/v5@v5.3.1?tab=licenses)
+- [github.com/go-git/go-billy/v5@v5.9.0](https://pkg.go.dev/github.com/go-git/go-billy/v5@v5.9.0?tab=licenses)
+- [github.com/go-logr/logr@v1.4.3](https://pkg.go.dev/github.com/go-logr/logr@v1.4.3?tab=licenses)
+- [github.com/go-logr/stdr@v1.2.2](https://pkg.go.dev/github.com/go-logr/stdr@v1.2.2?tab=licenses)
+- [github.com/go-openapi/errors@v0.22.8](https://pkg.go.dev/github.com/go-openapi/errors@v0.22.8?tab=licenses)
+- [github.com/go-openapi/strfmt@v0.27.0](https://pkg.go.dev/github.com/go-openapi/strfmt@v0.27.0?tab=licenses)
+- [github.com/go-playground/locales@v0.14.1](https://pkg.go.dev/github.com/go-playground/locales@v0.14.1?tab=licenses)
+- [github.com/go-playground/universal-translator@v0.18.1](https://pkg.go.dev/github.com/go-playground/universal-translator@v0.18.1?tab=licenses)
+- [github.com/go-playground/validator/v10@v10.30.3](https://pkg.go.dev/github.com/go-playground/validator/v10@v10.30.3?tab=licenses)
+- [github.com/go-resty/resty/v2@v2.17.2](https://pkg.go.dev/github.com/go-resty/resty/v2@v2.17.2?tab=licenses)
+- [github.com/go-viper/mapstructure/v2@v2.5.0](https://pkg.go.dev/github.com/go-viper/mapstructure/v2@v2.5.0?tab=licenses)
+- [github.com/goccy/go-json@v0.10.6](https://pkg.go.dev/github.com/goccy/go-json@v0.10.6?tab=licenses)
+- [github.com/gofrs/flock@v0.13.0](https://pkg.go.dev/github.com/gofrs/flock@v0.13.0?tab=licenses)
+- [github.com/gogo/protobuf@v1.3.2](https://pkg.go.dev/github.com/gogo/protobuf@v1.3.2?tab=licenses)
+- [github.com/golang-jwt/jwt/v4@v4.5.2](https://pkg.go.dev/github.com/golang-jwt/jwt/v4@v4.5.2?tab=licenses)
+- [github.com/golang-jwt/jwt/v5@v5.3.1](https://pkg.go.dev/github.com/golang-jwt/jwt/v5@v5.3.1?tab=licenses)
+- [github.com/google/btree@v1.1.3](https://pkg.go.dev/github.com/google/btree@v1.1.3?tab=licenses)
+- [github.com/google/flatbuffers@v25.12.19+incompatible](https://pkg.go.dev/github.com/google/flatbuffers@v25.12.19+incompatible?tab=licenses)
+- [github.com/google/s2a-go@v0.1.9](https://pkg.go.dev/github.com/google/s2a-go@v0.1.9?tab=licenses)
+- [github.com/google/uuid@v1.6.0](https://pkg.go.dev/github.com/google/uuid@v1.6.0?tab=licenses)
+- [github.com/googleapis/enterprise-certificate-proxy@v0.3.18](https://pkg.go.dev/github.com/googleapis/enterprise-certificate-proxy@v0.3.18?tab=licenses)
+- [github.com/googleapis/gax-go/v2@v2.22.0](https://pkg.go.dev/github.com/googleapis/gax-go/v2@v2.22.0?tab=licenses)
+- [github.com/gorilla/schema@v1.4.1](https://pkg.go.dev/github.com/gorilla/schema@v1.4.1?tab=licenses)
+- [github.com/hanwen/go-fuse/v2@v2.10.1](https://pkg.go.dev/github.com/hanwen/go-fuse/v2@v2.10.1?tab=licenses)
+- [github.com/hashicorp/errwrap@v1.0.0](https://pkg.go.dev/github.com/hashicorp/errwrap@v1.0.0?tab=licenses)
+- [github.com/hashicorp/go-cleanhttp@v0.5.2](https://pkg.go.dev/github.com/hashicorp/go-cleanhttp@v0.5.2?tab=licenses)
+- [github.com/hashicorp/go-multierror@v1.1.1](https://pkg.go.dev/github.com/hashicorp/go-multierror@v1.1.1?tab=licenses)
+- [github.com/hashicorp/go-retryablehttp@v0.7.8](https://pkg.go.dev/github.com/hashicorp/go-retryablehttp@v0.7.8?tab=licenses)
+- [github.com/hashicorp/go-uuid@v1.0.3](https://pkg.go.dev/github.com/hashicorp/go-uuid@v1.0.3?tab=licenses)
+- [github.com/hashicorp/golang-lru/v2@v2.0.7](https://pkg.go.dev/github.com/hashicorp/golang-lru/v2@v2.0.7?tab=licenses)
+- [github.com/internxt/rclone-adapter@v0.0.0-20260708165336-dd6561bacfa2](https://pkg.go.dev/github.com/internxt/rclone-adapter@v0.0.0-20260708165336-dd6561bacfa2?tab=licenses)
+- [github.com/jcmturner/aescts/v2@v2.0.0](https://pkg.go.dev/github.com/jcmturner/aescts/v2@v2.0.0?tab=licenses)
+- [github.com/jcmturner/dnsutils/v2@v2.0.0](https://pkg.go.dev/github.com/jcmturner/dnsutils/v2@v2.0.0?tab=licenses)
+- [github.com/jcmturner/gofork@v1.7.6](https://pkg.go.dev/github.com/jcmturner/gofork@v1.7.6?tab=licenses)
+- [github.com/jcmturner/goidentity/v6@v6.0.1](https://pkg.go.dev/github.com/jcmturner/goidentity/v6@v6.0.1?tab=licenses)
+- [github.com/jcmturner/gokrb5/v8@v8.4.4](https://pkg.go.dev/github.com/jcmturner/gokrb5/v8@v8.4.4?tab=licenses)
+- [github.com/jcmturner/rpc/v2@v2.0.3](https://pkg.go.dev/github.com/jcmturner/rpc/v2@v2.0.3?tab=licenses)
+- [github.com/jlaffaye/ftp@v0.2.1-0.20251026020404-6602e981a1bb](https://pkg.go.dev/github.com/jlaffaye/ftp@v0.2.1-0.20251026020404-6602e981a1bb?tab=licenses)
+- [github.com/jtolio/noiseconn@v0.0.0-20231127013910-f6d9ecbf1de7](https://pkg.go.dev/github.com/jtolio/noiseconn@v0.0.0-20231127013910-f6d9ecbf1de7?tab=licenses)
+- [github.com/jzelinskie/whirlpool@v0.0.0-20201016144138-0675e54bb004](https://pkg.go.dev/github.com/jzelinskie/whirlpool@v0.0.0-20201016144138-0675e54bb004?tab=licenses)
+- [github.com/klauspost/compress@v1.19.0](https://pkg.go.dev/github.com/klauspost/compress@v1.19.0?tab=licenses)
+- [github.com/klauspost/cpuid/v2@v2.4.0](https://pkg.go.dev/github.com/klauspost/cpuid/v2@v2.4.0?tab=licenses)
+- [github.com/klauspost/pgzip@v1.2.6](https://pkg.go.dev/github.com/klauspost/pgzip@v1.2.6?tab=licenses)
+- [github.com/koofr/go-httpclient@v0.0.0-20240520111329-e20f8f203988](https://pkg.go.dev/github.com/koofr/go-httpclient@v0.0.0-20240520111329-e20f8f203988?tab=licenses)
+- [github.com/koofr/go-koofrclient@v0.0.0-20221207135200-cbd7fc9ad6a6](https://pkg.go.dev/github.com/koofr/go-koofrclient@v0.0.0-20221207135200-cbd7fc9ad6a6?tab=licenses)
+- [github.com/kr/fs@v0.1.0](https://pkg.go.dev/github.com/kr/fs@v0.1.0?tab=licenses)
+- [github.com/kylelemons/godebug@v1.1.0](https://pkg.go.dev/github.com/kylelemons/godebug@v1.1.0?tab=licenses)
+- [github.com/lanrat/extsort@v1.4.2](https://pkg.go.dev/github.com/lanrat/extsort@v1.4.2?tab=licenses)
+- [github.com/leodido/go-urn@v1.4.0](https://pkg.go.dev/github.com/leodido/go-urn@v1.4.0?tab=licenses)
+- [github.com/lpar/calendar@v0.2.0](https://pkg.go.dev/github.com/lpar/calendar@v0.2.0?tab=licenses)
+- [github.com/lucasb-eyer/go-colorful@v1.4.0](https://pkg.go.dev/github.com/lucasb-eyer/go-colorful@v1.4.0?tab=licenses)
+- [github.com/mailru/easyjson@v0.9.2](https://pkg.go.dev/github.com/mailru/easyjson@v0.9.2?tab=licenses)
+- [github.com/mattn/go-colorable@v0.1.15](https://pkg.go.dev/github.com/mattn/go-colorable@v0.1.15?tab=licenses)
+- [github.com/mattn/go-isatty@v0.0.23](https://pkg.go.dev/github.com/mattn/go-isatty@v0.0.23?tab=licenses)
+- [github.com/mattn/go-runewidth@v0.0.24](https://pkg.go.dev/github.com/mattn/go-runewidth@v0.0.24?tab=licenses)
+- [github.com/mholt/archives@v0.1.5](https://pkg.go.dev/github.com/mholt/archives@v0.1.5?tab=licenses)
+- [github.com/mikelolasagasti/xz@v1.0.1](https://pkg.go.dev/github.com/mikelolasagasti/xz@v1.0.1?tab=licenses)
+- [github.com/minio/minlz@v1.2.0](https://pkg.go.dev/github.com/minio/minlz@v1.2.0?tab=licenses)
+- [github.com/minio/xxml@v0.0.3](https://pkg.go.dev/github.com/minio/xxml@v0.0.3?tab=licenses)
+- [github.com/mitchellh/go-homedir@v1.1.0](https://pkg.go.dev/github.com/mitchellh/go-homedir@v1.1.0?tab=licenses)
+- [github.com/moby/sys/mountinfo@v0.7.2](https://pkg.go.dev/github.com/moby/sys/mountinfo@v0.7.2?tab=licenses)
+- [github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822](https://pkg.go.dev/github.com/munnerz/goautoneg@v0.0.0-20191010083416-a7dc8b61c822?tab=licenses)
+- [github.com/ncw/swift/v2@v2.0.5](https://pkg.go.dev/github.com/ncw/swift/v2@v2.0.5?tab=licenses)
+- [github.com/nwaples/rardecode/v2@v2.2.5](https://pkg.go.dev/github.com/nwaples/rardecode/v2@v2.2.5?tab=licenses)
+- [github.com/oklog/ulid/v2@v2.1.1](https://pkg.go.dev/github.com/oklog/ulid/v2@v2.1.1?tab=licenses)
+- [github.com/oracle/oci-go-sdk/v65@v65.121.0](https://pkg.go.dev/github.com/oracle/oci-go-sdk/v65@v65.121.0?tab=licenses)
+- [github.com/panjf2000/ants/v2@v2.12.1](https://pkg.go.dev/github.com/panjf2000/ants/v2@v2.12.1?tab=licenses)
+- [github.com/patrickmn/go-cache@v2.1.0+incompatible](https://pkg.go.dev/github.com/patrickmn/go-cache@v2.1.0+incompatible?tab=licenses)
+- [github.com/pengsrc/go-shared@v0.2.1-0.20190131101655-1999055a4a14](https://pkg.go.dev/github.com/pengsrc/go-shared@v0.2.1-0.20190131101655-1999055a4a14?tab=licenses)
+- [github.com/peterh/liner@v1.2.2](https://pkg.go.dev/github.com/peterh/liner@v1.2.2?tab=licenses)
+- [github.com/pierrec/lz4/v4@v4.1.27](https://pkg.go.dev/github.com/pierrec/lz4/v4@v4.1.27?tab=licenses)
+- [github.com/pkg/browser@v0.0.0-20240102092130-5ac0b6a4141c](https://pkg.go.dev/github.com/pkg/browser@v0.0.0-20240102092130-5ac0b6a4141c?tab=licenses)
+- [github.com/pkg/errors@v0.9.1](https://pkg.go.dev/github.com/pkg/errors@v0.9.1?tab=licenses)
+- [github.com/pkg/sftp@v1.13.11](https://pkg.go.dev/github.com/pkg/sftp@v1.13.11?tab=licenses)
+- [github.com/pkg/xattr@v0.4.12](https://pkg.go.dev/github.com/pkg/xattr@v0.4.12?tab=licenses)
+- [github.com/pmezard/go-difflib@v1.0.1-0.20181226105442-5d4384ee4fb2](https://pkg.go.dev/github.com/pmezard/go-difflib@v1.0.1-0.20181226105442-5d4384ee4fb2?tab=licenses)
+- [github.com/pquerna/otp@v1.5.0](https://pkg.go.dev/github.com/pquerna/otp@v1.5.0?tab=licenses)
+- [github.com/prometheus/client_golang@v1.23.2](https://pkg.go.dev/github.com/prometheus/client_golang@v1.23.2?tab=licenses)
+- [github.com/prometheus/client_model@v0.6.2](https://pkg.go.dev/github.com/prometheus/client_model@v0.6.2?tab=licenses)
+- [github.com/prometheus/common@v0.70.0](https://pkg.go.dev/github.com/prometheus/common@v0.70.0?tab=licenses)
+- [github.com/prometheus/procfs@v0.21.1](https://pkg.go.dev/github.com/prometheus/procfs@v0.21.1?tab=licenses)
+- [github.com/putdotio/go-putio/putio@v0.0.0-20200123120452-16d982cac2b8](https://pkg.go.dev/github.com/putdotio/go-putio/putio@v0.0.0-20200123120452-16d982cac2b8?tab=licenses)
+- [github.com/rasky/go-xdr@v0.0.0-20170124162913-1a41d1a06c93](https://pkg.go.dev/github.com/rasky/go-xdr@v0.0.0-20170124162913-1a41d1a06c93?tab=licenses)
+- [github.com/rclone/Proton-API-Bridge@v1.0.5](https://pkg.go.dev/github.com/rclone/Proton-API-Bridge@v1.0.5?tab=licenses)
+- [github.com/rclone/go-proton-api@v1.0.4](https://pkg.go.dev/github.com/rclone/go-proton-api@v1.0.4?tab=licenses)
+- [github.com/rclone/gofakes3@v0.0.9](https://pkg.go.dev/github.com/rclone/gofakes3@v0.0.9?tab=licenses)
+- [github.com/relvacode/iso8601@v1.7.0](https://pkg.go.dev/github.com/relvacode/iso8601@v1.7.0?tab=licenses)
+- [github.com/rfjakob/eme@v1.2.0](https://pkg.go.dev/github.com/rfjakob/eme@v1.2.0?tab=licenses)
+- [github.com/rivo/uniseg@v0.4.7](https://pkg.go.dev/github.com/rivo/uniseg@v0.4.7?tab=licenses)
+- [github.com/russross/blackfriday/v2@v2.1.0](https://pkg.go.dev/github.com/russross/blackfriday/v2@v2.1.0?tab=licenses)
+- [github.com/ryszard/goskiplist@v0.0.0-20150312221310-2dfbae5fcf46](https://pkg.go.dev/github.com/ryszard/goskiplist@v0.0.0-20150312221310-2dfbae5fcf46?tab=licenses)
+- [github.com/sabhiram/go-gitignore@v0.0.0-20210923224102-525f6e181f06](https://pkg.go.dev/github.com/sabhiram/go-gitignore@v0.0.0-20210923224102-525f6e181f06?tab=licenses)
+- [github.com/samber/lo@v1.53.0](https://pkg.go.dev/github.com/samber/lo@v1.53.0?tab=licenses)
+- [github.com/shirou/gopsutil/v4@v4.26.6](https://pkg.go.dev/github.com/shirou/gopsutil/v4@v4.26.6?tab=licenses)
+- [github.com/sirupsen/logrus@v1.9.4](https://pkg.go.dev/github.com/sirupsen/logrus@v1.9.4?tab=licenses)
+- [github.com/skratchdot/open-golang@v0.0.0-20200116055534-eef842397966](https://pkg.go.dev/github.com/skratchdot/open-golang@v0.0.0-20200116055534-eef842397966?tab=licenses)
+- [github.com/sony/gobreaker/v2@v2.4.0](https://pkg.go.dev/github.com/sony/gobreaker/v2@v2.4.0?tab=licenses)
+- [github.com/sorairolake/lzip-go@v0.3.8](https://pkg.go.dev/github.com/sorairolake/lzip-go@v0.3.8?tab=licenses)
+- [github.com/spacemonkeygo/monkit/v3@v3.0.25-0.20251022131615-eb24eb109368](https://pkg.go.dev/github.com/spacemonkeygo/monkit/v3@v3.0.25-0.20251022131615-eb24eb109368?tab=licenses)
+- [github.com/spf13/afero@v1.15.0](https://pkg.go.dev/github.com/spf13/afero@v1.15.0?tab=licenses)
+- [github.com/spf13/cobra@v1.10.2](https://pkg.go.dev/github.com/spf13/cobra@v1.10.2?tab=licenses)
+- [github.com/spf13/pflag@v1.0.10](https://pkg.go.dev/github.com/spf13/pflag@v1.0.10?tab=licenses)
+- [github.com/stangelandcl/ppmd@v0.1.1](https://pkg.go.dev/github.com/stangelandcl/ppmd@v0.1.1?tab=licenses)
+- [github.com/stretchr/testify@v1.11.1](https://pkg.go.dev/github.com/stretchr/testify@v1.11.1?tab=licenses)
+- [github.com/t3rm1n4l/go-mega@v0.0.0-20260717075258-c6acd6a5bd04](https://pkg.go.dev/github.com/t3rm1n4l/go-mega@v0.0.0-20260717075258-c6acd6a5bd04?tab=licenses)
+- [github.com/tyler-smith/go-bip39@v1.1.0](https://pkg.go.dev/github.com/tyler-smith/go-bip39@v1.1.0?tab=licenses)
+- [github.com/ulikunitz/xz@v0.5.15](https://pkg.go.dev/github.com/ulikunitz/xz@v0.5.15?tab=licenses)
+- [github.com/unknwon/goconfig@v1.0.0](https://pkg.go.dev/github.com/unknwon/goconfig@v1.0.0?tab=licenses)
+- [github.com/willscott/go-nfs@v0.0.4](https://pkg.go.dev/github.com/willscott/go-nfs@v0.0.4?tab=licenses)
+- [github.com/willscott/go-nfs-client@v0.0.0-20251022144359-801f10d98886](https://pkg.go.dev/github.com/willscott/go-nfs-client@v0.0.0-20251022144359-801f10d98886?tab=licenses)
+- [github.com/wk8/go-ordered-map/v2@v2.1.8](https://pkg.go.dev/github.com/wk8/go-ordered-map/v2@v2.1.8?tab=licenses)
+- [github.com/xanzy/ssh-agent@v0.3.3](https://pkg.go.dev/github.com/xanzy/ssh-agent@v0.3.3?tab=licenses)
+- [github.com/youmark/pkcs8@v0.0.0-20240726163527-a2c0da244d78](https://pkg.go.dev/github.com/youmark/pkcs8@v0.0.0-20240726163527-a2c0da244d78?tab=licenses)
+- [github.com/yunify/qingstor-sdk-go/v3@v3.2.0](https://pkg.go.dev/github.com/yunify/qingstor-sdk-go/v3@v3.2.0?tab=licenses)
+- [github.com/zeebo/blake3@v0.2.4](https://pkg.go.dev/github.com/zeebo/blake3@v0.2.4?tab=licenses)
+- [github.com/zeebo/errs@v1.4.0](https://pkg.go.dev/github.com/zeebo/errs@v1.4.0?tab=licenses)
+- [github.com/zeebo/xxh3@v1.1.0](https://pkg.go.dev/github.com/zeebo/xxh3@v1.1.0?tab=licenses)
+- [go.etcd.io/bbolt@v1.5.0](https://pkg.go.dev/go.etcd.io/bbolt@v1.5.0?tab=licenses)
+- [go.opentelemetry.io/auto/sdk@v1.2.1](https://pkg.go.dev/go.opentelemetry.io/auto/sdk@v1.2.1?tab=licenses)
+- [go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.69.0](https://pkg.go.dev/go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.69.0?tab=licenses)
+- [go.opentelemetry.io/otel@v1.44.0](https://pkg.go.dev/go.opentelemetry.io/otel@v1.44.0?tab=licenses)
+- [go.opentelemetry.io/otel/metric@v1.44.0](https://pkg.go.dev/go.opentelemetry.io/otel/metric@v1.44.0?tab=licenses)
+- [go.opentelemetry.io/otel/trace@v1.44.0](https://pkg.go.dev/go.opentelemetry.io/otel/trace@v1.44.0?tab=licenses)
+- [go.yaml.in/yaml/v2@v2.4.4](https://pkg.go.dev/go.yaml.in/yaml/v2@v2.4.4?tab=licenses)
+- [go.yaml.in/yaml/v3@v3.0.4](https://pkg.go.dev/go.yaml.in/yaml/v3@v3.0.4?tab=licenses)
+- [go4.org@v0.0.0-20260112195520-a5071408f32f](https://pkg.go.dev/go4.org@v0.0.0-20260112195520-a5071408f32f?tab=licenses)
+- [goftp.io/server/v2@v2.0.3](https://pkg.go.dev/goftp.io/server/v2@v2.0.3?tab=licenses)
+- [golang.org/x/crypto@v0.56.0](https://pkg.go.dev/golang.org/x/crypto@v0.56.0?tab=licenses)
+- [golang.org/x/exp@v0.0.0-20260709172345-9ea1abe57597](https://pkg.go.dev/golang.org/x/exp@v0.0.0-20260709172345-9ea1abe57597?tab=licenses)
+- [golang.org/x/image@v0.45.0](https://pkg.go.dev/golang.org/x/image@v0.45.0?tab=licenses)
+- [golang.org/x/net@v0.57.0](https://pkg.go.dev/golang.org/x/net@v0.57.0?tab=licenses)
+- [golang.org/x/oauth2@v0.36.0](https://pkg.go.dev/golang.org/x/oauth2@v0.36.0?tab=licenses)
+- [golang.org/x/sync@v0.22.0](https://pkg.go.dev/golang.org/x/sync@v0.22.0?tab=licenses)
+- [golang.org/x/sys@v0.47.0](https://pkg.go.dev/golang.org/x/sys@v0.47.0?tab=licenses)
+- [golang.org/x/term@v0.45.0](https://pkg.go.dev/golang.org/x/term@v0.45.0?tab=licenses)
+- [golang.org/x/text@v0.41.0](https://pkg.go.dev/golang.org/x/text@v0.41.0?tab=licenses)
+- [golang.org/x/time@v0.15.0](https://pkg.go.dev/golang.org/x/time@v0.15.0?tab=licenses)
+- [google.golang.org/api@v0.279.0](https://pkg.go.dev/google.golang.org/api@v0.279.0?tab=licenses)
+- [google.golang.org/genproto/googleapis/rpc@v0.0.0-20260715232425-e75dac1f907d](https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260715232425-e75dac1f907d?tab=licenses)
+- [google.golang.org/grpc@v1.84.0-dev.0.20260723093437-b6eac429d7b6](https://pkg.go.dev/google.golang.org/grpc@v1.84.0-dev.0.20260723093437-b6eac429d7b6?tab=licenses)
+- [google.golang.org/protobuf@v1.36.11](https://pkg.go.dev/google.golang.org/protobuf@v1.36.11?tab=licenses)
+- [gopkg.in/natefinch/lumberjack.v2@v2.2.1](https://pkg.go.dev/gopkg.in/natefinch/lumberjack.v2@v2.2.1?tab=licenses)
+- [gopkg.in/validator.v2@v2.0.1](https://pkg.go.dev/gopkg.in/validator.v2@v2.0.1?tab=licenses)
+- [gopkg.in/yaml.v2@v2.4.0](https://pkg.go.dev/gopkg.in/yaml.v2@v2.4.0?tab=licenses)
+- [gopkg.in/yaml.v3@v3.0.1](https://pkg.go.dev/gopkg.in/yaml.v3@v3.0.1?tab=licenses)
+- [moul.io/http2curl/v2@v2.3.0](https://pkg.go.dev/moul.io/http2curl/v2@v2.3.0?tab=licenses)
+- [sigs.k8s.io/yaml@v1.6.0](https://pkg.go.dev/sigs.k8s.io/yaml@v1.6.0?tab=licenses)
+- [storj.io/common@v0.0.0-20260629224719-ba1bff0a7846](https://pkg.go.dev/storj.io/common@v0.0.0-20260629224719-ba1bff0a7846?tab=licenses)
+- [storj.io/drpc@v1.0.0](https://pkg.go.dev/storj.io/drpc@v1.0.0?tab=licenses)
+- [storj.io/eventkit@v0.0.0-20260716074419-6861a92e2aa5](https://pkg.go.dev/storj.io/eventkit@v0.0.0-20260716074419-6861a92e2aa5?tab=licenses)
+- [storj.io/infectious@v0.0.2](https://pkg.go.dev/storj.io/infectious@v0.0.2?tab=licenses)
+- [storj.io/picobuf@v0.0.4](https://pkg.go.dev/storj.io/picobuf@v0.0.4?tab=licenses)
+- [storj.io/uplink@v1.14.3](https://pkg.go.dev/storj.io/uplink@v1.14.3?tab=licenses)

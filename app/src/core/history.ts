@@ -9,7 +9,7 @@ export interface NativeError {
 }
 export interface BackupState {
   readonly config: {
-    schema_version: 2;
+    schema_version: 3;
     interval_minutes: number;
     local_retention: BackupRetention;
     destinations: readonly BackupDestination[];
@@ -35,10 +35,22 @@ export const DEFAULT_BACKUP_RETENTION: BackupRetention = {
 };
 export interface BackupDestination {
   readonly id: string;
-  readonly path: string;
+  readonly location:
+    | { kind: "local-directory"; path: string }
+    | {
+        kind: "google-drive";
+        connection_id: string;
+        root_folder_id: string;
+        display_name: string;
+      };
   readonly repository_id: string;
   readonly enabled: boolean;
   readonly retention: BackupRetention;
+}
+export function backupDestinationLabel(target: BackupDestination): string {
+  return target.location.kind === "local-directory"
+    ? target.location.path
+    : target.location.display_name;
 }
 export interface BackupDestinationStatus {
   readonly phase: string;
@@ -48,8 +60,17 @@ export interface BackupDestinationStatus {
   readonly maintenance_error: NativeError | null;
   readonly pending_copy_count: number;
   readonly expired_copy_count: number;
+  readonly next_retry_at?: string | null;
+  readonly active_generation_id?: string | null;
 }
 export type BackupSettingsRequest =
+  | {
+      kind: "add-google-drive";
+      connectionId: string;
+      retryIntent?: string;
+      password: string;
+      retention: BackupRetention;
+    }
   | { kind: "local"; intervalMinutes: number; retention: BackupRetention }
   | {
       kind: "add";
@@ -110,6 +131,9 @@ export interface BackupPort {
   cancel(): Promise<void>;
   resume(): Promise<void>;
   maintainIdle(): Promise<unknown>;
+  cloud?: CloudPort;
+  scheduleCloud?(id?: string): Promise<unknown>;
+  waitTransfers?(budgetMs: number): Promise<unknown>;
   settings(value: BackupSettingsRequest): Promise<void>;
   chooseAdditional(): Promise<string | null>;
   history(
@@ -124,6 +148,51 @@ export interface BackupPort {
     filename: string,
   ): Promise<void>;
 }
+export interface CloudConnection {
+  readonly id: string;
+  readonly account_display_label: string;
+  readonly oauth_client_id: string;
+  readonly last_verified_at: string | null;
+  readonly auth_state: string;
+  readonly bindings: readonly {
+    workspace_id: string;
+    destination_id: string;
+    enabled: boolean;
+  }[];
+}
+export interface CloudState {
+  readonly configured: boolean;
+  readonly experimental: boolean;
+  readonly configuration_error?: NativeError | null;
+  readonly connections: readonly CloudConnection[];
+}
+export interface CloudAuthStatus {
+  readonly operation_id: string;
+  readonly connection_id: string;
+  readonly phase: string;
+  readonly authorization_url: string | null;
+  readonly error: NativeError | null;
+}
+export interface CloudInitIntent {
+  id: string;
+  phase: string;
+  root_folder_id: string | null;
+  display_name: string | null;
+}
+export interface CloudPort {
+  list(): Promise<CloudState>;
+  connect(name: string): Promise<CloudAuthStatus>;
+  reconnect(connectionId: string): Promise<CloudAuthStatus>;
+  authStatus(operationId: string): Promise<CloudAuthStatus>;
+  cancelAuth(operationId: string): Promise<unknown>;
+  disconnect(
+    connectionId: string,
+    stopDestinations?: boolean,
+  ): Promise<unknown>;
+  intents(connectionId: string): Promise<readonly CloudInitIntent[]>;
+  recoveryInformation(destinationId: string): Promise<Record<string, string>>;
+  cancelTransfer(destinationId: string): Promise<unknown>;
+}
 export function nativeErrorMessage(cause: unknown): string {
   if (cause && typeof cause === "object" && "message" in cause)
     return String(cause.message);
@@ -133,13 +202,39 @@ export function createDefaultBackupPort(): BackupPort | null {
   if (!isTauri()) return null;
   const request = <T>(request: unknown): Promise<T> =>
     invoke<T>("workspace_native_query", { request });
+  const cloud = <T>(request: unknown): Promise<T> =>
+    invoke<T>("workspace_cloud", { request });
   return {
     status: () => request({ operation: "backup", action: { kind: "status" } }),
     run: () => request({ operation: "backup", action: { kind: "run" } }),
     cancel: () => invoke("workspace_backup_cancel"),
     resume: () => invoke("workspace_backup_resume"),
     maintainIdle: () =>
-      request({ operation: "backup", action: { kind: "idle-maintain" } }),
+      request({ operation: "backup", action: { kind: "idle_maintain" } }),
+    scheduleCloud: (id) =>
+      request({
+        operation: "backup",
+        action: { kind: "cloud_tick", id: id ?? null },
+      }),
+    waitTransfers: (budgetMs) =>
+      request({
+        operation: "backup",
+        action: { kind: "wait_transfers", budget_ms: budgetMs },
+      }),
+    cloud: {
+      list: () => cloud({ kind: "list" }),
+      connect: (name) => cloud({ kind: "connect", name }),
+      reconnect: (connectionId) => cloud({ kind: "reconnect", connectionId }),
+      authStatus: (operationId) => cloud({ kind: "auth-status", operationId }),
+      cancelAuth: (operationId) => cloud({ kind: "cancel-auth", operationId }),
+      disconnect: (connectionId, stopDestinations = false) =>
+        cloud({ kind: "disconnect", connectionId, stopDestinations }),
+      intents: (connectionId) => cloud({ kind: "intents", connectionId }),
+      recoveryInformation: (destinationId) =>
+        cloud({ kind: "recovery-information", destinationId }),
+      cancelTransfer: (destinationId) =>
+        cloud({ kind: "cancel-transfer", destinationId }),
+    },
     settings: (request) => invoke("workspace_backup_settings", { request }),
     chooseAdditional: async () => {
       const selected = await open({
@@ -240,6 +335,8 @@ export class BackupController {
   private async tick(): Promise<void> {
     if (this.stopped) return;
     const state = await this.port.status();
+    if (this.stopped) return;
+    await this.port.scheduleCloud?.();
     if (this.stopped) return;
     if (Date.now() - this.lastCheck >= state.config.interval_minutes * 60_000) {
       this.lastCheck = Date.now();

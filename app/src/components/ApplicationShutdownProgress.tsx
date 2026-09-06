@@ -1,5 +1,8 @@
 import { ModalDialog } from "./ModalDialog";
-import { backupCopyingDestinations } from "../core/history";
+import {
+  backupCopyingDestinations,
+  backupDestinationLabel,
+} from "../core/history";
 import type { ApplicationDepartureProgress } from "../core/application-departure";
 export type ApplicationShutdownProgressState = ApplicationDepartureProgress;
 
@@ -86,7 +89,7 @@ function shutdownProgressLabel(
     ? backupCopyingDestinations(progress.backup)
     : [];
   if (copying.length > 0)
-    return `ローカル履歴を保存しました。転送先: ${copying.map((target) => target.path).join(" / ")}`;
+    return `ローカル履歴を保存しました。転送先: ${copying.map(backupDestinationLabel).join(" / ")}`;
   switch (progress.backup?.status.phase) {
     case "capturing":
       return "整合したデータベースと添付を取得しています…";

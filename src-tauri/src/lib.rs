@@ -12,6 +12,8 @@ pub mod backup_management;
 pub mod backup_settings;
 pub mod cli;
 mod clipboard;
+pub mod cloud;
+mod credentials;
 mod data_area;
 mod diagnostics;
 pub mod document_model;
@@ -21,9 +23,12 @@ pub mod namespace;
 pub mod native_service;
 mod persistence;
 pub mod portable_mirror;
+mod private_files;
+mod rclone;
 pub mod read_service;
 pub mod restic;
 mod search_index;
+mod sidecar;
 mod workspace_migration;
 pub mod workspace_owner;
 
@@ -472,6 +477,7 @@ pub fn run() {
         native_service::workspace_backup_cancel,
         native_service::workspace_backup_resume,
         native_service::workspace_backup_settings,
+        native_service::workspace_cloud,
         native_service::workspace_history_attachment_export,
         deactivate_input_method,
         set_normal_mode_ime_guard,

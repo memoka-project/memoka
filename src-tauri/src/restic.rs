@@ -8,7 +8,6 @@ use serde_json::Value;
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
-    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -39,18 +38,60 @@ impl std::fmt::Debug for Password {
 }
 #[derive(Clone, Debug)]
 pub struct Repository {
-    pub path: PathBuf,
+    pub location: RepositoryLocation,
     pub password: Password,
 }
+#[derive(Clone, Debug)]
+pub enum RepositoryLocation {
+    LocalDirectory { path: PathBuf },
+    GoogleDrive(crate::rclone::DriveRepository),
+}
 impl Repository {
-    pub fn local(workspace: &Path) -> Self {
+    pub fn at(path: PathBuf, password: Password) -> Self {
         Self {
-            path: workspace.join(".memoka-backups").join("restic"),
-            password: Password::Insecure,
+            location: RepositoryLocation::LocalDirectory { path },
+            password,
         }
     }
+    pub(crate) fn drive(context: crate::rclone::DriveRepository, password: Password) -> Self {
+        Self {
+            location: RepositoryLocation::GoogleDrive(context),
+            password,
+        }
+    }
+    pub fn local_path(&self) -> Result<&Path, ReadError> {
+        match &self.location {
+            RepositoryLocation::LocalDirectory { path } => Ok(path),
+            _ => Err(ReadError::new(
+                "INVALID_ARGUMENT",
+                "This operation requires a local repository",
+            )),
+        }
+    }
+    pub(crate) fn drive_context(&self) -> Option<&crate::rclone::DriveRepository> {
+        match &self.location {
+            RepositoryLocation::GoogleDrive(context) => Some(context),
+            _ => None,
+        }
+    }
+    pub(crate) fn address(&self) -> OsString {
+        match &self.location {
+            RepositoryLocation::LocalDirectory { path } => path.as_os_str().to_owned(),
+            RepositoryLocation::GoogleDrive(_) => "rclone:memoka_drive:".into(),
+        }
+    }
+    pub fn local(workspace: &Path) -> Self {
+        Self::at(
+            workspace.join(".memoka-backups").join("restic"),
+            Password::Insecure,
+        )
+    }
     pub fn validate_path(&self) -> Result<(), ReadError> {
-        if !self.path.is_absolute() {
+        if let Some(context) = self.drive_context() {
+            return crate::cloud::validate_folder_id(&context.folder_id);
+        }
+        let path = self.local_path()?;
+        if !path.is_absolute() {
             return Err(ReadError::new(
                 "UNSAFE_PATH",
                 "Repository must be an absolute local path",
@@ -58,7 +99,7 @@ impl Repository {
         }
         // A missing leaf is allowed only for explicit initialization. Existing
         // ancestors must not redirect to another store via symlink/reparse.
-        for path in self.path.ancestors() {
+        for path in path.ancestors() {
             match fs::symlink_metadata(path) {
                 Ok(_) => checked_directory(path)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -194,7 +235,10 @@ impl Restic {
         }
         let mut command = Command::new(&self.binary);
         sanitized(&mut command);
-        command.arg("--repo").arg(&repo.path).arg("--no-cache");
+        command.arg("--repo").arg(repo.address()).arg("--no-cache");
+        if let Some(context) = repo.drive_context() {
+            context.configure(&mut command)?;
+        }
         match &repo.password {
             Password::Insecure => {
                 command.arg("--insecure-no-password");
@@ -227,10 +271,19 @@ impl Restic {
                 "Restic operation deadline reached",
             ));
         }
-        let result = run_process(command, &self.cancel, timeout)?;
+        let result = run_process(command, &self.cancel, timeout);
+        // Restic's child rclone can refresh the shared config too. Inspect
+        // rewritten config/side files after reaping, also on cancel/error.
+        if let Some(context) = repo.drive_context() {
+            context.inspect_config()?;
+        }
+        let result = result?;
         let status = result.status;
         let stdout = result.stdout;
         if status.code() != Some(0) {
+            if repo.drive_context().is_some() && !matches!(status.code(), Some(3 | 10 | 11 | 12)) {
+                return Err(crate::rclone::classify_error(&result.stderr));
+            }
             return Err(ReadError::new(
                 match status.code() {
                     Some(3) => "RESTIC_INCOMPLETE",
@@ -267,13 +320,18 @@ impl Restic {
         source: Option<&Repository>,
     ) -> Result<String, ReadError> {
         repo.validate_path()?;
-        if repo.path.exists() && fs::read_dir(&repo.path)?.next().transpose()?.is_some() {
-            return Err(ReadError::new(
-                "REPOSITORY_NOT_EMPTY",
-                "Initialization requires an empty dedicated directory",
-            ));
+        if let Ok(path) = repo.local_path() {
+            if path.exists() && fs::read_dir(path)?.next().transpose()?.is_some() {
+                return Err(ReadError::new(
+                    "REPOSITORY_NOT_EMPTY",
+                    "Initialization requires an empty dedicated directory",
+                ));
+            }
+            fs::create_dir_all(path)?;
         }
-        fs::create_dir_all(&repo.path)?;
+        if let Some(context) = repo.drive_context() {
+            context.require_empty(&self.cancel)?;
+        }
         let mut args = vec![OsString::from("init")];
         if let Some(source) = source {
             if !matches!(source.password, Password::Insecure) {
@@ -284,7 +342,7 @@ impl Restic {
             }
             args.extend([
                 "--from-repo".into(),
-                source.path.clone().into_os_string(),
+                source.local_path()?.as_os_str().to_owned(),
                 "--from-insecure-no-password".into(),
                 "--copy-chunker-params".into(),
             ]);
@@ -293,119 +351,16 @@ impl Restic {
         self.repository_id(repo)
     }
 }
-/// Every exit, including an I/O error or unwinding, kills and reaps the child.
-/// A cancelled operation owns its token permanently; later requests cannot
-/// reset it while this process is still stopping.
-struct ChildGuard(std::process::Child);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-struct ProcessOutput {
-    status: std::process::ExitStatus,
-    stdout: Vec<u8>,
-}
 fn run_process(
-    mut command: Command,
+    command: Command,
     cancel: &Cancellation,
     timeout: Duration,
-) -> Result<ProcessOutput, ReadError> {
-    if cancel.load(Ordering::Acquire) {
-        return Err(ReadError::new("CANCELLED", "Operation cancelled"));
-    }
-    let mut child = ChildGuard(
-        command
-            .spawn()
-            .map_err(|_| ReadError::new("SIDECAR_IO", "Cannot start bundled Restic"))?,
-    );
-    let stdout = child
-        .0
-        .stdout
-        .take()
-        .map(|pipe| std::thread::spawn(move || bounded_output(pipe, 64 * 1024 * 1024)));
-    let stderr = child
-        .0
-        .stderr
-        .take()
-        .map(|pipe| std::thread::spawn(move || bounded_output(pipe, 256 * 1024)));
-    let began = Instant::now();
-    let result = loop {
-        match child.0.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Err(_) => {
-                break Err(ReadError::new(
-                    "SIDECAR_IO",
-                    "Cannot wait for bundled Restic",
-                ));
-            }
-            Ok(None) => {}
-        }
-        if cancel.load(Ordering::Acquire) || began.elapsed() >= timeout {
-            break Err(ReadError::new(
-                if cancel.load(Ordering::Acquire) {
-                    "CANCELLED"
-                } else {
-                    "TIMEOUT"
-                },
-                "Restic operation was stopped",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    // Close the writer before joining readers even on timeout, wait failure,
-    // or cancellation. Never expose Restic's raw stderr in application logs.
-    drop(child);
-    let stdout = stdout
-        .map(|thread| {
-            thread
-                .join()
-                .map_err(|_| ReadError::new("SIDECAR_IO", "Cannot read Restic response"))
-        })
-        .transpose()?
-        .transpose()
-        .map_err(|_| ReadError::new("SIDECAR_IO", "Cannot read Restic response"))?
-        .unwrap_or_default();
-    if let Some(thread) = stderr {
-        let _ = thread.join();
-    }
-    Ok(ProcessOutput {
-        status: result?,
-        stdout,
-    })
+) -> Result<crate::sidecar::ProcessOutput, ReadError> {
+    crate::sidecar::run(command, cancel, timeout, None)
 }
-fn bounded_output(mut input: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
-    let mut result = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        match input.read(&mut buffer)? {
-            0 => break,
-            count => {
-                let left = (limit + 1).saturating_sub(result.len());
-                result.extend_from_slice(&buffer[..count.min(left)]);
-            }
-        }
-    }
-    Ok(result)
-}
-fn sanitized(command: &mut Command) {
-    for (key, _) in std::env::vars_os() {
-        if key
-            .to_string_lossy()
-            .to_ascii_uppercase()
-            .starts_with("RESTIC_")
-        {
-            command.env_remove(key);
-        }
-    }
-    command.env("GOMAXPROCS", "2").stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-}
+#[cfg(test)]
+use crate::sidecar::bounded_output;
+use crate::sidecar::sanitized;
 pub fn args(values: &[impl AsRef<OsStr>]) -> Vec<OsString> {
     values
         .iter()
@@ -429,10 +384,7 @@ mod tests {
             .within(Duration::from_secs(30));
         assert!(expired.expired());
         let dir = tempfile::tempdir().unwrap();
-        let repo = Repository {
-            path: dir.path().into(),
-            password: Password::Insecure,
-        };
+        let repo = Repository::at(dir.path().into(), Password::Insecure);
         let error = expired.run(&repo, &args(&["snapshots"]), None).unwrap_err();
         assert_eq!(error.code, "TIMEOUT");
     }
@@ -442,10 +394,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("real")).unwrap();
         std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("link")).unwrap();
-        let repo = Repository {
-            path: dir.path().join("link/missing-repository"),
-            password: Password::Insecure,
-        };
+        let repo = Repository::at(
+            dir.path().join("link/missing-repository"),
+            Password::Insecure,
+        );
         assert_eq!(repo.validate_path().unwrap_err().code, "UNSAFE_PATH");
         assert!(!dir.path().join("real/missing-repository").exists());
     }

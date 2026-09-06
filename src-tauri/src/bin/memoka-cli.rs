@@ -6,7 +6,7 @@ fn main() {
         arguments.first().map(String::as_str),
         Some("verify" | "restore")
     );
-    if let Err(error) = cli::run(arguments) {
+    if let Err(error) = cli::install_interrupt_handler().and_then(|_| cli::run(arguments)) {
         eprintln!(
             "{}",
             serde_json::to_string(&error).expect("serializable diagnostic")

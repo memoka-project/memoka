@@ -33,6 +33,24 @@ function fixture() {
 }
 
 describe("shared quit/switch/update durability barrier", () => {
+  it("uses a separate bounded cloud wait and leaves normal transfer alive on deadline", async () => {
+    const { coordinator, options, progress } = fixture();
+    const waitTransfers = vi.fn<(budgetMs: number) => Promise<void>>(
+      async () => {
+        throw { code: "COPY_TIMEOUT", message: "Cloud transfer still running" };
+      },
+    );
+    options.backup.waitTransfers = waitTransfers;
+    const result = coordinator.start(options);
+    await vi.waitFor(() => expect(progress()?.stage).toBe("backup-error"));
+    expect(waitTransfers).toHaveBeenCalledOnce();
+    expect(waitTransfers.mock.calls[0]?.[0]).toBeLessThanOrEqual(30000);
+    expect(options.controller.cancel).not.toHaveBeenCalled();
+    expect(options.complete).not.toHaveBeenCalled();
+    await coordinator.leave(false);
+    expect(await result).toBe(false);
+    expect(options.controller.cancel).toHaveBeenCalledOnce();
+  });
   it.each(["quit", "switch-workspace", "update"] as const)(
     "%s only proceeds after Core, local capture and transfer",
     async (kind) => {
@@ -77,7 +95,7 @@ describe("shared quit/switch/update durability barrier", () => {
         destinations: [
           {
             id: "offline",
-            path: "/offline",
+            location: { kind: "local-directory", path: "/offline" },
             repository_id: "repo",
             enabled: true,
             retention: state.config.local_retention,
@@ -118,7 +136,7 @@ describe("shared quit/switch/update durability barrier", () => {
         destinations: [
           {
             id: "disabled",
-            path: "/offline",
+            location: { kind: "local-directory", path: "/offline" },
             repository_id: "repo",
             enabled: false,
             retention: state.config.local_retention,

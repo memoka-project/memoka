@@ -38,11 +38,48 @@ impl Retention {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DestinationLocation {
+    LocalDirectory {
+        path: PathBuf,
+    },
+    GoogleDrive {
+        connection_id: String,
+        root_folder_id: String,
+        display_name: String,
+    },
+}
+impl DestinationLocation {
+    pub fn local_path(&self) -> Option<&Path> {
+        match self {
+            Self::LocalDirectory { path } => Some(path),
+            _ => None,
+        }
+    }
+    pub fn is_cloud(&self) -> bool {
+        matches!(self, Self::GoogleDrive { .. })
+    }
+    pub fn validate(&self) -> Result<(), ReadError> {
+        match self {
+            Self::GoogleDrive {
+                connection_id,
+                root_folder_id,
+                ..
+            } => {
+                crate::cloud::validate_connection_id(connection_id)?;
+                crate::cloud::validate_folder_id(root_folder_id)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdditionalTarget {
     pub id: String,
-    pub path: PathBuf,
+    pub location: DestinationLocation,
     pub repository_id: String,
-    pub credential: String,
+    pub credential_ref: String,
     pub enabled: bool,
     pub retention: Retention,
 }
@@ -58,7 +95,7 @@ pub struct BackupConfig {
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             interval_minutes: 15,
             local_repository_id: None,
             local_retention: Retention::default(),
@@ -76,6 +113,9 @@ pub struct DestinationStatus {
     pub maintenance_error: Option<ReadError>,
     pub pending_copy_count: usize,
     pub expired_copy_count: usize,
+    pub failure_count: u32,
+    pub next_retry_at: Option<String>,
+    pub active_generation_id: Option<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -155,28 +195,37 @@ fn migrate(db: &mut Connection) -> Result<(), ReadError> {
     let raw: Value = read(db, "backup.config")?;
     // A fresh/restored Workspace has nothing to migrate. Pure config/status
     // reads must stay read-only, including while a history reader holds a
-    // SQLite read transaction. The first settings write creates schema 2.
+    // SQLite read transaction. The first settings write creates schema 3.
     if raw.is_null() {
         return Ok(());
     }
-    if raw["schema_version"] == 2 {
+    if raw["schema_version"] == 3 {
         return Ok(());
     }
     let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let raw: Value = read(&tx, "backup.config")?;
-    if raw["schema_version"] == 2 {
+    if raw["schema_version"] == 3 {
         return Ok(());
     }
-    if raw.get("schema_version").is_some_and(|v| v != 1) {
+    if raw.get("schema_version").is_some_and(|v| v != 1 && v != 2) {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
             "Unsupported backup configuration version",
         ));
     }
+    let mut converted = raw.clone();
+    if let Some(targets) = converted
+        .get_mut("destinations")
+        .and_then(Value::as_array_mut)
+    {
+        for target in targets {
+            migrate_location(target)?;
+        }
+    }
     let mut config: BackupConfig = if raw.is_null() {
         BackupConfig::default()
     } else {
-        serde_json::from_value(raw.clone())?
+        serde_json::from_value(converted)?
     };
     let previous: Value = read(&tx, "backup.status")?;
     let mut status: BackupStatus = if previous.is_null() {
@@ -190,6 +239,7 @@ fn migrate(db: &mut Connection) -> Result<(), ReadError> {
         target["id"] = json!(id);
         target["enabled"] = json!(true);
         target["retention"] = serde_json::to_value(Retention::default())?;
+        migrate_location(&mut target)?;
         config.destinations.push(serde_json::from_value(target)?);
         let mut migrated = json!({});
         for (old, new) in [
@@ -215,9 +265,11 @@ fn migrate(db: &mut Connection) -> Result<(), ReadError> {
         let mut pending = pending;
         pending["id"] = json!(uuid::Uuid::now_v7().to_string());
         let pending: InitIntent = serde_json::from_value(pending)?;
-        write(&tx, "backup.init_intents", &vec![pending])?;
+        let mut intents: Vec<InitIntent> = read(&tx, "backup.init_intents")?;
+        intents.push(pending);
+        write(&tx, "backup.init_intents", &intents)?;
     }
-    config.schema_version = 2;
+    config.schema_version = 3;
     write(&tx, "backup.config", &config)?;
     write(&tx, "backup.status", &status)?;
     tx.execute(
@@ -230,19 +282,48 @@ fn migrate(db: &mut Connection) -> Result<(), ReadError> {
 pub fn config(workspace: &Path) -> Result<BackupConfig, ReadError> {
     let mut db = connection(workspace)?;
     migrate(&mut db)?;
-    read(&db, "backup.config")
+    let value: BackupConfig = read(&db, "backup.config")?;
+    for target in &value.destinations {
+        target.location.validate()?;
+    }
+    Ok(value)
 }
 /// History/CLI reads need only the unchanged local identity. Do not migrate
 /// operational settings or allocate destination IDs just to read a generation.
 pub(crate) fn read_local_repository_id(workspace: &Path) -> Result<Option<String>, ReadError> {
     let raw: Value = setting(workspace, "backup.config")?;
-    if raw.get("schema_version").is_some_and(|v| v != 1 && v != 2) {
+    if raw
+        .get("schema_version")
+        .is_some_and(|v| v != 1 && v != 2 && v != 3)
+    {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
             "Unsupported backup configuration version",
         ));
     }
     serde_json::from_value(raw["local_repository_id"].clone()).map_err(Into::into)
+}
+fn migrate_location(value: &mut Value) -> Result<(), ReadError> {
+    let target = value
+        .as_object_mut()
+        .ok_or_else(|| ReadError::new("INVALID_DATA", "Invalid legacy backup destination"))?;
+    if target.contains_key("location") {
+        return Err(ReadError::new(
+            "UNSUPPORTED_SCHEMA",
+            "Legacy destination unexpectedly contains a location",
+        ));
+    }
+    let path = target
+        .remove("path")
+        .ok_or_else(|| ReadError::new("INVALID_DATA", "Missing legacy backup path"))?;
+    target.insert(
+        "location".into(),
+        json!({"kind":"local-directory", "path":path}),
+    );
+    if let Some(credential) = target.remove("credential") {
+        target.insert("credential_ref".into(), credential);
+    }
+    Ok(())
 }
 pub fn status(workspace: &Path) -> Result<BackupStatus, ReadError> {
     let mut db = connection(workspace)?;
@@ -325,6 +406,97 @@ mod tests {
         dir
     }
     #[test]
+    fn schema_two_migration_preserves_order_status_ledger_intent_and_content() {
+        let dir = fixture();
+        let path = dir.path();
+        let targets = json!([
+            {"id":"second","path":"/offline/B","repository_id":"b","credential":"ref-b","enabled":false,"retention":{"last":8,"daily":2,"monthly":1}},
+            {"id":"first","path":"/offline/A","repository_id":"a","credential":"ref-a","enabled":true,"retention":{"last":9,"daily":0,"monthly":3}}
+        ]);
+        save_setting(path,"backup.config",&json!({"schema_version":2,"interval_minutes":17,"local_repository_id":"local","destinations":targets})).unwrap();
+        let error = json!({"code":"ADDITIONAL_OFFLINE","message":"offline","details":null});
+        save_setting(path,"backup.status",&json!({"last_local_captured_epoch":77,"destinations":{"second":{"phase":"error","error":error,"pending_copy_count":3,"expired_copy_count":2,"protected_capture_at":"2026-09-01T00:00:00Z"}}})).unwrap();
+        let ledger =
+            json!({"repository_id":"b","pending":{"p":"t"},"expired":{"e":"t"},"delivered":["d"]});
+        let intents =
+            json!([{"id":"retry","workspace_id":"w","path":"/offline/new","repository_id":"same"}]);
+        save_setting(path, &ledger_key("second"), &ledger).unwrap();
+        save_setting(path, "backup.init_intents", &intents).unwrap();
+        save_setting(path, "content_epoch", &99).unwrap();
+        connection(path).unwrap().execute_batch("CREATE TABLE untouched_document (bytes BLOB); INSERT INTO untouched_document VALUES (X'010203');").unwrap();
+        let migrated = config(path).unwrap();
+        assert_eq!(migrated.schema_version, 3);
+        assert_eq!(
+            migrated
+                .destinations
+                .iter()
+                .map(|d| d.id.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        for (actual, original) in migrated
+            .destinations
+            .iter()
+            .zip(targets.as_array().unwrap())
+        {
+            assert_eq!(actual.enabled, original["enabled"]);
+            assert_eq!(actual.repository_id, original["repository_id"]);
+            assert_eq!(actual.credential_ref, original["credential"]);
+            assert_eq!(
+                serde_json::to_value(&actual.retention).unwrap(),
+                original["retention"]
+            );
+            assert_eq!(
+                serde_json::to_value(&actual.location).unwrap()["path"],
+                original["path"]
+            );
+        }
+        assert_eq!(
+            setting::<Value>(path, &ledger_key("second")).unwrap(),
+            ledger
+        );
+        assert_eq!(
+            setting::<Value>(path, "backup.init_intents").unwrap(),
+            intents
+        );
+        assert_eq!(setting::<u64>(path, "content_epoch").unwrap(), 99);
+        assert_eq!(
+            status(path).unwrap().destinations["second"]
+                .error
+                .as_ref()
+                .unwrap()
+                .code,
+            "ADDITIONAL_OFFLINE"
+        );
+        assert_eq!(
+            status(path).unwrap().destinations["second"].expired_copy_count,
+            2
+        );
+        assert_eq!(
+            connection(path)
+                .unwrap()
+                .query_row("SELECT hex(bytes) FROM untouched_document", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "010203"
+        );
+        assert_eq!(
+            serde_json::to_value(config(path).unwrap()).unwrap(),
+            serde_json::to_value(migrated).unwrap()
+        );
+    }
+    #[test]
+    fn unknown_location_is_never_reinterpreted_as_local() {
+        let dir = fixture();
+        let value = json!({"schema_version":3,"destinations":[{"id":"bad","enabled":true,"repository_id":"x","credential_ref":"ref","retention":{"last":1,"daily":0,"monthly":0},"location":{"kind":"arbitrary-remote","path":"rclone:evil:"}}]});
+        save_setting(dir.path(), "backup.config", &value).unwrap();
+        assert!(config(dir.path()).is_err());
+        assert_eq!(
+            setting::<Value>(dir.path(), "backup.config").unwrap(),
+            value
+        );
+    }
+    #[test]
     fn singleton_migration_preserves_credentials_and_state_once() {
         let dir = fixture();
         let path = dir.path();
@@ -345,7 +517,7 @@ mod tests {
         let migrated = config(path).unwrap();
         let target = &migrated.destinations[0];
         assert_eq!(migrated.interval_minutes, 23);
-        assert_eq!(target.credential, "repo:other");
+        assert_eq!(target.credential_ref, "repo:other");
         assert!(target.enabled);
         assert_eq!(target.retention, Retention::default());
         assert_eq!(config(path).unwrap().destinations[0].id, target.id);
@@ -399,7 +571,7 @@ mod tests {
         reader
             .execute_batch("BEGIN; SELECT * FROM settings;")
             .unwrap();
-        assert_eq!(config(path).unwrap().schema_version, 2);
+        assert_eq!(config(path).unwrap().schema_version, 3);
         assert!(status(path).unwrap().destinations.is_empty());
         assert_eq!(
             reader
@@ -413,9 +585,11 @@ mod tests {
         update_config(path, |config| {
             config.destinations.push(AdditionalTarget {
                 id: "target".into(),
-                path: PathBuf::from("/offline/target"),
+                location: DestinationLocation::LocalDirectory {
+                    path: PathBuf::from("/offline/target"),
+                },
                 repository_id: "repository".into(),
-                credential: "test-credential-reference".into(),
+                credential_ref: "test-credential-reference".into(),
                 enabled: true,
                 retention: Retention::default(),
             });

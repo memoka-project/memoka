@@ -12,18 +12,47 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock, atomic::Ordering},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
+#[derive(Clone)]
 pub struct NativeService {
     pub workspace: PathBuf,
-    capture: Mutex<()>,
-    copy: Mutex<()>,
-    repositories: RwLock<()>,
-    preview: Mutex<()>,
-    operations: crate::background_operation::Operations,
-    _lease: Option<crate::workspace_owner::WorkspaceLease>,
+    capture: Arc<Mutex<()>>,
+    copy: Arc<Mutex<()>>,
+    repositories: Arc<RwLock<()>>,
+    preview: Arc<Mutex<()>>,
+    operations: Arc<crate::background_operation::Operations>,
+    cloud_job: Arc<Mutex<Option<CloudJob>>>,
+    cloud_paused: Arc<AtomicBool>,
+    local_maintenance_pending: Arc<AtomicBool>,
+    settings: Arc<Mutex<()>>,
+    _lease: Option<Arc<crate::workspace_owner::WorkspaceLease>>,
+}
+struct CloudJob {
+    cancel: restic::Cancellation,
+    target: Arc<Mutex<Option<String>>>,
+    forced: Arc<Mutex<std::collections::VecDeque<String>>>,
+}
+struct CloudCompletion {
+    jobs: Arc<Mutex<Option<CloudJob>>>,
+    cancel: restic::Cancellation,
+}
+impl Drop for CloudCompletion {
+    fn drop(&mut self) {
+        if let Ok(mut job) = self.jobs.lock() {
+            if job
+                .as_ref()
+                .is_some_and(|job| Arc::ptr_eq(&job.cancel, &self.cancel))
+            {
+                *job = None;
+            }
+        }
+    }
 }
 fn busy() -> ReadError {
     ReadError::new(
@@ -35,27 +64,224 @@ impl NativeService {
     pub fn new(workspace: PathBuf) -> Self {
         Self {
             workspace,
-            capture: Mutex::new(()),
-            copy: Mutex::new(()),
-            repositories: RwLock::new(()),
-            preview: Mutex::new(()),
+            capture: Default::default(),
+            copy: Default::default(),
+            repositories: Default::default(),
+            preview: Default::default(),
             operations: Default::default(),
+            cloud_job: Default::default(),
+            cloud_paused: Default::default(),
+            local_maintenance_pending: Default::default(),
+            settings: Default::default(),
             _lease: None,
         }
     }
     pub fn owned(lease: crate::workspace_owner::WorkspaceLease) -> Self {
         let mut value = Self::new(lease.workspace.clone());
-        value._lease = Some(lease);
+        value._lease = Some(Arc::new(lease));
         value
     }
     pub fn cancel(&self) -> Result<(), ReadError> {
+        self.cloud_paused.store(true, Ordering::Release);
+        self.cancel_cloud(None)?;
+        crate::cloud::cancel_all_auth();
         self.operations.cancel()
     }
     pub fn resume(&self) -> Result<(), ReadError> {
-        self.operations.resume()
+        if self.cloud_paused.load(Ordering::Acquire) && self.cloud_running() {
+            return Err(busy());
+        }
+        self.operations.resume()?;
+        self.cloud_paused.store(false, Ordering::Release);
+        Ok(())
     }
     pub fn running(&self) -> bool {
-        self.operations.running()
+        self.operations.running() || self.cloud_running() || crate::cloud::auth_running()
+    }
+    fn cloud_running(&self) -> bool {
+        self.cloud_job.lock().map_or(true, |job| job.is_some())
+    }
+    pub fn cancel_cloud(&self, id: Option<&str>) -> Result<(), ReadError> {
+        if let Some(job) = self.cloud_job.lock().map_err(|_| busy())?.as_ref() {
+            if let Some(id) = id {
+                job.forced
+                    .lock()
+                    .map_err(|_| busy())?
+                    .retain(|item| item != id);
+            }
+            let target = job.target.lock().map_err(|_| busy())?;
+            if id.is_none() || target.is_none() || target.as_deref() == id {
+                job.cancel.store(true, Ordering::Release);
+            }
+        }
+        Ok(())
+    }
+    pub fn schedule_cloud(&self, force: Option<String>) -> Result<Value, ReadError> {
+        let mut job = self.cloud_job.lock().map_err(|_| busy())?;
+        if self.cloud_paused.load(Ordering::Acquire) {
+            return Err(ReadError::new(
+                "CANCELLED",
+                "Background operations are paused",
+            ));
+        }
+        if let Some(id) = &force {
+            let target = backup_settings::destination(&self.workspace, id)?;
+            if !target.enabled || !target.location.is_cloud() {
+                return Err(ReadError::new(
+                    "INVALID_ARGUMENT",
+                    "Choose an enabled Google Drive destination",
+                ));
+            }
+        }
+        if let Some(job) = job.as_ref() {
+            if let Some(id) = force {
+                let mut queue = job.forced.lock().map_err(|_| busy())?;
+                if !queue.contains(&id) {
+                    queue.push_back(id);
+                }
+            }
+            return Ok(json!({"schema_version":3,"already_running":true,"queued":true}));
+        }
+        if !backup::config(&self.workspace)?
+            .destinations
+            .iter()
+            .any(|t| t.enabled && t.location.is_cloud())
+        {
+            return Ok(json!({"schema_version":3,"queued":false}));
+        }
+        let cancel = restic::cancellation();
+        let target = Arc::new(Mutex::new(None));
+        let forced = Arc::new(Mutex::new(
+            force.into_iter().collect::<std::collections::VecDeque<_>>(),
+        ));
+        *job = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: target.clone(),
+            forced: forced.clone(),
+        });
+        let service = self.clone();
+        std::thread::spawn(move || {
+            let _completion = CloudCompletion {
+                jobs: service.cloud_job.clone(),
+                cancel: cancel.clone(),
+            };
+            loop {
+                if cancel.load(Ordering::Acquire) {
+                    break;
+                }
+                let result = (|| {
+                    let force = forced.lock().map_err(|_| busy())?.pop_front();
+                    let _source_lease = service.repositories.try_read().map_err(|_| busy())?;
+                    let restic =
+                        Restic::discover(cancel.clone())?.within(Duration::from_secs(3600));
+                    backup_management::cloud_unit(
+                        &service.workspace,
+                        &restic,
+                        force.as_deref(),
+                        |id| {
+                            if let Ok(mut value) = target.lock() {
+                                *value = Some(id.into());
+                            }
+                        },
+                    )
+                })();
+                match result {
+                    Ok(true) => {
+                        // An idle request can yield between successful cloud
+                        // generations. An endless pending queue must not pin
+                        // the local retention set forever. Never treat a
+                        // failed transfer as successful deletion cleanup.
+                        let last_succeeded = target
+                            .lock()
+                            .ok()
+                            .and_then(|id| id.clone())
+                            .and_then(|id| {
+                                backup::status(&service.workspace)
+                                    .ok()
+                                    .and_then(|status| status.destinations.get(&id).cloned())
+                            })
+                            .is_some_and(|status| {
+                                status.error.is_none() && status.maintenance_error.is_none()
+                            });
+                        if last_succeeded
+                            && !cancel.load(Ordering::Acquire)
+                            && service
+                                .local_maintenance_pending
+                                .swap(false, Ordering::AcqRel)
+                        {
+                            if service
+                                .maintain(false, true, cancel.clone())
+                                .is_err_and(|error| error.code == "BACKUP_BUSY")
+                            {
+                                service
+                                    .local_maintenance_pending
+                                    .store(true, Ordering::Release);
+                            }
+                        }
+                        continue;
+                    }
+                    Ok(false) => {
+                        // Enqueue and the empty -> stopped transition use the
+                        // same lock. Do not drop an explicit retry queued just
+                        // as the last background unit finishes.
+                        if let Ok(mut job) = service.cloud_job.lock() {
+                            if forced.lock().is_ok_and(|queue| !queue.is_empty()) {
+                                continue;
+                            }
+                            *job = None;
+                        }
+                        break;
+                    }
+                    Err(error) => {
+                        if error.code != "BACKUP_BUSY" {
+                            let _ = backup::update_status(&service.workspace, |status| {
+                                let ids = if let Ok(Some(id)) = target.lock().map(|s| s.clone()) {
+                                    vec![id]
+                                } else {
+                                    backup::config(&service.workspace)
+                                        .map(|config| {
+                                            config
+                                                .destinations
+                                                .into_iter()
+                                                .filter(|t| t.enabled && t.location.is_cloud())
+                                                .map(|t| t.id)
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                for id in ids {
+                                    let state = status.destinations.entry(id).or_default();
+                                    state.phase = "error".into();
+                                    state.error = Some(error.clone());
+                                }
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(json!({"schema_version":3,"queued":true}))
+    }
+    pub fn wait_transfers(&self, budget: Duration) -> Result<Value, ReadError> {
+        let began = std::time::Instant::now();
+        while self.cloud_running() {
+            if crate::sidecar::interrupted() {
+                self.cancel_cloud(None)?;
+                while self.cloud_running() {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                return Err(ReadError::new("CANCELLED", "Backup interrupted"));
+            }
+            if began.elapsed() >= budget {
+                return Err(ReadError::new(
+                    "COPY_TIMEOUT",
+                    "Google Drive transfer is still running. Retry waiting, cancel, or exit without waiting",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        self.backup(BackupAction::Status)
     }
     pub fn query(&self, request: Request) -> Result<Reply, ReadError> {
         match request {
@@ -149,10 +375,14 @@ impl NativeService {
                     }
                 }
                 Ok(
-                    json!({"schema_version":2,"config":config,"status":status,"content_epoch":backup::content_epoch(&self.workspace)?}),
+                    json!({"schema_version":3,"config":config,"status":status,"content_epoch":backup::content_epoch(&self.workspace)?}),
                 )
             }
             BackupAction::Run => self.run_cycle(Duration::from_secs(30)),
+            BackupAction::CloudTick { id } => self.schedule_cloud(id),
+            BackupAction::WaitTransfers { budget_ms } => {
+                self.wait_transfers(Duration::from_millis(u64::from(budget_ms.min(30_000))))
+            }
             BackupAction::Copy => {
                 let operation = self.operations.begin()?;
                 self.copy(Duration::from_secs(3600), operation.cancel.clone())
@@ -168,12 +398,31 @@ impl NativeService {
             }
             BackupAction::Maintain { dry_run } => {
                 let operation = self.operations.begin()?;
-                self.maintain(dry_run, true, operation.cancel.clone())
+                let mut result = self.maintain(dry_run, true, operation.cancel.clone())?;
+                // Release the local writer lease before any network work.
+                // Connection/repository leases serialize cloud maintenance.
+                let restic =
+                    Restic::discover(operation.cancel.clone())?.within(Duration::from_secs(3600));
+                let cloud = self.maintain_destinations(&restic, dry_run, true, true)?;
+                if let Some(destinations) = result["destinations"].as_array_mut() {
+                    destinations.extend(cloud);
+                }
+                Ok(result)
             }
             BackupAction::IdleMaintain => {
+                self.schedule_cloud(None)?;
+                if self.cloud_running() {
+                    if backup_management::idle_maintenance_due(&self.workspace)? {
+                        self.local_maintenance_pending
+                            .store(true, Ordering::Release);
+                    }
+                    return Ok(
+                        json!({"schema_version":3,"skipped":true,"reason":"copy-source-reader-active"}),
+                    );
+                }
                 let operation = self.operations.begin()?;
                 if !backup_management::idle_maintenance_due(&self.workspace)? {
-                    return Ok(json!({"schema_version":2,"skipped":true}));
+                    return Ok(json!({"schema_version":3,"skipped":true}));
                 }
                 self.maintain(false, true, operation.cancel.clone())
             }
@@ -202,7 +451,7 @@ impl NativeService {
                 "Backup stopped after confirmed local capture",
             ));
         }
-        let transfers = self.copy(copy_budget, operation.cancel.clone());
+        let transfers = self.copy_local(copy_budget, operation.cancel.clone());
         let transfer_failed = transfers.as_ref().map_or(true, |value| {
             value["destinations"]
                 .as_array()
@@ -227,8 +476,11 @@ impl NativeService {
             Ok(value) => (value["destinations"].clone(), None),
             Err(error) => (json!([]), Some(error)),
         };
+        if !operation.cancel.load(Ordering::Acquire) {
+            self.schedule_cloud(None)?;
+        }
         Ok(
-            json!({"schema_version":2,"local_generation":local,"destinations":destinations,"transfer_error":error,"maintenance":maintenance}),
+            json!({"schema_version":3,"local_generation":local,"destinations":destinations,"transfer_error":error,"maintenance":maintenance}),
         )
     }
     fn copy(&self, budget: Duration, cancel: restic::Cancellation) -> Result<Value, ReadError> {
@@ -251,6 +503,16 @@ impl NativeService {
         }
         result
     }
+    fn copy_local(
+        &self,
+        budget: Duration,
+        cancel: restic::Cancellation,
+    ) -> Result<Value, ReadError> {
+        let _copy = self.copy.try_lock().map_err(|_| busy())?;
+        let _lease = self.repositories.try_read().map_err(|_| busy())?;
+        let restic = Restic::discover(cancel)?;
+        backup_management::copy_local(&self.workspace, &restic, budget)
+    }
     fn maintain(
         &self,
         dry_run: bool,
@@ -271,59 +533,9 @@ impl NativeService {
                 dry_run,
                 prune,
             )?;
-            let mut destinations = Vec::new();
-            for target in backup::config(&self.workspace)?
-                .destinations
-                .into_iter()
-                .filter(|target| target.enabled)
-            {
-                if restic.cancel.load(Ordering::Acquire) {
-                    return Err(ReadError::new("CANCELLED", "Maintenance cancelled"));
-                }
-                if !backup_settings::destination(&self.workspace, &target.id)?.enabled {
-                    continue;
-                }
-                let status = backup::status(&self.workspace)?;
-                if !status.destinations.get(&target.id).is_some_and(|state| {
-                    state.error.is_none() && state.protected_capture_at.is_some()
-                }) {
-                    continue;
-                }
-                backup::update_status(&self.workspace, |status| {
-                    status
-                        .destinations
-                        .entry(target.id.clone())
-                        .or_default()
-                        .phase = "maintaining".into();
-                })?;
-                let outcome =
-                    backup_management::additional_repository(&target, &restic).and_then(|repo| {
-                        backup_management::maintain_repository(
-                            &self.workspace,
-                            &restic,
-                            &repo,
-                            dry_run,
-                            prune,
-                        )
-                    });
-                let error = outcome
-                    .as_ref()
-                    .err()
-                    .filter(|error| error.code != "DESTINATION_DISABLED")
-                    .cloned();
-                backup::update_status(&self.workspace, |status| {
-                    let state = status.destinations.entry(target.id.clone()).or_default();
-                    state.phase = "idle".into();
-                    state.maintenance_error = error.clone();
-                })?;
-                destinations.push(match outcome {
-                    Ok(plan) => json!({"id":target.id,"plan":plan}),
-                    Err(_) if error.is_none() => json!({"id":target.id,"skipped":true}),
-                    Err(_) => json!({"id":target.id,"error":error}),
-                });
-            }
+            let destinations = self.maintain_destinations(&restic, dry_run, prune, false)?;
             Ok(
-                json!({"schema_version":2,"dry_run":dry_run,"local":local,"destinations":destinations}),
+                json!({"schema_version":3,"dry_run":dry_run,"local":local,"destinations":destinations}),
             )
         })();
         backup::update_status(&self.workspace, |status| {
@@ -331,6 +543,68 @@ impl NativeService {
             status.phase = "idle".into();
         })?;
         result
+    }
+    fn maintain_destinations(
+        &self,
+        restic: &Restic,
+        dry_run: bool,
+        prune: bool,
+        cloud: bool,
+    ) -> Result<Vec<Value>, ReadError> {
+        let mut destinations = Vec::new();
+        for target in backup::config(&self.workspace)?
+            .destinations
+            .into_iter()
+            .filter(|target| target.enabled && target.location.is_cloud() == cloud)
+        {
+            if restic.cancel.load(Ordering::Acquire) {
+                return Err(ReadError::new("CANCELLED", "Maintenance cancelled"));
+            }
+            if !backup_settings::destination(&self.workspace, &target.id)?.enabled {
+                continue;
+            }
+            let status = backup::status(&self.workspace)?;
+            if !status
+                .destinations
+                .get(&target.id)
+                .is_some_and(|state| state.error.is_none() && state.protected_capture_at.is_some())
+            {
+                continue;
+            }
+            backup::update_status(&self.workspace, |status| {
+                status
+                    .destinations
+                    .entry(target.id.clone())
+                    .or_default()
+                    .phase = "maintaining".into();
+            })?;
+            let outcome =
+                backup_management::additional_repository(&target, restic).and_then(|repo| {
+                    backup_management::maintain_repository(
+                        &self.workspace,
+                        restic,
+                        &repo,
+                        dry_run,
+                        prune,
+                    )
+                });
+            let error = outcome
+                .as_ref()
+                .err()
+                .filter(|error| error.code != "DESTINATION_DISABLED")
+                .cloned();
+            backup::update_status(&self.workspace, |status| {
+                let state = status.destinations.entry(target.id.clone()).or_default();
+                state.phase = "idle".into();
+                state.maintenance_error = error.clone();
+            })?;
+            destinations.push(match outcome {
+                Ok(plan) => json!({"id":target.id,"plan":plan}),
+                Err(_) if error.is_none() => json!({"id":target.id,"skipped":true}),
+                Err(_) => json!({"id":target.id,"error":error}),
+            });
+        }
+        Ok(destinations)
     }
     pub fn settings(&self, request: BackupSettingsRequest) -> Result<(), ReadError> {
         // Metadata-only settings remain usable during copy/maintenance. Each
@@ -341,6 +615,9 @@ impl NativeService {
                 retention,
             } => backup_settings::set_local(&self.workspace, interval_minutes, retention),
             BackupSettingsRequest::Enabled { id, enabled } => {
+                if !enabled {
+                    self.cancel_cloud(Some(&id))?;
+                }
                 backup_settings::update_destination(&self.workspace, &id, |target| {
                     target.enabled = enabled
                 })
@@ -353,8 +630,22 @@ impl NativeService {
             }
             request => {
                 let operation = self.operations.begin()?;
-                let _lease = self.repositories.try_write().map_err(|_| busy())?;
+                let _settings = self.settings.try_lock().map_err(|_| busy())?;
+                let _lease = self.repositories.try_read().map_err(|_| busy())?;
                 match request {
+                    BackupSettingsRequest::AddGoogleDrive {
+                        connection_id,
+                        retry_intent,
+                        password,
+                        retention,
+                    } => crate::cloud::CloudService::discover()?.configure_destination(
+                        &self.workspace,
+                        &connection_id,
+                        retry_intent.as_deref(),
+                        password,
+                        retention,
+                        &Restic::discover(operation.cancel.clone())?,
+                    ),
                     BackupSettingsRequest::Add {
                         directory,
                         password,
@@ -375,6 +666,9 @@ impl NativeService {
                         )
                     }
                     BackupSettingsRequest::Remove { id } => {
+                        self.cancel_cloud(Some(&id))?;
+                        // A running target owns the connection. Retrying Remove
+                        // after cancellation avoids changing its in-flight ledger.
                         backup_management::detach_additional(&self.workspace, &id)
                     }
                     _ => unreachable!(),
@@ -393,6 +687,12 @@ impl NativeService {
     deny_unknown_fields
 )]
 pub enum BackupSettingsRequest {
+    AddGoogleDrive {
+        connection_id: String,
+        retry_intent: Option<String>,
+        password: String,
+        retention: backup::Retention,
+    },
     Local {
         interval_minutes: u32,
         retention: backup::Retention,
@@ -417,6 +717,71 @@ pub enum BackupSettingsRequest {
         id: String,
         password: String,
     },
+}
+
+#[cfg(test)]
+mod cloud_scheduler_tests {
+    use super::*;
+    #[test]
+    fn completion_from_previous_worker_cannot_clear_new_worker() {
+        let jobs = Arc::new(Mutex::new(None));
+        let old = CloudCompletion {
+            jobs: jobs.clone(),
+            cancel: restic::cancellation(),
+        };
+        let new_cancel = restic::cancellation();
+        *jobs.lock().unwrap() = Some(CloudJob {
+            cancel: new_cancel.clone(),
+            target: Default::default(),
+            forced: Default::default(),
+        });
+        drop(old);
+        assert!(jobs.lock().unwrap().is_some());
+        drop(CloudCompletion {
+            jobs: jobs.clone(),
+            cancel: new_cancel,
+        });
+        assert!(jobs.lock().unwrap().is_none());
+    }
+    #[test]
+    fn departure_deadline_does_not_cancel_normal_transfer_and_late_ticks_stay_paused() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = NativeService::new(directory.path().to_owned());
+        let cancel = restic::cancellation();
+        *service.cloud_job.lock().unwrap() = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: Arc::new(Mutex::new(Some("target".into()))),
+            forced: Default::default(),
+        });
+        let began = std::time::Instant::now();
+        assert_eq!(
+            service
+                .wait_transfers(Duration::from_millis(20))
+                .unwrap_err()
+                .code,
+            "COPY_TIMEOUT"
+        );
+        assert!(began.elapsed() < Duration::from_secs(1));
+        assert!(!cancel.load(Ordering::Acquire));
+        assert!(service.cloud_running());
+        service.cancel().unwrap();
+        assert!(cancel.load(Ordering::Acquire));
+        assert_eq!(service.schedule_cloud(None).unwrap_err().code, "CANCELLED");
+        assert!(service.resume().is_err());
+        *service.cloud_job.lock().unwrap() = None;
+        service.resume().unwrap();
+        assert!(!service.cloud_paused.load(Ordering::Acquire));
+    }
+    #[test]
+    fn source_copy_reader_allows_capture_and_history_but_excludes_prune() {
+        let service = NativeService::new(PathBuf::from("unused"));
+        let _copy = service.repositories.try_read().unwrap();
+        assert!(service.repositories.try_read().is_ok());
+        assert!(service.capture.try_lock().is_ok());
+        assert!(service.preview.try_lock().is_ok());
+        assert!(service.repositories.try_write().is_err());
+        assert!(service.settings.try_lock().is_ok());
+    }
 }
 
 #[tauri::command]
@@ -472,6 +837,95 @@ pub(crate) async fn workspace_backup_settings(
     tauri::async_runtime::spawn_blocking(move || service.settings(request))
         .await
         .map_err(|_| ReadError::new("BACKGROUND_FAILED", "Settings could not be saved"))?
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum CloudRequest {
+    List,
+    Connect {
+        name: String,
+    },
+    Reconnect {
+        connection_id: String,
+    },
+    AuthStatus {
+        operation_id: String,
+    },
+    CancelAuth {
+        operation_id: String,
+    },
+    Disconnect {
+        connection_id: String,
+        #[serde(default)]
+        stop_destinations: bool,
+    },
+    Intents {
+        connection_id: String,
+    },
+    RecoveryInformation {
+        destination_id: String,
+    },
+    CancelTransfer {
+        destination_id: String,
+    },
+}
+#[tauri::command]
+pub(crate) async fn workspace_cloud(
+    request: CloudRequest,
+    state: tauri::State<'_, crate::persistence::ProductPersistenceState>,
+) -> Result<Value, ReadError> {
+    let native = state.native_service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let service = crate::cloud::CloudService::discover()?;
+        match request {
+            CloudRequest::List => service.list(),
+            CloudRequest::Connect { name } => {
+                Ok(serde_json::to_value(service.start_auth(name, None, true)?)?)
+            }
+            CloudRequest::Reconnect { connection_id } => Ok(serde_json::to_value(
+                service.start_auth(String::new(), Some(connection_id), true)?,
+            )?),
+            CloudRequest::AuthStatus { operation_id } => Ok(serde_json::to_value(
+                crate::cloud::auth_status(&operation_id)?,
+            )?),
+            CloudRequest::CancelAuth { operation_id } => {
+                crate::cloud::cancel_auth(&operation_id)?;
+                Ok(json!({"cancelled":true}))
+            }
+            CloudRequest::Disconnect {
+                connection_id,
+                stop_destinations,
+            } => {
+                service.disconnect(&connection_id, stop_destinations)?;
+                Ok(json!({"disconnected":true}))
+            }
+            CloudRequest::Intents { connection_id } => {
+                let workspace_id = WorkspaceReader::open(&native.workspace)?.workspace_id;
+                Ok(serde_json::to_value(
+                    service
+                        .initialization_intents(&connection_id)?
+                        .into_iter()
+                        .filter(|i| i.workspace_id == workspace_id)
+                        .collect::<Vec<_>>(),
+                )?)
+            }
+            CloudRequest::RecoveryInformation { destination_id } => {
+                service.recovery_information(&native.workspace, &destination_id)
+            }
+            CloudRequest::CancelTransfer { destination_id } => {
+                native.cancel_cloud(Some(&destination_id))?;
+                Ok(json!({"cancelling":true}))
+            }
+        }
+    })
+    .await
+    .map_err(|_| ReadError::new("BACKGROUND_FAILED", "Cloud operation could not complete"))?
 }
 
 #[tauri::command]

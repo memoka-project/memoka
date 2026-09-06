@@ -117,6 +117,20 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 
 ## 9. Namespace、履歴、移行・復旧
 
+### Google Driveの追加検証
+
+固定Restic 0.19.1/rclone 1.75.1のprepare/hash検証、`test:rclone`による暗号化configとstdio backend、
+`MEMOKA_TEST_LONG_CLOUD_COPY=1 node scripts/test-rclone-boundary.mjs`による30秒超copyを実行する。
+これらはlocal transportの成立性検証で、実OAuth/Driveの成功として扱わない。
+schema 3移行、資格情報/環境/子孫process、lease、scheduler、GUI入力の回帰試験を通常verifyへ含める。
+
+実Googleアカウントの認証、token更新、認可取消後の既存root参照、元config/keyringを使わない別OSユーザー/別PC復旧が正式提供のgateである。
+Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切替/Updater、中断後の子孫回収もnative確認する。
+未知object、shortcut、同名衝突では整理を止める。ゴミ箱移動と空き容量の区別を実確認する。
+未実施を省略せず、[Google Drive開発・検証記録](../development/google-drive-backup.md)に環境と受け入れID別結果を残す。
+
+### 共通回帰試験
+
 - 初回data area選択、既存area再open、非空未知directory拒否
 - Workspace切替成功と全失敗点でのrollback
 - 同一Workspaceの二重起動拒否と既存Window activation

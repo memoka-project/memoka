@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PasswordForm, RetentionFields } from "./BackupFields";
+import {
+  CloudBackupSettings,
+  CloudDestinationActions,
+} from "./CloudBackupSettings";
 import { ModalDialog } from "./ModalDialog";
 import { EventDateTime } from "./EventDateTime";
 import {
   DEFAULT_BACKUP_RETENTION,
+  backupDestinationLabel,
   nativeErrorMessage,
   type BackupPort,
   type BackupState,
-  type BackupRetention,
   type BackupDestination,
   type BackupDestinationStatus,
   type BackupSettingsRequest,
@@ -36,6 +41,7 @@ export function BackupDialog({
     null,
   );
   const [directory, setDirectory] = useState<string | null>(null);
+  const [destinationKind, setDestinationKind] = useState("local");
   const refreshSequence = useRef(0);
   const refresh = async (): Promise<void> => {
     const sequence = ++refreshSequence.current;
@@ -123,12 +129,26 @@ export function BackupDialog({
             <DestinationSettings
               key={target.id}
               target={target}
+              port={port}
               status={state.status.destinations[target.id]}
               busy={busy !== null}
               save={save}
               error={error?.key === target.id ? error.message : null}
             />
           ))}
+          {port.cloud && (
+            <label>
+              追加する保存先の種類
+              <select
+                value={destinationKind}
+                disabled={busy !== null}
+                onChange={(event) => setDestinationKind(event.target.value)}
+              >
+                <option value="local">ローカルディレクトリ</option>
+                <option value="google">Google Drive</option>
+              </select>
+            </label>
+          )}
           {directory ? (
             <NewDestination
               key={directory}
@@ -140,26 +160,40 @@ export function BackupDialog({
               onAdded={() => setDirectory(null)}
             />
           ) : (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => {
-                void port
-                  .chooseAdditional()
-                  .then((value) => {
-                    if (mounted.current && value) setDirectory(value);
-                  })
-                  .catch((cause) => {
-                    if (mounted.current)
-                      setError({
-                        key: "status",
-                        message: nativeErrorMessage(cause),
-                      });
-                  });
+            destinationKind === "local" && (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => {
+                  void port
+                    .chooseAdditional()
+                    .then((value) => {
+                      if (mounted.current && value) setDirectory(value);
+                    })
+                    .catch((cause) => {
+                      if (mounted.current)
+                        setError({
+                          key: "status",
+                          message: nativeErrorMessage(cause),
+                        });
+                    });
+                }}
+              >
+                保存先を追加
+              </button>
+            )
+          )}
+          {port.cloud && (
+            <CloudBackupSettings
+              allowAdd={destinationKind === "google"}
+              cloud={port.cloud}
+              save={save}
+              busy={busy !== null}
+              error={error?.key === "google-new" ? error.message : null}
+              onConnected={() => {
+                void port.scheduleCloud?.();
               }}
-            >
-              保存先を追加
-            </button>
+            />
           )}
         </>
       ) : (
@@ -167,6 +201,25 @@ export function BackupDialog({
       )}
       <div className="application-modal-actions">
         {busy !== null && <span role="status">設定を保存しています…</span>}
+        {busy === "google-new" && (
+          <button
+            type="button"
+            onClick={() => {
+              void port
+                .cancel()
+                .then(() => port.resume())
+                .catch((cause) => {
+                  if (mounted.current)
+                    setError({
+                      key: "google-new",
+                      message: nativeErrorMessage(cause),
+                    });
+                });
+            }}
+          >
+            登録と進行中のバックアップを中止（作成済みフォルダーは残す）
+          </button>
+        )}
         <button type="button" disabled={busy !== null} onClick={close}>
           閉じる
         </button>
@@ -245,12 +298,14 @@ function LocalSettings({
 }
 function DestinationSettings({
   target,
+  port,
   status,
   busy,
   save,
   error,
 }: {
   target: BackupDestination;
+  port: BackupPort;
   status?: BackupDestinationStatus;
   busy: boolean;
   save: Save;
@@ -260,8 +315,16 @@ function DestinationSettings({
   const [credential, setCredential] = useState(false);
   const [removing, setRemoving] = useState(false);
   return (
-    <section className="backup-destination-card" aria-label={target.path}>
-      <h4 className="backup-destination-path">{target.path}</h4>
+    <section
+      className="backup-destination-card"
+      aria-label={backupDestinationLabel(target)}
+    >
+      <h4 className="backup-destination-path">
+        {target.location.kind === "google-drive"
+          ? "Google Drive · "
+          : "ローカル · "}
+        {backupDestinationLabel(target)}
+      </h4>
       <label>
         <input
           type="checkbox"
@@ -296,6 +359,20 @@ function DestinationSettings({
           {status?.pending_copy_count ?? 0} / {status?.expired_copy_count ?? 0}
         </dd>
       </dl>
+      {status?.next_retry_at && (
+        <p>
+          再試行予定: <EventDateTime value={status.next_retry_at} />
+        </p>
+      )}
+      {target.location.kind === "google-drive" && port.cloud && (
+        <CloudDestinationActions
+          cloud={port.cloud}
+          target={target}
+          onTransfer={() =>
+            port.scheduleCloud?.(target.id) ?? Promise.resolve()
+          }
+        />
+      )}
       {status?.error && (
         <p role="alert">
           {target.enabled ? "" : "停止前のエラー: "}
@@ -405,129 +482,6 @@ function NewDestination({
     </section>
   );
 }
-function PasswordForm({
-  busy,
-  newRepository = false,
-  onSubmit,
-  onDone,
-  onCancel,
-  children,
-}: {
-  busy: boolean;
-  newRepository?: boolean;
-  onSubmit: (password: string) => Promise<boolean>;
-  onDone: () => void;
-  onCancel: () => void;
-  children?: ReactNode;
-}) {
-  const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
-  const [error, setError] = useState("");
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!password || password !== confirmation) {
-          setError("空でないパスワードを同じ内容で2回入力してください");
-          return;
-        }
-        setError("");
-        void onSubmit(password).then((saved) => {
-          if (saved) {
-            setPassword("");
-            setConfirmation("");
-            onDone();
-          }
-        });
-      }}
-    >
-      <fieldset disabled={busy}>
-        {children}
-        <label>
-          パスワード
-          <input
-            type="password"
-            autoComplete={newRepository ? "new-password" : "current-password"}
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-        </label>
-        <label>
-          パスワードを再入力
-          <input
-            type="password"
-            autoComplete={newRepository ? "new-password" : "current-password"}
-            required
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-          />
-        </label>
-        <p>
-          {newRepository
-            ? "OS資格情報ストアへ保存します。復旧に備えパスワードを別途保管してください。"
-            : "この保存先の既存パスワードを再登録します。バックアップのパスワードを変更する操作ではありません。"}
-        </p>
-        {error && <p role="alert">{error}</p>}
-        <button type="submit">
-          {newRepository ? "保存先を登録" : "パスワードを再登録"}
-        </button>{" "}
-        <button type="button" onClick={onCancel}>
-          取り消す
-        </button>
-      </fieldset>
-    </form>
-  );
-}
-function RetentionFields({
-  value,
-  previous,
-  onChange,
-}: {
-  value: BackupRetention;
-  previous?: BackupRetention;
-  onChange: (value: BackupRetention) => void;
-}) {
-  return (
-    <>
-      <div className="backup-retention-fields">
-        {(
-          [
-            ["last", "直近"],
-            ["daily", "日次"],
-            ["monthly", "月次"],
-          ] as const
-        ).map(([key, label]) => (
-          <label key={key}>
-            {label}（世代）
-            <input
-              type="number"
-              min={key === "last" ? 1 : 0}
-              max={4294967295}
-              step={1}
-              required
-              value={value[key]}
-              onChange={(event) =>
-                onChange({ ...value, [key]: Number(event.target.value) })
-              }
-            />
-          </label>
-        ))}
-      </div>
-      <p className="backup-setting-hint">
-        いずれかの条件に該当する世代を保持します。日次・月次の0は、その条件を無効にします。
-      </p>
-      {previous &&
-        (["last", "daily", "monthly"] as const).some(
-          (key) => value[key] < previous[key],
-        ) && (
-          <p className="backup-retention-warning">
-            保持数を減らすと、次回の整理で古い世代が削除される場合があります。
-          </p>
-        )}
-    </>
-  );
-}
 function BackupTime({
   value,
   empty,
@@ -550,6 +504,7 @@ function phaseLabel(phase: string): string {
         pending: "転送待ち",
         disabled: "無効",
         stopping: "現在の処理が終わり次第停止",
+        cancelled: "転送を中止しました（保存済み世代は維持）",
         error: "エラー",
       } as Record<string, string>
     )[phase] ??

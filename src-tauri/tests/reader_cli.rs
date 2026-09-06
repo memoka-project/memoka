@@ -70,6 +70,37 @@ fn cli(workspace: &std::path::Path, arguments: &[&str]) -> Output {
         .output()
         .unwrap()
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {
+    let temp = tempfile::tempdir().unwrap();
+    let installation = temp.path().join("installation 日本語 with spaces");
+    fs::create_dir(&installation).unwrap();
+    let executable = installation.join("memoka-cli");
+    fs::copy(env!("CARGO_BIN_EXE_memoka-cli"), &executable).unwrap();
+    let config = temp.path().join("isolated-config");
+    let output = Command::new(executable)
+        .args(["cloud", "list", "--format", "json"])
+        .env("XDG_CONFIG_HOME", &config)
+        .env(
+            "MEMOKA_GOOGLE_OAUTH_CLIENT_FILE",
+            temp.path().join("missing-client.json"),
+        )
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema_version"], 3);
+    assert_eq!(value["configured"], false);
+    assert_eq!(value["connections"], json!([]));
+    assert!(!config.exists());
+    assert!(!installation.join("rclone").exists());
+    assert!(!installation.join("restic").exists());
+}
 #[test]
 fn current_read_is_headless_and_does_not_migrate_initialize_or_sync_help() {
     let workspace = fixture();

@@ -25,6 +25,11 @@ const USAGE: &str = "Memoka CLI\n\n\
   memoka-cli history [--id ID] [--workspace DIR] --format json\n\
   memoka-cli backup run|status|list|copy [--workspace DIR]\n\
   memoka-cli backup maintain [--workspace DIR] [--dry-run]\n\
+  memoka-cli cloud connect google-drive --name NAME [--client-file FILE] [--no-browser]\n\
+  memoka-cli cloud list --format json\n\
+  memoka-cli cloud reconnect --connection ID [--client-file FILE] [--no-browser]\n\
+  memoka-cli cloud disconnect --connection ID [--stop-destinations]\n\
+  memoka-cli backup list|check|restore --connection ID --drive-folder-id ID --password-stdin [--generation ID --target EMPTY-DIR]\n\
   memoka-cli backup list|check --repository DIR --insecure-no-password|--password-stdin [--full]\n\
   memoka-cli backup restore --repository DIR --generation ID --target EMPTY-DIR --insecure-no-password|--password-stdin\n\
   memoka-cli verify --source OLD-MIRROR\n\
@@ -45,6 +50,8 @@ impl Options {
             "--full",
             "--password-stdin",
             "--insecure-no-password",
+            "--no-browser",
+            "--stop-destinations",
         ];
         let value_names = [
             "--workspace",
@@ -57,6 +64,10 @@ impl Options {
             "--output",
             "--target",
             "--source",
+            "--connection",
+            "--drive-folder-id",
+            "--client-file",
+            "--name",
         ];
         let mut result = Self {
             positional: Vec::new(),
@@ -145,9 +156,24 @@ impl Options {
         if self.get("--workspace").is_some() {
             return Err(argument("Use either --repository or --workspace, not both"));
         }
-        let path = PathBuf::from(self.required("--repository")?);
-        checked_directory(&path)?;
-        let path = fs::canonicalize(path)?;
+        let cloud = self.get("--connection").is_some() || self.get("--drive-folder-id").is_some();
+        if cloud && self.get("--repository").is_some() {
+            return Err(argument(
+                "Choose local --repository OR --connection with --drive-folder-id",
+            ));
+        }
+        if cloud && self.flag("--insecure-no-password") {
+            return Err(argument("Google Drive repositories require a password"));
+        }
+        let path = if cloud {
+            crate::cloud::validate_connection_id(self.required("--connection")?)?;
+            crate::cloud::validate_folder_id(self.required("--drive-folder-id")?)?;
+            None
+        } else {
+            let path = PathBuf::from(self.required("--repository")?);
+            checked_directory(&path)?;
+            Some(fs::canonicalize(path)?)
+        };
         let password = if self.flag("--insecure-no-password") {
             if self.flag("--password-stdin") {
                 return Err(argument("Choose exactly one password mode"));
@@ -188,7 +214,16 @@ impl Options {
             }
             Password::Secret(secret)
         };
-        Ok(Repository { path, password })
+        match path {
+            Some(path) => Ok(Repository::at(path, password)),
+            None => crate::cloud::CloudService::discover()?.repository(
+                self.required("--connection")?,
+                self.required("--drive-folder-id")?,
+                password,
+                None,
+                &Restic::discover(restic::cancellation())?,
+            ),
+        }
     }
 }
 fn argument(message: &str) -> ReadError {
@@ -201,6 +236,10 @@ fn print_json(value: &impl serde::Serialize) -> Result<(), ReadError> {
     Ok(())
 }
 
+/// Installed only by the standalone executable, not by GUI queries/tests.
+pub fn install_interrupt_handler() -> Result<(), ReadError> {
+    crate::sidecar::install_cli_interrupt_handler()
+}
 pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
     if arguments.is_empty() || arguments.iter().any(|arg| arg == "--help" || arg == "-h") {
         print!("{USAGE}");
@@ -223,7 +262,14 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
     if format != "json" && !(format == "markdown" && command == "read") {
         return Err(argument("Unsupported output format"));
     }
-    if command == "backup" && options.get("--repository").is_some() {
+    if command == "cloud" {
+        return cloud_command(&options);
+    }
+    if command == "backup"
+        && ["--repository", "--connection", "--drive-folder-id"]
+            .iter()
+            .any(|key| options.get(key).is_some())
+    {
         return repository_command(&options);
     }
     let positional = options
@@ -350,7 +396,24 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
         Ok(_lease) => {
             let service = NativeService::new(workspace.clone());
             match service.query(request.clone())? {
-                Reply::Json(value) => value,
+                Reply::Json(value) => {
+                    if matches!(
+                        request,
+                        Request::Backup {
+                            action: BackupAction::Run
+                        }
+                    ) {
+                        // The standalone process owns this worker and its lease.
+                        if let Err(error) =
+                            service.wait_transfers(std::time::Duration::from_secs(3600))
+                        {
+                            service.cancel()?;
+                            let _ = service.wait_transfers(std::time::Duration::from_secs(31));
+                            return Err(error);
+                        }
+                    }
+                    value
+                }
                 Reply::Attachment { metadata, mut file } => {
                     let (temporary, _) = output
                         .as_mut()
@@ -395,7 +458,7 @@ fn repository_command(options: &Options) -> Result<(), ReadError> {
     let [_, action] = options.positional.as_slice() else {
         return Err(argument("Unexpected backup arguments"));
     };
-    let allowed = match action.as_str() {
+    let mut allowed = match action.as_str() {
         "list" => vec![
             "--repository",
             "--format",
@@ -423,6 +486,7 @@ fn repository_command(options: &Options) -> Result<(), ReadError> {
             ));
         }
     };
+    allowed.extend(["--connection", "--drive-folder-id"]);
     options.allow(&allowed)?;
     let repository = options.repository()?;
     let restic = Restic::discover(restic::cancellation())?;
@@ -450,6 +514,66 @@ fn repository_command(options: &Options) -> Result<(), ReadError> {
         _ => unreachable!(),
     };
     print_json(&result)
+}
+fn cloud_command(options: &Options) -> Result<(), ReadError> {
+    let positional: Vec<_> = options.positional.iter().map(String::as_str).collect();
+    let service = crate::cloud::CloudService::discover()?
+        .with_profile(options.get("--client-file").map(PathBuf::from));
+    match positional.as_slice() {
+        ["cloud", "list"] => {
+            options.allow(&["--format"])?;
+            print_json(&service.list()?)
+        }
+        ["cloud", "disconnect"] => {
+            options.allow(&["--connection", "--format", "--stop-destinations"])?;
+            service.disconnect(
+                options.required("--connection")?,
+                options.flag("--stop-destinations"),
+            )?;
+            print_json(
+                &json!({"schema_version":3,"disconnected":true,"google_authorization_revoked":false}),
+            )
+        }
+        ["cloud", "connect", "google-drive"] | ["cloud", "reconnect"] => {
+            let reconnect = positional[1] == "reconnect";
+            if reconnect {
+                options.allow(&["--connection", "--client-file", "--no-browser", "--format"])?;
+            } else {
+                options.allow(&["--name", "--client-file", "--no-browser", "--format"])?;
+            }
+            let status = service.start_auth(
+                if reconnect {
+                    String::new()
+                } else {
+                    options.required("--name")?.into()
+                },
+                if reconnect {
+                    Some(options.required("--connection")?.into())
+                } else {
+                    None
+                },
+                !options.flag("--no-browser"),
+            )?;
+            let mut printed_url = false;
+            loop {
+                let status = crate::cloud::auth_status(&status.operation_id)?;
+                if !printed_url && let Some(url) = &status.authorization_url {
+                    eprintln!("Open in your browser (temporary authorization URL):\n{url}");
+                    printed_url = true;
+                }
+                if status.phase == "success" {
+                    return print_json(
+                        &json!({"schema_version":3,"connection_id":status.connection_id,"experimental":true}),
+                    );
+                }
+                if let Some(error) = status.error {
+                    return Err(error);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+        _ => Err(argument("Unknown cloud operation")),
+    }
 }
 fn legacy(options: &Options, command: &str) -> Result<(), ReadError> {
     if options.positional.len() != 1 {
@@ -503,5 +627,25 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(options.repository().unwrap_err().code, "INVALID_ARGUMENT");
+    }
+    #[test]
+    fn cloud_locator_validation_precedes_any_password_or_network_access() {
+        for args in [
+            vec!["--connection", "bad", "--repository", "/unused"],
+            vec!["--connection", "bad", "--workspace", "/unused"],
+            vec!["--connection", "bad", "--insecure-no-password"],
+            vec!["--connection", "../untrusted", "--drive-folder-id", "root"],
+            vec![
+                "--connection",
+                "01a0bdc7-cd00-7000-8000-000000000001",
+                "--drive-folder-id",
+                "../path",
+            ],
+            vec!["--connection", "01a0bdc7-cd00-7000-8000-000000000001"],
+        ] {
+            let options =
+                Options::parse(args.iter().map(|value| value.to_string()).collect()).unwrap();
+            assert!(options.repository().is_err());
+        }
     }
 }

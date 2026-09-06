@@ -88,7 +88,7 @@ pub fn local_repository(
         crate::backup_settings::read_local_repository_id(workspace)?
     };
     if let Some(expected) = expected {
-        if !repo.path.join("config").is_file() {
+        if !repo.local_path()?.join("config").is_file() {
             return Err(ReadError::new(
                 "REPOSITORY_MISSING",
                 "Local history is missing; it will not be silently reinitialized",
@@ -109,7 +109,7 @@ pub fn local_repository(
         ));
     }
     let pending: bool = setting(workspace, "backup.local_init_pending")?;
-    let id = if repo.path.join("config").is_file() {
+    let id = if repo.local_path()?.join("config").is_file() {
         if !pending {
             return Err(ReadError::new(
                 "REPOSITORY_MISMATCH",
@@ -118,7 +118,12 @@ pub fn local_repository(
         }
         restic.repository_id(&repo)?
     } else {
-        if repo.path.exists() && fs::read_dir(&repo.path)?.next().transpose()?.is_some() {
+        if repo.local_path()?.exists()
+            && fs::read_dir(repo.local_path()?)?
+                .next()
+                .transpose()?
+                .is_some()
+        {
             return Err(ReadError::new(
                 "REPOSITORY_NOT_EMPTY",
                 "Local history initialization requires an empty directory",
@@ -920,9 +925,11 @@ pub(crate) mod tests {
             id: "offline".into(),
             enabled: true,
             retention: Retention::default(),
-            path: temporary.path().join("disconnected-device"),
+            location: crate::backup_settings::DestinationLocation::LocalDirectory {
+                path: temporary.path().join("disconnected-device"),
+            },
             repository_id: "a".repeat(64),
-            credential: "not-used-while-offline".into(),
+            credential_ref: "not-used-while-offline".into(),
         });
         save_setting(&workspace, "backup.config", &configured).unwrap();
         let service = crate::native_service::NativeService::new(workspace.clone());
@@ -958,19 +965,16 @@ pub(crate) mod tests {
         let restic = Restic::discover(crate::restic::cancellation()).unwrap();
         let original = run_local(&workspace, &restic).unwrap().unwrap();
         let source = local_repository(&workspace, &restic, false).unwrap();
-        let target = Repository {
-            path: temporary.path().join("additional"),
-            password: Password::Secret("temporary-contract-password".into()),
-        };
+        let target = Repository::at(
+            temporary.path().join("additional"),
+            Password::Secret("temporary-contract-password".into()),
+        );
         restic.initialize(&target, Some(&source)).unwrap();
         assert_ne!(
             restic.repository_id(&source).unwrap(),
             restic.repository_id(&target).unwrap()
         );
-        let no_secret = Repository {
-            path: target.path.clone(),
-            password: Password::Insecure,
-        };
+        let no_secret = Repository::at(target.local_path().unwrap().to_owned(), Password::Insecure);
         assert_eq!(
             restic.repository_id(&no_secret).unwrap_err().code,
             "CREDENTIALS"

@@ -3063,6 +3063,7 @@ export function App({
           onSaved={(request) => {
             if (
               request.kind !== "add" &&
+              request.kind !== "add-google-drive" &&
               request.kind !== "credential" &&
               !(request.kind === "enabled" && request.enabled)
             )

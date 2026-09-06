@@ -5,9 +5,9 @@
   "identifier": "dev.memoka.desktop",
   "mainBinaryName": "memoka",
   "build": {
-    "beforeDevCommand": "corepack pnpm restic:prepare && corepack pnpm dev",
+    "beforeDevCommand": "corepack pnpm restic:prepare && corepack pnpm rclone:prepare && corepack pnpm dev",
     "devUrl": "http://127.0.0.1:1421",
-    "beforeBuildCommand": "corepack pnpm restic:prepare && corepack pnpm build",
+    "beforeBuildCommand": "corepack pnpm restic:prepare && corepack pnpm rclone:prepare && corepack pnpm build",
     "beforeBundleCommand": "node scripts/prepare-linux-appimage-tools.mjs",
     "frontendDist": "../dist"
   },
@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "externalBin": ["binaries/restic"],
+    "externalBin": ["binaries/restic", "binaries/rclone"],
     "useLocalToolsDir": true,
     "publisher": "Jun Ando",
     "homepage": "https://github.com/memoka-project/memoka",
@@ -43,6 +43,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../LICENSE", "../PRIVACY.md", "../THIRD_PARTY_NOTICES.md"]
+    "resources": [
+      "../LICENSE",
+      "../PRIVACY.md",
+      "../THIRD_PARTY_NOTICES.md",
+      "../SIDECARS.json"
+    ]
   }
 }

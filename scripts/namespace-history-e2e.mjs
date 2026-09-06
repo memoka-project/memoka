@@ -55,10 +55,10 @@ export async function runNamespaceHistory({
     );
     assert.equal(stderr, "", "Successful reads must not leak diagnostics");
     const result = JSON.parse(stdout);
-    const backupStateV2 =
+    const backupStateV3 =
       args[0] === "backup" &&
       ["status", "run", "copy", "maintain"].includes(args[1]);
-    assert.equal(result.schema_version, backupStateV2 ? 2 : 1);
+    assert.equal(result.schema_version, backupStateV3 ? 3 : 1);
     return result;
   };
   const command = async (name) => {
@@ -110,6 +110,26 @@ export async function runNamespaceHistory({
             && (dialog.querySelector('input')?.matches(':enabled') ?? true);`,
           Boolean,
         );
+        // The isolated application config has no OAuth profile. Opening the
+        // integrated panel must expose the feature without starting OAuth,
+        // touching a keyring, or blocking ordinary local settings.
+        await waitFor(
+          sessionId,
+          `return document.querySelector('.backup-dialog')?.textContent.includes('Google接続は未設定です');`,
+          Boolean,
+        );
+        const cloudUi = await execute(
+          sessionId,
+          `const panel = document.querySelector('.backup-dialog');
+            const connect = Array.from(panel.querySelectorAll('button')).find(button => button.textContent === 'Googleへ新規接続');
+            return { disabled: connect?.disabled,
+              types: Array.from(panel.querySelectorAll('select option')).map(option => option.textContent),
+              tokenFields: panel.querySelectorAll('input[type=password]').length };`,
+        );
+        assert.equal(cloudUi.disabled, true);
+        assert.ok(cloudUi.types.includes("Google Drive"));
+        assert.ok(cloudUi.types.includes("ローカルディレクトリ"));
+        assert.equal(cloudUi.tokenFields, 0);
         if (!size) {
           // Exercise the real settings IPC, not only mocked dialog forms.
           // Retention changes are configuration-only and must not capture or
@@ -550,6 +570,7 @@ export async function runNamespaceHistory({
       "centered-backup-modals-and-bounded-small-window-scrolling",
       "backup-modal-tab-cycle-and-editor-focus-restoration",
       "backup-settings-native-save-without-capture-or-modal-dismissal",
+      "unconfigured-google-native-panel-and-typed-destination-chooser",
       "history-absolute-local-datetime-with-ago",
       "centered-native-shutdown-progress-and-cancel-focus-restoration",
       "group-create-and-rename-without-note-mutation",

@@ -230,12 +230,14 @@ pub fn restore(
             .ok_or_else(|| ReadError::new("UNSAFE_PATH", "Invalid restore target name"))?,
     )?;
     let target = parent.join(basename);
-    let repository = fs::canonicalize(&repo.path)?;
-    if target.starts_with(&repository) || repository.starts_with(&target) {
-        return Err(ReadError::new(
-            "UNSAFE_PATH",
-            "Restore target overlaps its source repository",
-        ));
+    if let Ok(path) = repo.local_path() {
+        let repository = fs::canonicalize(path)?;
+        if target.starts_with(&repository) || repository.starts_with(&target) {
+            return Err(ReadError::new(
+                "UNSAFE_PATH",
+                "Restore target overlaps its source repository",
+            ));
+        }
     }
     if target.exists() {
         checked_directory(&target)?;

@@ -121,6 +121,12 @@ pub enum BackupAction {
     Status,
     List,
     Copy,
+    CloudTick {
+        id: Option<String>,
+    },
+    WaitTransfers {
+        budget_ms: u32,
+    },
     IdleMaintain,
     Maintain {
         #[serde(default)]
@@ -137,6 +143,7 @@ impl Request {
             Self::Backup {
                 action:
                     BackupAction::Run
+                    | BackupAction::WaitTransfers { .. }
                     | BackupAction::Copy
                     | BackupAction::IdleMaintain
                     | BackupAction::Maintain { .. }

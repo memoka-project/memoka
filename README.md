@@ -96,6 +96,7 @@ CI相当の主要検証は次で実行します。
 
 ```powershell
 corepack pnpm restic:prepare
+corepack pnpm rclone:prepare
 corepack pnpm verify
 ```
 
@@ -213,8 +214,11 @@ corepack pnpm cli:build
 ```
 
 出力先はLinuxでは`target/release/memoka-cli`、Windowsでは`target\release\memoka-cli.exe`です。
-固定版Resticも同じディレクトリへ配置されます。CLIを別の場所へコピーする場合は`restic`（Windowsは`restic.exe`）を
-隣に置いてください。CLIの実行にNode.js、GTK、WebViewは不要です。Linux ReleaseではCLIとResticをまとめたarchiveも提供します。
+固定版Resticとrcloneも同じディレクトリへ配置されます。CLIを移動する場合は`restic`と`rclone`（Windowsは`.exe`付き）も
+隣に置いてください。CLIの実行にNode.js、GTK、WebViewは不要です。Linux Releaseでは両sidecarを含むarchiveも提供します。
+
+Google Drive用のCLI接続は`memoka-cli cloud connect google-drive --name <label>`です。専用Desktop OAuth client設定が必要です。
+実験的機能の設定と復旧commandは[Help](doc/help.md)、clientの安全な配置と未検証事項は[開発者向け手順](doc/development/google-drive-backup.md)を参照してください。
 
 ## 開発
 
@@ -223,6 +227,7 @@ corepack pnpm cli:build
 ```bash
 corepack pnpm install --frozen-lockfile
 corepack pnpm restic:prepare
+corepack pnpm rclone:prepare
 corepack pnpm tauri:dev
 ```
 
@@ -234,7 +239,7 @@ corepack pnpm large-note-gate
 corepack pnpm tauri:build
 ```
 
-`restic:prepare`は対応OSの固定artifactを取得し、archiveと実行ファイルのSHA-256を検証します。
+`restic:prepare`と`rclone:prepare`は対応OSの固定artifactを取得し、archiveと実行ファイルのSHA-256を検証します。
 Tauriの開発起動・buildと`cli:build`でも自動実行します。Cargo testを直接実行する場合は先に準備してください。
 
 ## ライセンス
@@ -244,3 +249,4 @@ Tauriの開発起動・buildと`cli:build`でも自動実行します。Cargo te
 組み込みカラーパレットはNightfox（MIT License、Copyright (c) 2021 James Simpson）に基づきます。
 固定した上流commitとライセンス全文は[Third-party notices](THIRD_PARTY_NOTICES.md)に記載しています。
 同梱ResticはBSD-2-Clauseです。ライセンス全文は[LICENSES/restic.txt](LICENSES/restic.txt)にも収録しています。
+同梱rcloneはMITです。ライセンス全文は[LICENSES/rclone.txt](LICENSES/rclone.txt)にも収録しています。

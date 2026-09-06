@@ -10,6 +10,7 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 run(process.execPath, ["scripts/prepare-restic.mjs"]);
+run(process.execPath, ["scripts/prepare-rclone.mjs"]);
 run("cargo", [
   "build",
   "--locked",
@@ -26,4 +27,8 @@ const target = windows
 await copyFile(
   join(root, "src-tauri", "binaries", `restic-${target}`),
   join(root, "target", "release", windows ? "restic.exe" : "restic"),
+);
+await copyFile(
+  join(root, "src-tauri", "binaries", `rclone-${target}`),
+  join(root, "target", "release", windows ? "rclone.exe" : "rclone"),
 );

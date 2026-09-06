@@ -480,6 +480,41 @@ Workspace内のローカル履歴は常時有効で、パスワードは設定�
 `s`は秒、`m`は分、`h`は時、`d`は日、`mo`は月（30日換算）、`y`は年（365日換算）です。
 履歴検索は`2026/09/06`など表示上の日付でも絞り込めます。
 
+### Google Driveへ保存する（実験的）
+
+> [!WARNING]
+> 実Googleアカウントでの長期利用・別PC復旧はまだ検証していません。重要なデータはローカル追加先などにも残してください。
+> Google接続にはMemoka専用のDesktop OAuth clientが必要です。未設定ならGoogle接続ボタンは無効になります。
+
+1. `:backup-settings`の「追加する保存先の種類」で**Google Drive**を選びます。
+2. 「接続の表示名」を入力して「Googleへ新規接続」を選ぶと、OSのブラウザが開きます。5分以内に認可してください。
+   既存接続を使う場合は再認証せず、その接続を選べます。認証中は「認証を中止」やダイアログを閉じる操作で取り消せます。
+3. 「Google Driveの保存先を追加」で接続、保持数、**バックアップ用パスワード**を指定します。パスワードは同じものを2回入力します。
+4. マイドライブ直下に専用フォルダーと暗号化repositoryを作り、最新のローカル世代から転送します。
+   「接続済み」「保存先の登録完了」は、バックアップの転送完了ではありません。保護済みの日時と転送待ち件数を確認してください。
+
+Googleの認可は`drive.file`だけです。これはアプリが扱えるファイルへの権限で、特定の1フォルダーだけのOAuth権限ではありません。
+Shared Drive、任意の既存フォルダー、Google Picker、サービスアカウントには対応していません。
+フォルダー名を変更しても実IDで参照しますが、手動での移動・削除・共有変更からバックアップを完全に守るものではありません。
+
+**Google接続のtoken**と**Resticのバックアップパスワード**は別です。Googleへログインできても、パスワードを失うと復号できません。
+「復旧用情報を表示」→「コピー」で、専用folder ID、Workspace/repository ID、OAuth client IDを安全な場所へ記録してください。
+この情報にはパスワードやtokenは含みません。パスワードも別途保管してください。
+
+転送は編集と別に動き、1世代の通常転送は最長1時間です。新しい編集がなくても転送待ち世代を再試行します。
+通信制限・一時障害では次回再試行時刻を表示し、認証失効時は自動でブラウザを開かず停止します。
+「今すぐ転送」は予約、「転送を中止」は現在の処理を止める操作です。未転送世代は消しません。
+整理で不要になったobjectはDriveのゴミ箱へ送るため、整理完了直後にGoogleの使用容量が減るとは限りません。Memokaはゴミ箱を空にしません。
+
+認証が失効したら「Googleを再認証」を使います。同じGoogleアカウント・OAuth clientと既存repositoryの検証後だけ接続を更新します。
+「既存パスワードを再登録」はGoogle再認証とは別です。OS資格情報ストアが使えない場合に平文へ保存することはありません。
+途中で登録に失敗した場合は「初期化の再開」に残る保存先を選び、**最初と同じパスワード**で再試行してください。
+作成結果が不明なフォルダーは勝手に再作成しません。取消後も作成済みフォルダーは残ります。
+
+保存先の「解除」はDriveのデータを消しません。「この端末の接続を解除」は接続情報だけの削除です。
+共有接続には利用先一覧があります。先に保存先を個別に解除するか、「利用中の保存先も停止して接続を解除する」で
+別Workspaceを含む全利用先の停止を明示確認してください。Google側の認可取消は行いません。全利用先停止からの再開には再認証が必要です。
+
 ### 終了・Workspace切替・更新
 
 終了時には、確定した編集を先に保存し、必要なローカル履歴を作ります。進捗画面から再試行やキャンセルができます。
@@ -487,6 +522,8 @@ Workspace内のローカル履歴は常時有効で、パスワードは設定�
 取り消しが可能な段階では、取り消しボタンのほか`Esc` / `Ctrl-c`でも戻れます。保存中・中断処理中・終了や更新の実行中は取り消せません。
 履歴作成を省略して終了できるのは、確定済み編集の保存が成功した後だけです。省略した履歴は次回起動後の対象になります。
 追加先への転送は待機時間を制限するため、未接続先のために無期限に終了できなくなることはありません。
+終了時の追加先待機は30秒が基本です。これは通常のGoogle転送の1時間上限とは別で、待機期限だけでは転送を中断しません。
+待機を再試行するか、終了操作を取り消すか、バックアップを中断して続行するかを選んでください。
 `:switch-workspace`と`:update`も同じ進捗画面を使います。ローカル履歴の保存後に追加先への転送だけが失敗した場合は、
 ローカル保存済みと表示されます。再試行、操作の取り消し、バックアップだけを中断して続行、のいずれかを選んでください。
 中断では実行中のバックアップ処理の終了を待ってから切替・更新へ進みます。
@@ -521,6 +558,23 @@ memoka-cli backup restore --repository <restic-directory> --generation <generati
 パスワード付きの追加先では`--insecure-no-password`を使わず、対話入力または`--password-stdin`で入力します。
 パスワードをコマンド引数へ直接書かないでください。復旧先は別の新規または空ディレクトリを選び、既存Workspaceを上書きしません。
 アプリ内に`:restore`はありません。
+
+Google Driveからの復旧には、元Workspaceではなく、同じOAuthアプリへの新しい認証、保存先のfolder ID、バックアップパスワードを使います。
+この経路は実Driveで未検証のため、正式な復旧保証はまだありません。新PCの接続IDは元PCと同じでなくて構いません。
+
+```text
+memoka-cli cloud connect google-drive --name recovery --client-file <absolute-client-json>
+memoka-cli cloud list --format json
+memoka-cli backup list --connection <new-connection-id> --drive-folder-id <folder-id> --password-stdin
+memoka-cli backup check --connection <new-connection-id> --drive-folder-id <folder-id> --password-stdin --full
+memoka-cli backup restore --connection <new-connection-id> --drive-folder-id <folder-id> --generation <generation-id> --target <empty-data-area> --password-stdin
+```
+
+`--client-file`はGoogleから取得したDesktop client設定JSONのローカル絶対pathです。tokenを指定するものではありません。
+標準配置またはbuild設定がある場合は省略できます。CLIもOS資格情報ストアを使用します。
+Google指定とローカルの`--repository`は同時に使えません。Google先で`--insecure-no-password`は使えません。
+認証とパスワード入力は別コマンドです。`Ctrl-c`で中断できます。GUI、Node、GTKやWebViewを起動する必要はありませんが、認証用のOSブラウザは必要です。
+Google側で認可を取り消した後やOAuth client変更後に、同じfolderへアクセスできると仮定しないでください。
 
 ### 旧portable mirrorからの復旧
 

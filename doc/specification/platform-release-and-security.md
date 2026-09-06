@@ -20,7 +20,7 @@ Releaseには少なくとも次を含める。
 - AppImage
 - Tauri Updater signature
 - `latest.json`
-- standalone `memoka-cli`と固定版Resticを同梱したarchive
+- standalone `memoka-cli`と固定版Restic/rcloneを同梱したarchive
 - `SHA256SUMS`
 - SPDX JSON SBOM
 - Source code archive
@@ -40,7 +40,7 @@ local buildはMSVC toolchain、Windows SDK、WebView2 Runtime、Node.js/Corepack
 `corepack pnpm tauri:build`はunsigned NSIS installerを生成できるが、公式配布物ではない。
 standalone復旧CLIもlocal buildできる。
 
-Linux・WindowsともRestic 0.19.1を固定し、artifactと実行fileのSHA-256を検証して同梱する。
+Linux・WindowsともRestic 0.19.1とrclone 1.75.1を固定し、artifactと実行fileのSHA-256を検証して同梱する。
 GUIのapp bundleとCLIの隣へそれぞれ配置する。CLIはTauriのwindow/runtimeを初期化せず、実行時に
 Node、DOM、GTK、WebViewを要求しない。Linuxでは`ldd`、Windowsではnative buildと実行で検証する。
 
@@ -88,10 +88,30 @@ source buildとWindows local buildではUpdaterを無効にし、`:update`は署
 ## 7. Networkとprivacy
 
 通常のNote操作、検索、履歴、Attachment、診断ではnetworkへ内容を送信しない。
-account、telemetry、広告、crash report自動送信、log uploadを実装しない。
+Memoka独自のaccount、telemetry、広告、crash report自動送信、log uploadを実装しない。
 
-公式AppImageの更新確認だけがGitHub ReleasesへHTTPS接続する。この際、IP addressなど通常のHTTP接続情報が
+公式AppImageの更新確認はGitHub ReleasesへHTTPS接続する。この際、IP addressなど通常のHTTP接続情報が
 GitHubへ伝わり得る。Note本文、title、検索語、Clipboard、Attachment、Workspace pathをrequestへ含めない。
+
+Google Driveを明示設定した場合は、認証と追加backupにGoogle OAuth/Drive APIを使う。
+クラウド未設定・無効なら起動・通常編集・status取得でGoogleへ接続しない。Note/添付はRestic暗号文として転送するが、
+IP、API request、時刻、転送量、objectサイズ、専用folder表示名まで秘匿するものではない。
+独自の中継サーバーへtokenやパスワードを送らない。Google機能の実アカウント検証は未完了で、実験的な扱いとする。
+
+### 7.1 Google認証と秘密保存
+
+scopeは`drive.file`だけで、共用rclone client、任意endpoint、WebView内loginへfallbackしない。
+rclone 1.75.1のDrive OAuthにはPKCEがないため、初回認証だけRust `oauth2`でstate/PKCE S256を実装する。
+127.0.0.1の一時portを使い、認証operationごとに5分期限・cancelを持つ。以後のrefreshは同梱rcloneが担当する。
+固定版のJSON config state machineで受け渡し、未知の質問はエラーにする。端末のOAuth画面を解析しない。
+
+接続はapplication config directoryの`cloud-connections/<UUID>/`に置く。非秘密metadata、初期化intent、
+revisionごとの暗号化configを分離し、metadataが指す1本だけをrefreshの正本にする。
+configへtokenを入れる前にrclone標準形式で暗号化し、ランダムな復号鍵は既存OS資格情報ストアに保存する。
+Resticパスワードとは別のkeyであり、Workspace DB/Captureへ入れない。keyring利用不能時の平文fallbackはない。
+親directoryと更新・失敗時のside fileにもUnix 0700/0600またはWindows owner/SYSTEM ACLを適用し、symlink/reparseを拒否する。
+接続単位とrepository ID単位のOS-user leaseにより、別Workspace/GUI/CLIをまたぐ並行利用を除外する。
+再認証では旧configを上書きせず、新configの検証が成功してからmetadataの参照を切り替える。
 
 ## 8. 外部contentの安全性
 
@@ -102,9 +122,13 @@ GitHubへ伝わり得る。Note本文、title、検索語、Clipboard、Attachme
 - custom attachment protocolはWorkspaceで解決したIDだけを読み、arbitrary filesystem pathを公開しない。
 - 現行read・Restic restore・旧mirror restoreのpath traversal、symlink、Windows reparse pointを拒否する。
 - Native read IPCは同じOS userのsocket/named pipeだけを受け付け、GUI ownerとheadless処理は同じWorkspace leaseを使う。
-- Resticの継承`RESTIC_*`環境を除去し、repositoryとpassword sourceを明示する。任意backend URLやcredential引数は受け付けない。
+- 子processの継承`RESTIC_*`/`RCLONE_*`/認証・library injection環境を除去し、必要なrepository/root/config/passwordだけをchild専用環境へ設定する。任意backend URLやcredential引数は受け付けない。
 - 追加先passwordはOS資格情報ストアと必要な子process環境だけへ渡す。local repositoryは明示的なno-passwordである。
 - 生成物allowlistは`backup.json`、`state.sqlite`、`blobs/<sha256>`に限定し、config、token、log、cache、鍵を含めない。
+- ブラウザopenerへbackup用secret環境を渡さない。HTTP redirect/TLS検証の無効化、任意認証endpointは許可しない。
+- Restic/rcloneのstdout/stderrは上限付きで回収し、raw診断やtokenをGUI/logへ返さず、既知のerror分類だけを使う。
+- Linux process group / Windows Job Objectで子孫を管理し、cancel/timeout時はpipeとleaseの解放前にkill/reapする。stdioにlogを混ぜず、外部公開HTTP/rcdを起動しない。
+- runtimeでは検証済み同梱binaryだけを使う。PATH/cwd fallback、self-update、実行時downloadは行わない。
 
 ## 9. 診断log
 
@@ -128,7 +152,7 @@ MemokaはMIT License、publisherはJun Ando、公開repositoryは
 
 Nightfox paletteなどthird-party componentは固定したupstreamとlicenseを
 `THIRD_PARTY_NOTICES.md`へ記載する。releaseごとにinventoryとSBOMを生成する。
-ResticのBSD-2-Clause本文を同梱し、Go moduleも含めて最終配布物のSBOMへ収録する。
+ResticのBSD-2-ClauseとrcloneのMIT本文を同梱し、Go moduleも含めて最終配布物のSBOMへ収録する。
 
 脆弱性は公開IssueではなくGitHub Private vulnerability reportingで受け付ける。
 最新の安定版だけをsecurity support対象とする。

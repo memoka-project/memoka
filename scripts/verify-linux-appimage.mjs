@@ -5,6 +5,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { RESTIC_ARTIFACTS } from "./restic-artifacts.mjs";
+import { RCLONE_ARTIFACTS } from "./rclone-artifacts.mjs";
 import {
   appImageLauncherMarker,
   inspectSanitizedAppDir,
@@ -47,6 +48,14 @@ try {
       "AppImage Restic sidecar is missing or not the verified version",
     );
   const { launcher, forbiddenLibraries } = await inspectSanitizedAppDir(appDir);
+  const rclone = await readFile(join(appDir, "usr", "bin", "rclone"));
+  if (
+    createHash("sha256").update(rclone).digest("hex") !==
+    RCLONE_ARTIFACTS["x86_64-unknown-linux-gnu"].executableSha256
+  )
+    throw new Error(
+      "AppImage rclone sidecar is missing or not the verified version",
+    );
   if (!launcher.includes(appImageLauncherMarker)) {
     throw new Error("Memoka AppImage launcher marker is missing");
   }

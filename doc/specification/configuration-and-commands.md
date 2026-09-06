@@ -32,6 +32,14 @@ themeなどをCommandから確定した場合は、既存commentと無関係な�
 このキーだけを理由に他の有効な設定を既定へ戻さない。バックアップの保存間隔・複数追加先・有効状態・保存先ごとの直近/日次/月次保持数は
 Workspaceごとの設定であり、`:backup-settings`から変更する。パスワードはOS資格情報ストアのみへ保存する。
 
+`:backup-settings`は状態表示を兼ねる中央floating modalで、ローカル/Google Driveの種類選択、保存先追加、
+保持数、無効化、解除、既存パスワード再登録を扱う。Google接続はWorkspace設定と別のOSユーザー単位で共有し、
+認証operationの進捗だけをpollする。接続の再認証/取消/ローカル解除と転送の開始/中断は別の操作である。
+Googleは実験的で、専用Desktop OAuth client未設定なら接続操作だけを無効化する。
+source buildは`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`で指定した絶対path、またはapplication config directoryの
+`google-desktop-client.json`を読む。tokenやパスワードを`config.toml`へ記載してはならない。
+通常cloud転送の1時間上限と終了時追加先待機の30秒は別管理で、いずれも現時点では固定値である。
+
 既定font stackは次である。
 
 ```text

@@ -4,7 +4,7 @@ export function backupFixture(overrides: Partial<BackupPort> = {}): BackupPort {
   return {
     status: async (): Promise<BackupState> => ({
       config: {
-        schema_version: 2,
+        schema_version: 3,
         interval_minutes: 15,
         local_retention: { last: 48, daily: 30, monthly: 12 },
         destinations: [],

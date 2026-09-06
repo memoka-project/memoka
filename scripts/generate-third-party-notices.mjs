@@ -1,9 +1,37 @@
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { format } from "prettier";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { RESTIC_VERSION, RESTIC_ARTIFACTS } from "./restic-artifacts.mjs";
+import { RCLONE_VERSION, RCLONE_ARTIFACTS } from "./rclone-artifacts.mjs";
 
 const root = new URL("../", import.meta.url);
+const host =
+  process.platform === "win32"
+    ? "x86_64-pc-windows-msvc"
+    : "x86_64-unknown-linux-gnu";
+const rcloneBinary = new URL(
+  `src-tauri/binaries/rclone-${host}${process.platform === "win32" ? ".exe" : ""}`,
+  root,
+);
+if (
+  createHash("sha256")
+    .update(await readFile(rcloneBinary))
+    .digest("hex") !== RCLONE_ARTIFACTS[host].executableSha256
+)
+  throw new Error("Prepare the pinned rclone before generating notices");
+const rcloneBuild = execFileSync(
+  fileURLToPath(rcloneBinary),
+  ["version", "--deps"],
+  { encoding: "utf8", maxBuffer: 1024 * 1024 },
+);
+const goModules = (rcloneBuild.split("Dependencies:\n")[1] ?? "")
+  .trim()
+  .split("\n")
+  .filter((line) => line.startsWith("- "));
+if (goModules.length < 10)
+  throw new Error("Bundled rclone Go module inventory is missing");
 const pnpm = JSON.parse(
   execFileSync(
     process.platform === "win32" ? "corepack.cmd" : "corepack",
@@ -115,11 +143,52 @@ linked upstream project and the dependency source package for the complete licen
 
 ${nightfoxNotice}
 ${resticNotice}
+## Bundled rclone
+
+[rclone ${RCLONE_VERSION}](https://github.com/rclone/rclone/releases/tag/v${RCLONE_VERSION}) is bundled unchanged as the Google Drive transport for Restic, under the MIT license.
+Archives and executable hashes are pinned in scripts/rclone-artifacts.mjs. The release SBOM inventories the executable's embedded Go modules.
+
+${Object.values(RCLONE_ARTIFACTS)
+  .map(
+    (artifact) =>
+      `- rclone-v${RCLONE_VERSION}-${artifact.platform}.zip: \`${artifact.sha256}\``,
+  )
+  .join("\n")}
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/rclone.txt", root), "utf8")).trimEnd()}
+\`\`\`
+
 ${render("JavaScript dependencies", javascript)}
 ${render("Rust dependencies", rust)}
+
+## Bundled rclone Go module inventory (${RCLONE_ARTIFACTS[host].platform})
+
+Read directly from the verified executable's Go build information. The Release SPDX SBOM includes this compiled dependency graph.
+Module licenses and source are available from each module's versioned source distribution; rclone's MIT license does not relicense its dependencies.
+
+${goModules
+  .map((line) => {
+    const [module, version] = line.slice(2).split(" ");
+    return `- [${module}@${version}](https://pkg.go.dev/${module}@${version}?tab=licenses)`;
+  })
+  .join("\n")}
 `;
 await writeFile(
   new URL("THIRD_PARTY_NOTICES.md", root),
   await format(document, { parser: "markdown" }),
+  "utf8",
+);
+await writeFile(
+  new URL("SIDECARS.json", root),
+  JSON.stringify(
+    {
+      schema_version: 1,
+      restic: { version: RESTIC_VERSION, artifacts: RESTIC_ARTIFACTS },
+      rclone: { version: RCLONE_VERSION, artifacts: RCLONE_ARTIFACTS },
+    },
+    null,
+    2,
+  ) + "\n",
   "utf8",
 );

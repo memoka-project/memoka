@@ -12,3 +12,5 @@ src-tauri/tauri.release.generated.json
 dist-release/
 src-tauri/binaries/restic-*
 .tools/restic/
+.tools/rclone/
+src-tauri/binaries/rclone-*

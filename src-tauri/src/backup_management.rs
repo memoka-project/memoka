@@ -2,7 +2,8 @@
 use crate::{
     backup::{self, AdditionalTarget, Generation, Retention},
     backup_settings::{
-        self as settings, DestinationStatus, InitIntent, TransferLedger, ledger_key,
+        self as settings, DestinationLocation, DestinationStatus, InitIntent, TransferLedger,
+        ledger_key,
     },
     document_model::ReadError,
     history,
@@ -13,26 +14,37 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, ffi::OsString, fs, path::Path, time::Duration};
 
-const CREDENTIAL_SERVICE: &str = "dev.memoka.desktop.backup";
-trait Credentials {
-    fn get(&self, id: &str) -> Result<String, ReadError>;
-    fn set(&self, id: &str, secret: &str) -> Result<(), ReadError>;
-    fn remove(&self, id: &str);
-}
-struct OsCredentials;
-fn credential(id: &str) -> Result<keyring::Entry, ReadError> {
-    keyring::Entry::new(CREDENTIAL_SERVICE, id).map_err(|_| credentials_error())
-}
-fn credentials_error() -> ReadError {
-    ReadError::new(
-        "CREDENTIALS_UNAVAILABLE",
-        "The destination credential is unavailable or the OS credential store is locked",
-    )
-}
+#[cfg(test)]
+use crate::credentials::credentials_error;
+use crate::credentials::{Credentials, OsCredentials};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cloud_backoff_and_manual_reauthentication_are_distinct() {
+        let now = chrono::Utc::now();
+        let mut state = DestinationStatus::default();
+        assert!(cloud_retry_due(Some(&state), now));
+        state.error = Some(ReadError::new("CLOUD_RATE_LIMIT", "retry later"));
+        state.next_retry_at = Some((now + chrono::Duration::seconds(90)).to_rfc3339());
+        assert!(!cloud_retry_due(Some(&state), now));
+        assert!(cloud_retry_due(
+            Some(&state),
+            now + chrono::Duration::seconds(91)
+        ));
+        for code in [
+            "CLOUD_REAUTH_REQUIRED",
+            "CREDENTIALS_UNAVAILABLE",
+            "REPOSITORY_MISMATCH",
+        ] {
+            state.error = Some(ReadError::new(code, "manual action required"));
+            assert!(!cloud_retry_due(
+                Some(&state),
+                now + chrono::Duration::days(30)
+            ));
+        }
+    }
     use std::{
         collections::BTreeMap,
         sync::{
@@ -146,7 +158,7 @@ mod tests {
         settings::update_destination(&workspace, &targets[1].id, |target| target.enabled = false)
             .unwrap();
         credentials
-            .set(&targets[2].credential, "wrong-password")
+            .set(&targets[2].credential_ref, "wrong-password")
             .unwrap();
         backup::save_setting(
             &workspace,
@@ -172,7 +184,7 @@ mod tests {
             Some(first.descriptor.captured_at.as_str())
         );
         assert!(status.destinations[&targets[2].id].error.is_some());
-        let previous_secret = credentials.get(&targets[2].credential).unwrap();
+        let previous_secret = credentials.get(&targets[2].credential_ref).unwrap();
         assert!(
             reregister(
                 &workspace,
@@ -184,7 +196,7 @@ mod tests {
             .is_err()
         );
         assert_eq!(
-            credentials.get(&targets[2].credential).unwrap(),
+            credentials.get(&targets[2].credential_ref).unwrap(),
             previous_secret
         );
         reregister(
@@ -346,23 +358,6 @@ mod tests {
         );
     }
 }
-impl Credentials for OsCredentials {
-    fn get(&self, id: &str) -> Result<String, ReadError> {
-        credential(id)?
-            .get_password()
-            .map_err(|_| credentials_error())
-    }
-    fn set(&self, id: &str, secret: &str) -> Result<(), ReadError> {
-        credential(id)?
-            .set_password(secret)
-            .map_err(|_| credentials_error())
-    }
-    fn remove(&self, id: &str) {
-        if let Ok(entry) = credential(id) {
-            let _ = entry.delete_credential();
-        }
-    }
-}
 pub fn additional_repository(
     target: &AdditionalTarget,
     restic: &Restic,
@@ -374,16 +369,34 @@ fn open_destination(
     restic: &Restic,
     credentials: &dyn Credentials,
 ) -> Result<Repository, ReadError> {
-    if !target.path.join("config").is_file() {
+    if let DestinationLocation::GoogleDrive {
+        connection_id,
+        root_folder_id,
+        ..
+    } = &target.location
+    {
+        return crate::cloud::CloudService::discover()?.repository(
+            connection_id,
+            root_folder_id,
+            Password::Secret(credentials.get(&target.credential_ref)?),
+            Some(&target.repository_id),
+            restic,
+        );
+    }
+    let path = target
+        .location
+        .local_path()
+        .ok_or_else(|| ReadError::new("INVALID_ARGUMENT", "Invalid local destination"))?;
+    if !path.join("config").is_file() {
         return Err(ReadError::new(
             "ADDITIONAL_OFFLINE",
             "The backup destination is not connected",
         ));
     }
-    let repo = Repository {
-        path: target.path.clone(),
-        password: Password::Secret(credentials.get(&target.credential)?),
-    };
+    let repo = Repository::at(
+        path.to_owned(),
+        Password::Secret(credentials.get(&target.credential_ref)?),
+    );
     if restic.repository_id(&repo)? != target.repository_id {
         return Err(ReadError::new(
             "REPOSITORY_MISMATCH",
@@ -432,7 +445,8 @@ fn configure_destination(
     if config
         .destinations
         .iter()
-        .any(|old| old.path == path || path.starts_with(&old.path) || old.path.starts_with(&path))
+        .filter_map(|old| old.location.local_path())
+        .any(|old| old == path || path.starts_with(old) || old.starts_with(&path))
     {
         return Err(ReadError::new(
             "DESTINATION_EXISTS",
@@ -449,10 +463,7 @@ fn configure_destination(
         .map(|item| item.id.clone())
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let expected = pending.as_ref().and_then(|item| item.repository_id.clone());
-    let repo = Repository {
-        path: path.clone(),
-        password: Password::Secret(secret),
-    };
+    let repo = Repository::at(path.clone(), Password::Secret(secret));
     let repository_id = if path.join("config").is_file() {
         if pending.is_none() {
             return Err(ReadError::new(
@@ -511,9 +522,9 @@ fn configure_destination(
     backup::update_config(&workspace, |config| {
         config.destinations.push(AdditionalTarget {
             id: id.clone(),
-            path,
+            location: DestinationLocation::LocalDirectory { path },
             repository_id,
-            credential: credential_id,
+            credential_ref: credential_id,
             enabled: true,
             retention,
         });
@@ -539,9 +550,21 @@ fn reregister(
     credentials: &dyn Credentials,
 ) -> Result<(), ReadError> {
     let target = settings::destination(workspace, id)?;
-    let repo = Repository {
-        path: target.path,
-        password: Password::Secret(secret),
+    let repo = match &target.location {
+        DestinationLocation::LocalDirectory { path } => {
+            Repository::at(path.clone(), Password::Secret(secret))
+        }
+        DestinationLocation::GoogleDrive {
+            connection_id,
+            root_folder_id,
+            ..
+        } => crate::cloud::CloudService::discover()?.repository(
+            connection_id,
+            root_folder_id,
+            Password::Secret(secret),
+            Some(&target.repository_id),
+            restic,
+        )?,
     };
     if restic.repository_id(&repo)? != target.repository_id {
         return Err(ReadError::new(
@@ -550,17 +573,26 @@ fn reregister(
         ));
     }
     if let Password::Secret(secret) = &repo.password {
-        credentials.set(&target.credential, secret)?;
+        credentials.set(&target.credential_ref, secret)?;
     }
     Ok(())
 }
 pub fn detach_additional(workspace: &Path, id: &str) -> Result<(), ReadError> {
     let previous = settings::destination(workspace, id)?;
+    if let DestinationLocation::GoogleDrive { connection_id, .. } = &previous.location {
+        crate::cloud::CloudService::discover()?.update_binding(
+            connection_id,
+            &WorkspaceReader::open(workspace)?.workspace_id,
+            id,
+            None,
+        )?;
+    }
     backup::update_config(workspace, |config| {
         config.destinations.retain(|item| item.id != id);
         Ok(())
     })?;
-    OsCredentials.remove(&previous.credential);
+    // Repository passwords are OS-user/repository scoped. Another Workspace
+    // may still use this same repository; never delete its shared key here.
     backup::save_setting(workspace, &ledger_key(id), &TransferLedger::default())?;
     backup::update_status(workspace, |status| {
         status.destinations.remove(id);
@@ -580,21 +612,33 @@ fn update_target_status(
 pub fn copy(workspace: &Path, restic: &Restic, budget: Duration) -> Result<Value, ReadError> {
     copy_destinations(workspace, restic, budget, &OsCredentials)
 }
+pub fn copy_local(workspace: &Path, restic: &Restic, budget: Duration) -> Result<Value, ReadError> {
+    copy_selected(workspace, restic, budget, &OsCredentials, true)
+}
 fn copy_destinations(
     workspace: &Path,
     restic: &Restic,
     budget: Duration,
     credentials: &dyn Credentials,
 ) -> Result<Value, ReadError> {
+    copy_selected(workspace, restic, budget, credentials, false)
+}
+fn copy_selected(
+    workspace: &Path,
+    restic: &Restic,
+    budget: Duration,
+    credentials: &dyn Credentials,
+    local_only: bool,
+) -> Result<Value, ReadError> {
     let bounded = restic.within(budget);
     let restic = &bounded;
     let mut targets = backup::config(workspace)?
         .destinations
         .into_iter()
-        .filter(|item| item.enabled)
+        .filter(|item| item.enabled && (!local_only || !item.location.is_cloud()))
         .collect::<Vec<_>>();
     if targets.is_empty() {
-        return Ok(json!({"schema_version":2,"destinations":[]}));
+        return Ok(json!({"schema_version":3,"destinations":[]}));
     }
     let next: Option<String> = backup::setting(workspace, "backup.copy_next_id")?;
     if let Some(index) = next.and_then(|id| targets.iter().position(|item| item.id == id)) {
@@ -624,7 +668,15 @@ fn copy_destinations(
                 "backup.copy_next_id",
                 &Some(&targets[(index + 1) % targets.len()].id),
             )?;
-            copy_target(workspace, restic, &source, &local, target, credentials)
+            copy_target(
+                workspace,
+                restic,
+                &source,
+                &local,
+                target,
+                credentials,
+                usize::MAX,
+            )
         };
         match result {
             Ok(value) => results.push(value),
@@ -637,7 +689,7 @@ fn copy_destinations(
             }
         }
     }
-    Ok(json!({"schema_version":2,"destinations":results}))
+    Ok(json!({"schema_version":3,"destinations":results}))
 }
 fn copy_target(
     workspace: &Path,
@@ -646,6 +698,7 @@ fn copy_target(
     local: &[Generation],
     target: &AdditionalTarget,
     credentials: &dyn Credentials,
+    generation_limit: usize,
 ) -> Result<Value, ReadError> {
     let key = ledger_key(&target.id);
     let mut ledger: TransferLedger = backup::setting(workspace, &key)?;
@@ -701,7 +754,20 @@ fn copy_target(
             state.protected_capture_at = protected.clone();
         })?;
         let mut count = 0;
-        for generation in local {
+        let active = backup::status(workspace)?
+            .destinations
+            .get(&target.id)
+            .and_then(|s| s.active_generation_id.clone());
+        let mut order: Vec<_> = local.iter().collect();
+        if target.location.is_cloud() {
+            // A failed active generation keeps its turn; new captures cannot
+            // starve it. Once source retention expires it, use remaining data.
+            order.sort_by_key(|g| active.as_deref() != Some(g.descriptor.generation_id.as_str()));
+        }
+        for generation in order {
+            if count >= generation_limit {
+                break;
+            }
             if !ledger
                 .pending
                 .contains_key(&generation.descriptor.generation_id)
@@ -717,6 +783,9 @@ fn copy_target(
                     "Transfer budget expired; remaining generations will be retried",
                 ));
             }
+            update_target_status(workspace, &target.id, |state| {
+                state.active_generation_id = Some(generation.descriptor.generation_id.clone())
+            })?;
             copy_generation(restic, source, &repo, generation)?;
             ledger.pending.remove(&generation.descriptor.generation_id);
             ledger
@@ -745,8 +814,167 @@ fn copy_target(
         state.expired_copy_count = ledger.expired.len();
         state.phase = if result.is_ok() { "idle" } else { "error" }.into();
         state.error = result.as_ref().err().cloned();
+        if result.is_ok() || !target.location.is_cloud() {
+            state.active_generation_id = None;
+        }
     })?;
     result
+}
+
+/// One cloud generation (or one maintenance unit) gets its own one-hour
+/// deadline. Re-evaluate the queue only after it finishes; new captures do not
+/// restart it. The caller holds a source-reader lease, not a capture mutex.
+pub(crate) fn cloud_unit(
+    workspace: &Path,
+    restic: &Restic,
+    force: Option<&str>,
+    selected: impl FnOnce(&str),
+) -> Result<bool, ReadError> {
+    let mut targets: Vec<_> = backup::config(workspace)?
+        .destinations
+        .into_iter()
+        .filter(|t| t.enabled && t.location.is_cloud())
+        .collect();
+    if targets.is_empty() {
+        return Ok(false);
+    }
+    let next: Option<String> = backup::setting(workspace, "backup.cloud_next_id")?;
+    if let Some(index) = next.and_then(|id| targets.iter().position(|t| t.id == id)) {
+        targets.rotate_left(index);
+    }
+    if let Some(id) = force {
+        targets.retain(|t| t.id == id);
+    }
+    let source = backup::local_repository(workspace, restic, false)?;
+    let workspace_id = WorkspaceReader::open(workspace)?.workspace_id;
+    let local = backup::generations(restic, &source, Some(&workspace_id), Some(workspace))?;
+    let status = backup::status(workspace)?;
+    for (index, target) in targets.iter().enumerate() {
+        if force.is_none()
+            && !cloud_retry_due(status.destinations.get(&target.id), chrono::Utc::now())
+        {
+            continue;
+        }
+        let ledger: TransferLedger = backup::setting(workspace, &ledger_key(&target.id))?;
+        let pending = local
+            .iter()
+            .any(|g| !ledger.delivered.contains(&g.descriptor.generation_id))
+            || ledger
+                .pending
+                .keys()
+                .any(|id| !local.iter().any(|g| &g.descriptor.generation_id == id));
+        let needs_maintenance = status
+            .destinations
+            .get(&target.id)
+            .is_some_and(|s| s.protected_capture_at.is_some())
+            && maintenance_due(workspace, &target.repository_id, &target.retention)?;
+        if !pending && !needs_maintenance && force.is_none() {
+            continue;
+        }
+        selected(&target.id);
+        backup::save_setting(
+            workspace,
+            "backup.cloud_next_id",
+            &Some(&targets[(index + 1) % targets.len()].id),
+        )?;
+        let result = if pending {
+            copy_target(
+                workspace,
+                restic,
+                &source,
+                &local,
+                target,
+                &OsCredentials,
+                1,
+            )
+            .map(|_| ())
+        } else {
+            update_target_status(workspace, &target.id, |s| {
+                s.phase = "maintaining".into();
+                s.error = None;
+            })?;
+            additional_repository(target, restic)
+                .and_then(|repo| maintain_repository(workspace, restic, &repo, false, true))
+                .map(|_| ())
+        };
+        update_target_status(workspace, &target.id, |state| {
+            if !pending || result.is_ok() {
+                state.active_generation_id = None;
+            }
+            match &result {
+                Ok(()) => {
+                    state.failure_count = 0;
+                    state.next_retry_at = None;
+                    state.phase = "idle".into();
+                    state.error = None;
+                    if !pending {
+                        state.maintenance_error = None;
+                    }
+                }
+                Err(error) => {
+                    state.phase = if error.code == "CANCELLED" {
+                        "cancelled"
+                    } else {
+                        "error"
+                    }
+                    .into();
+                    if pending {
+                        state.error = Some(error.clone());
+                    } else {
+                        state.maintenance_error = Some(error.clone());
+                    }
+                    state.failure_count = state.failure_count.saturating_add(1);
+                    let seconds = 30i64
+                        .saturating_mul(1i64 << state.failure_count.min(10))
+                        .min(3600)
+                        + (rand::random::<u16>() % 31) as i64;
+                    state.next_retry_at = Some(
+                        (chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339(),
+                    );
+                }
+            }
+        })?;
+        // The error is persisted per target. Return control to the scheduler
+        // so another target still gets a turn, without a modal/global failure.
+        return Ok(true);
+    }
+    Ok(false)
+}
+fn cloud_retry_due(state: Option<&DestinationStatus>, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let Some(state) = state else {
+        return true;
+    };
+    if state
+        .error
+        .as_ref()
+        .or(state.maintenance_error.as_ref())
+        .is_some_and(|e| {
+            matches!(
+                e.code.as_str(),
+                "CLOUD_REAUTH_REQUIRED"
+                    | "CLOUD_CLIENT_INVALID"
+                    | "CLOUD_CLIENT_CHANGED"
+                    | "CLOUD_SCOPE_MISMATCH"
+                    | "CREDENTIALS"
+                    | "CREDENTIALS_UNAVAILABLE"
+                    | "CLOUD_ACCOUNT_CHANGED"
+                    | "CLOUD_ROOT_UNAVAILABLE"
+                    | "CLOUD_ROOT_INVALID"
+                    | "DRIVE_UNSAFE_LAYOUT"
+                    | "CLOUD_ACCESS_DENIED"
+                    | "CLOUD_QUOTA"
+                    | "REPOSITORY_MISMATCH"
+                    | "REPOSITORY_MISSING"
+            )
+        })
+    {
+        return false;
+    }
+    state
+        .next_retry_at
+        .as_ref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_none_or(|time| time <= now)
 }
 
 pub fn copy_generation(
@@ -775,7 +1003,7 @@ pub fn copy_generation(
         &[
             OsString::from("copy"),
             "--from-repo".into(),
-            source.path.as_os_str().to_owned(),
+            source.local_path()?.as_os_str().to_owned(),
             "--from-insecure-no-password".into(),
             generation.snapshot_id.clone().into(),
         ],
@@ -911,6 +1139,9 @@ pub fn maintain_repository(
     dry_run: bool,
     prune: bool,
 ) -> Result<RetentionPlan, ReadError> {
+    if let Some(context) = repo.drive_context() {
+        context.validate_layout(&restic.cancel)?;
+    }
     let workspace_id = WorkspaceReader::open(workspace)?.workspace_id;
     let repository_id = restic.repository_id(repo)?;
     let config = backup::config(workspace)?;
@@ -1029,7 +1260,11 @@ pub fn idle_maintenance_due(workspace: &Path) -> Result<bool, ReadError> {
     if maintenance_due(workspace, &local, &config.local_retention)? {
         return Ok(true);
     }
-    for target in config.destinations.iter().filter(|target| target.enabled) {
+    for target in config
+        .destinations
+        .iter()
+        .filter(|target| target.enabled && !target.location.is_cloud())
+    {
         if status
             .destinations
             .get(&target.id)

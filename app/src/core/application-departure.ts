@@ -1,6 +1,7 @@
 import {
   nativeErrorMessage,
   backupTransferFailures,
+  backupDestinationLabel,
   type BackupPort,
   type BackupState,
 } from "./history";
@@ -23,7 +24,7 @@ export interface ApplicationDepartureProgress {
 interface DepartureOptions {
   readonly kind: ApplicationDepartureKind;
   readonly save: () => Promise<void>;
-  readonly backup: Pick<BackupPort, "status"> | null;
+  readonly backup: Pick<BackupPort, "status" | "waitTransfers"> | null;
   readonly controller: {
     pause(): void;
     resume(): void;
@@ -118,7 +119,12 @@ export class ApplicationDeparture {
         try {
           await this.paint();
           if (!this.waiting(session)) return;
+          const transferBegan = Date.now();
           await controller.flush();
+          if (this.waiting(session))
+            await backup.waitTransfers?.(
+              Math.max(0, 30_000 - (Date.now() - transferBegan)),
+            );
           if (!this.waiting(session)) return;
           const state = await backup.status();
           if (!this.waiting(session)) return;
@@ -127,7 +133,7 @@ export class ApplicationDeparture {
             this.show(
               session,
               "backup-error",
-              `ローカル履歴は保存済みですが、追加先への転送は未完了です: ${failures.map(({ destination, error }) => `${destination.path}: ${error.message}`).join(" / ")}`,
+              `ローカル履歴は保存済みですが、追加先への転送は未完了です: ${failures.map(({ destination, error }) => `${backupDestinationLabel(destination)}: ${error.message}`).join(" / ")}`,
               state,
             );
             return;

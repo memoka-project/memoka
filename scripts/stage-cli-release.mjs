@@ -16,10 +16,12 @@ await mkdir(directory, { recursive: true });
 for (const source of [
   new URL(`target/release/${executable}`, root),
   new URL(`target/release/restic${platform === "windows" ? ".exe" : ""}`, root),
+  new URL(`target/release/rclone${platform === "windows" ? ".exe" : ""}`, root),
   new URL("LICENSE", root),
   new URL("README.md", root),
   new URL("PRIVACY.md", root),
   new URL("THIRD_PARTY_NOTICES.md", root),
+  new URL("SIDECARS.json", root),
 ]) {
   await copyFile(source, join(directory, basename(fileURLToPath(source))));
 }

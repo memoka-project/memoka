@@ -21,7 +21,7 @@ import { backupFixture } from "./backup-fixture";
 
 const destination = (id: string, enabled = true): BackupDestination => ({
   id,
-  path: "/backup/" + id,
+  location: { kind: "local-directory", path: "/backup/" + id },
   repository_id: "repo-" + id,
   enabled,
   retention: { ...DEFAULT_BACKUP_RETENTION },
