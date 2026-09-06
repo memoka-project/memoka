@@ -405,7 +405,7 @@ pub fn validate_descriptor(descriptor: &Descriptor) -> Result<(), ReadError> {
     }
     Ok(())
 }
-fn validate_hash(hash: &str) -> Result<(), ReadError> {
+pub(crate) fn validate_hash(hash: &str) -> Result<(), ReadError> {
     if hash.len() != 64
         || !hash
             .bytes()

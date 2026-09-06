@@ -163,7 +163,7 @@ pub(crate) fn connection(workspace: &Path) -> Result<Connection, ReadError> {
     connection.busy_timeout(Duration::from_secs(5))?;
     Ok(connection)
 }
-fn read<T: serde::de::DeserializeOwned + Default>(
+pub(crate) fn read<T: serde::de::DeserializeOwned + Default>(
     db: &Connection,
     key: &str,
 ) -> Result<T, ReadError> {

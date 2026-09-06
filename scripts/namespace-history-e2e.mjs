@@ -566,6 +566,14 @@ export async function runNamespaceHistory({
     resumedGeneration,
   );
   assert.equal(resumedRead.markdown, newer.markdown);
+  // Same native cycle as :qa, including the GUI owner's Core save barrier,
+  // without actually closing the WebDriver application mid-assertion.
+  const unchangedStart = performance.now();
+  const unchanged = await cli("backup", "run");
+  const unchangedBackupMs = Math.round(performance.now() - unchangedStart);
+  assert.equal(unchanged.skipped, true);
+  assert.equal(unchanged.reason, "already-uploaded");
+  assert.equal(unchanged.local_generation, null);
   assert.equal(
     await execute(
       sessionId,
@@ -586,6 +594,7 @@ export async function runNamespaceHistory({
     liveRevision: newer.source.document_revision,
     timingMs: {
       backupCycle: captureMs,
+      unchangedBackupCycle: unchangedBackupMs,
       historicalRead: historicalReadMs,
       preview: previewMs,
     },
@@ -601,6 +610,7 @@ export async function runNamespaceHistory({
       "history-absolute-local-datetime-with-ago",
       "centered-native-shutdown-progress-and-cancel-focus-restoration",
       "manual-backup-survives-qa-withdrawal-and-captures-latest-note",
+      "unchanged-backup-receipt-skips-restic-and-transfer-restart",
       "group-create-and-rename-without-note-mutation",
       "child-note-placement-and-distinct-entry-id",
       "native-cli-owner-save-barrier-without-focus-change",

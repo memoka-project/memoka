@@ -216,6 +216,16 @@ Googleは1世代のcopy後に別の整理単位を巡回する。整理前には
 OS close、`:quit`、`:q`、`:qa`は共通shutdown処理を使う。
 確定Core保存を先にflushし、未包含変更のローカル履歴と追加先への転送を待つ。
 
+同じNativeServiceで確認済みのbackup cycleについて、process-local receiptでno-opを早期判定する。
+Core保存barrier自体は省かず、SQLite read transactionで現在のcontent_epoch、保存済みepoch、保存先設定、転送台帳を照合する。
+公開される待ち件数だけでは省略しない。保持中の全世代が、同じrepository IDの台帳でdeliveredまたはDriveのawaiting_verificationに含まれ、pendingが空であることを要する。
+有効なlocal保存先とlocal履歴はconfigのhash、snapshot名・size・mtimeを確認し、欠落・差替え・symlink等があれば通常の検証へ戻す。
+receiptが成立する場合は全Noteのvalidate、Restic起動・世代一覧取得、copyの再起動を省く。保存状態や保護済み日時を書き換えない。
+receiptは永続化せず、再起動時は通常確認する。編集、保存先の追加/変更、転送失敗や台帳不一致、明示check/maintain等は通常経路へ戻す。
+snapshotを変更しない正常なidle保持確認はreceiptを捨てない。これは完全性検査ではなく、明示checkや変更時の検証を代替しない。
+通常のcloud tickもreceiptにより未転送がなければ新しいworkerを起動しない。idle/manualの検証・整理は独立して実行する。
+開始済みworkerは省略判定で中断しないため、終了時に実行中の検証・整理が残れば従来どおり完了を待つ。
+
 終了・Workspace切替・Updaterは同じ進捗overlayで、保存中、履歴作成・転送中、編集復帰中、中断待ち、実行中、失敗を区別する。
 再試行、操作のキャンセル、バックアップだけを中断して続行する選択肢を用意する。
 省略はCore保存成功後に限り、正本保存の失敗を無視して終了する選択肢は提供しない。

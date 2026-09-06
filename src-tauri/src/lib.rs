@@ -8,6 +8,7 @@ mod application_config;
 mod attachment;
 mod background_operation;
 pub mod backup;
+mod backup_checkpoint;
 pub mod backup_management;
 pub mod backup_progress;
 pub mod backup_settings;

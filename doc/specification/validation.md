@@ -129,6 +129,9 @@ Driveのupload完了を保護済みと混同しないこと、検証待ちの再
 終了の待機上限はなく、nativeで31秒・frontendで仮想120秒待機してもtimeout/cancelしない。終了準備中に未開始の検証・整理を開始せず、取消で再開できることを確認する。
 `:backup`→`:qa`→終了取消では転送を中止せず、編集へfocusが戻り、古い進捗poll・未開始の最終captureを止める。
 取消直後の再`:qa`と遅延応答、取消済みIDの再解除、CLIの独立した待機を検査する。切替・更新取消も同様とし、明示中断時だけ子processの回収を待つ。
+確認済みの無変更cycleではCore barrier後のRestic/転送起動を省き、status・保護日時・世代を変更しない。cold startは省略しない。
+変更epoch、保存先追加/変更/無効化、待ち件数0だが未包含世代がある台帳、repository ID不一致、local履歴/保存先の欠落・snapshot差替えを検査する。
+転送済み検証待ちはno-op判定を妨げず、実行中のworkerを中断しない。native GUI＋owner CLI経由で無変更cycleの省略と経過時間を記録する。
 一時cacheのowner-only権限・共有・破棄、uncached full check、実stdio JSON統計、長い/不正logの上限と秘密の非公開を確認する。
 工程別表示、世代数と通信量の区別、未計測値、失敗/中断、poll中の入力draft保持を確認する。
 ID再利用がleased handle内だけであり、copy後・実削除前のfresh照合が残ること、`cat config`以外のlockを省略しないことを確認する。

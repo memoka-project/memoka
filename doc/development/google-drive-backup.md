@@ -326,3 +326,29 @@ nativeの31秒待機とfrontendの仮想120秒待機でもtimeout/cancelしな�
 一時Workspaceで`:backup`→`:qa`→Ctrl-cの後に編集へ戻り、手動backupが成功し、最新の本文を新世代から読めることを確認した。
 証拠は`evidence/generated/namespace-history-tauri.json`（2026/09/07 00:20開始、`passed: true`、`generationAfterCancelledQuit`を記録）。
 実Driveへの転送とWindows環境の再確認は未実施。
+
+### 9.4 無変更の終了時にbackup cycleを短絡（2026/09/07）
+
+`:qa`は常にCore barrier後にbackup cycleを呼んでいた。`run_local`のepoch一致判定より前に全Note検証とResticのID・snapshot一覧取得があり、
+local copy確認とcloud worker起動でもsourceの一覧を再取得していた。未転送0でもこれらの確認を繰り返す構造だった。
+
+- 確認済みcycleのprocess-local receiptを導入した。cold startでは従来の検証を行い、永続化された「idle」だけで省略しない。
+- SQLiteの同じread transactionでcontent_epoch、保存済みepoch、保存先設定、repository ID、世代ごとの転送台帳を確認する。
+- 公開pending件数0だけでは十分としない。保持中の全世代がdeliveredまたはDriveのawaiting_verificationに入り、pendingが空である場合だけ省略する。
+- localのrepository config hash、snapshot名・size・mtimeも比較する。欠落・差替え・symlink、設定/資格情報変更、転送error等では通常処理へ戻す。
+- 無変更時はNoteを再hydrateせず、Restic/rclone/資格情報ストアを開かずに返す。保護日時・status・世代を更新しない。
+- 通常cloud tickやupload-only workerの次の巡回も、確認済みなら新しい一覧取得を行わない。idle/manual検証は別で実行し、開始済み処理の終了待ち・明示中断は変更しない。
+- snapshotを変更しない正常なidle保持確認ではreceiptを維持する。実際のforget/pruneによる変更はfile比較で検出する。明示check/maintainや整備失敗はreceiptを無効化する。
+
+実Resticを使う一時Workspaceの単独回帰試験では、無変更の通常確認1,740msに対し、確認済み経路は412µsだった。
+これはローカルのnative cycleの測定であり、Drive転送速度やアプリ全体の終了時間ではない。Core保存barrierと既存workerの待機は残る。
+
+release binaryを使うnative namespace/history E2Eも合格した。
+一時Workspaceで`:backup`→`:qa`→Ctrl-c後の手動backup継続を確認し、その後のGUI owner経由の無変更cycleは10msで完了した。
+この計測にはCLI/IPCとCore保存barrierを含むが、アプリの終了そのものは含まない。
+証拠は`evidence/generated/namespace-history-tauri.json`（2026/09/07 00:52開始、`passed: true`、`timingMs.unchangedBackupCycle`を記録）。
+実Driveの転送速度・実環境での終了時間とWindows環境の再確認は未実施。
+
+format/spec/lint/typecheck、frontend 694件、Rust 134件、CLI 5件、sidecar境界、production frontend buildを確認した。
+`verify`中に既存の検索UIのago表示テストが一度失敗したが、frontend全件の再実行で合格した。検索/日時の実装やテストには変更していない。
+通常ignoredの大規模calendar/FTSテストは今回の再実行対象外とした。

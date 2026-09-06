@@ -30,6 +30,7 @@ pub struct NativeService {
     cloud_job: Arc<Mutex<Option<CloudJob>>>,
     cloud_paused: Arc<AtomicBool>,
     departure: Arc<Mutex<Option<String>>>,
+    backup_checkpoint: Arc<Mutex<Option<crate::backup_checkpoint::BackupCheckpoint>>>,
     local_maintenance_pending: Arc<AtomicBool>,
     settings: Arc<Mutex<()>>,
     _lease: Option<Arc<crate::workspace_owner::WorkspaceLease>>,
@@ -74,6 +75,7 @@ impl NativeService {
             cloud_job: Default::default(),
             cloud_paused: Default::default(),
             departure: Default::default(),
+            backup_checkpoint: Default::default(),
             local_maintenance_pending: Default::default(),
             settings: Default::default(),
             _lease: None,
@@ -159,6 +161,9 @@ impl NativeService {
         {
             return Ok(json!({"schema_version":3,"queued":false}));
         }
+        if !allow_deferred && self.backup_is_current() {
+            return Ok(json!({"schema_version":3,"queued":false,"reason":"already-uploaded"}));
+        }
         let cancel = restic::cancellation();
         let allow_deferred = Arc::new(AtomicBool::new(allow_deferred));
         let target = Arc::new(Mutex::new(None));
@@ -186,6 +191,10 @@ impl NativeService {
                 let result = (|| {
                     let force = forced.lock().map_err(|_| busy())?.pop_front();
                     let _source_lease = service.repositories.try_read().map_err(|_| busy())?;
+                    let transfers_only = service.departing() || !deferred_at_start;
+                    if force.is_none() && transfers_only && service.backup_is_current() {
+                        return Ok(false);
+                    }
                     let restic = base
                         .as_ref()
                         .map_err(Clone::clone)?
@@ -194,7 +203,7 @@ impl NativeService {
                         &service.workspace,
                         &restic,
                         force.as_deref(),
-                        service.departing() || !deferred_at_start,
+                        transfers_only,
                         |id| {
                             if let Ok(mut value) = target.lock() {
                                 *value = Some(id.into());
@@ -451,6 +460,7 @@ impl NativeService {
                 )
             }
             BackupAction::Maintain { dry_run } => {
+                self.invalidate_backup_checkpoint();
                 let operation = self.operations.begin()?;
                 let mut result = self.maintain(dry_run, true, operation.cancel.clone())?;
                 // Release the local writer lease before any network work.
@@ -481,6 +491,7 @@ impl NativeService {
                 self.maintain(false, true, operation.cancel.clone())
             }
             BackupAction::Check { full } => {
+                self.invalidate_backup_checkpoint();
                 let operation = self.operations.begin()?;
                 let _lease = self.repositories.try_write().map_err(|_| busy())?;
                 let restic = Restic::discover(operation.cancel.clone())?;
@@ -489,11 +500,29 @@ impl NativeService {
             }
         }
     }
+    fn backup_is_current(&self) -> bool {
+        self.backup_checkpoint.lock().is_ok_and(|checkpoint| {
+            checkpoint
+                .as_ref()
+                .is_some_and(|checkpoint| checkpoint.is_current(&self.workspace).unwrap_or(false))
+        })
+    }
+    fn invalidate_backup_checkpoint(&self) {
+        if let Ok(mut checkpoint) = self.backup_checkpoint.lock() {
+            *checkpoint = None;
+        }
+    }
     pub fn run_cycle(&self) -> Result<Value, ReadError> {
         let operation = self.operations.begin()?;
         let local = {
             let _capture = self.capture.try_lock().map_err(|_| busy())?;
             let _lease = self.repositories.try_read().map_err(|_| busy())?;
+            if self.backup_is_current() {
+                return Ok(
+                    json!({"schema_version":3,"local_generation":null,"destinations":[],"transfer_error":null,"maintenance":null,"skipped":true,"reason":"already-uploaded"}),
+                );
+            }
+            self.invalidate_backup_checkpoint();
             let restic = Restic::discover(operation.cancel.clone())?;
             backup::run_local(&self.workspace, &restic)?
         };
@@ -533,6 +562,20 @@ impl NativeService {
             Ok(value) => (value["destinations"].clone(), None),
             Err(error) => (json!([]), Some(error)),
         };
+        if !transfer_failed && !operation.cancel.load(Ordering::Acquire) {
+            // Failure to cache is only a missed optimization. Never turn a
+            // successfully verified backup into an error or trust stale proof.
+            if let (Ok(_capture), Ok(_lease)) =
+                (self.capture.try_lock(), self.repositories.try_read())
+            {
+                if let Ok(mut checkpoint) = self.backup_checkpoint.lock() {
+                    *checkpoint =
+                        crate::backup_checkpoint::BackupCheckpoint::record(&self.workspace)
+                            .ok()
+                            .flatten();
+                }
+            }
+        }
         if !operation.cancel.load(Ordering::Acquire) {
             self.schedule_cloud(None)?;
         }
@@ -541,6 +584,7 @@ impl NativeService {
         )
     }
     fn copy(&self, budget: Duration, cancel: restic::Cancellation) -> Result<Value, ReadError> {
+        self.invalidate_backup_checkpoint();
         let _copy = self.copy.try_lock().map_err(|_| busy())?;
         let _lease = self.repositories.try_read().map_err(|_| busy())?;
         if cancel.load(Ordering::Acquire) {
@@ -595,6 +639,11 @@ impl NativeService {
             status.maintenance_error = result.as_ref().err().cloned();
             status.phase = "idle".into();
         })?;
+        if result.is_err() {
+            self.invalidate_backup_checkpoint();
+        }
+        // Successful idle maintenance that changed no snapshot need not throw
+        // away the receipt. Actual forget/prune changes fail its file check.
         result
     }
     fn maintain_destinations(
@@ -660,6 +709,7 @@ impl NativeService {
         Ok(destinations)
     }
     pub fn settings(&self, request: BackupSettingsRequest) -> Result<(), ReadError> {
+        self.invalidate_backup_checkpoint();
         // Metadata-only settings remain usable during copy/maintenance. Each
         // worker observes enabled state before starting the next unit of work.
         match request {
@@ -775,6 +825,133 @@ pub enum BackupSettingsRequest {
 #[cfg(test)]
 mod cloud_scheduler_tests {
     use super::*;
+    #[test]
+    fn verified_unchanged_cycles_skip_children_but_edits_and_cold_starts_do_not() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().to_owned();
+        backup::tests::fixture(&workspace);
+        let service = NativeService::new(workspace.clone());
+        assert!(!service.backup_is_current());
+        let started = std::time::Instant::now();
+        let first = service.run_cycle().unwrap();
+        let full_ms = started.elapsed().as_millis();
+        assert!(first["local_generation"].is_object());
+        assert!(service.backup_is_current());
+        let before: Value = backup::setting(&workspace, "backup.status").unwrap();
+        let started = std::time::Instant::now();
+        let warm = service.run_cycle().unwrap();
+        let warm_us = started.elapsed().as_micros();
+        assert_eq!(warm["skipped"], true);
+        assert_eq!(warm["reason"], "already-uploaded");
+        assert_eq!(
+            before,
+            backup::setting::<Value>(&workspace, "backup.status").unwrap()
+        );
+        assert!(!service.cloud_running());
+
+        // A persisted "idle" status cannot seed a process-local receipt.
+        let reopened = NativeService::new(workspace.clone());
+        assert!(!reopened.backup_is_current());
+        let started = std::time::Instant::now();
+        let cold = reopened.run_cycle().unwrap();
+        let cold_ms = started.elapsed().as_millis();
+        eprintln!(
+            "backup cycle: capture {full_ms} ms; unchanged cold {cold_ms} ms, warm {warm_us} us (no Restic/transport)"
+        );
+        assert!(cold["local_generation"].is_null());
+        assert!(cold.get("skipped").is_none());
+        assert!(reopened.backup_is_current());
+        service.backup(BackupAction::IdleMaintain).unwrap();
+        assert!(
+            service.backup_is_current(),
+            "no-op idle retention must preserve the warm receipt"
+        );
+        let epoch = backup::content_epoch(&workspace).unwrap();
+        backup::save_setting(&workspace, "content_epoch", &(epoch + 1)).unwrap();
+        assert!(!service.backup_is_current());
+        let changed = service.run_cycle().unwrap();
+        assert_eq!(
+            changed["local_generation"]["descriptor"]["content_epoch"],
+            epoch + 1
+        );
+        assert_eq!(service.run_cycle().unwrap()["skipped"], true);
+        let path = restic::Repository::local(&workspace)
+            .local_path()
+            .unwrap()
+            .to_owned();
+        let offline = temp.path().join("offline-history");
+        std::fs::rename(&path, &offline).unwrap();
+        assert!(!service.backup_is_current());
+        assert_eq!(service.run_cycle().unwrap_err().code, "REPOSITORY_MISSING");
+    }
+    #[test]
+    fn uploaded_cloud_generations_do_not_restart_jobs_or_cancel_running_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().to_owned();
+        backup::tests::fixture(&workspace);
+        let service = NativeService::new(workspace.clone());
+        let generation: backup::Generation =
+            serde_json::from_value(service.run_cycle().unwrap()["local_generation"].clone())
+                .unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        let repository_id = "b".repeat(64);
+        let mut config = backup::config(&workspace).unwrap();
+        config.destinations.push(backup::AdditionalTarget {
+            id: id.clone(),
+            location: backup_settings::DestinationLocation::GoogleDrive {
+                connection_id: uuid::Uuid::now_v7().to_string(),
+                root_folder_id: "test-only-folder".into(),
+                display_name: "test-only".into(),
+            },
+            repository_id: repository_id.clone(),
+            credential_ref: "not-accessed".into(),
+            enabled: true,
+            retention: Default::default(),
+        });
+        backup::save_setting(&workspace, "backup.config", &config).unwrap();
+        let ledger = backup_settings::TransferLedger {
+            repository_id: Some(repository_id),
+            awaiting_verification: std::collections::BTreeMap::from([(
+                generation.descriptor.generation_id.clone(),
+                generation,
+            )]),
+            ..Default::default()
+        };
+        backup_settings::save_transfer(&workspace, &id, &ledger, |s| {
+            s.phase = "verification-pending".into();
+        })
+        .unwrap();
+        // Model an upload acknowledgement without ever opening Google or the
+        // OS credential store. The source was verified by the real local run.
+        *service.backup_checkpoint.lock().unwrap() =
+            crate::backup_checkpoint::BackupCheckpoint::record(&workspace).unwrap();
+        assert!(service.backup_is_current());
+        assert_eq!(service.schedule_cloud(None).unwrap()["queued"], false);
+        service
+            .backup(BackupAction::Departure {
+                active: true,
+                id: "quit".into(),
+            })
+            .unwrap();
+        let before: Value = backup::setting(&workspace, "backup.status").unwrap();
+        assert_eq!(service.run_cycle().unwrap()["skipped"], true);
+        assert!(!service.cloud_running());
+        let cancel = restic::cancellation();
+        *service.cloud_job.lock().unwrap() = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: Default::default(),
+            forced: Default::default(),
+            allow_deferred: Default::default(),
+        });
+        assert_eq!(service.run_cycle().unwrap()["skipped"], true);
+        assert!(service.cloud_running());
+        assert!(!cancel.load(Ordering::Acquire));
+        assert_eq!(
+            before,
+            backup::setting::<Value>(&workspace, "backup.status").unwrap()
+        );
+        *service.cloud_job.lock().unwrap() = None;
+    }
     #[test]
     fn completion_from_previous_worker_cannot_clear_new_worker() {
         let jobs = Arc::new(Mutex::new(None));
