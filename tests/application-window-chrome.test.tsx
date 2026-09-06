@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../app/src/App";
 import { ApplicationTabBar } from "../app/src/components/ApplicationTabBar";
@@ -294,13 +300,14 @@ describe("custom application window chrome", () => {
       const run = vi.fn(async () => {
         if (holdBackup) await gate;
       });
+      const cancel = vi.fn(async () => releaseBackup());
       const fixture = createDesktopWindowFixture();
       const forceClose = vi.fn(async () => undefined);
       fixture.port.forceClose = forceClose;
       const view = render(
         <App
           desktopWindow={fixture.port}
-          backup={backupFixture({ run, cancel: async () => releaseBackup() })}
+          backup={backupFixture({ run, cancel })}
         />,
       );
       const tree = await screen.findByRole("tree", { name: "ノートツリー" });
@@ -342,6 +349,8 @@ describe("custom application window chrome", () => {
       );
       await waitFor(() => expect(document.activeElement).toBe(origin));
       expect(forceClose).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+      await act(async () => releaseBackup());
     },
   );
 

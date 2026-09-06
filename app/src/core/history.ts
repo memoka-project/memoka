@@ -59,9 +59,49 @@ export interface BackupDestinationStatus {
   readonly error: NativeError | null;
   readonly maintenance_error: NativeError | null;
   readonly pending_copy_count: number;
+  readonly verification_error?: NativeError | null;
+  readonly pending_verification_count?: number;
   readonly expired_copy_count: number;
   readonly next_retry_at?: string | null;
   readonly active_generation_id?: string | null;
+  readonly failure_count?: number;
+  readonly progress?: BackupTransferProgress | null;
+}
+export type BackupTransferStage =
+  | "connecting"
+  | "listing"
+  | "source-verification"
+  | "uploading"
+  | "target-verification"
+  | "maintaining"
+  | "complete";
+export type BackupTransferOperation =
+  | "repository"
+  | "snapshots"
+  | "descriptor"
+  | "file-list"
+  | "copy"
+  | "forget"
+  | "prune"
+  | "check"
+  | "other";
+export interface BackupTransferProgress {
+  readonly running: boolean;
+  readonly stage: BackupTransferStage;
+  readonly started_at: string;
+  readonly last_progress_at: string;
+  readonly elapsed_ms: number;
+  readonly stage_elapsed_ms: number;
+  readonly generation_captured_at: string | null;
+  readonly completed_generations: number;
+  readonly total_generations: number;
+  readonly operation: BackupTransferOperation | null;
+  readonly failed_operation?: BackupTransferOperation | null;
+  readonly operations_completed: number;
+  readonly operation_counts: Partial<Record<BackupTransferOperation, number>>;
+  readonly transport_bytes: number | null;
+  readonly bytes_per_second: number | null;
+  readonly transport_errors: number;
 }
 export type BackupSettingsRequest =
   | {
@@ -90,6 +130,23 @@ export function backupTransferFailures(
     const error = state.status.destinations[destination.id]?.error;
     return destination.enabled && error ? [{ destination, error }] : [];
   });
+}
+/** Diagnostics include maintenance failures without making them transfer failures
+ * that would block departure after an already verified backup. */
+export function backupErrorCount(state: BackupState): number {
+  return (
+    Number(!!state.status.local_error) +
+    Number(!!state.status.maintenance_error) +
+    state.config.destinations.filter((target) => {
+      const status = state.status.destinations[target.id];
+      return (
+        target.enabled &&
+        (status?.error ||
+          status?.verification_error ||
+          status?.maintenance_error)
+      );
+    }).length
+  );
 }
 export function backupCopyingDestinations(
   state: BackupState,
@@ -133,7 +190,8 @@ export interface BackupPort {
   maintainIdle(): Promise<unknown>;
   cloud?: CloudPort;
   scheduleCloud?(id?: string): Promise<unknown>;
-  waitTransfers?(budgetMs: number): Promise<unknown>;
+  waitTransfers?(departureId: string): Promise<unknown>;
+  setDeparture?(active: boolean, departureId: string): Promise<unknown>;
   settings(value: BackupSettingsRequest): Promise<void>;
   chooseAdditional(): Promise<string | null>;
   history(
@@ -216,10 +274,15 @@ export function createDefaultBackupPort(): BackupPort | null {
         operation: "backup",
         action: { kind: "cloud_tick", id: id ?? null },
       }),
-    waitTransfers: (budgetMs) =>
+    waitTransfers: (departureId) =>
       request({
         operation: "backup",
-        action: { kind: "wait_transfers", budget_ms: budgetMs },
+        action: { kind: "wait_transfers", departure_id: departureId },
+      }),
+    setDeparture: (active, departureId) =>
+      request({
+        operation: "backup",
+        action: { kind: "departure", active, id: departureId },
       }),
     cloud: {
       list: () => cloud({ kind: "list" }),
@@ -382,9 +445,13 @@ export class BackupController {
       .catch(() => undefined);
     return result;
   }
-  async flush(): Promise<void> {
+  async flush(signal?: AbortSignal): Promise<void> {
     const epoch = this.cancellationEpoch;
+    if (signal?.aborted) return;
     if (this.pending) await this.pending;
+    // Cancelling departure must not cancel an earlier :backup or launch an
+    // unnecessary final capture after that backup eventually finishes.
+    if (signal?.aborted) return;
     if (epoch !== this.cancellationEpoch)
       throw { code: "CANCELLED", message: "バックアップをキャンセルしました" };
     await this.run();
@@ -397,6 +464,8 @@ export class BackupController {
   resume(): void {
     if (!this.stopped) return;
     this.stopped = false;
+    // Departure owns its native observer; resuming this timer must not clear
+    // a newer quit/switch request's observer from a delayed callback.
     void this.port.resume().catch(this.onError);
     this.schedule(60_000);
   }

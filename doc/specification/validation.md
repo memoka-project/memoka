@@ -123,6 +123,18 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 `MEMOKA_TEST_LONG_CLOUD_COPY=1 node scripts/test-rclone-boundary.mjs`による30秒超copyを実行する。
 これらはlocal transportの成立性検証で、実OAuth/Driveの成功として扱わない。
 schema 3移行、資格情報/環境/子孫process、lease、scheduler、GUI入力の回帰試験を通常verifyへ含める。
+転送後検証のremote `dump/ls`回数が無関係な世代数に比例しないこと、対象世代・欠損・再試行の検証が残ることを確認する。
+Driveのupload完了を保護済みと混同しないこと、検証待ちの再起動/元世代のlocal保持整理後の再開、copy応答喪失時の非重複、検証不一致時の保護日時維持を実Resticで検査する。
+未検証世代がある追加先ではforget/pruneを保留し、検証・整理の一時障害は新規uploadをbackoffしない。
+終了の待機上限はなく、nativeで31秒・frontendで仮想120秒待機してもtimeout/cancelしない。終了準備中に未開始の検証・整理を開始せず、取消で再開できることを確認する。
+`:backup`→`:qa`→終了取消では転送を中止せず、編集へfocusが戻り、古い進捗poll・未開始の最終captureを止める。
+取消直後の再`:qa`と遅延応答、取消済みIDの再解除、CLIの独立した待機を検査する。切替・更新取消も同様とし、明示中断時だけ子processの回収を待つ。
+一時cacheのowner-only権限・共有・破棄、uncached full check、実stdio JSON統計、長い/不正logの上限と秘密の非公開を確認する。
+工程別表示、世代数と通信量の区別、未計測値、失敗/中断、poll中の入力draft保持を確認する。
+ID再利用がleased handle内だけであり、copy後・実削除前のfresh照合が残ること、`cat config`以外のlockを省略しないことを確認する。
+保持数以下のno-op、保持数超過・設定変更・24時間後の再評価、未完了writeの回収待ち永続化、
+後続成功時にも古い回収待ちを失わないこと、prune前の未知snapshot拒否を確認する。
+Linuxでは実Resticの中断後にlock fileが消えること、後始末中にtransportが生存すること、猶予超過で子孫が回収されることを確認する。
 
 実Googleアカウントの認証、token更新、認可取消後の既存root参照、元config/keyringを使わない別OSユーザー/別PC復旧が正式提供のgateである。
 Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切替/Updater、中断後の子孫回収もnative確認する。

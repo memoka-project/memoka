@@ -125,9 +125,12 @@ Resticパスワードとは別のkeyであり、Workspace DB/Captureへ入れな
 - 子processの継承`RESTIC_*`/`RCLONE_*`/認証・library injection環境を除去し、必要なrepository/root/config/passwordだけをchild専用環境へ設定する。任意backend URLやcredential引数は受け付けない。
 - 追加先passwordはOS資格情報ストアと必要な子process環境だけへ渡す。local repositoryは明示的なno-passwordである。
 - 生成物allowlistは`backup.json`、`state.sqlite`、`blobs/<sha256>`に限定し、config、token、log、cache、鍵を含めない。
+- Google転送jobの一時Restic cacheはWorkspace外のowner-only directoryに置き、job終了・中断で破棄する。OS crash/SIGKILL時に残る可能性はある。
+- 転送進捗は固定command種別と数値だけを公開する。rclone JSON logのmessage/object、認証情報、生の子process出力は公開しない。
+- 周期的な通信統計はnativeのbounded pipeで消費し、DBへ毎秒保存しない。stderrは容量制限付きで末尾を保持し、長時間転送の末尾に出る認証/容量/通信エラーの分類を維持する。
 - ブラウザopenerへbackup用secret環境を渡さない。HTTP redirect/TLS検証の無効化、任意認証endpointは許可しない。
 - Restic/rcloneのstdout/stderrは上限付きで回収し、raw診断やtokenをGUI/logへ返さず、既知のerror分類だけを使う。
-- Linux process group / Windows Job Objectで子孫を管理し、cancel/timeout時はpipeとleaseの解放前にkill/reapする。stdioにlogを混ぜず、外部公開HTTP/rcdを起動しない。
+- Linux process group / Windows Job Objectで子孫を管理する。cancel/timeoutではLinuxのRestic本体へSIGINTを送り、rcloneでのlock解除を最大20秒待つ。Windowsの非console childでは同じ上限まで自然終了を待ち、その後の残存子孫をkill/reapしてpipeとleaseを解放する。stdioにlogを混ぜず、外部公開HTTP/rcdを起動しない。
 - runtimeでは検証済み同梱binaryだけを使う。PATH/cwd fallback、self-update、実行時downloadは行わない。
 
 ## 9. 診断log

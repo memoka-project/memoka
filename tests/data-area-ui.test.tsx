@@ -30,7 +30,7 @@ describe("Workspace data area startup", () => {
   });
 
   it.each([false, true])(
-    "keeps the active editor until backup cancellation completes (switch=%s)",
+    "withdraws switching without stopping backup, or reaps children on explicit skip (switch=%s)",
     async (proceed) => {
       const dataArea = new MemoryDataAreaPort(true, "memory://next-workspace");
       const activate = vi.spyOn(dataArea, "activate");
@@ -81,11 +81,15 @@ describe("Workspace data area startup", () => {
             : "切り替えを取り消す",
         }),
       );
-      await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
-      expect(activate).not.toHaveBeenCalled();
-      await act(async () => {
-        reaped();
-      });
+      if (proceed) {
+        await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+        expect(activate).not.toHaveBeenCalled();
+        await act(async () => {
+          reaped();
+        });
+      } else {
+        expect(cancel).not.toHaveBeenCalled();
+      }
       await waitFor(() =>
         expect(
           screen.queryByRole("dialog", { name: "Workspaceを切り替え" }),
@@ -96,6 +100,10 @@ describe("Workspace data area startup", () => {
         proceed ? "memory://next-workspace" : "memory://workspace",
       );
       if (!proceed) expect(editor.isConnected).toBe(true);
+      await act(async () => {
+        stop();
+        reaped();
+      });
     },
   );
 });

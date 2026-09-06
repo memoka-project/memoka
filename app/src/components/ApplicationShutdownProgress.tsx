@@ -26,7 +26,7 @@ export function ApplicationShutdownProgress({
       : progress.kind === "update"
         ? "更新"
         : "終了";
-  const canCancel = !["saving", "closing", "cancelling"].includes(
+  const canCancel = !["saving", "closing", "cancelling", "resuming"].includes(
     progress.stage,
   );
 
@@ -49,6 +49,13 @@ export function ApplicationShutdownProgress({
       <h2>{failed ? `${action}前の確認` : `${action}の準備をしています`}</h2>
       {!failed && <progress />}
       <p role="status">{shutdownProgressLabel(progress)}</p>
+      {progress.stage === "backup" && (
+        <p>
+          時間制限を設けず転送の完了を待ちます。Driveの未開始の検証・保持整理は後回しにし、次回起動後も再開します。実行中の検証・整理がある場合は、その処理の終了を待ちます。「
+          {action}
+          を取り消す」を選ぶと、バックアップを続けたまま編集画面に戻ります。
+        </p>
+      )}
       {detail && <p>{detail}</p>}
       {progress.error && <p role="alert">{progress.error}</p>}
       {(failed || canCancel) && (
@@ -71,6 +78,8 @@ function shutdownProgressLabel(
   progress: ApplicationShutdownProgressState,
 ): string {
   if (progress.stage === "saving") return "変更を保存しています…";
+  if (progress.stage === "resuming")
+    return "バックアップを継続して編集画面に戻ります…";
   if (progress.stage === "cancelling")
     return "バックアップを中断し、実行中の処理の終了を待っています…";
   if (progress.stage === "closing")

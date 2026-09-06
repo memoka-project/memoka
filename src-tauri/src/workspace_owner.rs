@@ -125,7 +125,12 @@ pub enum BackupAction {
         id: Option<String>,
     },
     WaitTransfers {
-        budget_ms: u32,
+        #[serde(default)]
+        departure_id: Option<String>,
+    },
+    Departure {
+        active: bool,
+        id: String,
     },
     IdleMaintain,
     Maintain {

@@ -115,6 +115,8 @@ pub struct Restic {
     pub cancel: Cancellation,
     pub timeout: Duration,
     deadline: Option<Instant>,
+    cache: Option<Arc<tempfile::TempDir>>,
+    progress: Option<Arc<crate::backup_progress::Progress>>,
 }
 impl Restic {
     pub fn discover(cancel: Cancellation) -> Result<Self, ReadError> {
@@ -174,7 +176,32 @@ impl Restic {
             cancel,
             timeout: Duration::from_secs(3600),
             deadline: None,
+            cache: None,
+            progress: None,
         })
+    }
+    /// A private, disposable cache shared across one transfer job's commands
+    /// and generations. Never reuse the user's Restic cache or capture it.
+    pub(crate) fn with_transfer_cache(&self) -> Result<Self, ReadError> {
+        let mut value = self.clone();
+        if value.cache.is_none() {
+            let directory = tempfile::Builder::new()
+                .prefix("memoka-restic-")
+                .tempdir()?;
+            crate::private_files::directory(directory.path())?;
+            value.cache = Some(Arc::new(directory));
+        }
+        Ok(value)
+    }
+    pub(crate) fn with_progress(&self, progress: Arc<crate::backup_progress::Progress>) -> Self {
+        let mut value = self.clone();
+        value.progress = Some(progress);
+        value
+    }
+    pub(crate) fn stage(&self, stage: crate::backup_progress::Stage) {
+        if let Some(progress) = &self.progress {
+            progress.stage(stage);
+        }
     }
     /// Bound the whole operation, including metadata enumeration, validation,
     /// copy and verification, rather than restarting the clock per subprocess.
@@ -235,9 +262,23 @@ impl Restic {
         }
         let mut command = Command::new(&self.binary);
         sanitized(&mut command);
-        command.arg("--repo").arg(repo.address()).arg("--no-cache");
+        command.arg("--repo").arg(repo.address());
+        // Explicit integrity checks must still read the repository itself.
+        if let Some(cache) = self
+            .cache
+            .as_ref()
+            .filter(|_| args.first().is_none_or(|arg| arg != "check"))
+        {
+            checked_directory(cache.path())?;
+            command.arg("--cache-dir").arg(cache.path());
+        } else {
+            command.arg("--no-cache");
+        }
         if let Some(context) = repo.drive_context() {
             context.configure(&mut command)?;
+            if self.progress.is_some() {
+                context.configure_progress(&mut command);
+            }
         }
         match &repo.password {
             Password::Insecure => {
@@ -271,7 +312,27 @@ impl Restic {
                 "Restic operation deadline reached",
             ));
         }
-        let result = run_process(command, &self.cancel, timeout);
+        use crate::backup_progress::Operation;
+        let operation = match args.first().and_then(|arg| arg.to_str()) {
+            Some("cat") => Operation::Repository,
+            Some("snapshots") => Operation::Snapshots,
+            Some("dump") => Operation::Descriptor,
+            Some("ls") => Operation::FileList,
+            Some("copy") => Operation::Copy,
+            Some("forget") => Operation::Forget,
+            Some("prune") => Operation::Prune,
+            Some("check") => Operation::Check,
+            _ => Operation::Other,
+        };
+        if let Some(progress) = &self.progress {
+            progress.operation_started(operation);
+        }
+        let result =
+            crate::sidecar::run_restic(command, &self.cancel, timeout, self.progress.clone());
+        if let Some(progress) = &self.progress {
+            progress
+                .operation_finished(operation, result.as_ref().is_ok_and(|r| r.status.success()));
+        }
         // Restic's child rclone can refresh the shared config too. Inspect
         // rewritten config/side files after reaping, also on cancel/error.
         if let Some(context) = repo.drive_context() {
@@ -292,9 +353,12 @@ impl Restic {
                     Some(12) => "CREDENTIALS",
                     _ => "RESTIC_FAILED",
                 },
-                "Restic operation failed; no generation was accepted",
+                match status.code() {
+                    Some(11) => "バックアップ保存先のロックを取得できません。別の処理が実行中、または異常終了した処理のロックが残っています。保存済みの世代は維持されています。",
+                    _ => "Restic operation failed; existing verified generations remain protected",
+                },
             )
-            .with_details(serde_json::json!({"exit_code":status.code()})));
+            .with_details(serde_json::json!({"exit_code":status.code(), "operation":operation})));
         }
         if stdout.len() > 64 * 1024 * 1024 {
             return Err(ReadError::new(
@@ -305,7 +369,10 @@ impl Restic {
         Ok(stdout)
     }
     pub fn repository_id(&self, repo: &Repository) -> Result<String, ReadError> {
-        let value = self.json(repo, &["cat", "config"])?;
+        // Freshly decrypt the config, but do not upload a read lock just to
+        // identify the repository. This reads no snapshot/index/pack; normal
+        // data reads, copy, forget and prune still use Restic's own locks.
+        let value = self.json(repo, &["cat", "config", "--no-lock"])?;
         let id = value["id"]
             .as_str()
             .ok_or_else(|| ReadError::new("RESTIC_PROTOCOL", "Repository ID is missing"))?;
@@ -313,6 +380,18 @@ impl Restic {
             return Err(ReadError::new("RESTIC_PROTOCOL", "Invalid repository ID"));
         }
         Ok(id.into())
+    }
+    /// Reuse only the identity checked when this leased cloud handle opened.
+    /// Never persists across jobs; post-copy checks and pre-deletion checks
+    /// deliberately call repository_id instead to detect replacement.
+    pub(crate) fn opened_repository_id(&self, repo: &Repository) -> Result<String, ReadError> {
+        match repo
+            .drive_context()
+            .and_then(|c| c.verified_repository_id.as_ref())
+        {
+            Some(id) => Ok(id.clone()),
+            None => self.repository_id(repo),
+        }
     }
     pub fn initialize(
         &self,
@@ -371,6 +450,175 @@ pub fn args(values: &[impl AsRef<OsStr>]) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn only_config_identity_reads_skip_locks_and_leased_identity_never_replaces_a_fresh_check() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("restic-test");
+        // No backend is launched. Reject --no-lock for any data operation.
+        fs::write(&script, format!("#!/bin/sh\nconfig=false; unlocked=false\nfor arg do\n case \"$arg\" in config) config=true;; --no-lock) unlocked=true;; esac\ndone\nif $config; then\n $unlocked || exit 1\n printf '%s' '{{\"id\":\"{}\"}}'\nelse\n $unlocked && exit 1\n printf '[]'\nfi\n", "a".repeat(64))).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let private = temp.path().join("private");
+        crate::private_files::directory(&private).unwrap();
+        let config = private.join("synthetic.conf");
+        fs::write(&config, "# test only\nRCLONE_ENCRYPT_V0:\nsynthetic\n").unwrap();
+        let lease =
+            Arc::new(crate::private_files::Lease::acquire(temp.path().join("lease")).unwrap());
+        let context = crate::rclone::DriveRepository {
+            rclone: crate::rclone::Rclone::discover().unwrap(),
+            config,
+            key: Arc::new(zeroize::Zeroizing::new("test-only".into())),
+            folder_id: "folder123".into(),
+            _lease: lease.clone(),
+            _repository_lease: Some(lease),
+            verified_repository_id: Some("b".repeat(64)),
+        };
+        let repo = Repository::drive(context.clone(), Password::Secret("test-only".into()));
+        let restic = Restic {
+            binary: script,
+            cancel: cancellation(),
+            timeout: Duration::from_secs(5),
+            deadline: None,
+            cache: None,
+            progress: None,
+        };
+        assert_eq!(
+            restic
+                .within(Duration::ZERO)
+                .opened_repository_id(&repo)
+                .unwrap(),
+            "b".repeat(64)
+        );
+        assert_eq!(
+            restic
+                .within(Duration::ZERO)
+                .repository_id(&repo)
+                .unwrap_err()
+                .code,
+            "TIMEOUT"
+        );
+        assert_eq!(restic.repository_id(&repo).unwrap(), "a".repeat(64));
+        assert!(
+            crate::backup::generations(&restic, &repo, None, None)
+                .unwrap()
+                .is_empty()
+        );
+        let mut unopened = context;
+        unopened.verified_repository_id = None;
+        let reopened = Repository::drive(unopened, repo.password.clone());
+        assert_eq!(
+            restic.opened_repository_id(&reopened).unwrap(),
+            "a".repeat(64)
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_real_restic_removes_its_lock_before_returning() {
+        let temp = tempfile::tempdir().unwrap();
+        let restic = Restic::discover(cancellation()).unwrap();
+        let repo = Repository::at(temp.path().join("repository"), Password::Insecure);
+        restic.initialize(&repo, None).unwrap();
+        let child_repo = repo.clone();
+        let child_restic = restic.clone();
+        let ready = temp.path().join("reading");
+        let child_ready = ready.clone();
+        let worker = std::thread::spawn(move || {
+            child_restic.run(
+                &child_repo,
+                &[
+                    "backup".into(),
+                    "--stdin-from-command".into(),
+                    "--stdin-filename".into(),
+                    "test-input".into(),
+                    "--".into(),
+                    "sh".into(),
+                    "-c".into(),
+                    "printf ready > \"$1\"; exec sleep 30".into(),
+                    "restic-test".into(),
+                    child_ready.into_os_string(),
+                ],
+                None,
+            )
+        });
+        let began = Instant::now();
+        while !ready.exists() && !worker.is_finished() && began.elapsed() < Duration::from_secs(10)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let locks = repo.local_path().unwrap().join("locks");
+        let had_lock = std::fs::read_dir(&locks).unwrap().count() > 0;
+        // No global --no-lock: an exclusive operation still rejects this lock.
+        let pruning = restic.run(&repo, &args(&["prune"]), None);
+        restic.cancel.store(true, Ordering::Release);
+        let stopped = worker.join().unwrap().unwrap_err();
+        let error = pruning.unwrap_err();
+        assert_eq!(error.code, "REPOSITORY_LOCKED");
+        assert!(error.message.contains("ロック"));
+        assert_eq!(error.details["operation"], "prune");
+        assert_eq!(stopped.code, "CANCELLED");
+        assert!(ready.exists() && had_lock);
+        assert_eq!(std::fs::read_dir(locks).unwrap().count(), 0);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_real_restic_over_rclone_stdio_removes_its_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let restic = Restic::discover(cancellation()).unwrap();
+        let repo = Repository::at(temp.path().join("repository"), Password::Insecure);
+        restic.initialize(&repo, None).unwrap();
+        let config = temp.path().join("empty-rclone.conf");
+        fs::write(&config, "").unwrap();
+        let rclone = crate::rclone::Rclone::discover().unwrap();
+        let rclone_command = rclone.command(&config, "unused-test-key");
+        let program =
+            crate::rclone::quote_program(Path::new(rclone_command.get_program())).unwrap();
+        let ready = temp.path().join("reading");
+        let mut command = Command::new(&restic.binary);
+        sanitized(&mut command);
+        // Real stdio transport to a local-only repository; no Google account
+        // and no ambient rclone config or Restic cache is used by this test.
+        command
+            .args([
+                "--repo",
+                &format!("rclone:{}", repo.local_path().unwrap().display()),
+                "--no-cache",
+                "--insecure-no-password",
+                "-o",
+                &format!("rclone.program={program}"),
+                "-o",
+                "rclone.args=serve restic --stdio --ask-password=false",
+                "backup",
+                "--stdin-from-command",
+                "--stdin-filename",
+                "test-input",
+                "--",
+                "sh",
+                "-c",
+                "printf ready > \"$1\"; exec sleep 30",
+                "restic-test",
+            ])
+            .arg(&ready)
+            .env("RCLONE_CONFIG", &config)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cancel = restic.cancel.clone();
+        let worker = std::thread::spawn(move || {
+            crate::sidecar::run_restic(command, &cancel, Duration::from_secs(30), None)
+        });
+        let began = Instant::now();
+        while !ready.exists() && !worker.is_finished() && began.elapsed() < Duration::from_secs(10)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let locks = repo.local_path().unwrap().join("locks");
+        let had_lock = fs::read_dir(&locks).unwrap().count() > 0;
+        restic.cancel.store(true, Ordering::Release);
+        let error = worker.join().unwrap().err().unwrap();
+        assert_eq!(error.code, "CANCELLED");
+        assert!(ready.exists() && had_lock);
+        assert_eq!(fs::read_dir(locks).unwrap().count(), 0);
+    }
     #[test]
     fn a_shorter_deadline_cannot_be_reset_by_the_next_phase() {
         let restic = Restic {
@@ -378,6 +626,8 @@ mod tests {
             cancel: cancellation(),
             timeout: Duration::from_secs(3600),
             deadline: None,
+            cache: None,
+            progress: None,
         };
         let expired = restic
             .within(Duration::ZERO)
@@ -387,6 +637,30 @@ mod tests {
         let repo = Repository::at(dir.path().into(), Password::Insecure);
         let error = expired.run(&repo, &args(&["snapshots"]), None).unwrap_err();
         assert_eq!(error.code, "TIMEOUT");
+    }
+    #[test]
+    fn transfer_cache_is_private_shared_and_disposable() {
+        let base = Restic::discover(cancellation()).unwrap();
+        assert!(base.cache.is_none());
+        let cached = base.with_transfer_cache().unwrap();
+        let next = cached
+            .within(Duration::from_secs(60))
+            .with_transfer_cache()
+            .unwrap();
+        let path = cached.cache.as_ref().unwrap().path().to_path_buf();
+        assert_eq!(next.cache.as_ref().unwrap().path(), path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        drop(cached);
+        assert!(path.is_dir());
+        drop(next);
+        assert!(!path.exists());
     }
     #[cfg(unix)]
     #[test]

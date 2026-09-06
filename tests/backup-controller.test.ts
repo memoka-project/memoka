@@ -5,6 +5,27 @@ import { backupFixture } from "./backup-fixture";
 
 describe("backup cancellation and confirmed Core barrier", () => {
   afterEach(() => vi.useRealTimers());
+  it("resumes scheduling without clearing a departure owned by the coordinator", async () => {
+    vi.useFakeTimers();
+    const calls: string[] = [];
+    const controller = new BackupController(
+      {} as CoreRuntime,
+      backupFixture({
+        setDeparture: async (active) => {
+          calls.push(`departure:${active}`);
+        },
+        resume: async () => {
+          calls.push("resume");
+        },
+      }),
+      vi.fn(),
+    );
+    controller.pause();
+    controller.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toEqual(["resume"]);
+    controller.destroy();
+  });
   it("does not launch a late native capture after cancellation during the Core barrier", async () => {
     vi.useFakeTimers();
     let release!: () => void;

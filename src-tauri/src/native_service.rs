@@ -29,6 +29,7 @@ pub struct NativeService {
     operations: Arc<crate::background_operation::Operations>,
     cloud_job: Arc<Mutex<Option<CloudJob>>>,
     cloud_paused: Arc<AtomicBool>,
+    departure: Arc<Mutex<Option<String>>>,
     local_maintenance_pending: Arc<AtomicBool>,
     settings: Arc<Mutex<()>>,
     _lease: Option<Arc<crate::workspace_owner::WorkspaceLease>>,
@@ -37,6 +38,7 @@ struct CloudJob {
     cancel: restic::Cancellation,
     target: Arc<Mutex<Option<String>>>,
     forced: Arc<Mutex<std::collections::VecDeque<String>>>,
+    allow_deferred: Arc<AtomicBool>,
 }
 struct CloudCompletion {
     jobs: Arc<Mutex<Option<CloudJob>>>,
@@ -71,6 +73,7 @@ impl NativeService {
             operations: Default::default(),
             cloud_job: Default::default(),
             cloud_paused: Default::default(),
+            departure: Default::default(),
             local_maintenance_pending: Default::default(),
             settings: Default::default(),
             _lease: None,
@@ -117,6 +120,10 @@ impl NativeService {
         Ok(())
     }
     pub fn schedule_cloud(&self, force: Option<String>) -> Result<Value, ReadError> {
+        self.schedule_cloud_work(force, false)
+    }
+    fn schedule_cloud_work(&self, force: Option<String>, idle: bool) -> Result<Value, ReadError> {
+        let allow_deferred = idle || force.is_some();
         let mut job = self.cloud_job.lock().map_err(|_| busy())?;
         if self.cloud_paused.load(Ordering::Acquire) {
             return Err(ReadError::new(
@@ -134,6 +141,9 @@ impl NativeService {
             }
         }
         if let Some(job) = job.as_ref() {
+            if allow_deferred {
+                job.allow_deferred.store(true, Ordering::Release);
+            }
             if let Some(id) = force {
                 let mut queue = job.forced.lock().map_err(|_| busy())?;
                 if !queue.contains(&id) {
@@ -150,6 +160,7 @@ impl NativeService {
             return Ok(json!({"schema_version":3,"queued":false}));
         }
         let cancel = restic::cancellation();
+        let allow_deferred = Arc::new(AtomicBool::new(allow_deferred));
         let target = Arc::new(Mutex::new(None));
         let forced = Arc::new(Mutex::new(
             force.into_iter().collect::<std::collections::VecDeque<_>>(),
@@ -158,6 +169,7 @@ impl NativeService {
             cancel: cancel.clone(),
             target: target.clone(),
             forced: forced.clone(),
+            allow_deferred: allow_deferred.clone(),
         });
         let service = self.clone();
         std::thread::spawn(move || {
@@ -165,19 +177,24 @@ impl NativeService {
                 jobs: service.cloud_job.clone(),
                 cancel: cancel.clone(),
             };
+            let base = Restic::discover(cancel.clone()).and_then(|r| r.with_transfer_cache());
             loop {
                 if cancel.load(Ordering::Acquire) {
                     break;
                 }
+                let deferred_at_start = allow_deferred.load(Ordering::Acquire);
                 let result = (|| {
                     let force = forced.lock().map_err(|_| busy())?.pop_front();
                     let _source_lease = service.repositories.try_read().map_err(|_| busy())?;
-                    let restic =
-                        Restic::discover(cancel.clone())?.within(Duration::from_secs(3600));
+                    let restic = base
+                        .as_ref()
+                        .map_err(Clone::clone)?
+                        .within(Duration::from_secs(3600));
                     backup_management::cloud_unit(
                         &service.workspace,
                         &restic,
                         force.as_deref(),
+                        service.departing() || !deferred_at_start,
                         |id| {
                             if let Ok(mut value) = target.lock() {
                                 *value = Some(id.into());
@@ -201,10 +218,13 @@ impl NativeService {
                                     .and_then(|status| status.destinations.get(&id).cloned())
                             })
                             .is_some_and(|status| {
-                                status.error.is_none() && status.maintenance_error.is_none()
+                                status.error.is_none()
+                                    && status.maintenance_error.is_none()
+                                    && status.verification_error.is_none()
                             });
                         if last_succeeded
                             && !cancel.load(Ordering::Acquire)
+                            && !service.departing()
                             && service
                                 .local_maintenance_pending
                                 .swap(false, Ordering::AcqRel)
@@ -226,6 +246,14 @@ impl NativeService {
                         // as the last background unit finishes.
                         if let Ok(mut job) = service.cloud_job.lock() {
                             if forced.lock().is_ok_and(|queue| !queue.is_empty()) {
+                                continue;
+                            }
+                            // Do not lose an idle request arriving just as an
+                            // upload-only worker discovers an empty queue.
+                            if !deferred_at_start
+                                && allow_deferred.load(Ordering::Acquire)
+                                && !service.departing()
+                            {
                                 continue;
                             }
                             *job = None;
@@ -263,21 +291,28 @@ impl NativeService {
         });
         Ok(json!({"schema_version":3,"queued":true}))
     }
-    pub fn wait_transfers(&self, budget: Duration) -> Result<Value, ReadError> {
-        let began = std::time::Instant::now();
+    pub fn wait_transfers(&self) -> Result<Value, ReadError> {
+        // Standalone CLI waits own the process lifetime, not a GUI departure.
+        self.wait_transfers_for(None)
+    }
+    fn departing(&self) -> bool {
+        self.departure.lock().map_or(true, |id| id.is_some())
+    }
+    fn wait_transfers_for(&self, departure_id: Option<&str>) -> Result<Value, ReadError> {
         while self.cloud_running() {
+            if let Some(id) = departure_id {
+                if self.departure.lock().map_err(|_| busy())?.as_deref() != Some(id) {
+                    // Withdrawing quit/switch/update only detaches this wait.
+                    // Never signal the worker or alter its transfer status.
+                    return Ok(json!({"schema_version":3,"detached":true}));
+                }
+            }
             if crate::sidecar::interrupted() {
                 self.cancel_cloud(None)?;
                 while self.cloud_running() {
                     std::thread::sleep(Duration::from_millis(25));
                 }
                 return Err(ReadError::new("CANCELLED", "Backup interrupted"));
-            }
-            if began.elapsed() >= budget {
-                return Err(ReadError::new(
-                    "COPY_TIMEOUT",
-                    "Google Drive transfer is still running. Retry waiting, cancel, or exit without waiting",
-                ));
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -361,10 +396,17 @@ impl NativeService {
                     .retain(|id, _| config.destinations.iter().any(|target| &target.id == id));
                 for target in &config.destinations {
                     let value = status.destinations.entry(target.id.clone()).or_default();
+                    if let Some(progress) =
+                        crate::backup_progress::live(&self.workspace, &target.id)
+                    {
+                        value.progress = Some(progress);
+                    }
                     if !target.enabled {
                         value.phase = if self.running()
-                            && matches!(value.phase.as_str(), "copying" | "maintaining")
-                        {
+                            && matches!(
+                                value.phase.as_str(),
+                                "copying" | "verifying" | "maintaining"
+                            ) {
                             "stopping"
                         } else {
                             "disabled"
@@ -378,10 +420,22 @@ impl NativeService {
                     json!({"schema_version":3,"config":config,"status":status,"content_epoch":backup::content_epoch(&self.workspace)?}),
                 )
             }
-            BackupAction::Run => self.run_cycle(Duration::from_secs(30)),
+            BackupAction::Run => self.run_cycle(),
             BackupAction::CloudTick { id } => self.schedule_cloud(id),
-            BackupAction::WaitTransfers { budget_ms } => {
-                self.wait_transfers(Duration::from_millis(u64::from(budget_ms.min(30_000))))
+            BackupAction::WaitTransfers { departure_id } => {
+                self.wait_transfers_for(departure_id.as_deref())
+            }
+            BackupAction::Departure { active, id } => {
+                // Stop only at unit boundaries. Never cancel an in-flight
+                // upload (or its repository lock cleanup) to meet an exit timer.
+                let mut departure = self.departure.lock().map_err(|_| busy())?;
+                if active {
+                    *departure = Some(id);
+                } else if departure.as_deref() == Some(&id) {
+                    // A delayed cancellation cannot clear a newer departure.
+                    *departure = None;
+                }
+                Ok(json!({"schema_version":3,"departing":departure.is_some()}))
             }
             BackupAction::Copy => {
                 let operation = self.operations.begin()?;
@@ -410,7 +464,7 @@ impl NativeService {
                 Ok(result)
             }
             BackupAction::IdleMaintain => {
-                self.schedule_cloud(None)?;
+                self.schedule_cloud_work(None, true)?;
                 if self.cloud_running() {
                     if backup_management::idle_maintenance_due(&self.workspace)? {
                         self.local_maintenance_pending
@@ -435,7 +489,7 @@ impl NativeService {
             }
         }
     }
-    pub fn run_cycle(&self, copy_budget: Duration) -> Result<Value, ReadError> {
+    pub fn run_cycle(&self) -> Result<Value, ReadError> {
         let operation = self.operations.begin()?;
         let local = {
             let _capture = self.capture.try_lock().map_err(|_| busy())?;
@@ -451,7 +505,7 @@ impl NativeService {
                 "Backup stopped after confirmed local capture",
             ));
         }
-        let transfers = self.copy_local(copy_budget, operation.cancel.clone());
+        let transfers = self.copy_local(operation.cancel.clone());
         let transfer_failed = transfers.as_ref().map_or(true, |value| {
             value["destinations"]
                 .as_array()
@@ -461,17 +515,20 @@ impl NativeService {
         // delete retained generations as its "success cleanup". Independent
         // later idle/manual maintenance still applies local retention, so an
         // offline destination cannot pin pending generations indefinitely.
-        let maintenance =
-            if local.is_some() && !transfer_failed && !operation.cancel.load(Ordering::Acquire) {
-                Some(
-                    match self.maintain(false, false, operation.cancel.clone()) {
-                        Ok(value) => value,
-                        Err(error) => json!({"error":error}),
-                    },
-                )
-            } else {
-                None
-            };
+        let maintenance = if local.is_some()
+            && !transfer_failed
+            && !operation.cancel.load(Ordering::Acquire)
+            && !self.departing()
+        {
+            Some(
+                match self.maintain(false, false, operation.cancel.clone()) {
+                    Ok(value) => value,
+                    Err(error) => json!({"error":error}),
+                },
+            )
+        } else {
+            None
+        };
         let (destinations, error) = match transfers {
             Ok(value) => (value["destinations"].clone(), None),
             Err(error) => (json!([]), Some(error)),
@@ -503,15 +560,11 @@ impl NativeService {
         }
         result
     }
-    fn copy_local(
-        &self,
-        budget: Duration,
-        cancel: restic::Cancellation,
-    ) -> Result<Value, ReadError> {
+    fn copy_local(&self, cancel: restic::Cancellation) -> Result<Value, ReadError> {
         let _copy = self.copy.try_lock().map_err(|_| busy())?;
         let _lease = self.repositories.try_read().map_err(|_| busy())?;
         let restic = Restic::discover(cancel)?;
-        backup_management::copy_local(&self.workspace, &restic, budget)
+        backup_management::copy_local(&self.workspace, &restic)
     }
     fn maintain(
         &self,
@@ -734,6 +787,7 @@ mod cloud_scheduler_tests {
             cancel: new_cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
+            allow_deferred: Default::default(),
         });
         drop(old);
         assert!(jobs.lock().unwrap().is_some());
@@ -744,7 +798,162 @@ mod cloud_scheduler_tests {
         assert!(jobs.lock().unwrap().is_none());
     }
     #[test]
-    fn departure_deadline_does_not_cancel_normal_transfer_and_late_ticks_stay_paused() {
+    fn idle_requests_enable_deferred_work_but_departure_does_not_cancel_active_work() {
+        let service = NativeService::new(PathBuf::from("unused"));
+        let allow_deferred = Arc::new(AtomicBool::new(false));
+        let cancel = restic::cancellation();
+        *service.cloud_job.lock().unwrap() = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: Default::default(),
+            forced: Default::default(),
+            allow_deferred: allow_deferred.clone(),
+        });
+        service.schedule_cloud(None).unwrap();
+        assert!(!allow_deferred.load(Ordering::Acquire));
+        service.schedule_cloud_work(None, true).unwrap();
+        assert!(allow_deferred.load(Ordering::Acquire));
+        service
+            .backup(BackupAction::Departure {
+                active: true,
+                id: "first".into(),
+            })
+            .unwrap();
+        assert!(service.departing());
+        assert!(!cancel.load(Ordering::Acquire));
+        service
+            .backup(BackupAction::Departure {
+                active: false,
+                id: "first".into(),
+            })
+            .unwrap();
+        assert!(!service.departing());
+        assert!(!cancel.load(Ordering::Acquire));
+    }
+    #[test]
+    fn departure_wait_has_no_thirty_second_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        backup::tests::fixture(directory.path());
+        let service = NativeService::new(directory.path().to_owned());
+        service
+            .backup(BackupAction::Departure {
+                active: true,
+                id: "first".into(),
+            })
+            .unwrap();
+        let cancel = restic::cancellation();
+        *service.cloud_job.lock().unwrap() = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: Default::default(),
+            forced: Default::default(),
+            allow_deferred: Default::default(),
+        });
+        let waiting = service.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            send.send(waiting.backup(BackupAction::WaitTransfers {
+                departure_id: Some("first".into()),
+            }))
+            .unwrap();
+        });
+        let early = receive.recv_timeout(Duration::from_secs(31));
+        let cancelled = cancel.load(Ordering::Acquire);
+        *service.cloud_job.lock().unwrap() = None;
+        thread.join().unwrap();
+        assert!(matches!(
+            early,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(!cancelled);
+        assert!(receive.recv().unwrap().is_ok());
+    }
+    #[test]
+    fn withdrawing_departure_detaches_only_its_wait_not_the_cloud_worker_or_cli() {
+        let directory = tempfile::tempdir().unwrap();
+        backup::tests::fixture(directory.path());
+        let service = NativeService::new(directory.path().to_owned());
+        let original_status: Value = backup::setting(directory.path(), "backup.status").unwrap();
+        let cancel = restic::cancellation();
+        *service.cloud_job.lock().unwrap() = Some(CloudJob {
+            cancel: cancel.clone(),
+            target: Default::default(),
+            forced: Default::default(),
+            allow_deferred: Default::default(),
+        });
+        let departure = |active, id: &str| {
+            service
+                .backup(BackupAction::Departure {
+                    active,
+                    id: id.into(),
+                })
+                .unwrap()
+        };
+        departure(true, "first");
+        let wait = |id: Option<&str>| {
+            let waiting = service.clone();
+            let id = id.map(String::from);
+            let (send, receive) = std::sync::mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                send.send(if let Some(id) = id {
+                    waiting.backup(BackupAction::WaitTransfers {
+                        departure_id: Some(id),
+                    })
+                } else {
+                    waiting.wait_transfers()
+                })
+                .unwrap();
+            });
+            (thread, receive)
+        };
+        let (first, first_result) = wait(Some("first"));
+        let (cli, cli_result) = wait(None);
+        let still_waiting = first_result.recv_timeout(Duration::from_millis(100));
+        // The next :qa can arrive before the first observer's next poll.
+        departure(false, "first");
+        departure(true, "second");
+        let detached = first_result.recv_timeout(Duration::from_secs(2));
+        let late_cancel = departure(false, "first");
+        // An IPC wait arriving after withdrawal also cannot adopt the new ID.
+        let late_wait = service.backup(BackupAction::WaitTransfers {
+            departure_id: Some("first".into()),
+        });
+        let (second, second_result) = wait(Some("second"));
+        let new_waiting = second_result.recv_timeout(Duration::from_millis(100));
+        departure(false, "second");
+        let second_detached = second_result.recv_timeout(Duration::from_secs(2));
+        let cli_still_waiting = cli_result.recv_timeout(Duration::from_millis(100));
+        let worker_still_running = service.cloud_running();
+        let transfer_cancelled = cancel.load(Ordering::Acquire);
+        let status_after: Value = backup::setting(directory.path(), "backup.status").unwrap();
+        // Finish the simulated upload and reap test threads even on a failed assertion.
+        *service.cloud_job.lock().unwrap() = None;
+        first.join().unwrap();
+        second.join().unwrap();
+        cli.join().unwrap();
+        assert!(matches!(
+            still_waiting,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(detached.unwrap().unwrap()["detached"], true);
+        assert_eq!(late_cancel["departing"], true);
+        assert_eq!(late_wait.unwrap()["detached"], true);
+        assert!(matches!(
+            new_waiting,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(second_detached.unwrap().unwrap()["detached"], true);
+        assert!(matches!(
+            cli_still_waiting,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert!(cli_result.recv().unwrap().is_ok());
+        assert!(worker_still_running);
+        assert!(!transfer_cancelled);
+        assert!(!service.cloud_paused.load(Ordering::Acquire));
+        assert!(!service.departing());
+        assert_eq!(original_status, status_after);
+    }
+    #[test]
+    fn explicit_cancel_stops_transfer_and_late_ticks_stay_paused() {
         let directory = tempfile::tempdir().unwrap();
         let service = NativeService::new(directory.path().to_owned());
         let cancel = restic::cancellation();
@@ -752,16 +961,8 @@ mod cloud_scheduler_tests {
             cancel: cancel.clone(),
             target: Arc::new(Mutex::new(Some("target".into()))),
             forced: Default::default(),
+            allow_deferred: Default::default(),
         });
-        let began = std::time::Instant::now();
-        assert_eq!(
-            service
-                .wait_transfers(Duration::from_millis(20))
-                .unwrap_err()
-                .code,
-            "COPY_TIMEOUT"
-        );
-        assert!(began.elapsed() < Duration::from_secs(1));
         assert!(!cancel.load(Ordering::Acquire));
         assert!(service.cloud_running());
         service.cancel().unwrap();
@@ -781,6 +982,48 @@ mod cloud_scheduler_tests {
         assert!(service.preview.try_lock().is_ok());
         assert!(service.repositories.try_write().is_err());
         assert!(service.settings.try_lock().is_ok());
+    }
+    #[test]
+    fn status_overlays_live_progress_without_writing_or_opening_an_offline_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        backup::tests::fixture(&workspace);
+        let mut config = backup::config(&workspace).unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        config.destinations.push(crate::backup::AdditionalTarget {
+            id: id.clone(),
+            location: backup_settings::DestinationLocation::LocalDirectory {
+                path: temp.path().join("must-not-be-opened"),
+            },
+            repository_id: "b".repeat(64),
+            credential_ref: "must-not-access-keyring".into(),
+            enabled: true,
+            retention: Default::default(),
+        });
+        backup::save_setting(&workspace, "backup.config", &config).unwrap();
+        let service = NativeService::new(workspace.clone());
+        let epoch = backup::content_epoch(&workspace).unwrap();
+        let before: Value = backup::setting(&workspace, "backup.status").unwrap();
+        let progress = crate::backup_progress::Progress::start(&workspace, &id, 4);
+        progress.completed(3);
+        progress.stage(crate::backup_progress::Stage::TargetVerification);
+        for _ in 0..3 {
+            let response = service.backup(BackupAction::Status).unwrap();
+            assert_eq!(
+                response["status"]["destinations"][&id]["progress"]["completed_generations"],
+                3
+            );
+            assert_eq!(
+                response["status"]["destinations"][&id]["progress"]["stage"],
+                "target-verification"
+            );
+        }
+        assert_eq!(
+            backup::setting::<Value>(&workspace, "backup.status").unwrap(),
+            before
+        );
+        assert_eq!(backup::content_epoch(&workspace).unwrap(), epoch);
+        assert!(!temp.path().join("must-not-be-opened").exists());
     }
 }
 

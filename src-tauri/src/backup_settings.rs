@@ -111,11 +111,14 @@ pub struct DestinationStatus {
     pub protected_capture_at: Option<String>,
     pub error: Option<ReadError>,
     pub maintenance_error: Option<ReadError>,
+    pub verification_error: Option<ReadError>,
     pub pending_copy_count: usize,
+    pub pending_verification_count: usize,
     pub expired_copy_count: usize,
     pub failure_count: u32,
     pub next_retry_at: Option<String>,
     pub active_generation_id: Option<String>,
+    pub progress: Option<crate::backup_progress::Snapshot>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -135,6 +138,9 @@ pub struct TransferLedger {
     pub pending: BTreeMap<String, String>,
     pub expired: BTreeMap<String, String>,
     pub delivered: BTreeSet<String>,
+    /// A successful copy is not yet a verified/protected generation. Keep its
+    /// expected descriptor across restarts and local source retention.
+    pub awaiting_verification: BTreeMap<String, crate::backup::Generation>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct InitIntent {
@@ -187,6 +193,28 @@ pub(crate) fn save_setting<T: Serialize>(
     value: &T,
 ) -> Result<(), ReadError> {
     write(&connection(workspace)?, key, value)
+}
+
+/// Commit the durable queue and its public counts/protection together. A crash
+/// must not lose verification work while leaving protection permanently stale.
+pub(crate) fn save_transfer(
+    workspace: &Path,
+    id: &str,
+    ledger: &TransferLedger,
+    update: impl FnOnce(&mut DestinationStatus),
+) -> Result<(), ReadError> {
+    let mut db = connection(workspace)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let mut status: BackupStatus = read(&tx, "backup.status")?;
+    let target = status.destinations.entry(id.to_owned()).or_default();
+    target.pending_copy_count = ledger.pending.len();
+    target.pending_verification_count = ledger.awaiting_verification.len();
+    target.expired_copy_count = ledger.expired.len();
+    update(target);
+    write(&tx, &ledger_key(id), ledger)?;
+    write(&tx, "backup.status", &status)?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// One transaction moves the old singleton, ledger, status and unfinished init.
@@ -404,6 +432,43 @@ mod tests {
             .execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);")
             .unwrap();
         dir
+    }
+    #[test]
+    fn transfer_queue_and_protection_commit_or_rollback_together() {
+        let dir = fixture();
+        let workspace = dir.path();
+        let mut ledger = TransferLedger::default();
+        ledger
+            .pending
+            .insert("generation".into(), "2026-09-06T00:00:00Z".into());
+        save_transfer(workspace, "target", &ledger, |_| {}).unwrap();
+        let db = connection(workspace).unwrap();
+        db.execute_batch("CREATE TRIGGER reject_status BEFORE UPDATE ON settings
+            WHEN NEW.key = 'backup.status' BEGIN SELECT RAISE(ABORT, 'test status write failure'); END;").unwrap();
+        ledger.pending.clear();
+        ledger.delivered.insert("generation".into());
+        assert!(
+            save_transfer(workspace, "target", &ledger, |s| {
+                s.protected_capture_at = Some("2026-09-06T00:00:00Z".into());
+            })
+            .is_err()
+        );
+        let unchanged: TransferLedger = setting(workspace, &ledger_key("target")).unwrap();
+        assert!(unchanged.delivered.is_empty());
+        assert_eq!(unchanged.pending.len(), 1);
+        let status: BackupStatus = setting(workspace, "backup.status").unwrap();
+        assert!(status.destinations["target"].protected_capture_at.is_none());
+        assert_eq!(status.destinations["target"].pending_copy_count, 1);
+        db.execute_batch("DROP TRIGGER reject_status;").unwrap();
+        save_transfer(workspace, "target", &ledger, |s| {
+            s.protected_capture_at = Some("2026-09-06T00:00:00Z".into());
+        })
+        .unwrap();
+        let saved: TransferLedger = setting(workspace, &ledger_key("target")).unwrap();
+        assert!(saved.delivered.contains("generation"));
+        let status: BackupStatus = setting(workspace, "backup.status").unwrap();
+        assert!(status.destinations["target"].protected_capture_at.is_some());
+        assert_eq!(status.destinations["target"].pending_copy_count, 0);
     }
     #[test]
     fn schema_two_migration_preserves_order_status_ledger_intent_and_content() {

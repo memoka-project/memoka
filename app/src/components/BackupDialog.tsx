@@ -6,6 +6,7 @@ import {
 } from "./CloudBackupSettings";
 import { ModalDialog } from "./ModalDialog";
 import { EventDateTime } from "./EventDateTime";
+import { BackupTransferProgress } from "./BackupTransferProgress";
 import {
   DEFAULT_BACKUP_RETENTION,
   backupDestinationLabel,
@@ -348,7 +349,7 @@ function DestinationSettings({
         </dd>
         <dt>保護済みの世代</dt>
         <dd>
-          <BackupTime value={status?.protected_capture_at} empty="未転送" />
+          <BackupTime value={status?.protected_capture_at} empty="未検証" />
         </dd>
         <dt>最終転送</dt>
         <dd>
@@ -358,7 +359,11 @@ function DestinationSettings({
         <dd>
           {status?.pending_copy_count ?? 0} / {status?.expired_copy_count ?? 0}
         </dd>
+        <dt>転送済み・検証待ち</dt>
+        <dd>{status?.pending_verification_count ?? 0} 世代</dd>
       </dl>
+      {status?.progress && <BackupTransferProgress value={status.progress} />}
+      {!!status?.failure_count && <p>連続失敗回数: {status.failure_count}</p>}
       {status?.next_retry_at && (
         <p>
           再試行予定: <EventDateTime value={status.next_retry_at} />
@@ -380,7 +385,16 @@ function DestinationSettings({
         </p>
       )}
       {status?.maintenance_error && (
-        <p role="alert">{status.maintenance_error.message}</p>
+        <p role="alert">
+          保持整理のエラー（保護済み世代は維持）:{" "}
+          {status.maintenance_error.message}
+        </p>
+      )}
+      {status?.verification_error && (
+        <p role="alert">
+          転送後の検証エラー（未検証の世代は保護済みに含みません）:{" "}
+          {status.verification_error.message}
+        </p>
       )}
       <form
         onSubmit={(event) => {
@@ -500,6 +514,8 @@ function phaseLabel(phase: string): string {
         capturing: "取得中",
         saving: "保存・検証中",
         copying: "転送中",
+        verifying: "転送後の検証中",
+        "verification-pending": "転送済み・検証待ち",
         maintaining: "整理中",
         pending: "転送待ち",
         disabled: "無効",

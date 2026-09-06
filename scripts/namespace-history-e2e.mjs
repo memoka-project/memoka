@@ -509,10 +509,10 @@ export async function runNamespaceHistory({
   );
   assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
 
-  // The newer live edit still needs a generation, so quit must show its
-  // real save/backup dialog. Cancel it; never exit a user's application or
-  // substitute a fake dialog for this private Workspace lifecycle check.
-  await command("quit");
+  // Reproduce :backup -> :qa -> withdraw quit in the private Workspace.
+  // The manual capture must continue without CANCELLED or a late close.
+  await command("backup");
+  await command("qa");
   await waitFor(
     sessionId,
     `return [...document.querySelectorAll('.application-shutdown-progress button')]
@@ -547,6 +547,32 @@ export async function runNamespaceHistory({
     30_000,
   );
   assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
+  await waitFor(
+    sessionId,
+    'return document.querySelector(".application-commandline")?.textContent ?? ""',
+    (text) => text.includes("backup · 処理完了"),
+    120_000,
+  );
+  const resumedBackup = await cli("backup", "status");
+  assert.equal(resumedBackup.status.local_error, null);
+  const resumedHistory = await cli("history", "--id", noteId);
+  const resumedGeneration =
+    resumedHistory.generations[0].descriptor.generation_id;
+  const resumedRead = await cli(
+    "read",
+    "--id",
+    noteId,
+    "--generation",
+    resumedGeneration,
+  );
+  assert.equal(resumedRead.markdown, newer.markdown);
+  assert.equal(
+    await execute(
+      sessionId,
+      'return !document.querySelector(".application-shutdown-progress")',
+    ),
+    true,
+  );
 
   return {
     modalLayouts,
@@ -555,6 +581,7 @@ export async function runNamespaceHistory({
     childEntryId: childEntry.entry_id,
     childNoteId: noteId,
     generation,
+    generationAfterCancelledQuit: resumedGeneration,
     capturedRevision: child.source.document_revision,
     liveRevision: newer.source.document_revision,
     timingMs: {
@@ -573,6 +600,7 @@ export async function runNamespaceHistory({
       "unconfigured-google-native-panel-and-typed-destination-chooser",
       "history-absolute-local-datetime-with-ago",
       "centered-native-shutdown-progress-and-cancel-focus-restoration",
+      "manual-backup-survives-qa-withdrawal-and-captures-latest-note",
       "group-create-and-rename-without-note-mutation",
       "child-note-placement-and-distinct-entry-id",
       "native-cli-owner-save-barrier-without-focus-change",

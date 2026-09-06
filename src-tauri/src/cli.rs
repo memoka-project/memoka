@@ -404,11 +404,9 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
                         }
                     ) {
                         // The standalone process owns this worker and its lease.
-                        if let Err(error) =
-                            service.wait_transfers(std::time::Duration::from_secs(3600))
-                        {
+                        if let Err(error) = service.wait_transfers() {
                             service.cancel()?;
-                            let _ = service.wait_transfers(std::time::Duration::from_secs(31));
+                            let _ = service.wait_transfers();
                             return Err(error);
                         }
                     }

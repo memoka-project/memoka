@@ -5,7 +5,7 @@ import {
 } from "../core/development-diagnostics";
 import {
   backupCopyingDestinations,
-  backupTransferFailures,
+  backupErrorCount,
   type BackupPort,
   type BackupState,
 } from "../core/history";
@@ -94,8 +94,7 @@ export function DevelopmentDebugTasks({
         /{" "}
         {backupState?.config.destinations.filter((target) => target.enabled)
           .length ?? 0}{" "}
-        enabled / {backupState ? backupTransferFailures(backupState).length : 0}{" "}
-        errors (
+        enabled / {backupState ? backupErrorCount(backupState) : 0} errors (
         {backupState?.config.destinations
           .filter((target) => target.enabled)
           .reduce(
@@ -105,7 +104,17 @@ export function DevelopmentDebugTasks({
                 0),
             0,
           ) ?? 0}{" "}
-        pending)
+        pending /{" "}
+        {backupState?.config.destinations
+          .filter((target) => target.enabled)
+          .reduce(
+            (sum, target) =>
+              sum +
+              (backupState.status.destinations[target.id]
+                ?.pending_verification_count ?? 0),
+            0,
+          ) ?? 0}{" "}
+        unverified)
       </span>
       <span
         data-input-latency-last-ms={formatDataNumber(input.lastMs)}

@@ -38,7 +38,7 @@ Workspaceごとの設定であり、`:backup-settings`から変更する。パ�
 Googleは実験的で、専用Desktop OAuth client未設定なら接続操作だけを無効化する。
 source buildは`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`で指定した絶対path、またはapplication config directoryの
 `google-desktop-client.json`を読む。tokenやパスワードを`config.toml`へ記載してはならない。
-通常cloud転送の1時間上限と終了時追加先待機の30秒は別管理で、いずれも現時点では固定値である。
+通常cloudの転送・検証・整理は1単位1時間の固定上限を持つ。終了時の追加先待機には上限を設けず、未開始のDrive検証・整理は次回へ回す。
 
 既定font stackは次である。
 

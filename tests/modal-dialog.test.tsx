@@ -136,7 +136,7 @@ describe("shared floating modal dialogs", () => {
     expect(document.documentElement.scrollTop).toBe(pageScroll);
   });
 
-  it.each(["saving", "closing", "cancelling"] as const)(
+  it.each(["saving", "closing", "cancelling", "resuming"] as const)(
     "does not cancel the protected %s stage or pass keys through to the editor",
     (stage) => {
       const cancel = vi.fn();

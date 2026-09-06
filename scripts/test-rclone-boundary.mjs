@@ -25,7 +25,7 @@ const env = Object.fromEntries(
 );
 const key = randomBytes(32).toString("hex");
 const token = randomBytes(32).toString("hex");
-function run(binary, args, extra = {}, input) {
+function run(binary, args, extra = {}, input, inspect) {
   const result = spawnSync(binary, args, {
     env: { ...env, ...extra },
     input,
@@ -39,6 +39,7 @@ function run(binary, args, extra = {}, input) {
     0,
     `sidecar exit ${result.status}; ${result.error?.code ?? "no spawn error"}`,
   );
+  inspect?.(result);
   return result.stdout;
 }
 try {
@@ -129,10 +130,13 @@ try {
   const remote = `rclone:memoka_local_test:${join(scratch, "repository")}`;
   // Restic parses this option again with shellquote; always quote its path.
   const program = `'${rclone.replaceAll("'", "'\\''")}'`;
+  const cache = join(scratch, "transfer-cache");
+  await mkdir(cache, { mode: 0o700 });
   const args = [
     "--repo",
     remote,
-    "--no-cache",
+    "--cache-dir",
+    cache,
     "-o",
     `rclone.program=${program}`,
     "-o",
@@ -221,6 +225,40 @@ try {
       "utf8",
     ),
     "日本語 round trip\n",
+  );
+  // Exercise the exact numeric telemetry protocol using real stdio children.
+  // This is local transport, not a substitute for a Google Drive test.
+  await writeFile(join(source, "progress.bin"), randomBytes(96 * 1024));
+  run(restic, [...sourceArgs, "backup", source]);
+  run(
+    restic,
+    [...copyArgs, "--limit-upload", "32"],
+    {
+      ...repositoryEnv,
+      RCLONE_USE_JSON_LOG: "true",
+      RCLONE_STATS: "1s",
+      RCLONE_STATS_LOG_LEVEL: "ERROR",
+      RCLONE_LOG_LEVEL: "ERROR",
+    },
+    undefined,
+    (result) => {
+      const measurements = result.stderr.split("\n").flatMap((line) => {
+        try {
+          const stats = JSON.parse(line.replace(/^rclone: /u, "")).stats;
+          return stats && typeof stats.bytes === "number" ? [stats.bytes] : [];
+        } catch {
+          return [];
+        }
+      });
+      assert.ok(
+        measurements.some((bytes) => bytes > 0),
+        "Real rclone JSON file-transfer stats must reach Restic stderr",
+      );
+    },
+  );
+  run(restic, [...args, "--no-cache", "check", "--read-data"], repositoryEnv);
+  console.log(
+    "PASS: private job cache / real numeric stdio transfer telemetry / uncached full check",
   );
   if (process.env.MEMOKA_TEST_LONG_CLOUD_COPY === "1") {
     await writeFile(join(source, "large.bin"), randomBytes(512 * 1024));

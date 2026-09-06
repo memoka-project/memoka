@@ -109,13 +109,18 @@ argv、設定file、通常log、Command-line履歴には入れない。既存パ
 
 追加先がoffline、鍵が取得不能、容量不足でも編集とローカル履歴は継続する。
 転送は新しいcaptureから試み、GUIの1回の転送試行には時間上限を設ける。
-ローカル追加先の転送は直列のbackground処理とし、GUIではローカル追加先全体に30秒の予算を適用する。Google Driveの通常転送は別workerで行う。試行後に次回開始先を巡回させ、未接続・低速な保存先が他の保存先を恒久的に妨げない。
+ローカル追加先の転送は直列のbackground処理とし、GUIの全体30秒予算は設けない。個別Restic commandの1時間上限は維持する。Google Driveの通常転送は別workerで行う。試行後に次回開始先を巡回させ、未接続・低速な保存先が他の保存先を恒久的に妨げない。
 時間切れや未処理の保存先を成功扱いしない。CLIの明示copyは従来どおり1時間の予算を持つ。
 同じgenerationを重複作成せず、元のcapture時刻を維持する。
-転送待ち、転送機会の期限切れ、追加先で保護済みのcapture時刻を区別して表示する。
+転送待ち、転送済み・検証待ち、転送機会の期限切れ、追加先で保護済みのcapture時刻を区別して表示する。
 追加先を変更したとき、以前の保存先への転送済み判定を流用しない。
 転送台帳、保護済みcapture日時、最終転送日時、転送待ち・期限切れ件数、エラー、整理状態は保存先IDごとに独立管理する。
-status取得はSQLiteの運用stateだけを読み、保存先やOS資格情報ストアへ接続しない。
+status取得はSQLiteの運用stateと実行中process内の進捗だけを読み、保存先やOS資格情報ストアへ接続しない。
+`status.destinations[id].progress`は任意の診断fieldで、schema 3の追加fieldとする。工程、処理世代のcapture時刻、
+完了/対象世代数、処理単位/工程の経過ms、最終進捗時刻、実行中command種別、完了command数、数値通信統計を持つ。
+生のstdout/stderr、file名、OAuth情報、秘密を含めない。実行中の統計はメモリだけに更新し、状態pollでDBへ書き込まない。
+処理終了時にsummaryを運用stateへ保存する。失敗・中断では工程を成功に変更しない。世代の完了数は表示中の工程に対する値であり、転送完了と検証完了を同一視しない。
+GUIは約2秒ごとに取得し、世代数のprogressと通信量（読み書き合計）を区別する。未計測値を0や推定ETAで代用しない。
 
 backup設定schema 3は`local_retention`と`destinations`配列を持つ。各保存先は`location`判別unionと`credential_ref`を持ち、ローカルは`{kind:"local-directory",path}`、Googleは`{kind:"google-drive",connection_id,root_folder_id,display_name}`である。
 schema 2の`path`/`credential`、旧単一`additional`、status、転送台帳、初期化途中のintentは1 transactionで移行し、順序、有効状態、保持値、repository ID・資格情報参照・運用履歴を維持する。未知schema/locationは拒否する。
@@ -141,8 +146,25 @@ Google接続はOSユーザー単位でWorkspace外へ保存し、複数保存先
 folder作成応答が不明な場合はnonce照合し、未発見/複数候補では再作成しない。init後の鍵保存失敗は同じパスワードで再試行する。
 既存root消失、権限不足、repository mismatchを自動initで隠さない。同一Workspaceの同一repository二重登録を拒否する。
 
-通常Google転送は1世代または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
+通常Google転送は1世代の転送、検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
 新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
+自動転送はuploadを先に完了し、検証・整理は30秒以上入力操作がないidle判定時のtickで開始する。明示的な「今すぐ転送」も検証・整理を再試行できる。
+複数先に転送できるデータがある場合、後続の検証・整理よりuploadを優先する。
+copy前には接続先identityとローカルsourceを確認するが、毎回のremote全世代一覧・検証は行わない。
+成功したcopyは期待descriptorを`TransferLedger.awaiting_verification`に永続化し、転送待ちから外す。`delivered`・保護済み日時は進めない。
+世代完了時の台帳・件数・保護済み日時は同じSQLite transactionで更新し、途中終了やDB書込み失敗で不整合にしない。
+`pending_verification_count`と`verification_error`はschema 3の追加fieldとし、旧stateでは0/nullとする。
+転送後の検証失敗を転送失敗と混同せず、検証や整理の一時障害のbackoffで新規uploadを遅延させない。identity/認証等の重大な問題は全工程を保留する。
+転送後の照合はWorkspace/generation tagで今回の世代に絞り、descriptorとfile集合を検証する。
+source/targetのsnapshot IDが異なることを許容する。copy応答喪失後はResticのsource snapshot identityによる冪等copyで再試行し、未確認の世代を保護済み扱いしない。
+検証成功時だけ`delivered`と保護済み日時を進める。検証待ちは再起動後も再開し、local sourceの保持期限後も期待descriptorと比較できる。
+転送済み・未検証世代はlocal保持整理で「未転送の期限切れ」に変更しない。検証待ちが残る追加先のforget/pruneは保留する。
+検証済みsnapshot/repository IDの組に対する結果は再利用し、無関係な全世代の再検証をcopyのたびに行わない。
+Google転送jobはowner-onlyの一時Restic cacheをcommand・世代間で共有する。ユーザーの既存cacheは使用せず、
+通常終了・中断で子process回収後に破棄する。明示的な`check`はcacheを無効にし、repositoryの実体を検査する。
+接続・repository leaseを持つhandleの生存中だけ、open時に照合したrepository IDを一覧取得・保持計画で再利用する。
+別jobへ持ち越さず、後続の転送後検証と実削除前は最新のIDを再照合する。ID取得の`cat config`だけは`--no-lock`で復号して読み、
+確認のたびにDriveへlock fileを書き込まない。snapshot/fileの読み取り、copy、forget、pruneのRestic lockは維持する。
 一時障害は指数backoff（最大1時間に0〜30秒のjitter）を持ち、認証失効・鍵取得不能・権限/容量不足・repository不一致や不明なlayoutは明示操作まで保留する。
 ネットワーク待ち中はCore mutexを持たず、copyのsource-reader leaseはCapture追加・履歴readを許可し、sourceのforget/pruneだけを除外する。
 無効化はGoogle workerへ中断も要求する。再接続、明示転送、中断、既存パスワード再登録、無効化、解除は独立した操作である。
@@ -151,7 +173,8 @@ folder作成応答が不明な場合はnonce照合し、未発見/複数候補�
 先に各保存先を解除するか、共有接続の全利用先を停止すると明示確認する。後者は非秘密の接続/保存先参照を残し、再認証で復帰する。
 Google上のfolderと世代は削除しない。status/設定の通常表示はmetadataだけで、Googleや資格情報ストアへ問い合わせない。
 
-**実Driveの認証・token更新・認可取消後の再アクセス・別OSプロファイル復旧は未検証であり、正式提供可とは判定しない。**
+ユーザーによる実Driveの接続・保存先登録と一部世代の転送は確認済みである。
+**token更新・認可取消後の再アクセス・別OSプロファイル復旧は未検証であり、正式提供可とは判定しない。**
 OAuth client変更で以前のbackupにアクセスできる保証はなく、scopeの自動拡大や空repositoryへの置換は行わない。
 設定手順と受け入れ試験の結果は[Google Drive開発・検証記録](../development/google-drive-backup.md)を参照する。
 
@@ -169,7 +192,16 @@ dry-runのkeep/remove集合を確認済みsnapshot集合と照合し、最新正
 実際のforgetは検証済みIDを128件ずつ指定する。
 copy中はsource repositoryのleaseを保持し、retention/pruneと競合させない。
 
-forgetとpruneは別処理である。pruneは30秒以上入力操作がないidle時に開始し、各repositoryで24時間に1回まで行う。
+正常世代数が「直近」の保持数以下で、pruneも不要なら、全世代を残せるためResticの`forget --dry-run`自体を省く。
+削除やpruneを行う場合はこの省略を使わず、確認済み集合との照合・最新世代保護・実行前ID再照合を行う。
+削除不要の確認時刻と実際のprune時刻は別に記録する。idle巡回では保持設定変更、保持数を超える新しい正常世代、
+または前回確認から24時間経過時に再評価する。prune不要なのに毎分Driveを再確認することはしない。
+
+forgetとpruneは別処理である。pruneは世代削除や中断した書き込み等による回収待ちがある場合に限り、
+30秒以上入力操作がないidle時に開始し、各repositoryで24時間に1回まで行う。
+capture/copy/forgetの書き込み前に回収待ちを運用DBへ記録する。正常capture/copyは今回分だけを解除し、
+以前の中断・失敗で残った回収待ちはprune成功まで保持する。回収待ちは再起動しても失わない。
+この記録を導入する前の未参照データも、次に必要になったpruneで合わせて回収する。
 `backup maintain`でも実行でき、`--dry-run`では変更しない。
 capture/copy失敗の直後に成功後cleanupとして世代を減らさない。
 prune失敗はaccepted backupを未作成へ戻さず、maintenance errorとして表示する。
@@ -182,15 +214,24 @@ Googleは1世代のcopy後に別の整理単位を巡回する。整理前には
 ## 8. 終了・切替・キャンセル
 
 OS close、`:quit`、`:q`、`:qa`は共通shutdown処理を使う。
-確定Core保存を先にflushし、未包含変更のローカル履歴とboundedな追加先転送を待つ。
+確定Core保存を先にflushし、未包含変更のローカル履歴と追加先への転送を待つ。
 
-終了・Workspace切替・Updaterは同じ進捗overlayで、保存中、履歴作成・転送中、中断待ち、実行中、失敗を区別する。
+終了・Workspace切替・Updaterは同じ進捗overlayで、保存中、履歴作成・転送中、編集復帰中、中断待ち、実行中、失敗を区別する。
 再試行、操作のキャンセル、バックアップだけを中断して続行する選択肢を用意する。
 省略はCore保存成功後に限り、正本保存の失敗を無視して終了する選択肢は提供しない。
-キャンセルは処理全体に属するtokenで後続phaseも停止し、Restic childをkill/reapしてから完了する。
+「終了/切替/更新を取り消す」（Esc/Ctrl-cを含む）はdeparture待機だけを解除し、開始済みのcapture/copy/検証を継続する。
+進捗pollと未開始の最終capture待機を解除し、転送のcancel token・失敗状態・保護済み日時には触れない。
+nativeのdeparture待機は操作IDに所属させ、取消済み操作の遅延応答や解除が新しいdepartureへ作用しないようにする。
+CLI単独実行の転送待機はGUIのdepartureに所属せず、GUIの操作取消では解除しない。
+「バックアップを中断して続行」だけが処理全体に属するtokenで後続phaseも停止し、子processの回収後に完了する。
+LinuxではRestic本体だけへSIGINTを送り、rcloneを生かしたまま最大20秒のlock解除猶予を与える。
+Windowsの非console childでは自然終了を同じ上限まで待つ。正常解除を保証するものではない。
+猶予を過ぎたらprocess group / Job Objectの子孫まで強制終了・回収し、leaseを解放する。
 
-Googleの通常1時間deadlineと終了時の追加先待機は別である。追加先待機には30秒を基本とする上限を設ける。
-待機期限だけでは通常cloud転送をkillせず、再待機・終了操作取消・中断して続行を選ばせる。
+終了・切替・更新の追加先待機には時間上限を設けず、30秒でtimeoutにしない。通常の1時間処理上限と接続・無応答timeoutは別に維持する。
+終了準備の開始時にnative workerを転送優先・後続検証/整理保留へ切り替える。進行中の単位は中断せず、その完了を待つ。
+未開始の検証・整理は終了を妨げず、検証台帳から次回起動後に再開する。操作取消で通常のidle検証を再び許可する。
+未検証は保護済みではなく、転送後の検証エラーだけで終了を阻止しない。GUIにこの違いを表示する。
 明示中断ではResticとrcloneの子孫まで終了し、lease解放を待つ。キャンセル後に遅れて届いたtickは再開操作まで拒否する。
 
 ローカル成功/追加先のみ失敗は別表示し、追加先未完了を自動的に無視して切替・更新へ進まない。

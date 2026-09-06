@@ -245,6 +245,7 @@ pub struct DriveRepository {
     pub(crate) folder_id: String,
     pub(crate) _lease: Arc<private_files::Lease>,
     pub(crate) _repository_lease: Option<Arc<private_files::Lease>>,
+    pub(crate) verified_repository_id: Option<String>,
 }
 impl std::fmt::Debug for DriveRepository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -252,6 +253,14 @@ impl std::fmt::Debug for DriveRepository {
     }
 }
 impl DriveRepository {
+    pub(crate) fn configure_progress(&self, command: &mut Command) {
+        // These logs stay in a bounded native pipe. Only numeric `stats`
+        // fields are exposed, never the accompanying message or object name.
+        command
+            .env("RCLONE_USE_JSON_LOG", "true")
+            .env("RCLONE_STATS", "1s")
+            .env("RCLONE_STATS_LOG_LEVEL", "ERROR");
+    }
     pub(crate) fn inspect_config(&self) -> Result<(), ReadError> {
         private_files::inspect(self.config.parent().ok_or_else(missing)?)?;
         ensure_encrypted(&self.config)

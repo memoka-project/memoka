@@ -488,12 +488,12 @@ impl CloudService {
                 "Google Drive repository identity changed",
             ));
         }
+        let mut context = repo.drive_context().unwrap().clone();
         if repository_id.is_none() {
-            let mut context = repo.drive_context().unwrap().clone();
             context._repository_lease = Some(self.repository_lease(&found)?);
-            return Ok(Repository::drive(context, repo.password));
         }
-        Ok(repo)
+        context.verified_repository_id = Some(found);
+        Ok(Repository::drive(context, repo.password))
     }
     fn context(
         &self,
@@ -518,6 +518,7 @@ impl CloudService {
             folder_id: folder.into(),
             _lease: lease,
             _repository_lease: None,
+            verified_repository_id: None,
         })
     }
     pub fn start_auth(
@@ -644,6 +645,7 @@ impl CloudService {
                 folder_id: String::new(),
                 _lease: lease,
                 _repository_lease: None,
+                verified_repository_id: None,
             };
             let access = drive::access_token(&context, &operation.cancel)?;
             let account_id = drive::account_id(&access, &operation.cancel)?;

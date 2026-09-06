@@ -5,6 +5,7 @@ import {
   type BackupPort,
   type BackupState,
 } from "./history";
+import { createUuidV7 } from "./ids";
 
 export type ApplicationDepartureKind = "quit" | "switch-workspace" | "update";
 export interface ApplicationDepartureProgress {
@@ -12,6 +13,7 @@ export interface ApplicationDepartureProgress {
   readonly stage:
     | "saving"
     | "backup"
+    | "resuming"
     | "cancelling"
     | "closing"
     | "saving-error"
@@ -24,28 +26,32 @@ export interface ApplicationDepartureProgress {
 interface DepartureOptions {
   readonly kind: ApplicationDepartureKind;
   readonly save: () => Promise<void>;
-  readonly backup: Pick<BackupPort, "status" | "waitTransfers"> | null;
+  readonly backup: Pick<
+    BackupPort,
+    "status" | "waitTransfers" | "setDeparture"
+  > | null;
   readonly controller: {
     pause(): void;
     resume(): void;
-    flush(): Promise<void>;
+    flush(signal?: AbortSignal): Promise<void>;
     cancel(): Promise<void>;
   } | null;
   readonly complete: () => Promise<void>;
 }
 interface Departure {
+  readonly id: string;
   readonly options: DepartureOptions;
   readonly resolve: (completed: boolean) => void;
   progress: ApplicationDepartureProgress;
   coreSaved: boolean;
   action: "wait" | "cancel" | "skip";
-  running: boolean;
+  attempt: AbortController | null;
 }
 
 /** One save/backup barrier for quit, workspace switching and the updater.
  * Errors remain interactive; only a successful Core save permits skipping
- * backup. Cancellation waits for the native child to be reaped before the
- * caller may close or release the workspace. */
+ * backup. Withdrawing departure detaches its wait, not the backup. Only an
+ * explicit skip cancels/reaps native children before closing the workspace. */
 export class ApplicationDeparture {
   private current: Departure | null = null;
   constructor(
@@ -62,12 +68,13 @@ export class ApplicationDeparture {
     options.controller?.pause();
     return new Promise((resolve) => {
       const session: Departure = {
+        id: createUuidV7(),
         options,
         resolve,
         progress: { kind: options.kind, stage: "saving", backup: null },
         coreSaved: false,
         action: "wait",
-        running: false,
+        attempt: null,
       };
       this.current = session;
       void this.attempt(session);
@@ -88,46 +95,56 @@ export class ApplicationDeparture {
     };
     this.publish(session.progress);
   }
-  private waiting(session: Departure): boolean {
-    return this.current === session && session.action === "wait";
+  private waiting(session: Departure, attempt: AbortController): boolean {
+    return (
+      this.current === session &&
+      session.action === "wait" &&
+      session.attempt === attempt &&
+      !attempt.signal.aborted
+    );
   }
   private async attempt(session: Departure): Promise<void> {
-    if (session.running) return;
-    session.running = true;
+    if (session.attempt && !session.attempt.signal.aborted) return;
+    const attempt = new AbortController();
+    session.attempt = attempt;
     session.action = "wait";
     session.coreSaved = false;
     let stage: ApplicationDepartureProgress["stage"] = "saving";
     this.show(session, stage);
     try {
       await this.paint();
+      await session.options.backup?.setDeparture?.(true, session.id);
       await session.options.save();
       session.coreSaved = true;
-      if (!this.waiting(session)) return;
+      if (!this.waiting(session, attempt)) return;
       const { controller, backup } = session.options;
       if (controller && backup) {
         stage = "backup";
         this.show(session, stage);
         const timer = setInterval(() => {
+          if (!this.waiting(session, attempt)) return;
           void backup
             .status()
             .then((state) => {
-              if (this.waiting(session) && session.progress.stage === "backup")
+              if (
+                this.waiting(session, attempt) &&
+                session.progress.stage === "backup"
+              )
                 this.show(session, "backup", undefined, state);
             })
             .catch(() => undefined);
         }, 500);
+        const stopPolling = () => clearInterval(timer);
+        attempt.signal.addEventListener("abort", stopPolling, { once: true });
         try {
           await this.paint();
-          if (!this.waiting(session)) return;
-          const transferBegan = Date.now();
-          await controller.flush();
-          if (this.waiting(session))
-            await backup.waitTransfers?.(
-              Math.max(0, 30_000 - (Date.now() - transferBegan)),
-            );
-          if (!this.waiting(session)) return;
+          if (!this.waiting(session, attempt)) return;
+          await controller.flush(attempt.signal);
+          if (this.waiting(session, attempt))
+            await backup.waitTransfers?.(session.id);
+          if (!this.waiting(session, attempt)) return;
           const state = await backup.status();
-          if (!this.waiting(session)) return;
+          if (!this.waiting(session, attempt)) return;
           const failures = backupTransferFailures(state);
           if (failures.length > 0) {
             this.show(
@@ -139,19 +156,20 @@ export class ApplicationDeparture {
             return;
           }
         } finally {
-          clearInterval(timer);
+          stopPolling();
+          attempt.signal.removeEventListener("abort", stopPolling);
         }
       }
-      if (this.waiting(session)) await this.complete(session);
+      if (this.waiting(session, attempt)) await this.complete(session);
     } catch (error) {
-      if (this.waiting(session))
+      if (this.waiting(session, attempt))
         this.show(
           session,
           stage === "saving" ? "saving-error" : "backup-error",
           error,
         );
     } finally {
-      session.running = false;
+      if (session.attempt === attempt) session.attempt = null;
     }
   }
   private async complete(session: Departure): Promise<void> {
@@ -159,6 +177,9 @@ export class ApplicationDeparture {
     try {
       await this.paint();
       await session.options.complete();
+      // A platform/test updater may return without replacing the process.
+      if (session.options.kind === "update")
+        await session.options.backup?.setDeparture?.(false, session.id);
       this.finish(session, true);
     } catch (error) {
       session.action = "wait";
@@ -184,17 +205,26 @@ export class ApplicationDeparture {
     if (
       !session ||
       session.action !== "wait" ||
-      ["saving", "closing", "cancelling"].includes(session.progress.stage) ||
+      ["saving", "closing", "cancelling", "resuming"].includes(
+        session.progress.stage,
+      ) ||
       (proceed &&
         (!session.coreSaved || session.progress.stage === "operation-error"))
     )
       return;
     session.action = proceed ? "skip" : "cancel";
-    this.show(session, "cancelling");
+    session.attempt?.abort();
+    this.show(session, proceed ? "cancelling" : "resuming");
     try {
-      await session.options.controller?.cancel();
-      if (proceed) await this.complete(session);
-      else this.finish(session, false);
+      if (proceed) {
+        await session.options.controller?.cancel();
+        await this.complete(session);
+      } else {
+        // Release only this departure's observer. Cloud copy and verification
+        // keep their own cancellation tokens and continue in the background.
+        await session.options.backup?.setDeparture?.(false, session.id);
+        this.finish(session, false);
+      }
     } catch (error) {
       session.action = "wait";
       this.show(

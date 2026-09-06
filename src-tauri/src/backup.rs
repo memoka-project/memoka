@@ -477,14 +477,67 @@ pub fn generations(
     workspace_id: Option<&str>,
     cache: Option<&Path>,
 ) -> Result<Vec<Generation>, ReadError> {
-    let repository_id = restic.repository_id(repo)?;
+    listed_generations(restic, repo, workspace_id, cache, None)
+}
+
+/// Post-copy verification is deliberately cold for the selected generation,
+/// but must not revalidate every unrelated snapshot on the destination.
+pub(crate) fn copied_generation(
+    restic: &Restic,
+    repo: &Repository,
+    workspace_id: &str,
+    generation_id: &str,
+) -> Result<Generation, ReadError> {
+    crate::attachment::validate_uuid_v7(workspace_id, "workspace_id")?;
+    crate::attachment::validate_uuid_v7(generation_id, "generation_id")?;
+    listed_generations(restic, repo, Some(workspace_id), None, Some(generation_id))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            ReadError::new(
+                "INCOMPLETE_GENERATION",
+                "Copied generation could not be verified",
+            )
+        })
+}
+
+pub(crate) fn remember_generation(
+    workspace: &Path,
+    generation: &Generation,
+) -> Result<(), ReadError> {
+    let key = format!("backup.cache.{}", generation.repository_id);
+    let mut accepted: Vec<Generation> = setting(workspace, &key)?;
+    accepted.retain(|old| old.snapshot_id != generation.snapshot_id);
+    accepted.push(generation.clone());
+    save_setting(workspace, &key, &accepted)
+}
+
+fn listed_generations(
+    restic: &Restic,
+    repo: &Repository,
+    workspace_id: Option<&str>,
+    cache: Option<&Path>,
+    generation_id: Option<&str>,
+) -> Result<Vec<Generation>, ReadError> {
+    let repository_id = if cache.is_some() {
+        restic.opened_repository_id(repo)?
+    } else {
+        // Uncached history reads and post-copy verification recheck identity.
+        restic.repository_id(repo)?
+    };
     let cache_key = format!("backup.cache.{repository_id}");
     let cached: Vec<Generation> = if let Some(workspace) = cache {
         setting(workspace, &cache_key)?
     } else {
         Vec::new()
     };
-    let raw = restic.json(repo, &["snapshots"])?;
+    let filter;
+    let raw = if let Some(id) = generation_id {
+        filter = format!("memoka,workspace:{},generation:{id}", workspace_id.unwrap());
+        restic.json(repo, &["snapshots", "--tag", &filter])?
+    } else {
+        restic.json(repo, &["snapshots"])?
+    };
     let snapshots = raw
         .as_array()
         .ok_or_else(|| ReadError::new("RESTIC_PROTOCOL", "Snapshot list is not an array"))?;
@@ -505,6 +558,7 @@ pub fn generations(
             || generation_tag.is_none()
             || workspace_tag.is_none()
             || workspace_id.is_some_and(|id| Some(id) != workspace_tag)
+            || generation_id.is_some_and(|id| Some(id) != generation_tag)
         {
             continue;
         }
@@ -581,6 +635,11 @@ pub fn run_local(workspace: &Path, restic: &Restic) -> Result<Option<Generation>
         let (stage, descriptor) = capture(workspace, restic)?;
         let result = (|| {
             phase(workspace, "saving")?;
+            let repository_id = config(workspace)?.local_repository_id.ok_or_else(|| {
+                ReadError::new("REPOSITORY_MISMATCH", "Local history identity is missing")
+            })?;
+            let was_pending =
+                crate::backup_management::begin_repository_write(workspace, &repository_id)?;
             // Restic 0.19.1 --time parses wall time in time.Local, not RFC3339.
             // Descriptor keeps the offset/timezone and subsecond capture time.
             let timestamp = chrono::DateTime::parse_from_rfc3339(&descriptor.captured_at)
@@ -623,15 +682,13 @@ pub fn run_local(workspace: &Path, restic: &Restic) -> Result<Option<Generation>
             let id = summary["snapshot_id"].as_str().ok_or_else(|| {
                 ReadError::new("RESTIC_PROTOCOL", "Backup snapshot ID is missing")
             })?;
-            let generation = verify_generation(
-                restic,
-                &repo,
-                id,
-                config(workspace)?
-                    .local_repository_id
-                    .as_deref()
-                    .unwrap_or(""),
+            let generation = verify_generation(restic, &repo, id, &repository_id)?;
+            crate::backup_management::complete_repository_write(
+                workspace,
+                &repository_id,
+                was_pending,
             )?;
+            remember_generation(workspace, &generation)?;
             update_status(workspace, |value| {
                 value.phase = "idle".into();
                 value.local_error = None;
@@ -933,9 +990,7 @@ pub(crate) mod tests {
         });
         save_setting(&workspace, "backup.config", &configured).unwrap();
         let service = crate::native_service::NativeService::new(workspace.clone());
-        let result = service
-            .run_cycle(std::time::Duration::from_secs(30))
-            .unwrap();
+        let result = service.run_cycle().unwrap();
         assert!(result["local_generation"].is_object());
         assert_eq!(
             result["destinations"][0]["error"]["code"],
