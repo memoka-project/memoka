@@ -1,5 +1,7 @@
 //! One owner per canonical Workspace, shared by GUI and headless CLI. The lock
 //! inode is permanent; endpoint lifetime never determines database ownership.
+#[cfg(windows)]
+mod windows_pipe;
 use crate::{
     document_model::ReadError,
     read_service::{AttachmentRecord, ReadRequest, checked_directory, plain_file},
@@ -238,9 +240,9 @@ pub struct Server {
 impl Server {
     pub fn start(lease: WorkspaceLease, handler: Handler) -> Result<Self, ReadError> {
         let name = endpoint(&lease.workspace)?;
-        let options = ListenerOptions::new()
-            .name(name.to_ns_name::<GenericNamespaced>()?)
-            .nonblocking(ListenerNonblockingMode::Both);
+        let options = ListenerOptions::new().name(name.to_ns_name::<GenericNamespaced>()?);
+        #[cfg(not(windows))]
+        let options = options.nonblocking(ListenerNonblockingMode::Both);
         #[cfg(windows)]
         let options = {
             use interprocess::os::windows::{
@@ -251,7 +253,9 @@ impl Server {
                     .map_err(|_| {
                         ReadError::new("IPC_ACCESS_DENIED", "Cannot create private IPC permissions")
                     })?;
-            options.security_descriptor(SecurityDescriptor::deserialize(&sddl)?)
+            options
+                .nonblocking(ListenerNonblockingMode::Accept)
+                .security_descriptor(SecurityDescriptor::deserialize(&sddl)?)
         };
         let listener = options.create_sync()?;
         let stopped = Arc::new(AtomicBool::new(false));
@@ -439,7 +443,8 @@ fn connect_owner(name: &str) -> std::io::Result<Stream> {
             format!(r"\\.\pipe\{name}"),
             ConnectWaitMode::Timeout(Duration::from_secs(2)),
         )?;
-        pipe.set_nonblocking(true)?;
+        // Keep PIPE_WAIT: windows_pipe submits overlapped reads/writes with a
+        // cancellable deadline, rather than polling PIPE_NOWAIT/PeekNamedPipe.
         Ok(Stream::from(local_socket::Stream::from(pipe)))
     }
     #[cfg(not(windows))]
@@ -448,37 +453,6 @@ fn connect_owner(name: &str) -> std::io::Result<Stream> {
         .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
         .nonblocking_stream(true)
         .connect_sync()
-}
-
-#[cfg(windows)]
-fn readable_pipe_bytes(stream: &Stream) -> Result<usize, ReadError> {
-    use std::os::windows::io::{AsHandle, AsRawHandle};
-    use windows_sys::Win32::{Foundation::ERROR_PIPE_NOT_CONNECTED, System::Pipes::PeekNamedPipe};
-    let Stream::NamedPipe(pipe) = stream;
-    let mut available = 0;
-    let ready = unsafe {
-        PeekNamedPipe(
-            pipe.as_handle().as_raw_handle(),
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null_mut(),
-            &mut available,
-            std::ptr::null_mut(),
-        )
-    };
-    if ready == 0 {
-        let error = std::io::Error::last_os_error();
-        if error.kind() == std::io::ErrorKind::BrokenPipe
-            || error.raw_os_error() == Some(ERROR_PIPE_NOT_CONNECTED as i32)
-        {
-            return Err(ReadError::new(
-                "IPC_DISCONNECTED",
-                "Workspace owner disconnected",
-            ));
-        }
-        return Err(error.into());
-    }
-    Ok(available as usize)
 }
 
 fn pause(deadline: Instant) -> Result<(), ReadError> {
@@ -496,32 +470,12 @@ fn read_exact(
     mut bytes: &mut [u8],
     deadline: Instant,
 ) -> Result<(), ReadError> {
-    #[cfg(all(test, windows))]
-    let original_length = bytes.len();
     while !bytes.is_empty() {
         #[cfg(windows)]
-        let count = {
-            // PIPE_NOWAIT reports ERROR_NO_DATA while still connected, but
-            // interprocess maps that to EOF. A single reader owns this stream;
-            // peek before reading so an idle connection remains distinguishable
-            // from an actual disconnect, and the deadline can still run.
-            let available = readable_pipe_bytes(stream)?;
-            if available == 0 {
-                if let Err(error) = pause(deadline) {
-                    #[cfg(test)]
-                    eprintln!(
-                        "owner IPC read timed out: {} of {original_length} bytes remain",
-                        bytes.len()
-                    );
-                    return Err(error);
-                }
-                continue;
-            }
-            bytes.len().min(available)
-        };
+        let result = windows_pipe::read(stream, bytes, deadline);
         #[cfg(not(windows))]
-        let count = bytes.len();
-        match stream.read(&mut bytes[..count]) {
+        let result = stream.read(bytes);
+        match result {
             Ok(0) => {
                 return Err(ReadError::new(
                     "IPC_DISCONNECTED",
@@ -532,6 +486,12 @@ fn read_exact(
                 bytes = &mut bytes[count..];
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => pause(deadline)?,
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                return Err(ReadError::new(
+                    "IPC_TIMEOUT",
+                    "Workspace IPC read timed out",
+                ));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error.into()),
         }
@@ -540,10 +500,11 @@ fn read_exact(
 }
 fn write_all(stream: &mut Stream, mut bytes: &[u8], deadline: Instant) -> Result<(), ReadError> {
     while !bytes.is_empty() {
-        match stream.write(bytes) {
-            #[cfg(windows)]
-            Ok(0) => pause(deadline)?, // PIPE_NOWAIT byte pipe has no free buffer yet.
-            #[cfg(not(windows))]
+        #[cfg(windows)]
+        let result = windows_pipe::write(stream, bytes, deadline);
+        #[cfg(not(windows))]
+        let result = stream.write(bytes);
+        match result {
             Ok(0) => {
                 return Err(ReadError::new(
                     "IPC_DISCONNECTED",
@@ -554,6 +515,12 @@ fn write_all(stream: &mut Stream, mut bytes: &[u8], deadline: Instant) -> Result
                 bytes = &bytes[count..];
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => pause(deadline)?,
+            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                return Err(ReadError::new(
+                    "IPC_TIMEOUT",
+                    "Workspace IPC write timed out",
+                ));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error.into()),
         }
@@ -669,16 +636,29 @@ mod tests {
         let name = format!("memoka-ipc-test-{}", uuid::Uuid::now_v7());
         let listener = ListenerOptions::new()
             .name(name.as_str().to_ns_name::<GenericNamespaced>().unwrap())
-            .nonblocking(ListenerNonblockingMode::Both)
+            .nonblocking(ListenerNonblockingMode::Accept)
             .create_sync()
             .unwrap();
         let mut client = connect_owner(&name).unwrap();
-        let server = listener.accept().unwrap();
+        let mut server = listener.accept().unwrap();
         assert_eq!(
             read_frame(&mut client, 100, Instant::now() + Duration::from_millis(30))
                 .unwrap_err()
                 .code,
             "IPC_TIMEOUT"
+        );
+        // A timed-out read must be fully cancelled: it cannot consume a later
+        // reply using an OVERLAPPED/buffer that already went out of scope.
+        write_frame(
+            &mut server,
+            b"after timeout",
+            100,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(
+            read_frame(&mut client, 100, Instant::now() + Duration::from_secs(1)).unwrap(),
+            b"after timeout"
         );
         drop(server);
         assert_eq!(
@@ -687,6 +667,30 @@ mod tests {
                 .code,
             "IPC_DISCONNECTED"
         );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn a_full_pipe_write_is_cancelled_at_its_deadline() {
+        let name = format!("memoka-ipc-test-{}", uuid::Uuid::now_v7());
+        let listener = ListenerOptions::new()
+            .name(name.as_str().to_ns_name::<GenericNamespaced>().unwrap())
+            .nonblocking(ListenerNonblockingMode::Accept)
+            .create_sync()
+            .unwrap();
+        let client = connect_owner(&name).unwrap();
+        let mut server = listener.accept().unwrap();
+        let began = Instant::now();
+        let error = write_frame(
+            &mut server,
+            &vec![b'x'; 1024 * 1024],
+            MAX_RESPONSE,
+            began + Duration::from_millis(30),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "IPC_TIMEOUT");
+        assert!(began.elapsed() < Duration::from_secs(2));
+        drop(client);
+        drop(server);
     }
     #[test]
     fn lock_and_ipc_are_scoped_to_one_workspace() {
@@ -703,7 +707,6 @@ mod tests {
         let server = Server::start(
             lease.clone(),
             Arc::new(|_| {
-                eprintln!("owner IPC fixture handler entered");
                 // Force an idle-but-connected read and a response larger than
                 // the pipe buffer, rather than depending on a scheduling race.
                 thread::sleep(Duration::from_millis(30));

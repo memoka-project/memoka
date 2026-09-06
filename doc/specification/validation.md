@@ -123,6 +123,8 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 `MEMOKA_TEST_LONG_CLOUD_COPY=1 node scripts/test-rclone-boundary.mjs`による30秒超copyを実行する。
 これらはlocal transportの成立性検証で、実OAuth/Driveの成功として扱わない。
 schema 3移行、資格情報/環境/子孫process、lease、scheduler、GUI入力の回帰試験を通常verifyへ含める。
+Windowsのowner IPCでは、接続中の空入力と切断を区別し、pipe bufferを超える応答を欠落なく受信する。
+読み書きの期限切れでは未完了I/Oを取り消して完了を回収し、次の受信に影響を残さないことを確認する。
 転送後検証のremote `dump/ls`回数が無関係な世代数に比例しないこと、対象世代・欠損・再試行の検証が残ることを確認する。
 Driveのupload完了を保護済みと混同しないこと、検証待ちの再起動/元世代のlocal保持整理後の再開、copy応答喪失時の非重複、検証不一致時の保護日時維持を実Resticで検査する。
 未検証世代がある追加先ではforget/pruneを保留し、検証・整理の一時障害は新規uploadをbackoffしない。
