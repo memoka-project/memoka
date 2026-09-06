@@ -120,6 +120,25 @@ export function SearchPane<Item>({
       aria-label={ariaLabel}
       data-memoka-focus-surface={focusSurface}
       {...dataAttributes}
+      onKeyDown={(event) => {
+        // A preview can contain links and attachment buttons. Closing the
+        // pane must still work after those controls receive focus.
+        if (
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          event.target === input.current
+        )
+          return;
+        const sequence = searchKeySequence(event);
+        if (
+          sequence &&
+          searchKeymap.resolve(commandContext, sequence) === "search.close"
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }
+      }}
     >
       <div className="workspace-search-left search-pane__left">
         <div

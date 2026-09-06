@@ -130,6 +130,14 @@ ListItemの選択は選択したItemまでで、未選択の子孫を暗黙に�
 
 `>/<`は選択されたSection/ListItemの階層を、表示順を維持したまま1段変更する。
 
+SectionはNote RootをH1としてH6までとする。`>>/<<`、Insertの`Ctrl-t/Ctrl-d`、Visual Lineの`>/<`、
+ParagraphからSectionを作る操作、`p/P`には同じ上限を適用する。`zf`中も絶対深度で検査する。
+結果がH7を含む場合は操作全体を拒否し、本文、ID、revision、Undoを変えない。H6 Headerでの`# `は文字として残す。
+
+既存の昇降格規則は、明示的に選んだHeaderを動かし、後続Headerの深さは不正な段差の補正以外は維持するもの。
+親Headerだけを選ぶ操作で子孫を自動選択しない。H5親からH6子までを選択してsubtree全体を1段降格する場合は、
+H7が生じるため全体を拒否する。
+
 ### 8.3 Visual Block
 
 Table内の`Ctrl-v`は結合CellのないTableで矩形Cell selectionへ入る。
@@ -210,26 +218,31 @@ Window分割は同じ方向に既存のsplitがあれば、それらを含めて
 
 ## 12. Tree
 
-TreeはEditorのVim modeではないが、共通cursor motionとCountを使用する。
+TreeはMain NamespaceのEntryを表示する。EntryはNoteを指すか、Noteを持たないグループである。
+EditorのVim modeではないが、共通cursor motionとCountを使用する。
 
-| Key          | 動作                                       |
-| ------------ | ------------------------------------------ |
-| `[count]j/k` | 表示Treeの次/前Note                        |
-| `gg/G`       | 表示Treeの先頭/末尾                        |
-| `h`          | 展開Noteを閉じる。閉じていれば親へ移動     |
-| `l`          | 閉じた親を展開。展開済みなら最初の子へ移動 |
-| `Enter`      | 選択Noteを現在Windowで開く                 |
-| `a`          | 選択Noteの次に空titleの兄弟Noteを作る      |
-| `c`          | 選択Noteの子として空titleのNoteを作る      |
-| `A`          | top-levelへ空titleのNoteを作る             |
-| `[count]J/K` | sibling内で下/上へ並べ替える               |
-| `[count]H/L` | 表示順を保って1段浅く/深くする             |
-| `D`          | 選択Noteとlive子孫をTrashへ移す            |
-| `T`          | Trash検索を開く                            |
+| Key          | 動作                                             |
+| ------------ | ------------------------------------------------ |
+| `[count]j/k` | 表示Treeの次/前Entry                             |
+| `gg/G`       | 表示Treeの先頭/末尾                              |
+| `h`          | 展開Entryを閉じる。閉じていれば親へ移動          |
+| `l`          | 閉じた親を展開。展開済みなら最初の子へ移動       |
+| `Enter`      | Noteを現在Windowで開く。グループは展開/折り畳み  |
+| `a`          | 選択Entryの次に空titleの兄弟Noteを作る           |
+| `c`          | 選択Entryの子として空titleのNoteを作る           |
+| `A`          | top-levelへ空titleのNoteを作る                   |
+| `[count]J/K` | sibling内で下/上へ並べ替える                     |
+| `[count]H/L` | 表示順を保って1段浅く/深くする                   |
+| `D`          | 選択Entryとlive子孫、そこに含むNoteをTrashへ移す |
+| `T`          | Trash検索を開く                                  |
 
-Treeではmouseによるopen、並べ替え、作成、inline renameを提供しない。titleはBuffer内のRoot Headerで編集する。
-`a`は選択Note直後、`c`は最後の子、`A`はtop-level末尾へ作成し、対象Windowで新Noteを開いて
+Treeではmouseによるopen、並べ替え、作成、inline renameを提供しない。Note titleはBuffer内のRoot Headerで編集する。
+`:group`で名前入力画面から選択Entryの子にグループを作り、`:rename-group`で選択グループを改名する。
+Entry未選択時はtop-levelへ作る。作成後は`H/L/J/K`でNoteと同じように配置を変更できる。
+グループ自体をBufferへ開かず、空グループのためにNote IDや仮Noteを作らない。
+`a`は選択Entry直後、`c`は最後の子、`A`はtop-level末尾へ作成し、対象Windowで新Noteを開いて
 空Root HeaderのInsert modeへ入る。Tree構造変更はEditor本文のUndo/Redoと`.` repeatには含めない。
+Treeの折り畳み・選択はTabごとのEntry IDで管理する。既存configの`note.*` Tree command名は互換aliasとして使える。
 
 ## 13. Leader
 

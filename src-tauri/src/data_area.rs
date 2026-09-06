@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 
 use crate::persistence::{PersistenceError, ProductPersistenceState, ProductStore, sync_directory};
-use crate::portable_mirror::PortableMirrorOperationState;
 
 const DATA_AREA_SCHEMA_VERSION: u32 = 1;
 const DATA_AREA_MARKER: &str = "data-area.json";
@@ -32,7 +31,6 @@ struct SelectedWorkspace {
 pub(crate) struct DataAreaStatus {
     selected: bool,
     path: Option<PathBuf>,
-    mirror_needs_repair: bool,
 }
 
 pub(crate) fn prepare_data_area(path: &Path) -> Result<PathBuf, PersistenceError> {
@@ -185,9 +183,6 @@ pub(crate) fn data_area_status(
         .map_err(|error| error.to_string())?;
     Ok(DataAreaStatus {
         selected: path.is_some(),
-        mirror_needs_repair: path
-            .as_ref()
-            .is_some_and(|path| path.join(MIRROR_UPDATE_MARKER).exists()),
         path,
     })
 }
@@ -196,21 +191,13 @@ pub(crate) fn data_area_status(
 pub(crate) fn data_area_activate(
     app: AppHandle,
     state: State<'_, ProductPersistenceState>,
-    mirror_state: State<'_, PortableMirrorOperationState>,
     path: PathBuf,
 ) -> Result<DataAreaStatus, String> {
-    if mirror_state
-        .has_active_operations()
-        .map_err(|error| error.to_string())?
-    {
-        return Err("portable mirror publication is still active".to_owned());
-    }
     let path = state
         .activate_data_area(&app, path)
         .map_err(|error| error.to_string())?;
     Ok(DataAreaStatus {
         selected: true,
-        mirror_needs_repair: path.join(MIRROR_UPDATE_MARKER).exists(),
         path: Some(path),
     })
 }

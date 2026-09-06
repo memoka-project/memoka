@@ -3,10 +3,7 @@ import {
   InputLatencyMonitor,
   type InputLatencySnapshot,
 } from "../core/development-diagnostics";
-import type {
-  PortableMirrorActivitySnapshot,
-  PortableMirrorController,
-} from "../core/portable-mirror";
+import type { BackupPort, BackupState } from "../core/history";
 import type {
   CoreRuntime,
   RuntimeBackgroundTaskSnapshot,
@@ -16,22 +13,40 @@ const DEBUG_REFRESH_MS = 250;
 
 interface DevelopmentDebugSnapshot {
   readonly runtime: RuntimeBackgroundTaskSnapshot;
-  readonly mirror: PortableMirrorActivitySnapshot;
   readonly input: InputLatencySnapshot;
 }
 
 export function DevelopmentDebugTasks({
   runtime,
-  mirrorController,
+  backup,
   applicationRoot,
 }: {
   runtime: CoreRuntime;
-  mirrorController: RefObject<PortableMirrorController | null>;
+  backup: BackupPort | null;
   applicationRoot: RefObject<HTMLElement | null>;
 }) {
   const [diagnostics, setDiagnostics] = useState<DevelopmentDebugSnapshot>(() =>
     initialSnapshot(runtime),
   );
+  const [backupState, setBackupState] = useState<BackupState | null>(null);
+  useEffect(() => {
+    if (!backup) return;
+    let active = true;
+    const refresh = (): void => {
+      void backup
+        .status()
+        .then((state) => {
+          if (active) setBackupState(state);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [backup]);
 
   useEffect(() => {
     const latency = applicationRoot.current
@@ -40,8 +55,6 @@ export function DevelopmentDebugTasks({
     const refresh = (): void => {
       const next: DevelopmentDebugSnapshot = {
         runtime: runtime.backgroundTaskSnapshot(),
-        mirror:
-          mirrorController.current?.activitySnapshot() ?? offMirrorSnapshot(),
         input: latency?.snapshot() ?? emptyInputSnapshot(),
       };
       setDiagnostics((current) =>
@@ -54,7 +67,7 @@ export function DevelopmentDebugTasks({
       globalThis.clearInterval(timer);
       latency?.destroy();
     };
-  }, [applicationRoot, mirrorController, runtime]);
+  }, [applicationRoot, runtime]);
 
   const search = diagnostics.runtime.searchIndex;
   const input = diagnostics.input;
@@ -68,10 +81,12 @@ export function DevelopmentDebugTasks({
         fts {formatSearchTask(search)}
       </span>
       <span
-        data-background-task="mirror"
-        data-background-task-phase={diagnostics.mirror.phase}
+        data-background-task="backup"
+        data-background-task-phase={backupState?.status.phase ?? "off"}
       >
-        mirror {formatMirrorTask(diagnostics.mirror)}
+        backup {backupState?.status.phase || "off"} / copy{" "}
+        {backupState?.status.additional_phase || "off"} (
+        {backupState?.status.pending_copy_count ?? 0} pending)
       </span>
       <span
         data-input-latency-last-ms={formatDataNumber(input.lastMs)}
@@ -88,19 +103,7 @@ export function DevelopmentDebugTasks({
 function initialSnapshot(runtime: CoreRuntime): DevelopmentDebugSnapshot {
   return {
     runtime: runtime.backgroundTaskSnapshot(),
-    mirror: offMirrorSnapshot(),
     input: emptyInputSnapshot(),
-  };
-}
-
-function offMirrorSnapshot(): PortableMirrorActivitySnapshot {
-  return {
-    phase: "off",
-    dirty: false,
-    completedBytes: null,
-    totalBytes: null,
-    lastResult: null,
-    lastDurationMs: null,
   };
 }
 
@@ -135,15 +138,6 @@ function formatSearchTask(
       ? ` (${search.lastTask ?? "task"} ${formatMilliseconds(search.lastDurationMs)})`
       : "";
   return `${phase}${detail}${last}`;
-}
-
-function formatMirrorTask(mirror: PortableMirrorActivitySnapshot): string {
-  const last =
-    (mirror.phase === "idle" || mirror.phase === "waiting") &&
-    mirror.lastDurationMs !== null
-      ? ` (${mirror.lastResult ?? "done"} ${formatMilliseconds(mirror.lastDurationMs)})`
-      : "";
-  return `${mirror.phase}${last}`;
 }
 
 function formatInputLatency(input: InputLatencySnapshot): string {

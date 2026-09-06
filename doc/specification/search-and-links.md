@@ -41,7 +41,7 @@ Internal Linkも現在表示されるtitle textを対象にし、atomic node全�
 非Root titleも独立した検索結果になる。
 
 - 1行目に一致したRoot/Section titleを表示する。
-- 2行目にNote Treeの祖先とNote内Section祖先をつないだ親階層を表示し、Workspace直下のRootは`/`とする。
+- 2行目にNamespace祖先（グループを含む）とNote内Section祖先をつないだ親階層を表示し、Workspace直下のRootは`/`とする。
 - 階層は小さく暗いtextにする。
 - 長い表示はNote titleを優先し、祖先側を省略する。
 - 更新日時の新しい順にsortする。
@@ -74,9 +74,10 @@ Note Bufferは`📄`、Image Bufferは`📷`で区別する。結果を確定す
 
 ## 6. Trash検索
 
-`:trash`はdeleted Noteのtitle/path検索を同じpaneで開き、赤系のsemantic colorを使用する。
+`:trash`はdeleted Noteとグループのtitle/path検索を同じpaneで開き、赤系のsemantic colorを使用する。
+グループは`📁`で表示し、存在しないNote/Sectionのpreviewを生成しない。
 
-- `r`だけが選択Noteの復元を実行する。
+- `r`だけが選択EntryのTrash operationをまとめて復元する。
 - Enter/Tabは無効である。
 - 復元後もpaneを閉じず、残った結果を更新する。
 - Treeへ自動移動しない。
@@ -86,12 +87,13 @@ Note Bufferは`📄`、Image Bufferは`📷`で区別する。結果を確定す
 
 ## 7. FTS index
 
-Workspace検索indexはSQLite schema 8の再構築可能な派生dataである。
+Workspace検索indexはschema 9の再構築可能なSQLite派生dataである。
 
 - titleと本文を用途別にqueryできる同一index subsystemで管理する。
 - 本文は論理行と表示snippetを検索できる形で保持する。
 - Note ID、Section ID、block位置、論理行番号、確定revisionを結果へ結び付ける。
 - 祖先pathは保存せず、WorkspaceMetadataDocからquery時に解決する。
+- Namespace/Sectionの名前と親IDだけを持つ派生graphからpathを解決する。グループ名を本文FTSへ混入させない。
 - parent変更や祖先renameだけでは子孫本文rowを更新せず、子孫`updated_at`も変更しない。
 - 確定Noteの変更だけをdebounce/coalesceして非同期indexingする。
 - 本文index更新はNoteごとに約1秒debounceし、検索入力は75 ms trailing debounceする。

@@ -3,6 +3,14 @@ import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { assertUuidV7, createUuidV7, isUuidV7 } from "./ids";
 import { yXmlTextVisibleText } from "./yxml-text";
 import {
+  createMainNamespace,
+  listNamespaceEntries,
+  namespaceEntryMap,
+  namespaceNoteEntries,
+  readMainNamespace,
+  validateNamespace,
+} from "./namespace";
+import {
   compareSiblingPositions,
   isCanonicalSiblingPosition,
 } from "./sibling-position";
@@ -17,6 +25,7 @@ import {
   deriveSectionCatalog,
   findSectionById,
   findParentSection,
+  findSectionWithDepth,
   insertChildSection,
   sectionBodyBlocks,
   planSectionDepthShift,
@@ -28,6 +37,7 @@ import {
   updateSectionProperties,
   updateSectionTitle,
   validateSectionTree,
+  validateSectionSnapshotDepth,
   replaceSectionBodySnapshot,
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
@@ -40,7 +50,7 @@ import {
 } from "./section-model";
 
 export const NOTE_DOC_SCHEMA_VERSION = 3;
-export const WORKSPACE_DOC_SCHEMA_VERSION = 2;
+export const WORKSPACE_DOC_SCHEMA_VERSION = 3;
 export const NOTE_BODY_FRAGMENT = "body";
 export const NOTE_SCHEMA_MIGRATION_ORIGIN = "memoka:note-schema-migration";
 export const DOCUMENT_IDENTITY_REPAIR_ORIGIN =
@@ -100,6 +110,8 @@ export type ProductDocument = NoteDocument | WorkspaceDocument;
 
 export interface NoteMetadataInput {
   noteId: string;
+  entryId?: string;
+  parentEntryId?: string | null;
   /** Null identifies a top-level Note. Missing legacy values load as null. */
   parentNoteId?: string | null;
   notePosition: string;
@@ -113,7 +125,11 @@ export interface NoteMetadataInput {
 }
 
 export interface NoteMetadata {
+  /** Query-time projection, including organizational groups. Never persisted. */
+  readonly namespaceAncestors?: readonly string[];
   noteId: string;
+  /** Placement projections are derived from Main Namespace, never stored on Notes. */
+  entryId?: string;
   parentNoteId: string | null;
   notePosition: string;
   createdAt: string;
@@ -304,6 +320,7 @@ export function createWorkspaceDocument(
     root.set("workspace_id", workspaceId);
     root.set("schema_version", WORKSPACE_DOC_SCHEMA_VERSION);
     root.set("notes", notes);
+    root.set("main_namespace", createMainNamespace());
   }, BOOTSTRAP_ORIGIN);
   return {
     kind: "workspace",
@@ -322,11 +339,36 @@ export function createWorkspaceDocumentFromMetadata(
 ): WorkspaceDocument {
   validateNoteMetadataTree(metadata);
   const workspace = createWorkspaceDocument(workspaceId);
+  // Equal sibling positions used NoteID as their old tie-break. Assign sorted
+  // fresh EntryIDs to sorted NoteIDs so restoring an old metadata projection
+  // cannot reorder those siblings just because identities changed.
+  const freshIds = metadata.map(() => createUuidV7()).sort();
+  const entryIds = new Map(
+    metadata
+      .map((note) => note.noteId)
+      .sort()
+      .map((id, index) => [id, freshIds[index]!]),
+  );
   workspace.doc.transact(() => {
     for (const note of metadata) {
-      workspace.notes.set(
-        note.noteId,
-        metadataToYMap(note, note.parentNoteId, note.notePosition),
+      workspace.notes.set(note.noteId, metadataToYMap(note));
+      const entryId = entryIds.get(note.noteId)!;
+      readMainNamespace(workspace.root).entries.set(
+        entryId,
+        namespaceEntryMap({
+          entryId,
+          parentEntryId:
+            note.parentNoteId === null
+              ? null
+              : entryIds.get(note.parentNoteId)!,
+          position: note.notePosition,
+          target: { kind: "note", id: note.noteId },
+          name: null,
+          createdAt: note.createdAt,
+          updatedAt: note.updatedAt,
+          deletedAt: note.deletedAt,
+          trashOperationId: note.trashOperationId,
+        }),
       );
     }
   }, BOOTSTRAP_ORIGIN);
@@ -343,6 +385,7 @@ export function createNoteDocumentFromSectionSnapshot(
   if (snapshot.sectionId !== noteId) {
     throw new Error("Root Section ID must equal Note ID");
   }
+  validateSectionSnapshotDepth(snapshot);
   const doc = new Y.Doc({ guid: noteId });
   const meta = doc.getMap("meta");
   const fragment = doc.getXmlFragment(NOTE_BODY_FRAGMENT);
@@ -623,12 +666,42 @@ export function addNoteMetadata(
     throw new Error("Note position must be a canonical fractional index");
   }
   const parentNoteId = input.parentNoteId ?? null;
-  validateParentReference(workspace, input.noteId, parentNoteId);
+  const noteEntries = namespaceNoteEntries(workspace.root);
+  const parentEntryId =
+    input.parentEntryId !== undefined
+      ? input.parentEntryId
+      : parentNoteId === null
+        ? null
+        : noteEntries.get(parentNoteId)?.entryId;
+  if (parentEntryId === undefined)
+    throw new Error("Unknown parent Note placement");
+  const { entries } = readMainNamespace(workspace.root);
+  if (parentEntryId !== null) {
+    const parent = listNamespaceEntries(workspace.root).find(
+      (entry) => entry.entryId === parentEntryId && !entry.deletedAt,
+    );
+    if (!parent) throw new Error("Unknown live Namespace parent");
+  }
+  const entryId = input.entryId ?? createUuidV7();
+  assertUuidV7(entryId, "entryId");
+  if (entryId === input.noteId || entries.has(entryId))
+    throw new Error("Duplicate Namespace entry identity");
   if (input.title !== undefined) validateTitle(input.title);
   workspace.doc.transact(() => {
-    workspace.notes.set(
-      input.noteId,
-      metadataToYMap(input, parentNoteId, notePosition),
+    workspace.notes.set(input.noteId, metadataToYMap(input));
+    entries.set(
+      entryId,
+      namespaceEntryMap({
+        entryId,
+        parentEntryId,
+        position: notePosition,
+        target: { kind: "note", id: input.noteId },
+        name: null,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+        deletedAt: input.deletedAt,
+        trashOperationId: input.trashOperationId,
+      }),
     );
   }, origin);
 }
@@ -639,17 +712,76 @@ export function readNoteMetadata(
 ): NoteMetadata | undefined {
   const value = workspace.notes.get(noteId);
   if (!value) return undefined;
-  const notePosition = String(value.get("note_position"));
-  const rawParentNoteId = value.get("parent_note_id");
-  const parentNoteId =
-    rawParentNoteId === null || rawParentNoteId === undefined
-      ? null
-      : String(rawParentNoteId);
+  return projectNoteMetadata(noteId, value, metadataPlacementIndex(workspace));
+}
+
+function metadataPlacementIndex(workspace: WorkspaceDocument) {
+  const entries = listNamespaceEntries(workspace.root);
+  return {
+    byNote: new Map(
+      entries.flatMap((entry) =>
+        entry.target ? [[entry.target.id, entry] as const] : [],
+      ),
+    ),
+    byId: new Map(entries.map((entry) => [entry.entryId, entry])),
+    titles: new Map(
+      [...workspace.notes].map(([id, note]) => [
+        id,
+        String(note.get("title_cache") ?? ""),
+      ]),
+    ),
+  };
+}
+
+function projectNoteMetadata(
+  noteId: string,
+  value: Y.Map<unknown>,
+  { byNote, byId, titles }: ReturnType<typeof metadataPlacementIndex>,
+): NoteMetadata {
+  const entry = byNote.get(noteId);
+  if (!entry) throw new Error("Note has no Namespace placement");
+  let parent =
+    entry.parentEntryId === null ? undefined : byId.get(entry.parentEntryId);
+  const visited = new Set<string>();
+  while (parent && !parent.target) {
+    if (visited.has(parent.entryId))
+      throw new Error("Namespace contains a cycle");
+    visited.add(parent.entryId);
+    parent =
+      parent.parentEntryId === null
+        ? undefined
+        : byId.get(parent.parentEntryId);
+  }
+  const parentNoteId = parent?.target?.id ?? null;
   const systemRole = value.get("system_role");
   return {
     noteId,
+    entryId: entry.entryId,
+    get namespaceAncestors() {
+      const names: string[] = [];
+      let cursor =
+        entry.parentEntryId === null
+          ? undefined
+          : byId.get(entry.parentEntryId);
+      const seen = new Set<string>();
+      while (cursor) {
+        if (seen.has(cursor.entryId))
+          throw new Error("Namespace contains a cycle");
+        seen.add(cursor.entryId);
+        names.push(
+          cursor.target
+            ? titles.get(cursor.target.id) || "新しいノート"
+            : cursor.name || "無題のグループ",
+        );
+        cursor =
+          cursor.parentEntryId === null
+            ? undefined
+            : byId.get(cursor.parentEntryId);
+      }
+      return names.reverse();
+    },
     parentNoteId,
-    notePosition,
+    notePosition: entry.position,
     title: String(value.get("title_cache") ?? ""),
     createdAt: String(value.get("created_at")),
     updatedAt: String(value.get("updated_at")),
@@ -660,13 +792,13 @@ export function readNoteMetadata(
 }
 
 export function listNoteMetadata(workspace: WorkspaceDocument): NoteMetadata[] {
-  return [...workspace.notes.keys()]
-    .map((noteId) => readNoteMetadata(workspace, noteId))
-    .filter((metadata): metadata is NoteMetadata => metadata !== undefined)
+  const index = metadataPlacementIndex(workspace);
+  return [...workspace.notes.entries()]
+    .map(([noteId, value]) => projectNoteMetadata(noteId, value, index))
     .sort(
       (left, right) =>
         compareSiblingPositions(left.notePosition, right.notePosition) ||
-        compareIdentifiers(left.noteId, right.noteId),
+        compareIdentifiers(left.entryId!, right.entryId!),
     );
 }
 
@@ -724,13 +856,21 @@ export function updateNotePlacements(
   }
   validateNoteMetadataTree([...current.values()]);
   const values = updates.map((update) => ({
-    value: requireMetadata(workspace, update.noteId),
+    value: readMainNamespace(workspace.root).entries.get(
+      current.get(update.noteId)!.entryId!,
+    )!,
     update,
   }));
+  const noteEntries = namespaceNoteEntries(workspace.root);
   workspace.doc.transact(() => {
     for (const { value, update } of values) {
-      value.set("parent_note_id", update.parentNoteId);
-      value.set("note_position", update.notePosition);
+      value.set(
+        "parent_entry_id",
+        update.parentNoteId === null
+          ? null
+          : noteEntries.get(update.parentNoteId)!.entryId,
+      );
+      value.set("position", update.notePosition);
     }
   }, origin);
 }
@@ -753,10 +893,15 @@ export function moveNotesToTrash(
     return value;
   });
   workspace.doc.transact(() => {
-    for (const value of values) {
+    const entries = readMainNamespace(workspace.root).entries;
+    const noteEntries = namespaceNoteEntries(workspace.root);
+    for (const [index, value] of values.entries()) {
       value.set("deleted_at", deletedAt);
       value.set("trash_operation_id", trashOperationId);
       value.set("updated_at", deletedAt);
+      const entry = entries.get(noteEntries.get(noteIds[index]!)!.entryId)!;
+      entry.set("deleted_at", deletedAt);
+      entry.set("trash_operation_id", trashOperationId);
     }
   }, origin);
 }
@@ -778,10 +923,15 @@ export function restoreNotesFromTrash(
     return value;
   });
   workspace.doc.transact(() => {
-    for (const value of values) {
+    const entries = readMainNamespace(workspace.root).entries;
+    const noteEntries = namespaceNoteEntries(workspace.root);
+    for (const [index, value] of values.entries()) {
       value.set("deleted_at", null);
       value.set("trash_operation_id", null);
       value.set("updated_at", restoredAt);
+      const entry = entries.get(noteEntries.get(noteIds[index]!)!.entryId)!;
+      entry.set("deleted_at", null);
+      entry.set("trash_operation_id", null);
     }
   }, origin);
 }
@@ -829,6 +979,7 @@ export function replaceNoteSectionTree(
   if (snapshot.sectionId !== note.noteId) {
     throw new Error("Root Section ID must equal Note ID");
   }
+  validateSectionSnapshotDepth(snapshot);
   note.doc.transact(() => {
     applySectionSnapshot(note.rootSection, snapshot);
     note.meta.set("updated_at", updatedAt);
@@ -844,11 +995,16 @@ export function planNoteSectionDepthShift(
   const boundary = findSectionById(note.rootSection, boundarySectionId);
   if (!boundary)
     throw new Error(`Unknown Focused Section: ${boundarySectionId}`);
-  return planSectionDepthShift(
+  const plan = planSectionDepthShift(
     sectionSnapshot(boundary),
     targetSectionIds,
     direction,
   );
+  validateSectionSnapshotDepth(
+    plan.snapshot,
+    findSectionWithDepth(note.rootSection, boundarySectionId)!.depth,
+  );
+  return plan;
 }
 
 export function applyNoteSectionDepthShift(
@@ -865,6 +1021,10 @@ export function applyNoteSectionDepthShift(
   if (plan.snapshot.sectionId !== boundarySectionId) {
     throw new Error("Section depth plan does not match its Focused Section");
   }
+  validateSectionSnapshotDepth(
+    plan.snapshot,
+    findSectionWithDepth(note.rootSection, boundarySectionId)!.depth,
+  );
   note.doc.transact(() => {
     applySectionHierarchySnapshot(boundary, plan.snapshot);
     note.meta.set("updated_at", updatedAt);
@@ -892,6 +1052,10 @@ export function putNoteSectionSibling(
     (child) => sectionId(child) === targetSectionId,
   );
   if (targetIndex < 0) return false;
+  validateSectionSnapshotDepth(
+    snapshot,
+    findSectionWithDepth(note.rootSection, targetSectionId)!.depth,
+  );
   const inserted = createSectionFromSnapshot(snapshot);
   note.doc.transact(() => {
     insertChildSection(
@@ -994,13 +1158,22 @@ export function createNoteSectionFromParagraph(
   const suffix = sourceSnapshot.body.slice(paragraphIndex + 1);
   const movedChildren =
     request.direction === "shallower" ? sourceSnapshot.children : [];
-  const created = createSectionFromSnapshot({
+  const createdSnapshot: SectionSnapshot = {
     sectionId: request.newSectionId,
     title: request.title,
     tags: [],
     body: suffix,
     children: movedChildren,
-  });
+  };
+  const sourceDepth = findSectionWithDepth(
+    note.rootSection,
+    request.sourceSectionId,
+  )!.depth;
+  validateSectionSnapshotDepth(
+    createdSnapshot,
+    sourceDepth + (request.direction === "deeper" ? 1 : 0),
+  );
+  const created = createSectionFromSnapshot(createdSnapshot);
 
   note.doc.transact(() => {
     replaceSectionBodySnapshot(source, prefix);
@@ -1312,14 +1485,8 @@ function workspaceDocumentFromYDoc(
   return workspace;
 }
 
-function metadataToYMap(
-  input: NoteMetadataInput,
-  parentNoteId: string | null,
-  notePosition: string,
-): Y.Map<unknown> {
+function metadataToYMap(input: NoteMetadataInput): Y.Map<unknown> {
   const value = new Y.Map<unknown>();
-  value.set("parent_note_id", parentNoteId);
-  value.set("note_position", notePosition);
   value.set("created_at", input.createdAt);
   value.set("updated_at", input.updatedAt);
   value.set("deleted_at", input.deletedAt ?? null);
@@ -1330,12 +1497,27 @@ function metadataToYMap(
 }
 
 function validateWorkspaceMetadata(workspace: WorkspaceDocument): void {
+  const entries = listNamespaceEntries(workspace.root);
+  validateNamespace(
+    entries,
+    new Map(
+      [...workspace.notes].map(([id, value]) => [
+        id,
+        {
+          deletedAt: nullableString(value.get("deleted_at")),
+          trashOperationId: nullableString(value.get("trash_operation_id")),
+        },
+      ]),
+    ),
+  );
   const metadata: NoteMetadata[] = [];
   for (const [noteId, value] of workspace.notes.entries()) {
     assertUuidV7(noteId, "noteId");
     if (!(value instanceof Y.Map)) {
       throw new Error(`Workspace Note metadata is invalid: ${noteId}`);
     }
+    if (value.has("parent_note_id") || value.has("note_position"))
+      throw new Error("Note placement must be stored in Namespace");
     const note = readNoteMetadata(workspace, noteId)!;
     if (!isCanonicalSiblingPosition(note.notePosition)) {
       throw new Error(`Note ${noteId} has an invalid note_position`);
@@ -1386,22 +1568,6 @@ export function validateNoteMetadataTree(notes: readonly NoteMetadata[]): void {
           : byId.get(cursor.parentNoteId);
     }
     for (const noteId of path) complete.add(noteId);
-  }
-}
-
-function validateParentReference(
-  workspace: WorkspaceDocument,
-  noteId: string,
-  parentNoteId: string | null,
-): void {
-  if (parentNoteId === null) return;
-  assertUuidV7(parentNoteId, "parentNoteId");
-  if (parentNoteId === noteId) {
-    throw new Error("A note cannot be its own parent");
-  }
-  const parent = readNoteMetadata(workspace, parentNoteId);
-  if (!parent || parent.deletedAt) {
-    throw new Error(`Unknown live parent: ${parentNoteId}`);
   }
 }
 

@@ -6,7 +6,7 @@ import {
   type WindowViewState as LegacyWindowViewState,
 } from "./window-state";
 
-export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 8;
+export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 9;
 
 export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
 
@@ -14,8 +14,8 @@ export type LeftSidebarUtility = "tree" | "search";
 export type SidebarSide = "left" | "right";
 
 export interface TreeSidebarViewState {
-  selectedNoteId: string | null;
-  collapsedNoteIds: string[];
+  selectedEntryId: string | null;
+  collapsedEntryIds: string[];
 }
 
 export interface OutlineSidebarViewState {
@@ -167,13 +167,13 @@ function bufferNoteId(buffer: BufferState | null): string | null {
 }
 
 function createLeftSidebarState(
-  selectedNoteId: string | null = null,
+  selectedEntryId: string | null = null,
 ): LeftSidebarState {
   return {
     visible: true,
     widthPx: 248,
     utility: "tree",
-    tree: { selectedNoteId, collapsedNoteIds: [] },
+    tree: { selectedEntryId, collapsedEntryIds: [] },
   };
 }
 
@@ -202,7 +202,7 @@ export function createApplicationWindowState(
         id: input.tabId,
         root: { type: "leaf", windowId: input.windowId },
         activeWindowId: input.windowId,
-        leftSidebar: createLeftSidebarState(bufferNoteId(buffer)),
+        leftSidebar: createLeftSidebarState(),
         rightSidebar: createRightSidebarState(),
       },
     ],
@@ -630,15 +630,15 @@ export function removeNotesFromSidebarViews(
   let changed = false;
   for (const tab of next.tabs) {
     const tree = tab.leftSidebar.tree;
-    if (tree.selectedNoteId && removedNoteIds.has(tree.selectedNoteId)) {
-      tree.selectedNoteId = notesFallbackNoteId;
+    if (tree.selectedEntryId && removedNoteIds.has(tree.selectedEntryId)) {
+      tree.selectedEntryId = notesFallbackNoteId;
       changed = true;
     }
-    const nextCollapsed = tree.collapsedNoteIds.filter(
+    const nextCollapsed = tree.collapsedEntryIds.filter(
       (noteId) => !removedNoteIds.has(noteId),
     );
-    if (nextCollapsed.length !== tree.collapsedNoteIds.length) {
-      tree.collapsedNoteIds = nextCollapsed;
+    if (nextCollapsed.length !== tree.collapsedEntryIds.length) {
+      tree.collapsedEntryIds = nextCollapsed;
       changed = true;
     }
 
@@ -688,7 +688,10 @@ export function reloadApplicationWindowState(
   return migrated.state;
 }
 
-export function migrateApplicationWindowState(value: unknown): {
+export function migrateApplicationWindowState(
+  value: unknown,
+  entryIds: ReadonlyMap<string, string> = new Map(),
+): {
   state: unknown;
   changed: boolean;
 } {
@@ -696,7 +699,7 @@ export function migrateApplicationWindowState(value: unknown): {
     return { state: value, changed: false };
   }
   const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 5 && version !== 6 && version !== 7) {
+  if (version !== 5 && version !== 6 && version !== 7 && version !== 8) {
     return { state: value, changed: false };
   }
   const state = structuredClone(value) as {
@@ -717,8 +720,10 @@ export function migrateApplicationWindowState(value: unknown): {
       if (!sidebar) continue;
       if (sidebar.utility === "notes") sidebar.utility = "tree";
       sidebar.tree = {
-        selectedNoteId: sidebar.notes?.selectedNoteId ?? null,
-        collapsedNoteIds: [],
+        selectedEntryId: sidebar.notes?.selectedNoteId
+          ? (entryIds.get(sidebar.notes.selectedNoteId) ?? null)
+          : null,
+        collapsedEntryIds: [],
       };
       delete sidebar.notes;
     }
@@ -735,6 +740,25 @@ export function migrateApplicationWindowState(value: unknown): {
   if (version < 7) {
     for (const window of Object.values(state.windows ?? {})) {
       if (window.view) window.view.collapsedSectionIds = [];
+    }
+  }
+  for (const tab of state.tabs ?? []) {
+    const tree = tab.leftSidebar?.tree as
+      | (TreeSidebarViewState & {
+          selectedNoteId?: string | null;
+          collapsedNoteIds?: string[];
+        })
+      | undefined;
+    if (!tree) continue;
+    if ("selectedNoteId" in tree) {
+      tree.selectedEntryId = tree.selectedNoteId
+        ? (entryIds.get(tree.selectedNoteId) ?? null)
+        : null;
+      tree.collapsedEntryIds = (tree.collapsedNoteIds ?? []).flatMap((id) =>
+        entryIds.has(id) ? [entryIds.get(id)!] : [],
+      );
+      delete tree.selectedNoteId;
+      delete tree.collapsedNoteIds;
     }
   }
   state.schemaVersion = APPLICATION_WINDOW_STATE_SCHEMA_VERSION;
@@ -1023,14 +1047,14 @@ function validateTreeSidebarViewState(value: unknown): void {
     throw new Error("Tree sidebar requires view state");
   }
   const tree = value as Partial<TreeSidebarViewState>;
-  if (tree.selectedNoteId !== null) {
-    assertNonEmptyId(tree.selectedNoteId, "Tree selected noteId");
+  if (tree.selectedEntryId !== null) {
+    assertNonEmptyId(tree.selectedEntryId, "Tree selected noteId");
   }
-  if (!Array.isArray(tree.collapsedNoteIds)) {
+  if (!Array.isArray(tree.collapsedEntryIds)) {
     throw new Error("Tree collapsed note IDs must be an array");
   }
   const seen = new Set<string>();
-  for (const noteId of tree.collapsedNoteIds) {
+  for (const noteId of tree.collapsedEntryIds) {
     assertNonEmptyId(noteId, "Tree collapsed noteId");
     if (seen.has(noteId)) {
       throw new Error(`Duplicate collapsed Tree note: ${noteId}`);

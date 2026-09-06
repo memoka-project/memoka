@@ -43,7 +43,6 @@ interface ApplicationKeyConfigLoadWire {
   readonly indentWidthPx: number;
   readonly japaneseWordSegmentation: string;
   readonly japaneseLineBreakSegmentation: string;
-  readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
 
@@ -58,7 +57,6 @@ export interface LoadedApplicationConfig {
   readonly indentWidthPx: number;
   readonly japaneseWordSegmentation: JapaneseWordSegmentationMode;
   readonly japaneseLineBreakSegmentation: JapaneseLineBreakSegmentationMode;
-  readonly waitForMirrorOnExit: boolean;
   readonly warning: string | null;
 }
 
@@ -133,7 +131,6 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-      waitForMirrorOnExit: true,
       warning: null,
     };
   }
@@ -156,7 +153,6 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-      waitForMirrorOnExit: true,
       warning,
     };
   }
@@ -173,7 +169,6 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-      waitForMirrorOnExit: true,
       warning: loaded.warning,
     };
   }
@@ -241,7 +236,6 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       indentWidthPx,
       japaneseWordSegmentation,
       japaneseLineBreakSegmentation,
-      waitForMirrorOnExit: loaded.waitForMirrorOnExit,
       warning: loaded.warning,
     };
   } catch (cause) {
@@ -258,7 +252,6 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       indentWidthPx: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
       japaneseWordSegmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
       japaneseLineBreakSegmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-      waitForMirrorOnExit: true,
       warning,
     };
   }

@@ -88,8 +88,14 @@ Tableの詳細は[Vim操作](vim-operations.md)に記載する。
 
 Section直下のParagraph先頭で`# `を入力すると、そのParagraph以降を直接Bodyに持つ新しい子Sectionへ変換する。
 Section title以降の内容は、その新SectionのBodyまたは子Sectionになる。
+Root H1からH6までを許す。H6本文での`# `はliteral textのまま残す。
+深さを変える操作と全paste経路は最終treeの絶対深さを事前検証する。
+H6を超える場合はtyped errorで全体を拒否し、ID、本文、revision、Undoを変更しない。
+H1が複数あるMarkdownの正規化後にH6を超える場合も、平坦化やplain-text fallbackを行わない。
 
-Section Headerでは次の操作でSection subtreeを1段ずつ昇格・降格する。
+Section Headerでは次の操作で、明示的に選択したHeaderを1段ずつ昇格・降格する。
+本文はHeaderと一緒に動く。未選択の後続Headerは、不正な深度の段差を補正する場合以外は絶対深度を維持する。
+subtree全体を昇降格する場合は対象の子孫HeaderもVisual Lineで選択する。
 
 - Insert: `Ctrl-t` / `Ctrl-d`
 - Normal: `>>` / `<<`
@@ -139,7 +145,7 @@ Section foldもWindow-localな表示状態である。
 
 ## 9. Markdown拡張
 
-CommonMark/GFMに加えて、次をimport、Clipboard、portable mirrorで往復する。
+CommonMark/GFMに加えて、次をimport、Clipboard、Native Markdown readで扱う。
 
 - Obsidian形式の`==highlight==`
 - GitHub AlertのNOTE、TIP、IMPORTANT、WARNING、CAUTION
@@ -211,4 +217,5 @@ inline code、Code/Source Block、8,192 UTF-16 code unitを超える単一text b
 - 空Root titleへの文書pasteでは、先頭ATX H1のpreflightを通った場合だけNote全体Markdown importを行う。
 - 大きなplain textやMarkdownを貼った後もBodyChunkにより編集可能DOM量を制限する。
 
-大量処理、検索index、portable mirrorは入力のmain pathから分離し、確定済みrevisionを非同期に処理する。
+大量処理、検索index、Restic capture/copy/maintenanceは入力のmain pathから分離する。
+検索は確定済みrevision、backupは短時間のSQLite Online Backupで切り取った同一時点の正本を非同期に処理する。

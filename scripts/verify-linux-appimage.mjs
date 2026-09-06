@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { RESTIC_ARTIFACTS } from "./restic-artifacts.mjs";
 import {
   appImageLauncherMarker,
   inspectSanitizedAppDir,
@@ -36,6 +38,14 @@ try {
     );
   }
   const appDir = join(extractionRoot, "squashfs-root");
+  const restic = await readFile(join(appDir, "usr", "bin", "restic"));
+  if (
+    createHash("sha256").update(restic).digest("hex") !==
+    RESTIC_ARTIFACTS["x86_64-unknown-linux-gnu"].executableSha256
+  )
+    throw new Error(
+      "AppImage Restic sidecar is missing or not the verified version",
+    );
   const { launcher, forbiddenLibraries } = await inspectSanitizedAppDir(appDir);
   if (!launcher.includes(appImageLauncherMarker)) {
     throw new Error("Memoka AppImage launcher marker is missing");

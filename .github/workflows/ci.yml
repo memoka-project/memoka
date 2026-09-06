@@ -26,6 +26,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm restic:prepare
       - run: corepack pnpm release:check-version
       - name: Verify the committed third-party inventory
         run: |
@@ -56,6 +57,7 @@ jobs:
           workspaces: . -> target
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm restic:prepare
       - run: corepack pnpm format:check
       - run: corepack pnpm lint
       - run: corepack pnpm typecheck

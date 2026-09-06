@@ -328,20 +328,22 @@ export function normalizeApplicationThemeId(
   return isApplicationThemeId(normalized) ? normalized : null;
 }
 
-/** Maps the displayed Root to H1 and repeats the H1-H6 colors after H6. */
+/** Uses absolute Note depth; focusing a Section never changes its color. */
 export function markupHeadingLevelForSectionDepth(
   depth: number,
 ): MarkupHeadingLevel {
-  if (!Number.isSafeInteger(depth) || depth < 0) {
-    throw new Error(`Section depth must be a non-negative integer: ${depth}`);
+  if (!Number.isSafeInteger(depth) || depth < 0 || depth > 5) {
+    throw new Error(`Section depth must be an integer from 0 to 5: ${depth}`);
   }
-  return ((depth % 6) + 1) as MarkupHeadingLevel;
+  return (depth + 1) as MarkupHeadingLevel;
 }
 
 export function nextMarkupHeadingLevel(
   level: MarkupHeadingLevel,
 ): MarkupHeadingLevel {
-  return level === 6 ? 1 : ((level + 1) as MarkupHeadingLevel);
+  // A tentative DOM node must not wrap to H1 before the structural H6
+  // transaction filter rejects it. This does not authorize a seventh level.
+  return Math.min(6, level + 1) as MarkupHeadingLevel;
 }
 
 export function filterApplicationThemes(

@@ -9,7 +9,11 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { createUuidV7, isUuidV7 } from "../core/ids";
-import { BODY_CHUNK_TARGET_BLOCKS } from "../core/section-model";
+import {
+  BODY_CHUNK_TARGET_BLOCKS,
+  MAX_SECTION_DEPTH,
+  SectionDepthLimitError,
+} from "../core/section-model";
 import {
   isSafeExternalLink,
   normalizeExternalLink,
@@ -419,6 +423,8 @@ export function parseMarkdownNote(
       stack.pop();
     }
     const parent = stack.at(-1) ?? rootDraft;
+    if (stack.length > MAX_SECTION_DEPTH)
+      throw new SectionDepthLimitError(stack.length);
     parent.children.push(draft);
     stack.push(draft);
   }

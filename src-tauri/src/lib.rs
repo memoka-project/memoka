@@ -6,12 +6,25 @@ use tauri::Manager;
 
 mod application_config;
 mod attachment;
+mod background_operation;
+pub mod backup;
+pub mod backup_management;
+pub mod cli;
 mod clipboard;
 mod data_area;
 mod diagnostics;
+pub mod document_model;
+pub mod history;
+pub mod markdown_read;
+pub mod namespace;
+pub mod native_service;
 mod persistence;
 pub mod portable_mirror;
+pub mod read_service;
+pub mod restic;
 mod search_index;
+mod workspace_migration;
+pub mod workspace_owner;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -433,11 +446,32 @@ pub fn run() {
             Ok(())
         })
         .manage(persistence::ProductPersistenceState::default())
-        .manage(portable_mirror::PortableMirrorOperationState::default())
+        .manage(native_service::SaveBarriers::default())
+        .register_asynchronous_uri_scheme_protocol(
+            "memoka-history-attachment",
+            |context, request, responder| {
+                let service = context
+                    .app_handle()
+                    .state::<persistence::ProductPersistenceState>()
+                    .native_service();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(native_service::history_attachment_response(
+                        service,
+                        request.uri().path(),
+                    ))
+                });
+            },
+        )
         .register_uri_scheme_protocol("memoka-attachment", |context, request| {
             attachment::attachment_protocol_response(context.app_handle(), request.uri().path())
         });
     let builder = builder.invoke_handler(tauri::generate_handler![
+        native_service::workspace_save_barrier_ack,
+        native_service::workspace_native_query,
+        native_service::workspace_backup_cancel,
+        native_service::workspace_backup_resume,
+        native_service::workspace_backup_settings,
+        native_service::workspace_history_attachment_export,
         deactivate_input_method,
         set_normal_mode_ime_guard,
         input_method_environment,
@@ -475,12 +509,6 @@ pub fn run() {
         persistence::workspace_search_index_replace_document,
         persistence::workspace_search_index_update_hierarchy,
         persistence::workspace_search_index_query,
-        portable_mirror::portable_mirror_status,
-        portable_mirror::portable_mirror_list_attachments,
-        portable_mirror::portable_mirror_begin,
-        portable_mirror::portable_mirror_write_chunk,
-        portable_mirror::portable_mirror_commit,
-        portable_mirror::portable_mirror_cancel
     ]);
     builder
         .run(tauri::generate_context!())

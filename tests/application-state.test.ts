@@ -70,7 +70,7 @@ describe("Memoka Application Window pure state", () => {
     const state = initialState();
 
     expect(state).toMatchObject({
-      schemaVersion: 8,
+      schemaVersion: 9,
       applicationWindowId: "application-window-1",
       activeTabId: "tab-1",
       tabs: [
@@ -82,7 +82,7 @@ describe("Memoka Application Window pure state", () => {
             visible: true,
             widthPx: 248,
             utility: "tree",
-            tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
+            tree: { selectedEntryId: null, collapsedEntryIds: [] },
           },
           rightSidebar: {
             visible: false,
@@ -127,10 +127,10 @@ describe("Memoka Application Window pure state", () => {
     const migrated = migrateApplicationWindowState(legacy);
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(8);
+    expect(state.schemaVersion).toBe(9);
     expect(state.tabs[0]?.leftSidebar).toMatchObject({
       utility: "tree",
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
+      tree: { selectedEntryId: null, collapsedEntryIds: [] },
     });
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
@@ -150,7 +150,7 @@ describe("Memoka Application Window pure state", () => {
 
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(8);
+    expect(state.schemaVersion).toBe(9);
     expect(state.windows["window-1"]!.view.collapsedSectionIds).toEqual([]);
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
@@ -610,14 +610,14 @@ describe("Memoka Application Window pure state", () => {
       visible: true,
       widthPx: 320,
       utility: "search",
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
+      tree: { selectedEntryId: null, collapsedEntryIds: [] },
     });
     expect(search.focusOwner).toEqual({ area: "left-sidebar" });
     expect(original.tabs[0].leftSidebar).toEqual({
       visible: true,
       widthPx: 248,
       utility: "tree",
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [] },
+      tree: { selectedEntryId: null, collapsedEntryIds: [] },
     });
 
     const editorFocused = updateSidebar(search, {
@@ -654,7 +654,7 @@ describe("Memoka Application Window pure state", () => {
   it("keeps Tree and Outline display and selection state per TabPage", () => {
     let state = updateSidebar(initialState(), {
       side: "left",
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [NOTE_B] },
+      tree: { selectedEntryId: NOTE_A, collapsedEntryIds: [NOTE_B] },
     });
     state = updateSidebar(state, {
       side: "right",
@@ -669,7 +669,7 @@ describe("Memoka Application Window pure state", () => {
     const createdTab = state.tabs.find(({ id }) => id === "tab-2");
     expect(createdTab?.leftSidebar).toMatchObject({
       visible: false,
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [NOTE_B] },
+      tree: { selectedEntryId: NOTE_A, collapsedEntryIds: [NOTE_B] },
     });
     expect(createdTab?.rightSidebar).toMatchObject({
       visible: false,
@@ -678,7 +678,7 @@ describe("Memoka Application Window pure state", () => {
     state = updateSidebar(state, {
       side: "left",
       visible: false,
-      tree: { selectedNoteId: NOTE_B, collapsedNoteIds: [] },
+      tree: { selectedEntryId: NOTE_B, collapsedEntryIds: [] },
     });
     state = updateSidebar(state, {
       side: "right",
@@ -689,7 +689,7 @@ describe("Memoka Application Window pure state", () => {
     const firstTab = switchTabPage(state, "tab-1").tabs[0];
     expect(firstTab.leftSidebar).toMatchObject({
       visible: true,
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [NOTE_B] },
+      tree: { selectedEntryId: NOTE_A, collapsedEntryIds: [NOTE_B] },
     });
     expect(firstTab.rightSidebar).toMatchObject({
       visible: true,
@@ -698,7 +698,7 @@ describe("Memoka Application Window pure state", () => {
     const secondTab = state.tabs.find(({ id }) => id === "tab-2");
     expect(secondTab?.leftSidebar).toMatchObject({
       visible: false,
-      tree: { selectedNoteId: NOTE_B, collapsedNoteIds: [] },
+      tree: { selectedEntryId: NOTE_B, collapsedEntryIds: [] },
     });
     expect(secondTab?.rightSidebar).toMatchObject({
       visible: false,
@@ -713,7 +713,7 @@ describe("Memoka Application Window pure state", () => {
     );
     state = updateSidebar(state, {
       side: "left",
-      tree: { selectedNoteId: NOTE_A, collapsedNoteIds: [NOTE_A] },
+      tree: { selectedEntryId: NOTE_A, collapsedEntryIds: [NOTE_A] },
     });
     state = updateSidebar(state, {
       side: "right",
@@ -732,15 +732,15 @@ describe("Memoka Application Window pure state", () => {
     );
     for (const tab of repaired.tabs) {
       expect(tab.leftSidebar.tree).toEqual({
-        selectedNoteId: NOTE_B,
-        collapsedNoteIds: [],
+        selectedEntryId: NOTE_B,
+        collapsedEntryIds: [],
       });
       expect(tab.rightSidebar.outline).toEqual({
         noteId: NOTE_B,
         selectedSectionId: null,
       });
     }
-    expect(state.tabs[0].leftSidebar.tree.selectedNoteId).toBe(NOTE_A);
+    expect(state.tabs[0].leftSidebar.tree.selectedEntryId).toBe(NOTE_A);
   });
 
   it("migrates deterministic legacy Window records without merging NoteDocs", () => {

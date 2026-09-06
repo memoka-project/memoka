@@ -16,6 +16,7 @@ import { CellSelection } from "@tiptap/pm/tables";
 import type { EditorView } from "@tiptap/pm/view";
 import type { UndoManager } from "yjs";
 import { sanitizeExternalHtml } from "../editor/html-paste";
+import { SectionDepthLimitError } from "../core/section-model";
 import {
   internalSectionLinkAtPosition,
   sectionIdAtEditorSelection,
@@ -1044,16 +1045,28 @@ export class ProductVimSession {
   ): boolean {
     const undoManager = findUndoManager(view);
     const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
-    const result = runMarkdownNoteImport(
-      view,
-      markdown,
-      this.options.getRootNoteId?.() ?? null,
-      {
-        beforeDispatch: () => {
-          if (standaloneUndo) undoManager?.stopCapturing();
+    let result;
+    try {
+      result = runMarkdownNoteImport(
+        view,
+        markdown,
+        this.options.getRootNoteId?.() ?? null,
+        {
+          beforeDispatch: () => {
+            if (standaloneUndo) undoManager?.stopCapturing();
+          },
         },
-      },
-    );
+      );
+    } catch (error) {
+      if (!(error instanceof SectionDepthLimitError)) throw error;
+      // This is a rejected whole-note import, not an unsupported MIME. Consume
+      // the paste before the browser/plain-text fallback can modify the Note.
+      // Parsing rejects it before dispatch or any Undo capture boundary.
+      this.action = "clipboard:paste:section-depth-limit";
+      this.options.onMessage?.(error.message);
+      this.emit();
+      return true;
+    }
     if (!result.changed) return false;
     if (standaloneUndo) undoManager?.stopCapturing();
     this.action = `clipboard:paste:markdown-note:${source}:changed`;

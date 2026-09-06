@@ -31,7 +31,6 @@ void loadApplicationConfig().then(
     indentWidthPx,
     japaneseWordSegmentation,
     japaneseLineBreakSegmentation,
-    waitForMirrorOnExit,
     warning,
   }) => {
     applyApplicationTheme(document.documentElement, theme);
@@ -65,7 +64,6 @@ void loadApplicationConfig().then(
         initialJapaneseLineBreakSegmentation={japaneseLineBreakSegmentation}
         keyConfig={config}
         keyConfigWarning={startupWarning}
-        waitForMirrorOnExit={waitForMirrorOnExit}
       />,
     );
   },

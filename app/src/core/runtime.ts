@@ -2,6 +2,17 @@ import type { Editor } from "@tiptap/core";
 import { CellSelection } from "@tiptap/pm/tables";
 import * as Y from "yjs";
 import {
+  applyNamespacePlan,
+  listNamespaceEntries,
+  namespaceNoteEntries,
+  namespacePath,
+  namespaceTreeNodes,
+  planNamespaceEdit,
+  readMainNamespace,
+  type NamespaceEdit,
+  type NamespaceTreeNode,
+} from "./namespace";
+import {
   CoreCommandRegistry,
   type CoreCommandEnvelope,
   type CoreCommandName,
@@ -22,7 +33,6 @@ import {
   listNoteMetadata,
   loadNoteDocumentWithSectionIdentityRecovery,
   loadProductDocument,
-  moveNotesToTrash,
   noteSectionCatalog,
   noteDisplayTitle,
   planNoteSectionDepthShift,
@@ -86,7 +96,6 @@ import {
   migrateLegacyWindowStates,
   migrateApplicationWindowState,
   openBufferInWindow,
-  removeNotesFromSidebarViews,
   splitWindow,
   switchTabPage,
   updateSidebar as updateApplicationSidebar,
@@ -128,9 +137,6 @@ import {
 } from "./internal-link-candidates";
 import {
   planNewNotePosition,
-  planNoteMove,
-  planNoteTrash,
-  planTrashRestore,
   noteAncestorPath,
   treeMoveRequestForDirection,
   type NoteMoveRequest,
@@ -185,6 +191,7 @@ export interface RuntimeSnapshot {
    * retraverse a large Note Tree.
    */
   notes: readonly NoteMetadata[];
+  namespaceEntries: readonly NamespaceTreeNode[];
   loadedNoteIds: string[];
   applicationWindow: ApplicationWindowState;
   windows: RuntimeWindowState[];
@@ -233,6 +240,8 @@ interface CreateNewNoteInput {
   createdAt: string;
   parentNoteId: string | null;
   afterNoteId: string | null;
+  parentEntryId?: string | null;
+  afterEntryId?: string | null;
   windowId?: string;
   fault?: CommitFault;
 }
@@ -349,6 +358,7 @@ export class CoreRuntime {
   private readonly pendingWorkspaceSearchIndexNoteIds = new Set<string>();
   private readonly pendingWorkspaceSearchIndexHierarchyNoteIds =
     new Set<string>();
+  private readonly pendingWorkspaceSearchNamespaceEntryIds = new Set<string>();
   private pendingWorkspaceSearchIndexHierarchyBaseRevision: number | null =
     null;
   private workspaceSearchIndexQueuedTaskCount = 0;
@@ -401,7 +411,8 @@ export class CoreRuntime {
   private activeNoteId: string | null = null;
   private applicationWindowState: ApplicationWindowState | null = null;
   private noteMetadataProjectionCache: readonly NoteMetadata[] | null = null;
-  private observedWorkspaceNotes: Y.Map<Y.Map<unknown>> | null = null;
+  private observedWorkspaceNotes: Y.Map<unknown> | null = null;
+  private namespaceProjectionCache: readonly NamespaceTreeNode[] | null = null;
   private unsubscribeWorkspaceReplacement: (() => void) | null = null;
 
   private readonly handleWorkspaceMetadataChange = (
@@ -417,7 +428,10 @@ export class CoreRuntime {
         );
       }),
     );
-    if (affectsApplicationProjection) this.noteMetadataProjectionCache = null;
+    if (affectsApplicationProjection) {
+      this.noteMetadataProjectionCache = null;
+      this.namespaceProjectionCache = null;
+    }
   };
 
   private constructor(
@@ -468,7 +482,7 @@ export class CoreRuntime {
     options: CoreRuntimeOptions = {},
   ): Promise<CoreRuntime> {
     const manifest = await persistence.manifest();
-    if (manifest.databaseSchemaVersion !== 4) {
+    if (manifest.databaseSchemaVersion !== 5) {
       throw new Error(
         `Unsupported persistence schema ${manifest.databaseSchemaVersion}`,
       );
@@ -601,18 +615,6 @@ export class CoreRuntime {
     );
   }
 
-  portableWorkspaceSnapshot(): {
-    readonly workspaceId: string;
-    readonly schemaVersion: number;
-    readonly revision: number;
-  } {
-    return {
-      workspaceId: this.workspaceDocument.workspaceId,
-      schemaVersion: this.workspaceDocument.schemaVersion,
-      revision: this.workspace.revision,
-    };
-  }
-
   /**
    * Loads a read-only preview without turning an unopened note into a Buffer.
    * A document already owned by the runtime is borrowed; a persisted-only
@@ -691,6 +693,9 @@ export class CoreRuntime {
       noteId: this.activeNoteId,
       title: metadata?.title ?? "",
       notes,
+      namespaceEntries: (this.namespaceProjectionCache ??= Object.freeze(
+        namespaceTreeNodes(this.workspaceDocument),
+      )),
       loadedNoteIds: [...this.notes.keys()].sort(),
       applicationWindow: this.applicationWindow,
       windows: [...this.windows.values()]
@@ -712,7 +717,8 @@ export class CoreRuntime {
   backgroundTaskSnapshot(): RuntimeBackgroundTaskSnapshot {
     const pendingNoteCount = this.pendingWorkspaceSearchIndexNoteIds.size;
     const pendingHierarchyCount =
-      this.pendingWorkspaceSearchIndexHierarchyNoteIds.size;
+      this.pendingWorkspaceSearchIndexHierarchyNoteIds.size +
+      this.pendingWorkspaceSearchNamespaceEntryIds.size;
     const common = {
       pendingNoteCount,
       pendingHierarchyCount,
@@ -1135,6 +1141,84 @@ export class CoreRuntime {
     return request
       ? this.moveNote(noteId, request)
       : Promise.resolve({ noteId, changed: false });
+  }
+
+  editNamespace(
+    request: NamespaceEdit,
+  ): Promise<CoreCommandResults["namespace.edit"]> {
+    return this.executeCommand({
+      name: "namespace.edit",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: request,
+    });
+  }
+
+  createNamespaceGroup(parentEntryId: string | null, name: string) {
+    return this.editNamespace({
+      kind: "create-group",
+      entryId: this.idFactory(),
+      parentEntryId,
+      name,
+      at: this.clock(),
+    });
+  }
+
+  renameNamespaceGroup(entryId: string, name: string) {
+    return this.editNamespace({
+      kind: "rename-group",
+      entryId,
+      name,
+      at: this.clock(),
+    });
+  }
+
+  moveNamespaceEntry(entryId: string, direction: TreeMoveDirection) {
+    return this.editNamespace({
+      kind: "move",
+      entryId,
+      direction,
+      at: this.clock(),
+    });
+  }
+
+  trashNamespaceEntry(entryId: string) {
+    return this.editNamespace({ kind: "trash", entryId, at: this.clock() });
+  }
+
+  restoreNamespaceEntry(entryId: string) {
+    return this.editNamespace({ kind: "restore", entryId, at: this.clock() });
+  }
+
+  createNoteAtEntry(
+    windowId: string,
+    selectedEntryId: string | null,
+    kind: "root" | "child" | "sibling",
+  ) {
+    const selected = listNamespaceEntries(this.workspaceDocument.root).find(
+      (entry) => entry.entryId === selectedEntryId && !entry.deletedAt,
+    );
+    if (kind !== "root" && !selected)
+      throw new Error("Namespace entry is not selected");
+    return this.executeCommand({
+      name: "note.create",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: {
+        noteId: this.idFactory(),
+        title: "",
+        createdAt: this.clock(),
+        windowId,
+        afterNoteId: null,
+        parentEntryId:
+          kind === "root"
+            ? null
+            : kind === "child"
+              ? selected!.entryId
+              : selected!.parentEntryId,
+        afterEntryId: kind === "sibling" ? selected!.entryId : null,
+      },
+    });
   }
 
   shiftSectionDepth(
@@ -1583,9 +1667,61 @@ export class CoreRuntime {
         throw new Error(`${target} search only supports note titles`);
       }
       const catalog = this.workspaceMetadataSearchCatalog(target);
+      let results = filterWorkspaceSearchCatalog(catalog, query, scope, limit);
+      if (target === "trash") {
+        const entries = listNamespaceEntries(this.workspaceDocument.root);
+        const titles = new Map(
+          listNoteMetadata(this.workspaceDocument).map((note) => [
+            note.noteId,
+            note.title,
+          ]),
+        );
+        const terms = normalizeWorkspaceSearchText(query)
+          .split(/\s+/u)
+          .filter(Boolean);
+        const groups: WorkspaceSearchResult[] = entries
+          .filter((entry) => entry.deletedAt && !entry.target)
+          .flatMap((entry) => {
+            const path = namespacePath(entries, titles, entry.entryId);
+            if (
+              !terms.every((term) =>
+                normalizeWorkspaceSearchText(path.join("/")).includes(term),
+              )
+            )
+              return [];
+            return [
+              {
+                resultId: `namespace:${entry.entryId}`,
+                namespaceEntryId: entry.entryId,
+                noteId: "",
+                sectionId: "",
+                title: path.at(-1)!,
+                parentPath: `/${path.slice(0, -1).join("/")}`,
+                updatedAt: entry.updatedAt,
+                kind: "group",
+                preview: "",
+                lineText: "",
+                blockId: null,
+                logicalLineNumber: null,
+                sectionLineNumber: null,
+                lineIndex: 0,
+                matchOffset: 0,
+                lineMatchOffset: 0,
+                query,
+              },
+            ];
+          });
+        results = [...results, ...groups]
+          .sort(
+            (a, b) =>
+              b.updatedAt.localeCompare(a.updatedAt) ||
+              a.resultId.localeCompare(b.resultId),
+          )
+          .slice(0, limit);
+      }
       return {
         scope,
-        results: filterWorkspaceSearchCatalog(catalog, query, scope, limit),
+        results,
         failures: [],
         backend: "metadata",
         elapsedMs: performance.now() - startedAt,
@@ -1607,7 +1743,7 @@ export class CoreRuntime {
     }
     const index = this.workspaceSearchIndex;
     if (index) {
-      if (this.pendingWorkspaceSearchIndexHierarchyNoteIds.size > 0) {
+      if (this.pendingWorkspaceSearchIndexHierarchyBaseRevision !== null) {
         this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
         await this.workspaceSearchIndexQueue;
       }
@@ -1789,6 +1925,8 @@ export class CoreRuntime {
     current: StableEditorPosition | null,
     result: WorkspaceSearchResult,
   ): Promise<EditorNavigationResult> {
+    if (result.kind === "group")
+      return { handled: false, detail: "jump:search:group" };
     const windowState = this.windows.get(windowId);
     if (!windowState) throw new Error(`Unknown window: ${windowId}`);
     if (
@@ -2191,6 +2329,7 @@ export class CoreRuntime {
     }
     this.pendingWorkspaceSearchIndexNoteIds.clear();
     this.pendingWorkspaceSearchIndexHierarchyNoteIds.clear();
+    this.pendingWorkspaceSearchNamespaceEntryIds.clear();
     this.pendingWorkspaceSearchIndexHierarchyBaseRevision = null;
     this.workspaceSearchDirtyNoteIds.clear();
     this.workspaceSearchProjectionCache.clear();
@@ -2258,7 +2397,14 @@ export class CoreRuntime {
 
     if (applicationRecord) {
       try {
-        const migrated = migrateApplicationWindowState(applicationRecord.state);
+        const migrated = migrateApplicationWindowState(
+          applicationRecord.state,
+          new Map(
+            [...namespaceNoteEntries(this.workspaceDocument.root)].map(
+              ([id, entry]) => [id, entry.entryId],
+            ),
+          ),
+        );
         validateApplicationWindowState(migrated.state);
         state = structuredClone(migrated.state);
         mustPersist = migrated.changed;
@@ -2331,17 +2477,22 @@ export class CoreRuntime {
         changed = true;
       }
     }
+    const liveEntryIds = new Set(
+      listNamespaceEntries(this.workspaceDocument.root)
+        .filter((entry) => !entry.deletedAt)
+        .map((entry) => entry.entryId),
+    );
     for (const tab of next.tabs) {
       const tree = tab.leftSidebar.tree;
-      if (tree.selectedNoteId && !liveNoteIds.has(tree.selectedNoteId)) {
-        tree.selectedNoteId = null;
+      if (tree.selectedEntryId && !liveEntryIds.has(tree.selectedEntryId)) {
+        tree.selectedEntryId = null;
         changed = true;
       }
-      const collapsedNoteIds = tree.collapsedNoteIds.filter((noteId) =>
-        liveNoteIds.has(noteId),
+      const collapsedEntryIds = tree.collapsedEntryIds.filter((noteId) =>
+        liveEntryIds.has(noteId),
       );
-      if (collapsedNoteIds.length !== tree.collapsedNoteIds.length) {
-        tree.collapsedNoteIds = collapsedNoteIds;
+      if (collapsedEntryIds.length !== tree.collapsedEntryIds.length) {
+        tree.collapsedEntryIds = collapsedEntryIds;
         changed = true;
       }
       const outline = tab.rightSidebar.outline;
@@ -2355,7 +2506,144 @@ export class CoreRuntime {
     return { state: next, changed };
   }
 
+  private async applyNamespaceEdit(
+    request: NamespaceEdit,
+    operationId: string,
+    fault?: CommitFault,
+  ): Promise<CoreCommandResults["namespace.edit"]> {
+    await this.localStateQueue.catch(() => undefined);
+    const plan = planNamespaceEdit(
+      this.workspaceDocument,
+      request,
+      operationId,
+    );
+    if (!plan.affectedEntryIds.length)
+      return {
+        entryId: request.entryId,
+        changed: false,
+        fallbackEntryId: null,
+      };
+    const previousEntries = new Map(
+      listNamespaceEntries(this.workspaceDocument.root).map((entry) => [
+        entry.entryId,
+        entry,
+      ]),
+    );
+    const hierarchyNoteIds = plan.entries.flatMap((entry) =>
+      entry.target &&
+      previousEntries.get(entry.entryId)?.parentEntryId !== entry.parentEntryId
+        ? [entry.target.id]
+        : [],
+    );
+    let next = structuredClone(this.requireApplicationWindowState());
+    const removedNotes = new Set(
+      request.kind === "trash" ? plan.affectedNoteIds : [],
+    );
+    const fallbackNoteId = plan.entries.find(
+      (entry) => entry.entryId === plan.fallbackEntryId,
+    )?.target?.id;
+    if (removedNotes.size && fallbackNoteId) {
+      await this.ensureNoteLoaded(fallbackNoteId);
+      for (const state of this.windows.values())
+        if (state.noteId && removedNotes.has(state.noteId))
+          next = openBufferInWindow(
+            next,
+            state.windowId,
+            createNoteBuffer(fallbackNoteId),
+            { mode: "normal", activate: false },
+          );
+    }
+    if (removedNotes.size) {
+      for (const [id, buffer] of Object.entries(next.buffers))
+        if (
+          this.contentBufferNoteId(buffer) &&
+          removedNotes.has(this.contentBufferNoteId(buffer)!)
+        )
+          next = closeBuffer(next, id);
+    }
+    if (request.kind === "trash") {
+      const removedEntries = new Set(plan.affectedEntryIds);
+      for (const tab of next.tabs) {
+        const tree = tab.leftSidebar.tree;
+        if (tree.selectedEntryId && removedEntries.has(tree.selectedEntryId))
+          tree.selectedEntryId = plan.fallbackEntryId;
+        tree.collapsedEntryIds = tree.collapsedEntryIds.filter(
+          (id) => !removedEntries.has(id),
+        );
+        if (
+          tab.rightSidebar.outline.noteId &&
+          removedNotes.has(tab.rightSidebar.outline.noteId)
+        )
+          tab.rightSidebar.outline = { noteId: null, selectedSectionId: null };
+      }
+    }
+    if (request.kind === "create-group") {
+      const tree = activeTab(next).leftSidebar.tree;
+      tree.selectedEntryId = request.entryId;
+      tree.collapsedEntryIds = tree.collapsedEntryIds.filter(
+        (id) =>
+          id !==
+          (request as Extract<NamespaceEdit, { kind: "create-group" }>)
+            .parentEntryId,
+      );
+    }
+    this.setSaving();
+    try {
+      await this.transactions.transact(
+        {
+          operationId: operationId,
+          scope: "workspace-structure",
+          documents: [this.workspace],
+          fault,
+          localStates: [toApplicationLocalStateCommit(next)],
+        },
+        () =>
+          applyNamespacePlan(
+            this.workspaceDocument,
+            plan,
+            CORE_TRANSACTION_ORIGIN,
+          ),
+      );
+      this.applicationWindowState = next;
+      this.syncActiveNoteFromApplicationWindow();
+      this.sectionCatalogRevision += 1;
+      this.internalLinkLabelRevision += 1;
+      if (request.kind === "trash" || request.kind === "restore")
+        this.queueWorkspaceSearchIndexRebuild();
+      else {
+        for (const entry of plan.entries) {
+          const before = previousEntries.get(entry.entryId);
+          if (
+            before?.parentEntryId !== entry.parentEntryId ||
+            before?.name !== entry.name
+          )
+            this.pendingWorkspaceSearchNamespaceEntryIds.add(entry.entryId);
+        }
+        this.queueWorkspaceSearchIndexHierarchyUpdate(
+          this.workspace.revision - 1,
+          hierarchyNoteIds,
+        );
+      }
+      this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
+      for (const [id, pending] of this.pendingNavigations)
+        if (removedNotes.has(pending.destination.noteId))
+          this.pendingNavigations.delete(id);
+      this.setReady();
+      return {
+        entryId: request.entryId,
+        changed: true,
+        fallbackEntryId: plan.fallbackEntryId,
+      };
+    } catch (error) {
+      this.reportError(error);
+      throw error;
+    }
+  }
+
   private registerCommands(): void {
+    this.commands.register("namespace.edit", (envelope) =>
+      this.applyNamespaceEdit(envelope.payload, envelope.operationId),
+    );
     this.commands.register("note.create_root", (envelope) =>
       this.createNewNote({
         ...envelope.payload,
@@ -2459,22 +2747,22 @@ export class CoreRuntime {
       }
     });
 
-    this.commands.register("note.reorder", (envelope) => {
-      const request = treeMoveRequestForDirection(
-        listNoteMetadata(this.workspaceDocument),
+    this.commands.register("note.reorder", async (envelope) => {
+      const entry = namespaceNoteEntries(this.workspaceDocument.root).get(
         envelope.payload.noteId,
-        envelope.payload.direction,
       );
-      return request
-        ? this.moveExistingNote({
-            ...envelope.payload,
-            ...request,
-            operationId: envelope.operationId,
-          })
-        : Promise.resolve({
-            noteId: envelope.payload.noteId,
-            changed: false,
-          });
+      if (!entry) throw new Error("Note has no Namespace entry");
+      const result = await this.applyNamespaceEdit(
+        {
+          kind: "move",
+          entryId: entry.entryId,
+          direction: envelope.payload.direction,
+          at: this.clock(),
+        },
+        envelope.operationId,
+        envelope.payload.fault,
+      );
+      return { noteId: envelope.payload.noteId, changed: result.changed };
     });
 
     this.commands.register("note.move", (envelope) =>
@@ -2686,117 +2974,54 @@ export class CoreRuntime {
     );
 
     this.commands.register("note.move_to_trash", async (envelope) => {
-      const { noteId, deletedAt, fault } = envelope.payload;
-      await this.localStateQueue.catch(() => undefined);
-      const metadata = listNoteMetadata(this.workspaceDocument);
-      const plan = planNoteTrash(metadata, noteId);
-      const trashed = new Set(plan.noteIds);
-      const fallbackNoteId = plan.fallbackNoteId;
-      if (fallbackNoteId) await this.ensureNoteLoaded(fallbackNoteId);
-      let nextApplicationState = this.requireApplicationWindowState();
-      const changedWindowIds = [...this.windows.values()]
-        .filter((state) => state.noteId !== null && trashed.has(state.noteId))
-        .map(({ windowId }) => windowId);
-      if (fallbackNoteId) {
-        for (const windowId of changedWindowIds) {
-          nextApplicationState = openBufferInWindow(
-            nextApplicationState,
-            windowId,
-            createNoteBuffer(fallbackNoteId),
-            { mode: "normal", activate: false },
-          );
-        }
-      }
-      for (const [bufferId, buffer] of Object.entries(
-        nextApplicationState.buffers,
-      )) {
-        const bufferedNoteId = this.contentBufferNoteId(buffer);
-        if (bufferedNoteId && trashed.has(bufferedNoteId)) {
-          nextApplicationState = closeBuffer(nextApplicationState, bufferId);
-        }
-      }
-      nextApplicationState = removeNotesFromSidebarViews(
-        nextApplicationState,
-        trashed,
-        fallbackNoteId,
+      const note = this.requireLiveMetadata(envelope.payload.noteId);
+      const request: NamespaceEdit = {
+        kind: "trash",
+        entryId: note.entryId!,
+        at: envelope.payload.deletedAt,
+      };
+      const plan = planNamespaceEdit(
+        this.workspaceDocument,
+        request,
+        envelope.operationId,
       );
-      this.setSaving();
-      try {
-        await this.transactions.transact(
-          {
-            operationId: envelope.operationId,
-            scope: "workspace-structure",
-            documents: [this.workspace],
-            localStates: [toApplicationLocalStateCommit(nextApplicationState)],
-            fault,
-          },
-          () =>
-            moveNotesToTrash(
-              this.workspaceDocument,
-              plan.noteIds,
-              deletedAt,
-              envelope.operationId,
-              CORE_TRANSACTION_ORIGIN,
-            ),
-        );
-        this.applicationWindowState = nextApplicationState;
-        this.syncActiveNoteFromApplicationWindow();
-        for (const [windowId, pending] of this.pendingNavigations) {
-          if (
-            trashed.has(pending.destination.noteId) ||
-            changedWindowIds.includes(windowId)
-          ) {
-            this.pendingNavigations.delete(windowId);
-          }
-        }
-        this.queueWorkspaceSearchIndexRebuild();
-        this.sectionCatalogRevision += 1;
-        this.setReady();
-        return {
-          noteId,
-          trashedNoteIds: [...plan.noteIds],
-          fallbackNoteId,
-        };
-      } catch (error) {
-        this.reportError(error);
-        throw error;
-      }
+      const fallbackNoteId =
+        plan.entries.find((entry) => entry.entryId === plan.fallbackEntryId)
+          ?.target?.id ?? null;
+      await this.applyNamespaceEdit(
+        request,
+        envelope.operationId,
+        envelope.payload.fault,
+      );
+      return {
+        noteId: note.noteId,
+        trashedNoteIds: plan.affectedNoteIds,
+        fallbackNoteId,
+      };
     });
 
     this.commands.register("note.restore_from_trash", async (envelope) => {
-      const { noteId, restoredAt, fault } = envelope.payload;
-      const metadata = readNoteMetadata(this.workspaceDocument, noteId);
-      if (!metadata?.deletedAt)
-        throw new Error(`Note is not in Trash: ${noteId}`);
-      const restoredNoteIds = planTrashRestore(
-        listNoteMetadata(this.workspaceDocument),
-        noteId,
+      const note = readNoteMetadata(
+        this.workspaceDocument,
+        envelope.payload.noteId,
       );
-      this.setSaving();
-      try {
-        await this.transactions.transact(
-          {
-            operationId: envelope.operationId,
-            scope: "workspace-structure",
-            documents: [this.workspace],
-            fault,
-          },
-          () =>
-            restoreNotesFromTrash(
-              this.workspaceDocument,
-              restoredNoteIds,
-              restoredAt,
-              CORE_TRANSACTION_ORIGIN,
-            ),
-        );
-        this.queueWorkspaceSearchIndexRebuild();
-        this.sectionCatalogRevision += 1;
-        this.setReady();
-        return { noteId, restoredNoteIds };
-      } catch (error) {
-        this.reportError(error);
-        throw error;
-      }
+      if (!note?.deletedAt) throw new Error("Note is not in Trash");
+      const request: NamespaceEdit = {
+        kind: "restore",
+        entryId: note.entryId!,
+        at: envelope.payload.restoredAt,
+      };
+      const plan = planNamespaceEdit(
+        this.workspaceDocument,
+        request,
+        envelope.operationId,
+      );
+      await this.applyNamespaceEdit(
+        request,
+        envelope.operationId,
+        envelope.payload.fault,
+      );
+      return { noteId: note.noteId, restoredNoteIds: plan.affectedNoteIds };
     });
 
     this.commands.register("note.replace_text", async (envelope) => {
@@ -3801,11 +4026,27 @@ export class CoreRuntime {
       throw new Error(`Duplicate note: ${noteId}`);
     }
     await this.localStateQueue.catch(() => undefined);
+    const placements = namespaceNoteEntries(this.workspaceDocument.root);
+    const entryId = this.idFactory();
+    const parentEntryId =
+      input.parentEntryId !== undefined
+        ? input.parentEntryId
+        : parentNoteId === null
+          ? null
+          : placements.get(parentNoteId)?.entryId;
+    if (parentEntryId === undefined)
+      throw new Error("Unknown parent placement");
+    const afterEntryId =
+      input.afterEntryId !== undefined
+        ? input.afterEntryId
+        : afterNoteId === null
+          ? null
+          : (placements.get(afterNoteId)?.entryId ?? null);
     const insertion = planNewNotePosition(
-      listNoteMetadata(this.workspaceDocument),
-      parentNoteId,
-      afterNoteId,
-      noteId,
+      namespaceTreeNodes(this.workspaceDocument),
+      parentEntryId,
+      afterEntryId,
+      entryId,
       siblingPositionSeed(
         this.workspaceDocument.workspaceId,
         operationId,
@@ -3846,6 +4087,8 @@ export class CoreRuntime {
               noteId,
               title,
               parentNoteId,
+              entryId,
+              parentEntryId,
               notePosition: insertion.notePosition,
               createdAt,
               updatedAt: createdAt,
@@ -3853,14 +4096,11 @@ export class CoreRuntime {
             CORE_TRANSACTION_ORIGIN,
           );
           if (insertion.reindexedSiblings.length > 0) {
-            updateNotePlacements(
-              this.workspaceDocument,
-              insertion.reindexedSiblings.map((update) => ({
-                ...update,
-                parentNoteId,
-              })),
-              CORE_TRANSACTION_ORIGIN,
-            );
+            const entries = readMainNamespace(
+              this.workspaceDocument.root,
+            ).entries;
+            for (const update of insertion.reindexedSiblings)
+              entries.get(update.noteId)!.set("position", update.notePosition);
           }
         },
       );
@@ -3892,74 +4132,29 @@ export class CoreRuntime {
     placement: NoteMoveRequest["placement"];
     fault?: CommitFault;
   }): Promise<{ noteId: string; changed: boolean }> {
-    const plan = planNoteMove(
-      listNoteMetadata(this.workspaceDocument),
-      input.noteId,
+    const note = this.requireLiveMetadata(input.noteId);
+    const parentEntryId = input.targetParentId
+      ? this.requireLiveMetadata(input.targetParentId).entryId!
+      : null;
+    const placement =
+      input.placement.kind === "after"
+        ? {
+            kind: "after" as const,
+            noteId: this.requireLiveMetadata(input.placement.noteId).entryId!,
+          }
+        : input.placement;
+    const result = await this.applyNamespaceEdit(
       {
-        targetParentId: input.targetParentId,
-        placement: input.placement,
+        kind: "move-to",
+        entryId: note.entryId!,
+        targetParentId: parentEntryId,
+        placement,
+        at: this.clock(),
       },
-      siblingPositionSeed(
-        this.workspaceDocument.workspaceId,
-        input.operationId,
-        input.noteId,
-      ),
+      input.operationId,
+      input.fault,
     );
-    if (!plan.changed) return { noteId: input.noteId, changed: false };
-    const metadata = new Map(
-      listNoteMetadata(this.workspaceDocument).map((note) => [
-        note.noteId,
-        note,
-      ]),
-    );
-    const updates = [
-      ...plan.reindexedSiblings.map((update) => ({
-        noteId: update.noteId,
-        parentNoteId: metadata.get(update.noteId)!.parentNoteId,
-        notePosition: update.notePosition,
-      })),
-      {
-        noteId: input.noteId,
-        parentNoteId: plan.targetParentId,
-        notePosition: plan.notePosition,
-      },
-    ];
-    this.setSaving();
-    const workspaceBaseRevision = this.workspace.revision;
-    try {
-      await this.transactions.transact(
-        {
-          operationId: input.operationId,
-          scope: "workspace-structure",
-          documents: [this.workspace],
-          fault: input.fault,
-        },
-        () =>
-          updateNotePlacements(
-            this.workspaceDocument,
-            updates,
-            CORE_TRANSACTION_ORIGIN,
-          ),
-      );
-      // Search hierarchy is normalized. A parent-changing move updates only
-      // the moved Root Section's parent edge. A same-parent reorder merely
-      // advances the derived index revision with an empty hierarchy update.
-      // Neither path touches descendants or body rows.
-      const parentChanged =
-        metadata.get(input.noteId)!.parentNoteId !== plan.targetParentId;
-      this.queueWorkspaceSearchIndexHierarchyUpdate(
-        workspaceBaseRevision,
-        parentChanged ? input.noteId : [],
-      );
-      this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
-      this.sectionCatalogRevision += 1;
-      this.internalLinkLabelRevision += 1;
-      this.setReady();
-      return { noteId: input.noteId, changed: true };
-    } catch (error) {
-      this.reportError(error);
-      throw error;
-    }
+    return { noteId: input.noteId, changed: result.changed };
   }
 
   private creationApplicationWindowState(
@@ -4007,7 +4202,22 @@ export class CoreRuntime {
       workspaceId: this.workspaceDocument.workspaceId,
       workspaceRevision,
       documents,
+      namespaceEntries: this.workspaceSearchNamespaceProjection(),
     };
+  }
+
+  private workspaceSearchNamespaceProjection(ids?: ReadonlySet<string>) {
+    return listNamespaceEntries(this.workspaceDocument.root)
+      .filter((entry) => !entry.deletedAt && (!ids || ids.has(entry.entryId)))
+      .map((entry) => ({
+        entryId: entry.entryId,
+        parentEntryId: entry.parentEntryId,
+        targetNoteId: entry.target?.id ?? null,
+        name: entry.name || "無題のグループ",
+        normalizedName: normalizeWorkspaceSearchText(
+          entry.name || "無題のグループ",
+        ),
+      }));
   }
 
   private workspaceSearchFallback(
@@ -4123,6 +4333,10 @@ export class CoreRuntime {
       return;
     }
     const baseRevision = this.pendingWorkspaceSearchIndexHierarchyBaseRevision;
+    const namespaceEntries = this.workspaceSearchNamespaceProjection(
+      this.pendingWorkspaceSearchNamespaceEntryIds,
+    );
+    this.pendingWorkspaceSearchNamespaceEntryIds.clear();
     const noteIds = [...this.pendingWorkspaceSearchIndexHierarchyNoteIds];
     this.pendingWorkspaceSearchIndexHierarchyNoteIds.clear();
     this.pendingWorkspaceSearchIndexHierarchyBaseRevision = null;
@@ -4155,6 +4369,7 @@ export class CoreRuntime {
         baseRevision,
         workspaceRevision,
         entries,
+        namespaceEntries,
       });
       if (status === "stale")
         await this.rebuildWorkspaceSearchIndexFromSource();
@@ -4590,9 +4805,10 @@ export class CoreRuntime {
     this.observedWorkspaceNotes?.unobserveDeep(
       this.handleWorkspaceMetadataChange,
     );
-    this.observedWorkspaceNotes = document.notes;
+    this.observedWorkspaceNotes = document.root;
     this.observedWorkspaceNotes.observeDeep(this.handleWorkspaceMetadataChange);
     this.noteMetadataProjectionCache = null;
+    this.namespaceProjectionCache = null;
   }
 
   private projectWindowState(windowId: string): RuntimeWindowState {

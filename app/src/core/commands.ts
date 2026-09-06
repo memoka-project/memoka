@@ -16,6 +16,7 @@ import type {
 export type CoreCommandSource = "ui" | "editor" | "internal";
 
 export interface CoreCommandPayloads {
+  "namespace.edit": import("./namespace").NamespaceEdit;
   "note.create_root": {
     noteId: string;
     createdAt: string;
@@ -41,6 +42,8 @@ export interface CoreCommandPayloads {
     title: string;
     createdAt: string;
     parentNoteId?: string | null;
+    parentEntryId?: string | null;
+    afterEntryId?: string | null;
     afterNoteId: string | null;
     windowId?: string;
     fault?: CommitFault;
@@ -208,6 +211,11 @@ export interface CoreCommandPayloads {
 }
 
 export interface CoreCommandResults {
+  "namespace.edit": {
+    entryId: string;
+    changed: boolean;
+    fallbackEntryId: string | null;
+  };
   "note.create_root": { noteId: string };
   "note.create_child": { noteId: string };
   "note.create_sibling_after": { noteId: string };

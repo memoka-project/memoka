@@ -45,7 +45,7 @@ function createRequest(
       {
         kind: "workspace",
         documentId: "workspace-1",
-        schemaVersion: 2,
+        schemaVersion: 3,
         baseRevision: 0,
         snapshot: SNAPSHOT,
         update: null,
@@ -53,7 +53,7 @@ function createRequest(
       {
         kind: "note",
         documentId: "note-1",
-        schemaVersion: 2,
+        schemaVersion: 3,
         baseRevision: 0,
         snapshot: SNAPSHOT,
         update: null,
@@ -122,7 +122,7 @@ describe("Memoka persistence port contract", () => {
         {
           kind: "note",
           documentId: "note-1",
-          schemaVersion: 2,
+          schemaVersion: 3,
           baseRevision: 1,
           snapshot: null,
           update: HISTORY.update2,
@@ -137,7 +137,7 @@ describe("Memoka persistence port contract", () => {
         {
           kind: "note",
           documentId: "note-1",
-          schemaVersion: 2,
+          schemaVersion: 3,
           baseRevision: 2,
           snapshot: null,
           update: HISTORY.update3,
@@ -150,7 +150,7 @@ describe("Memoka persistence port contract", () => {
       operationId: "op-compact",
       kind: "note",
       documentId: "note-1",
-      schemaVersion: 2,
+      schemaVersion: 3,
       expectedRevision: 3,
     });
 
@@ -176,7 +176,7 @@ describe("Memoka persistence port contract", () => {
         {
           kind: "note",
           documentId: "note-1",
-          schemaVersion: 2,
+          schemaVersion: 3,
           baseRevision: 1,
           snapshot: null,
           update: HISTORY.update2,
@@ -191,7 +191,7 @@ describe("Memoka persistence port contract", () => {
         operationId: "op-compact-fail",
         kind: "note",
         documentId: "note-1",
-        schemaVersion: 2,
+        schemaVersion: 3,
         expectedRevision: 2,
         fault: "before-sql-commit",
       }),
@@ -209,7 +209,7 @@ describe("Memoka persistence port contract", () => {
         {
           kind: "note",
           documentId: "note-1",
-          schemaVersion: 2,
+          schemaVersion: 3,
           baseRevision: 1,
           snapshot: null,
           update: HISTORY.update2,
@@ -221,7 +221,7 @@ describe("Memoka persistence port contract", () => {
       operationId: "op-compact-lost-response",
       kind: "note",
       documentId: "note-1",
-      schemaVersion: 2,
+      schemaVersion: 3,
       expectedRevision: 2,
       fault: "after-commit-response",
     };

@@ -555,6 +555,7 @@ pub(crate) fn attachment_batch_commit_store(
             request.created_at
         ],
     )?;
+    crate::workspace_migration::bump_content_epoch(&transaction)?;
     transaction.commit()?;
     let staging = staging_directory(&store.root, operation_id);
     if staging.exists() {
@@ -1333,53 +1334,6 @@ fn query_attachment_metadata(
     }))
 }
 
-pub(crate) fn list_all_attachment_metadata(
-    store: &mut ProductStore,
-) -> Result<Vec<AttachmentMetadata>, PersistenceError> {
-    let ids = {
-        let mut statement = store
-            .connection
-            .prepare("SELECT attachment_id FROM attachments ORDER BY created_at, attachment_id")?;
-        statement
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    ids.into_iter()
-        .map(|attachment_id| {
-            query_attachment_metadata(&store.connection, &store.root, &attachment_id)?
-                .ok_or_else(|| PersistenceError::InvalidInput("unknown attachment".to_owned()))
-        })
-        .collect()
-}
-
-pub(crate) fn resolve_attachment_cas_source(
-    store: &mut ProductStore,
-    attachment_id: &str,
-    expected_sha256: &str,
-    expected_size: u64,
-) -> Result<PathBuf, PersistenceError> {
-    validate_uuid_v7(attachment_id, "attachment_id")?;
-    let metadata = query_attachment_metadata(&store.connection, &store.root, attachment_id)?
-        .ok_or_else(|| PersistenceError::InvalidInput("unknown attachment".to_owned()))?;
-    if metadata.sha256 != expected_sha256 || metadata.size != expected_size {
-        return Err(PersistenceError::InvalidInput(
-            "portable mirror Attachment metadata does not match CAS".to_owned(),
-        ));
-    }
-    cas_path(&store.root, &metadata.sha256)
-}
-
-pub(crate) fn copy_resolved_attachment_cas_to(
-    source: &Path,
-    expected_sha256: &str,
-    expected_size: u64,
-    target: &Path,
-) -> Result<(), PersistenceError> {
-    verify_cas_object(source, expected_sha256, expected_size)?;
-    fs::copy(source, target)?;
-    Ok(())
-}
-
 fn staging_directory(root: &Path, operation_id: &str) -> PathBuf {
     root.join("attachments").join("staging").join(operation_id)
 }
@@ -1564,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v2_without_deleting_documents() {
+    fn rejects_incomplete_v2_schema_without_deleting_documents() {
         let directory = TempDir::new().unwrap();
         {
             let connection =
@@ -1583,11 +1537,21 @@ mod tests {
                 )
                 .unwrap();
         }
-        let store = ProductStore::open(directory.path()).unwrap();
-        assert_eq!(store.manifest().unwrap().database_schema_version, 4);
+        assert!(ProductStore::open(directory.path()).is_err());
+        let connection =
+            rusqlite::Connection::open(directory.path().join("memoka.sqlite3")).unwrap();
         assert_eq!(
-            store
-                .connection
+            connection
+                .query_row(
+                    "SELECT value FROM settings WHERE key='database_schema_version'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "2"
+        );
+        assert_eq!(
+            connection
                 .query_row("SELECT COUNT(*) FROM documents", [], |row| row
                     .get::<_, i64>(0))
                 .unwrap(),

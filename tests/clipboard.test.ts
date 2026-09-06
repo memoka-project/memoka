@@ -285,6 +285,43 @@ describe("Memoka structured Clipboard", () => {
     reopened.destroy();
   });
 
+  it.each(["text/plain", MARKDOWN_CLIPBOARD_MIME])(
+    "rejects a normalized H7 import without a %s fallback or Undo change",
+    async (mime) => {
+      const persistence = new MemoryPersistencePort();
+      const runtime = await CoreRuntime.open(persistence, { initialTitle: "" });
+      const root = document.createElement("div");
+      document.body.append(root);
+      const attached = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        attached.editor.commands.setTextSelection(1);
+        attached.editor.commands.focus();
+        await runtime.flush();
+        const before = attached.editor.getJSON();
+        const markdown =
+          "# Root\n\n# Second\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6\n\nbody";
+        const event = paste(attached.editor, {
+          [mime]: markdown,
+          "text/plain": markdown,
+        });
+        expect(event.defaultPrevented).toBe(true);
+        await runtime.flush();
+        expect(attached.editor.getJSON()).toEqual(before);
+        expect(attached.adapter.vimSnapshot.action).toBe(
+          "clipboard:paste:section-depth-limit",
+        );
+        expect(attached.editor.commands.undo()).toBe(false);
+        expect(attached.editor.getJSON()).toEqual(before);
+      } finally {
+        attached.adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
   it("recovers a large plain Markdown title paste when WebKit omits all Clipboard types", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       initialTitle: "",

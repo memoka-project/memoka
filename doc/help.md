@@ -187,6 +187,11 @@ Section直下のParagraphで`>>`またはInsertの`Ctrl-t`を使うと、そのP
 作ります。`<<`またはInsertの`Ctrl-d`では兄弟Sectionを作ります。Paragraphより後ろの本文も新しいSectionへ
 移動します。Normal操作は`u`、Insert直後の逆方向操作は一時的な逆変換で元へ戻せます。
 
+ノートタイトルはH1、Sectionは最も深い位置でH6までです。`zf`で表示を絞っても、深さはノートから数えます。
+H7を作る操作や貼り付けは全体を取り消し、既存内容を残します。H6の本文で`# `を入力した場合は、
+新しいSectionを作らず、そのまま文字として入力します。複数のH1を含むMarkdownでは、2つ目以降のH1を
+Rootの子にする結果、元のH6がH7相当になることがあります。その場合も、勝手に平坦化せず貼り付けを拒否します。
+
 ### Sectionの折り畳み
 
 | Key         | 動作                                     |
@@ -232,26 +237,31 @@ rowとcolumnの追加は`.`で繰り返せます。
 ## ノートとTree
 
 `<Leader>t`または`:tree`でTreeを開きます。Treeはkeyboard操作を前提とし、mouseによるopen、並べ替え、
-作成、inline renameは行いません。タイトルはNoteを開き、EditorのRoot titleで編集します。
+作成、inline renameは行いません。Treeはノートの配置を管理する**Namespace**です。ノートを持たない
+**グループ**も作れます。ノートタイトルはEditorのRoot title、グループ名は`:rename-group`で編集します。
+`:group`は選択項目の子にグループを作ります。選択項目がなければ最上位に作ります。
 
-| Key                     | 動作                                                         |
-| ----------------------- | ------------------------------------------------------------ |
-| `[count]j` / `[count]k` | 表示中の次、前のNoteを選択します。                           |
-| `gg` / `G`              | 表示Treeの先頭、末尾へ移動します。                           |
-| `h`                     | 展開中のNoteを閉じます。閉じている場合は親へ移動します。     |
-| `l`                     | 閉じた親を展開します。展開済みの場合は最初の子へ移動します。 |
-| `Enter`                 | 選択Noteを現在Windowで開きます。                             |
-| `a`                     | 選択Noteの直後に空タイトルの兄弟Noteを作ります。             |
-| `c`                     | 選択Noteの最後の子として空タイトルのNoteを作ります。         |
-| `A`                     | top-level末尾に空タイトルのNoteを作ります。                  |
-| `[count]J` / `[count]K` | 同じ親の中で下、上へ並べ替えます。                           |
-| `[count]H` / `[count]L` | 表示順を保ちながら1段浅く、深くします。                      |
-| `D`                     | 選択Noteとliveな子孫をTrashへ移します。                      |
-| `T`                     | Trash検索を開きます。                                        |
-| `Esc`                   | Treeを閉じてactive Windowへ戻ります。                        |
+| Key                     | 動作                                                               |
+| ----------------------- | ------------------------------------------------------------------ |
+| `[count]j` / `[count]k` | 表示中の次、前の項目を選択します。                                 |
+| `gg` / `G`              | 表示Treeの先頭、末尾へ移動します。                                 |
+| `h`                     | 展開中の項目を閉じます。閉じている場合は親へ移動します。           |
+| `l`                     | 閉じた親を展開します。展開済みの場合は最初の子へ移動します。       |
+| `Enter`                 | 選択Noteを現在Windowで開きます。グループは折り畳みを切り替えます。 |
+| `a`                     | 選択項目の直後に空タイトルの兄弟Noteを作ります。                   |
+| `c`                     | 選択項目の最後の子として空タイトルのNoteを作ります。               |
+| `A`                     | top-level末尾に空タイトルのNoteを作ります。                        |
+| `[count]J` / `[count]K` | 同じ親の中で下、上へ並べ替えます。                                 |
+| `[count]H` / `[count]L` | 表示順を保ちながら1段浅く、深くします。                            |
+| `D`                     | 選択項目と、未削除の子孫項目・NoteをまとめてTrashへ移します。      |
+| `T`                     | Trash検索を開きます。                                              |
+| `Esc`                   | Treeを閉じてactive Windowへ戻ります。                              |
 
-Treeの構造変更はEditor本文のUndo、Redo、`.`には含まれません。`:trash`では削除済みNoteを検索し、
-`r`で復元します。`Enter`と`Tab`では閉じず、`Esc`または`Ctrl-c`で終了します。
+ノート1つの配置は1か所です。グループを作成しても空のNoteを作るわけではなく、同じNoteを別の場所に複製する
+aliasでもありません。Treeで並べ替えてもNote本文や内部linkのIDは変わりません。
+
+Treeの構造変更はEditor本文のUndo、Redo、`.`には含まれません。`:trash`では削除済みNoteに加え、Noteを含まない
+グループも検索できます。`r`で同じ削除操作の対象を復元します。`Enter`と`Tab`では閉じず、`Esc`または`Ctrl-c`で終了します。
 
 ## 検索とlink
 
@@ -347,38 +357,44 @@ NormalまたはSidebarなどのapplication surfaceで`:`を押すと、画面下
 `Enter`で実行し、`Esc`または`Ctrl-c`で取り消します。`<Leader>c`ではcommandを検索して選べます。
 MemokaのCommand-lineは完全なVim Ex parserではありません。
 
-| Command                                           | 動作                                                |
-| ------------------------------------------------- | --------------------------------------------------- |
-| `:tree`                                           | Treeを開きます。                                    |
-| `:trash`                                          | Trash内のNoteを検索します。                         |
-| `:buffers` / `:ls`                                | 読み込み済みBufferを検索します。                    |
-| `:outline`                                        | 現在WindowのOutlineを開きます。                     |
-| `:split` / `:sp`                                  | 現在Windowを上下に分割します。                      |
-| `:vsplit` / `:vs`                                 | 現在Windowを左右に分割します。                      |
-| `:close` / `:clo`                                 | 現在Windowを閉じます。                              |
-| `:bdelete` / `:bd`                                | 現在Bufferを閉じ、Windowを空にします。              |
-| `:tabnew`                                         | 空のTabを作ります。                                 |
-| `:tabclose` / `:tabc`                             | 現在Tabを閉じます。                                 |
-| `:tabnext` / `:tabn`                              | 次のTabへ移動します。                               |
-| `:tabprevious` / `:tabp`                          | 前のTabへ移動します。                               |
-| `:paste-markdown`                                 | ClipboardをMarkdownとして貼り付けます。             |
-| `:paste-html`                                     | ClipboardをHTMLとして貼り付けます。                 |
-| `:attach`                                         | file pickerから現在位置へ添付します。               |
-| `:image-width [10..100%]`                         | 現在画像の表示幅を確認、変更します。                |
-| `:switch-workspace`                               | 別のWorkspaceデータ領域へ切り替えます。             |
-| `:update`                                         | 署名済み更新を確認、適用します。                    |
-| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。       |
-| `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。               |
-| `:colorscheme [name]` / `:colo`                   | Nightfox themeを選択、変更します。                  |
-| `:font`                                           | Application全体のfontを選択します。                 |
-| `:zoom [50..200]`                                 | Zoomを確認、変更します。                            |
-| `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。          |
-| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。    |
-| `:indent-width [16..64]`                          | SectionとListに共通するindent幅を確認、変更します。 |
-| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を確認、変更します。                  |
-| `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行を確認、変更します。            |
-| `:quit` / `:q` / `:qa`                            | 保存と必要なmirror生成を終えてMemokaを終了します。  |
-| `:help`                                           | この管理Help Noteを同期して開きます。               |
+| Command                                           | 動作                                                     |
+| ------------------------------------------------- | -------------------------------------------------------- |
+| `:tree`                                           | Treeを開きます。                                         |
+| `:group`                                          | 選択項目の子にグループを作ります。                       |
+| `:rename-group`                                   | Treeで選択したグループの名前を変更します。               |
+| `:trash`                                          | Trash内のNoteやグループを検索します。                    |
+| `:buffers` / `:ls`                                | 読み込み済みBufferを検索します。                         |
+| `:outline`                                        | 現在WindowのOutlineを開きます。                          |
+| `:split` / `:sp`                                  | 現在Windowを上下に分割します。                           |
+| `:vsplit` / `:vs`                                 | 現在Windowを左右に分割します。                           |
+| `:close` / `:clo`                                 | 現在Windowを閉じます。                                   |
+| `:bdelete` / `:bd`                                | 現在Bufferを閉じ、Windowを空にします。                   |
+| `:tabnew`                                         | 空のTabを作ります。                                      |
+| `:tabclose` / `:tabc`                             | 現在Tabを閉じます。                                      |
+| `:tabnext` / `:tabn`                              | 次のTabへ移動します。                                    |
+| `:tabprevious` / `:tabp`                          | 前のTabへ移動します。                                    |
+| `:paste-markdown`                                 | ClipboardをMarkdownとして貼り付けます。                  |
+| `:paste-html`                                     | ClipboardをHTMLとして貼り付けます。                      |
+| `:attach`                                         | file pickerから現在位置へ添付します。                    |
+| `:image-width [10..100%]`                         | 現在画像の表示幅を確認、変更します。                     |
+| `:switch-workspace`                               | 別のWorkspaceデータ領域へ切り替えます。                  |
+| `:backup`                                         | 確定した編集の履歴を作り、追加保存先への転送を試みます。 |
+| `:backup-status`                                  | 履歴、追加先、欠損・エラーの状態を確認します。           |
+| `:backup-settings`                                | 保存間隔、追加保存先、パスワードを設定します。           |
+| `:history`                                        | 過去のNote・SectionまたはWorkspaceを参照します。         |
+| `:update`                                         | 署名済み更新を確認、適用します。                         |
+| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。            |
+| `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                    |
+| `:colorscheme [name]` / `:colo`                   | Nightfox themeを選択、変更します。                       |
+| `:font`                                           | Application全体のfontを選択します。                      |
+| `:zoom [50..200]`                                 | Zoomを確認、変更します。                                 |
+| `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。               |
+| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。         |
+| `:indent-width [16..64]`                          | SectionとListに共通するindent幅を確認、変更します。      |
+| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を確認、変更します。                       |
+| `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行を確認、変更します。                 |
+| `:quit` / `:q` / `:qa`                            | 確定した編集の保存と必要な履歴作成を終えて終了します。   |
+| `:help`                                           | この管理Help Noteを同期して開きます。                    |
 
 ### `config.toml`
 
@@ -396,7 +412,8 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 - `indent_width_px`はSection、List、Table、Code Block、Imageに共通する表示grid幅です。
 - `vim.whichwrap`は対応motionが論理行端を越えるかを指定します。
 - `japanese.word_segmentation`と`japanese.line_break_segmentation`は操作と表示の日本語分割を個別に指定します。
-- `shutdown.wait_for_mirror = false`では、終了時にmirror完成を待たず、次回起動後へ生成を回します。既定は`true`です。
+- 旧設定`shutdown.wait_for_mirror`は受け付けますが無視します。このキーが残っていても他の設定は失われません。
+- バックアップ設定は`:backup-settings`でWorkspaceごとに保存します。追加保存先のパスワードを`config.toml`へ書かないでください。
 
 ## Clipboard・添付・画像
 
@@ -416,15 +433,82 @@ OS既定applicationへ渡します。
 
 ## データと復旧
 
-初回起動時にWorkspaceのデータ領域を選択します。内部データはその中の`.memoka`へ保存され、人間が読める
-Markdown mirrorはデータ領域直下へ自動出力されます。これをportable mirrorと呼びます。mirrorは外部で
-編集してMemokaへ読み戻すための第二の編集データではありません。世代管理が必要な場合は、外部のbackup toolを
-使用してください。
+### 正本と自動履歴
 
-終了時は既定でmirrorの完成を待ちます。別のデータ領域へ移るときは`:switch-workspace`を使います。
-同じWorkspaceを別processで開こうとすると新しいprocessは終了し、既存Windowを前面へ戻します。
+初回起動時にWorkspaceのデータ領域を選択します。現在の正本はその中の`.memoka`にあるSQLiteと添付ファイルです。
+確定した編集は自動保存されます。変換中の未確定IME入力は確定済み編集とは別扱いです。
 
-復旧前に専用CLIでmirrorを検証し、空のデータ領域へrestoreできます。
+履歴には同梱の**Restic**を使います。ローカル履歴の保存先は`.memoka-backups/restic`です。
+最初の履歴は空のWorkspaceでも作ります。その後は、変更があると起動時、既定15分間隔、終了時、Workspace切替時、
+更新適用前に保存します。カーソル移動、検索索引や表示設定だけの更新では新しい世代を作りません。
+`:backup`で今すぐ作成でき、`:backup-status`で状態を確認できます。
+
+> [!WARNING]
+> ローカル履歴にはパスワードを設定していません。同じディスクの故障やWorkspace全体の削除には備えられません。
+> Trashへ移したNoteや本文から外した添付ファイルも履歴に含まれます。削除しても過去世代から直ちに消えるわけではありません。
+
+各保存先では、**直近48世代・日次30世代・月次12世代のいずれかに該当する世代**を保持します。
+不要データの物理解放は別途、アイドル時の保守で行います。直近の保存済み世代は削除対象にしません。
+既知の添付欠損は履歴へ記録しますが、内容が壊れた添付を正常な保存結果として扱いません。
+
+### 追加保存先
+
+`:backup-settings`で自動保存間隔を1〜1,440分に変更し、追加のローカル保存先を1つ設定できます。
+選んだディレクトリの下に、ローカル履歴とは独立した、パスワード付きのRestic repositoryを作ります。
+最新の世代から転送するため、長く接続していなかった場合も最新状態の保護を優先します。
+
+パスワードは2回入力し、OSの資格情報ストアへ保存します。設定ファイルやログには保存しません。
+別PCから復旧できるよう、パスワードは自分でも安全に保管してください。追加先を解除しても保存済み履歴は削除しません。
+
+追加先が未接続ならローカル履歴は継続します。`:backup-status`では、追加先で保護できた**元の保存日時**、
+転送待ち件数、転送前にローカル保持期限を過ぎた件数を区別します。転送時刻が新しくても、古い世代を保護しただけなら
+最新編集のバックアップではありません。保存先を見失った場合、空のrepositoryで黙って作り直すことはありません。
+
+### 終了・Workspace切替・更新
+
+終了時には、確定した編集を先に保存し、必要なローカル履歴を作ります。進捗画面から再試行やキャンセルができます。
+履歴作成を省略して終了できるのは、確定済み編集の保存が成功した後だけです。省略した履歴は次回起動後の対象になります。
+追加先への転送は待機時間を制限するため、未接続先のために無期限に終了できなくなることはありません。
+`:switch-workspace`と`:update`も同じ進捗画面を使います。ローカル履歴の保存後に追加先への転送だけが失敗した場合は、
+ローカル保存済みと表示されます。再試行、操作の取り消し、バックアップだけを中断して続行、のいずれかを選んでください。
+中断では実行中のバックアップ処理の終了を待ってから切替・更新へ進みます。
+
+別のデータ領域へ移るときは`:switch-workspace`を使います。同じWorkspaceを別processで開こうとすると
+新しいprocessは終了し、既存Windowを前面へ戻します。
+
+### 過去の状態を見る
+
+`:history`は、現在NoteまたはSectionの履歴を共通検索paneで開きます。Noteを開いていない場合はWorkspaceの履歴を表示します。
+日時で絞り、矢印キーで世代を選択できます。プレビューは**読み取り専用**です。内部linkや添付も同じ世代の内容を参照し、
+現在の編集内容を混ぜません。`Esc`または`Ctrl-c`で閉じます。
+
+`u`と`Ctrl-r`のUndo・Redoは起動中の編集用で、再起動後には引き継ぎません。過去の保存状態は`:history`で参照してください。
+
+### CLIで読む・復旧する
+
+`memoka-cli`はGUIを起動せずに利用できます。Tree、Note・Section、検索結果、添付を読み出せます。
+起動中のMemokaが同じWorkspaceを開いていれば、確定編集の保存を待ってそのprocess経由で読みます。
+読み出しだけでは移行、Help更新やバックアップ初期化を行いません。
+
+```text
+memoka-cli tree --workspace <data-area> --format json
+memoka-cli read --workspace <data-area> --id <note-or-section-id> --format markdown
+memoka-cli search <query> --workspace <data-area> --format json
+memoka-cli history --workspace <data-area> --format json
+memoka-cli backup list --repository <restic-directory> --insecure-no-password
+memoka-cli backup check --repository <restic-directory> --insecure-no-password --full
+memoka-cli backup restore --repository <restic-directory> --generation <generation-id> --target <new-data-area> --insecure-no-password
+```
+
+パスワード付きの追加先では`--insecure-no-password`を使わず、対話入力または`--password-stdin`で入力します。
+パスワードをコマンド引数へ直接書かないでください。復旧先は別の新規または空ディレクトリを選び、既存Workspaceを上書きしません。
+アプリ内に`:restore`はありません。
+
+### 旧portable mirrorからの復旧
+
+Markdown mirrorの自動出力は廃止しました。既存の`notes/`、`attachments/`、`manifest.json`などは削除しません。
+旧portable mirrorは引き続きCLIで検証し、空のデータ領域へ復旧できます。H6制限を超えるなど不正なデータは、
+復旧先を作る前に拒否します。
 
 ```text
 memoka-cli verify --source <portable-mirror-data-area>

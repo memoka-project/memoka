@@ -84,7 +84,12 @@ describe("managed Memoka help note", () => {
       "Table編集",
       "既定Leaderは,です",
       "config.toml",
-      "wait_for_mirror = false",
+      "shutdown.wait_for_mirror",
+      ":group",
+      ":backup-settings",
+      ":history",
+      "Restic",
+      "直近48世代",
       "portable mirror",
       ":help",
     ]) {

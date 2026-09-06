@@ -1,25 +1,33 @@
 import { useEffect, useRef } from "react";
-import type { PortableMirrorActivitySnapshot } from "../core/portable-mirror";
-
-export interface ApplicationShutdownProgressState {
-  readonly stage: "saving" | "mirror" | "closing";
-  readonly mirror: PortableMirrorActivitySnapshot | null;
-}
+import type { ApplicationDepartureProgress } from "../core/application-departure";
+export type ApplicationShutdownProgressState = ApplicationDepartureProgress;
 
 export function ApplicationShutdownProgress({
   progress,
+  onRetry,
+  onCancel,
+  onSkip,
+  detail,
 }: {
   progress: ApplicationShutdownProgressState;
+  onRetry: () => void;
+  onCancel: () => void;
+  onSkip: () => void;
+  detail?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => root.current?.focus({ preventScroll: true }), []);
 
-  const completed = progress.mirror?.completedBytes ?? null;
-  const total = progress.mirror?.totalBytes ?? null;
-  const percent =
-    completed !== null && total !== null && total > 0
-      ? Math.min(100, Math.round((completed / total) * 100))
-      : null;
+  const failed = progress.stage.endsWith("-error");
+  const action =
+    progress.kind === "switch-workspace"
+      ? "切り替え"
+      : progress.kind === "update"
+        ? "更新"
+        : "終了";
+  const canCancel = !["saving", "closing", "cancelling"].includes(
+    progress.stage,
+  );
 
   return (
     <div
@@ -27,20 +35,57 @@ export function ApplicationShutdownProgress({
       className="application-shutdown-overlay focus-surface focus-surface--focused"
       data-memoka-focus-surface="shutdown"
       role="dialog"
-      aria-label="Memokaを終了"
+      aria-label={
+        progress.kind === "switch-workspace"
+          ? "Workspaceを切り替え"
+          : progress.kind === "update"
+            ? "更新前の保存"
+            : "Memokaを終了"
+      }
       aria-modal="true"
-      aria-busy="true"
+      aria-busy={!failed}
       tabIndex={0}
       onKeyDown={(event) => {
-        event.preventDefault();
         event.stopPropagation();
+        if (event.key === "Tab") {
+          event.preventDefault();
+          const buttons = [
+            ...(root.current?.querySelectorAll<HTMLButtonElement>(
+              "button:not(:disabled)",
+            ) ?? []),
+          ];
+          const index = buttons.indexOf(
+            document.activeElement as HTMLButtonElement,
+          );
+          buttons[
+            (index + (event.shiftKey ? -1 : 1) + buttons.length) %
+              buttons.length
+          ]?.focus();
+        }
+        if (
+          (event.key === "Escape" ||
+            (event.ctrlKey && event.key.toLowerCase() === "c")) &&
+          canCancel
+        ) {
+          event.preventDefault();
+          onCancel();
+        }
       }}
     >
       <section className="application-shutdown-progress" role="status">
         <span className="eyebrow">Memoka</span>
-        <h2>終了しています</h2>
-        <progress {...(percent === null ? {} : { value: percent, max: 100 })} />
-        <p>{shutdownProgressLabel(progress, percent)}</p>
+        <h2>{failed ? `${action}前の確認` : `${action}の準備をしています`}</h2>
+        {!failed && <progress />}
+        <p>{shutdownProgressLabel(progress)}</p>
+        {detail && <p>{detail}</p>}
+        {progress.error && <p role="alert">{progress.error}</p>}
+        {failed && <button onClick={onRetry}>再試行</button>}
+        {canCancel && <button onClick={onCancel}>{action}を取り消す</button>}
+        {(progress.stage === "backup" || progress.stage === "backup-error") && (
+          <button onClick={onSkip}>
+            バックアップを中断して{action}（編集内容は保存済み）
+          </button>
+        )}
       </section>
     </div>
   );
@@ -48,23 +93,30 @@ export function ApplicationShutdownProgress({
 
 function shutdownProgressLabel(
   progress: ApplicationShutdownProgressState,
-  percent: number | null,
 ): string {
   if (progress.stage === "saving") return "変更を保存しています…";
+  if (progress.stage === "cancelling")
+    return "バックアップを中断し、実行中の処理の終了を待っています…";
   if (progress.stage === "closing")
-    return "保存を完了しました。終了しています…";
-  switch (progress.mirror?.phase) {
-    case "flushing":
-      return "Markdown mirror用の変更を確定しています…";
-    case "preparing":
-      return "Markdown mirrorを生成しています…";
-    case "staging":
-      return "Markdown mirrorの書き込みを準備しています…";
-    case "uploading":
-      return `Markdown mirrorを書き込んでいます${percent === null ? "…" : `… ${percent}%`}`;
-    case "committing":
-      return "Markdown mirrorを確定しています…";
+    return progress.kind === "switch-workspace"
+      ? "Workspaceを切り替えています…"
+      : progress.kind === "update"
+        ? "更新を適用しています…"
+        : "終了しています…";
+  if (progress.stage === "saving-error")
+    return "編集内容を保存できていないため、そのまま続行できません。";
+  if (progress.stage === "operation-error")
+    return "操作を完了できませんでした。現在のWorkspaceは保持されています。";
+  if (progress.stage === "backup-error")
+    return "編集内容は保存済みです。履歴の保存または追加先への転送が完了していません。";
+  if (progress.backup?.status.additional_phase === "copying")
+    return "ローカル履歴を保存しました。追加保存先へ転送しています…";
+  switch (progress.backup?.status.phase) {
+    case "capturing":
+      return "整合したデータベースと添付を取得しています…";
+    case "saving":
+      return "ローカル履歴を保存・検証しています…";
     default:
-      return "Markdown mirrorの完了を待っています…";
+      return "バックアップの完了を待っています…";
   }
 }

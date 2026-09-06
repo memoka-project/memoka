@@ -136,7 +136,7 @@ describe("Section depth guides", () => {
     }
   });
 
-  it("shares all six cyclic heading colors with the Outline", () => {
+  it("shares all six absolute heading colors with the Outline", () => {
     const css = readFileSync(
       resolve(process.cwd(), "app/src/styles.css"),
       "utf8",
@@ -158,11 +158,11 @@ describe("Section depth guides", () => {
     );
   });
 
-  it("annotates deep Editor Sections with repeating H1-H6 levels", async () => {
+  it("annotates Editor Sections with H1-H6 levels", async () => {
     const note = createNoteDocument(createUuidV7(), [], "Root");
     note.doc.transact(() => {
       let parent = note.rootSection;
-      for (let depth = 1; depth <= 7; depth += 1) {
+      for (let depth = 1; depth <= 5; depth += 1) {
         const child = createSectionXml(createUuidV7(), `Depth ${depth}`);
         insertChildSection(parent, child);
         parent = child;
@@ -178,7 +178,7 @@ describe("Section depth guides", () => {
         ...editor.view.dom.querySelectorAll<HTMLElement>(".memoka-section"),
       ].map((section) => section.dataset.memokaMarkupHeading);
       expect(editor.view.dom.dataset.memokaMarkupHeading).toBe("1");
-      expect(levels).toEqual(["2", "3", "4", "5", "6", "1", "2"]);
+      expect(levels).toEqual(["2", "3", "4", "5", "6"]);
     } finally {
       editor.destroy();
       note.doc.destroy();
@@ -190,7 +190,7 @@ describe("Section depth guides", () => {
     const sectionIds: string[] = [];
     note.doc.transact(() => {
       let parent = note.rootSection;
-      for (let depth = 1; depth <= 7; depth += 1) {
+      for (let depth = 1; depth <= 5; depth += 1) {
         const sectionId = createUuidV7();
         sectionIds.push(sectionId);
         const child = createSectionXml(sectionId, `Depth ${depth}`);
@@ -210,7 +210,7 @@ describe("Section depth guides", () => {
       const levels = [
         ...editor.view.dom.querySelectorAll<HTMLElement>(".memoka-section"),
       ].map((section) => section.dataset.memokaMarkupHeading);
-      expect(levels).toEqual(["5", "6", "1", "2"]);
+      expect(levels).toEqual(["5", "6"]);
     } finally {
       editor.destroy();
       note.doc.destroy();

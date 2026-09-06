@@ -130,7 +130,7 @@ export class MemoryPersistencePort implements PersistencePort {
 
   async manifest(): Promise<PersistenceManifest> {
     return {
-      databaseSchemaVersion: 4,
+      databaseSchemaVersion: 5,
       activeWorkspaceId: this.activeWorkspaceId,
     };
   }
@@ -538,7 +538,7 @@ function isSupportedDocumentSchema(
   schemaVersion: number,
 ): boolean {
   return kind === "workspace"
-    ? schemaVersion === 2
+    ? schemaVersion === 3
     : schemaVersion === 2 || schemaVersion === 3;
 }
 

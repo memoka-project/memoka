@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus, release, totalmem } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { runNamespaceHistory } from "./namespace-history-e2e.mjs";
 
 const webdriver = process.env.MEMOKA_WEBDRIVER ?? "http://127.0.0.1:4447";
 const application = process.env.MEMOKA_TAURI_APP;
@@ -15,6 +16,8 @@ const utilitiesOnly = process.env.MEMOKA_E2E_UTILITIES_ONLY === "1";
 const sidebarFocusOnly = process.env.MEMOKA_E2E_SIDEBAR_FOCUS_ONLY === "1";
 const windowChromeOnly = process.env.MEMOKA_E2E_WINDOW_CHROME_ONLY === "1";
 const attachmentOnly = process.env.MEMOKA_E2E_ATTACHMENT_ONLY === "1";
+const namespaceHistoryOnly =
+  process.env.MEMOKA_E2E_NAMESPACE_HISTORY_ONLY === "1";
 const W3C_ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
 const ENTER = "\uE007";
 const ESCAPE = "\uE00C";
@@ -3918,6 +3921,49 @@ await waitFor(
     .vimMode?.replace('-', ' ').toUpperCase() ?? ''`,
   (value) => value === "NORMAL",
 );
+
+if (namespaceHistoryOnly) {
+  try {
+    const result = {
+      id: "namespace-history-tauri",
+      generatedAt: new Date().toISOString(),
+      sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim(),
+      dirty: Boolean(
+        execFileSync("git", ["status", "--porcelain"], {
+          encoding: "utf8",
+        }).trim(),
+      ),
+      passed: true,
+      native: await runNamespaceHistory({
+        sessionId: firstSession,
+        application,
+        workspace: e2eWorkspace,
+        initialNoteId: initial.noteId,
+        execute,
+        waitFor,
+        waitForElement,
+        sendKeys,
+        sendActiveKey,
+        sendActiveChord,
+        clickElement,
+      }),
+    };
+    await screenshot(firstSession, "namespace-history-tauri.png");
+    writeFileSync(
+      `${evidenceDirectory}/namespace-history-tauri.json`,
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    await screenshot(firstSession, "namespace-history-tauri-failure.png");
+    throw error;
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
 
 if (windowChromeOnly) {
   const windowChrome = await runApplicationWindowChrome(firstSession);

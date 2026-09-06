@@ -93,11 +93,15 @@ Sidebarが縦に長い場合はSidebar内部だけをscrollし、Tab line、stat
 
 ## 7. Tree
 
-TreeはNoteの親子構造をdepth-firstで表示する。折り畳み状態をTabPage localに保持する。
-選択Noteがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
+TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
+選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
 mouse hoverだけでは選択を変更せず、Tree固有のmouse操作UIは提供しない。
+
+Noteなしgroupはfolderとして表示し、EnterではEditorを開かず折り畳みをtoggleする。
+`:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
+削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
 
 ## 8. Outline
 
@@ -149,13 +153,25 @@ Duskfox、Nordfox、Terafox、Carbonfoxである。Carbonfoxは暖色を区別�
 未merge PR #487が提案したCarbon Design paletteを採用する。
 
 太字、斜体、inline code、打ち消し、外部link、内部link、Section title、List markerにsemantic colorを割り当てる。
-Section titleはNoteからの絶対depthで色を決め、H7相当以降はpaletteを循環する。`zf/zF`しても同じSectionの色を変えない。
+Section titleはNoteからの絶対depth（Root H1〜H6）で色を決める。`zf/zF`しても同じSectionの色を変えない。
+H7以降のSectionは作れず、古いデータにも無検証の色循環で対応しない。
 Visual CharとVisual Lineのselection背景は同じsemantic selection色を使う。
 
 Application fontは本文と通常UIに適用する。code、行番号、Command-line、debug lineは等幅fontを維持する。
 inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当で表示する。
 
-## 12. development debug line
+## 12. 保存待ちと履歴
+
+終了、Workspace切替、Updaterは共通の保存待ち画面を使い、確定Core保存、ローカル履歴の作成、追加先への転送、
+キャンセル待ち、操作実行、失敗を区別する。ローカル成功と追加先だけの失敗は別に表示する。
+Core保存失敗を無視する操作は用意しない。バックアップ待ちでは再試行、取り消し、バックアップのみ中断して続行を選べる。
+待機中も旧Editorをmountしたまま保つが、modalがfocusを所有し、背後へのキー入力・pointer操作を遮断する。
+
+`:backup-status`と`:backup-settings`は同じ状態表示を使う。設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
+`:history`は共通検索ペインの読み取り専用previewを使い、過去Note、内部link、添付を選択世代の範囲で表示する。
+preview内のbuttonへfocusした後もEsc/Ctrl-cで閉じられる。現在Noteへの直接上書き機能はない。
+
+## 13. development debug line
 
 development buildだけ、Application最下部にdebug lineを表示できる。release buildではDOM、計測、表示を生成しない。
 
@@ -163,7 +179,7 @@ debug lineには機密contentを含めず、次の診断情報を表示できる
 
 - focus owner、mode、保存revisionの短い状態
 - FTSのidle/waiting/running/error
-- portable mirrorのwaiting/preparing/transferring/committing/errorと進捗
+- backupのcapturing/copying/maintaining/idle、世代保存時刻、追加先保護時刻、pending/expired、error
 - keydownから対応する可視inputまたは次のDOM更新frameまでの直近値、p95、最大値、sample数、slow件数
 
 debug line自身の更新を入力反映として計測しない。

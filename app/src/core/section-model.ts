@@ -7,6 +7,39 @@ export const SECTION_HEADER_NODE = "sectionHeader";
 export const SECTION_BODY_NODE = "sectionBody";
 export const BODY_CHUNK_NODE = "bodyChunk";
 export const SECTION_CHILDREN_NODE = "sectionChildren";
+export const MAX_SECTION_DEPTH = 5;
+
+export class SectionDepthLimitError extends Error {
+  readonly code = "SECTION_DEPTH_LIMIT";
+  constructor(
+    readonly depth: number,
+    readonly sectionId?: string,
+  ) {
+    super("セクションはH6（ノートから5階層）までです。操作を取り消しました。");
+    this.name = "SectionDepthLimitError";
+  }
+}
+
+export function validateSectionSnapshotDepth(
+  snapshot: SectionSnapshot,
+  absoluteDepth = 0,
+): void {
+  const pending = [{ snapshot, depth: absoluteDepth }];
+  const seen = new Set<SectionSnapshot>();
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (current.depth > MAX_SECTION_DEPTH)
+      throw new SectionDepthLimitError(
+        current.depth,
+        current.snapshot.sectionId,
+      );
+    if (seen.has(current.snapshot))
+      throw new Error("Section snapshot contains a cycle");
+    seen.add(current.snapshot);
+    for (const child of current.snapshot.children)
+      pending.push({ snapshot: child, depth: current.depth + 1 });
+  }
+}
 
 export const BODY_CHUNK_TARGET_BLOCKS = 256;
 export const BODY_CHUNK_TARGET_BYTES = 128 * 1024;
@@ -14,6 +47,14 @@ export const BODY_CHUNK_HARD_BLOCKS = 512;
 export const BODY_CHUNK_HARD_BYTES = 256 * 1024;
 
 const utf8Encoder = new TextEncoder();
+
+// Yjs deliberately cannot read preliminary shared types. Retain the immutable
+// structural description at construction, so insertion can be rejected before
+// the child's identities or any Undo item enter the live document.
+const preliminarySections = new WeakMap<
+  Y.XmlElement,
+  readonly { id: string; depth: number }[]
+>();
 
 function approximateJsonBytes(value: unknown): number {
   return utf8Encoder.encode(JSON.stringify(value)).byteLength;
@@ -87,9 +128,22 @@ export function createSectionXml(
   assertUuidV7(sectionId, "sectionId");
   validateSectionTitle(title);
   validateSectionProperties(properties);
+  const structure = [{ id: sectionId, depth: 0 }];
+  const identities = new Set([sectionId]);
   for (const child of children) {
     if (child.nodeName !== SECTION_NODE) {
       throw new Error("Section children may only contain Section nodes");
+    }
+    const childStructure = preliminarySections.get(child);
+    if (child.doc || !childStructure)
+      throw new Error("Section children must be newly constructed Sections");
+    for (const item of childStructure) {
+      if (item.depth + 1 > MAX_SECTION_DEPTH)
+        throw new SectionDepthLimitError(item.depth + 1, item.id);
+      if (identities.has(item.id))
+        throw new Error(`Duplicate Section ID: ${item.id}`);
+      identities.add(item.id);
+      structure.push({ id: item.id, depth: item.depth + 1 });
     }
   }
 
@@ -110,6 +164,7 @@ export function createSectionXml(
   const sectionChildren = new Y.XmlElement(SECTION_CHILDREN_NODE);
   if (children.length > 0) sectionChildren.insert(0, [...children]);
   section.insert(0, [header, sectionBody, sectionChildren]);
+  preliminarySections.set(section, structure);
   return section;
 }
 
@@ -428,6 +483,8 @@ export function validateSectionTree(
       throw new Error("Section must contain exactly header, body and children");
     }
     const id = sectionId(current.section);
+    if (current.depth > MAX_SECTION_DEPTH)
+      throw new SectionDepthLimitError(current.depth, id);
     if (seenIds.has(id)) throw new Error(`Duplicate Section ID: ${id}`);
     seenIds.add(id);
     sectionCount += 1;
@@ -572,7 +629,7 @@ export async function sectionSnapshotAsync(
 
 function throwIfSnapshotAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
-  const error = new Error("Portable mirror preparation was cancelled");
+  const error = new Error("Section snapshot preparation was cancelled");
   error.name = "AbortError";
   throw error;
 }
@@ -631,8 +688,10 @@ export function planSectionDepthShift(
     return { snapshot: boundary, changed: false, affectedSectionIds: [] };
   }
 
+  const snapshot = rebuildSectionSnapshot(flattened, resultingDepths);
+  validateSectionSnapshotDepth(snapshot);
   return {
-    snapshot: rebuildSectionSnapshot(flattened, resultingDepths),
+    snapshot,
     changed: true,
     affectedSectionIds,
   };
@@ -681,6 +740,7 @@ export function applySectionSnapshot(
     throw new Error("Section snapshot ID does not match its target");
   }
   validateSectionSnapshot(snapshot);
+  validateSectionSnapshotDepth(snapshot, absoluteSectionDepth(target));
   replaceSectionFields(target, snapshot);
   replaceSectionChildren(target, snapshot);
 }
@@ -694,6 +754,7 @@ export function applySectionHierarchySnapshot(
     throw new Error("Section hierarchy snapshot ID does not match its target");
   }
   validateSectionSnapshot(snapshot);
+  validateSectionSnapshotDepth(snapshot, absoluteSectionDepth(target));
   reconcileSectionHierarchy(target, snapshot);
 }
 
@@ -900,6 +961,7 @@ function replaceSectionChildren(
 export function createSectionFromSnapshot(
   snapshot: SectionSnapshot,
 ): Y.XmlElement {
+  validateSectionSnapshot(snapshot);
   // Preliminary Yjs types cannot be traversed. Construct descendants first
   // and hand them to their parent exactly once instead of creating an empty
   // tree and reading it back before integration.
@@ -961,16 +1023,25 @@ export function insertChildSection(
   if (!Number.isSafeInteger(index) || index < 0 || index > children.length) {
     throw new Error("Section insertion index is outside the child list");
   }
-  children.insert(index, [child]);
-  try {
-    validateSectionTree(rootSectionFor(parent));
-  } catch (error) {
-    // A preliminary Y.XmlElement cannot be traversed reliably until it is
-    // integrated. Validate immediately after insertion and remove it again in
-    // the same caller-owned transaction if it violates the tree invariant.
-    children.delete(index, 1);
-    throw error;
+  const structure = preliminarySections.get(child);
+  if (child.doc || !structure)
+    throw new Error("Inserted Section must be newly constructed");
+  const depth = absoluteSectionDepth(parent) + 1;
+  for (const item of structure) {
+    if (depth + item.depth > MAX_SECTION_DEPTH)
+      throw new SectionDepthLimitError(depth + item.depth, item.id);
   }
+  const existing = new Set<string>();
+  const pending = [rootSectionFor(parent)];
+  while (pending.length) {
+    const current = pending.pop()!;
+    existing.add(sectionId(current));
+    pending.push(...childSections(current));
+  }
+  for (const item of structure)
+    if (existing.has(item.id))
+      throw new Error(`Duplicate Section ID: ${item.id}`);
+  children.insert(index, [child]);
 }
 
 export function removeChildSection(
@@ -1111,6 +1182,22 @@ function rootSectionFor(section: Y.XmlElement): Y.XmlElement {
     }
     current = ancestor;
   }
+}
+
+function absoluteSectionDepth(section: Y.XmlElement): number {
+  let current = section;
+  let depth = 0;
+  while (
+    current.parent instanceof Y.XmlElement &&
+    current.parent.nodeName === SECTION_CHILDREN_NODE
+  ) {
+    const parent = current.parent.parent;
+    if (!(parent instanceof Y.XmlElement) || parent.nodeName !== SECTION_NODE)
+      throw new Error("Section has an invalid parent");
+    current = parent;
+    depth += 1;
+  }
+  return depth;
 }
 
 function requiredContainer(
@@ -1336,6 +1423,7 @@ function remapSectionSnapshot(
 }
 
 function validateSectionSnapshot(snapshot: SectionSnapshot): void {
+  validateSectionSnapshotDepth(snapshot);
   const ids = new Set<string>();
   const pending = [snapshot];
   while (pending.length > 0) {
@@ -1373,9 +1461,9 @@ export function replaceSectionBodySnapshot(
   bodySnapshot: readonly unknown[],
 ): void {
   const targetBody = sectionBody(target);
-  targetBody.delete(0, targetBody.length);
   const body = sectionBodyFromSnapshot({ body: bodySnapshot });
   const chunks = createBodyChunks(body, bodySnapshot.map(approximateJsonBytes));
+  targetBody.delete(0, targetBody.length);
   if (chunks.length > 0) targetBody.insert(0, chunks);
 }
 

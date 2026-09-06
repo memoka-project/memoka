@@ -1,16 +1,19 @@
 import type { Editor } from "@tiptap/core";
+import readerFixture from "./fixtures/reader-contract.json";
 import * as Y from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { noteBufferId } from "../app/src/core/application-state";
 import {
   blockToYXml,
   createNoteDocument,
+  createNoteDocumentFromSectionSnapshot,
   type NoteBlock,
 } from "../app/src/core/documents";
 import {
   createSectionXml,
   insertChildSection,
   sectionBodyBlocks,
+  type SectionSnapshot,
 } from "../app/src/core/section-model";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -69,6 +72,33 @@ function editorRoot(): HTMLDivElement {
 }
 
 describe("Memoka Workspace search", () => {
+  it("shares body logical rows and offsets with the native CLI contract", () => {
+    const note = createNoteDocumentFromSectionSnapshot(
+      readerFixture.expected.sectionId,
+      readerFixture.expected as SectionSnapshot,
+    );
+    try {
+      const rows = deriveWorkspaceSearchDocument(note).blocks;
+      for (const [text, number, offset] of [
+        ["親", 3, 0],
+        ["子", 4, 0],
+        ["注意", 5, 0],
+        ["```", 7, 12],
+        ["見出し | 右", 9, 0],
+        ["太字 | 値|1", 10, 0],
+        ["本文 一致語", 12, 0],
+        ["external", 2, 28],
+      ] as const) {
+        expect(rows.find((row) => row.text === text)).toMatchObject({
+          logicalLineNumber: number,
+          sourceOffset: offset,
+        });
+      }
+    } finally {
+      note.doc.destroy();
+    }
+  });
+
   it("indexes visible external Link labels without hidden mark attributes", () => {
     const noteId = createUuidV7();
     const blockId = createUuidV7();

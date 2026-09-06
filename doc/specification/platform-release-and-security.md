@@ -13,14 +13,14 @@ macOS、ARM、Microsoft Store、apt repository、deb repository、自前CDNは�
 
 ## 2. Linux配布
 
-公式binaryとしてGitHub Releasesで配布するのはLinux x86_64 AppImageだけである。
+公式GUI binaryはLinux x86_64 AppImageである。別途、GUIを含まないstandalone CLI archiveを配布する。
 
 Releaseには少なくとも次を含める。
 
 - AppImage
 - Tauri Updater signature
 - `latest.json`
-- standalone `memoka-cli` archive
+- standalone `memoka-cli`と固定版Resticを同梱したarchive
 - `SHA256SUMS`
 - SPDX JSON SBOM
 - Source code archive
@@ -39,6 +39,10 @@ GitHubのSource code archiveまたはrepositoryをWindows 11 x64上でbuildし�
 local buildはMSVC toolchain、Windows SDK、WebView2 Runtime、Node.js/Corepackを使用する。
 `corepack pnpm tauri:build`はunsigned NSIS installerを生成できるが、公式配布物ではない。
 standalone復旧CLIもlocal buildできる。
+
+Linux・WindowsともRestic 0.19.1を固定し、artifactと実行fileのSHA-256を検証して同梱する。
+GUIのapp bundleとCLIの隣へそれぞれ配置する。CLIはTauriのwindow/runtimeを初期化せず、実行時に
+Node、DOM、GTK、WebViewを要求しない。Linuxでは`ldd`、Windowsではnative buildと実行で検証する。
 
 Windows ClipboardはCF_UNICODETEXT、CF_HDROP、登録PNG、CF_DIBV5/CF_DIBなどのnative adapterを使用する。
 Microsoft IMEとWebView2で入力確定の欠落・二重反映がないことを確認する。
@@ -77,13 +81,13 @@ Updaterは公式Linux AppImageだけで有効にする。release buildへ埋め�
 - 自動download/installしない。
 - `:update`でrelease情報を表示し、利用者がEnterで確定した場合だけ適用する。
 - offline、no update、download失敗、署名不正では現在versionとWorkspaceを変更しない。
-- 適用前にCore保存と必要なportable mirrorをflushする。
+- 適用前にCore保存barrierと必要なlocal履歴をflushし、追加先copyには待機時間上限を設ける。
 
 source buildとWindows local buildではUpdaterを無効にし、`:update`は署名済み配布版だけで利用可能であることを通知する。
 
 ## 7. Networkとprivacy
 
-通常のNote操作、検索、mirror、Attachment、診断ではnetworkへ内容を送信しない。
+通常のNote操作、検索、履歴、Attachment、診断ではnetworkへ内容を送信しない。
 account、telemetry、広告、crash report自動送信、log uploadを実装しない。
 
 公式AppImageの更新確認だけがGitHub ReleasesへHTTPS接続する。この際、IP addressなど通常のHTTP接続情報が
@@ -96,7 +100,11 @@ GitHubへ伝わり得る。Note本文、title、検索語、Clipboard、Attachme
 - Attachmentはsize、filename、MIME/magic bytes、pathを検証する。
 - SVG/HTML、実行file、shortcutなどをinline previewしない。
 - custom attachment protocolはWorkspaceで解決したIDだけを読み、arbitrary filesystem pathを公開しない。
-- portable mirrorのpath traversal、symlink、root外renameを拒否する。
+- 現行read・Restic restore・旧mirror restoreのpath traversal、symlink、Windows reparse pointを拒否する。
+- Native read IPCは同じOS userのsocket/named pipeだけを受け付け、GUI ownerとheadless処理は同じWorkspace leaseを使う。
+- Resticの継承`RESTIC_*`環境を除去し、repositoryとpassword sourceを明示する。任意backend URLやcredential引数は受け付けない。
+- 追加先passwordはOS資格情報ストアと必要な子process環境だけへ渡す。local repositoryは明示的なno-passwordである。
+- 生成物allowlistは`backup.json`、`state.sqlite`、`blobs/<sha256>`に限定し、config、token、log、cache、鍵を含めない。
 
 ## 9. 診断log
 
@@ -120,6 +128,7 @@ MemokaはMIT License、publisherはJun Ando、公開repositoryは
 
 Nightfox paletteなどthird-party componentは固定したupstreamとlicenseを
 `THIRD_PARTY_NOTICES.md`へ記載する。releaseごとにinventoryとSBOMを生成する。
+ResticのBSD-2-Clause本文を同梱し、Go moduleも含めて最終配布物のSBOMへ収録する。
 
 脆弱性は公開IssueではなくGitHub Private vulnerability reportingで受け付ける。
 最新の安定版だけをsecurity support対象とする。

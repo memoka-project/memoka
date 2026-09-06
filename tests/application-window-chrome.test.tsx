@@ -13,6 +13,7 @@ import {
   createTabPage,
 } from "../app/src/core/application-state";
 import type { DesktopWindowPort } from "../app/src/platform/desktop-window";
+import { backupFixture } from "./backup-fixture";
 
 function createDesktopWindowFixture() {
   let maximized = false;
@@ -140,12 +141,9 @@ describe("custom application window chrome", () => {
     await screen.findByRole("button", { name: "Memokaを最大化" });
   });
 
-  it("closes after canonical persistence without waiting for the derived mirror", async () => {
+  it("closes after canonical persistence when native backup is unavailable", async () => {
     let closeRequested: (() => void | Promise<void>) | null = null;
     const forceClose = vi.fn(async () => undefined);
-    const listAttachments = vi.fn(async () => {
-      throw new Error("the shutdown path must not start a mirror publication");
-    });
     const fixture = createDesktopWindowFixture();
     fixture.port.subscribeToCloseRequested = vi.fn(async (listener) => {
       closeRequested = listener;
@@ -157,20 +155,7 @@ describe("custom application window chrome", () => {
     };
     fixture.port.forceClose = forceClose;
     const view = render(
-      <App
-        desktopWindow={fixture.port}
-        portableMirror={{
-          status: async () => ({
-            manifest: null,
-            mirrorNeedsRepair: false,
-            documentRevisions: [],
-          }),
-          listAttachments,
-          publish: async () => undefined,
-        }}
-        showDebugLine={false}
-        waitForMirrorOnExit={false}
-      />,
+      <App desktopWindow={fixture.port} backup={null} showDebugLine={false} />,
     );
 
     await screen.findByRole("tree", { name: "ノートツリー" });
@@ -178,7 +163,6 @@ describe("custom application window chrome", () => {
     await requestNativeClose();
 
     await waitFor(() => expect(forceClose).toHaveBeenCalledOnce());
-    expect(listAttachments).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -189,11 +173,7 @@ describe("custom application window chrome", () => {
       const forceClose = vi.fn(async () => undefined);
       fixture.port.forceClose = forceClose;
       const view = render(
-        <App
-          desktopWindow={fixture.port}
-          portableMirror={null}
-          showDebugLine={false}
-        />,
+        <App desktopWindow={fixture.port} showDebugLine={false} />,
       );
 
       const editor = await waitFor(() => {
@@ -221,7 +201,7 @@ describe("custom application window chrome", () => {
     },
   );
 
-  it("waits for the mirror by default and shows its shutdown progress", async () => {
+  it("waits for the backup and shows its shutdown progress", async () => {
     let closeRequested: (() => void | Promise<void>) | null = null;
     let releasePublish!: () => void;
     let markPublishStarted!: () => void;
@@ -245,21 +225,12 @@ describe("custom application window chrome", () => {
     const view = render(
       <App
         desktopWindow={fixture.port}
-        portableMirror={{
-          status: async () => ({
-            manifest: null,
-            mirrorNeedsRepair: false,
-            documentRevisions: [],
-          }),
-          listAttachments: async () => [],
-          publish: async (_publication, options) => {
-            options?.onPhase?.("uploading");
-            options?.onProgress?.({ completedBytes: 50, totalBytes: 100 });
+        backup={backupFixture({
+          run: async () => {
             markPublishStarted();
             await publishGate;
-            options?.onPhase?.("committing");
           },
-        }}
+        })}
         showDebugLine={false}
       />,
     );
@@ -275,7 +246,7 @@ describe("custom application window chrome", () => {
         await screen.findByRole("dialog", { name: "Memokaを終了" })
       ).getAttribute("aria-busy"),
     ).toBe("true");
-    await screen.findByText(/Markdown mirrorを書き込んでいます… 50%/u);
+    await screen.findByText(/バックアップの完了を待っています/u);
 
     releasePublish();
     await closing;

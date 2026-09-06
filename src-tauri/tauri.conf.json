@@ -5,15 +5,15 @@
   "identifier": "dev.memoka.desktop",
   "mainBinaryName": "memoka",
   "build": {
-    "beforeDevCommand": "corepack pnpm dev",
+    "beforeDevCommand": "corepack pnpm restic:prepare && corepack pnpm dev",
     "devUrl": "http://127.0.0.1:1421",
-    "beforeBuildCommand": "corepack pnpm build",
+    "beforeBuildCommand": "corepack pnpm restic:prepare && corepack pnpm build",
     "beforeBundleCommand": "node scripts/prepare-linux-appimage-tools.mjs",
     "frontendDist": "../dist"
   },
   "app": {
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost ws: http:; img-src 'self' data: blob: memoka-attachment: http://memoka-attachment.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost ws: http:; img-src 'self' data: blob: memoka-attachment: http://memoka-attachment.localhost memoka-history-attachment: http://memoka-history-attachment.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
     },
     "windows": [
       {
@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": ["binaries/restic"],
     "useLocalToolsDir": true,
     "publisher": "Jun Ando",
     "homepage": "https://github.com/memoka-project/memoka",

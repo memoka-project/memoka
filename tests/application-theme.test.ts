@@ -89,15 +89,16 @@ describe("Memoka application themes", () => {
     }
   });
 
-  it("cycles Section depths through the six Markdown heading colors", () => {
+  it("uses the six absolute Note depths without an H7 color cycle", () => {
     expect(
-      Array.from({ length: 14 }, (_, depth) =>
+      Array.from({ length: 6 }, (_, depth) =>
         markupHeadingLevelForSectionDepth(depth),
       ),
-    ).toEqual([1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 1, 2]);
-    expect(nextMarkupHeadingLevel(6)).toBe(1);
+    ).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(nextMarkupHeadingLevel(6)).toBe(6);
+    expect(() => markupHeadingLevelForSectionDepth(6)).toThrow("0 to 5");
     expect(() => markupHeadingLevelForSectionDepth(-1)).toThrow(
-      "Section depth must be a non-negative integer",
+      "Section depth must be an integer from 0 to 5",
     );
   });
 

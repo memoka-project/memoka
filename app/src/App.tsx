@@ -11,6 +11,18 @@ import {
 } from "react";
 import { CoreRuntime, type RuntimeSnapshot } from "./core/runtime";
 import { createDefaultPersistencePort } from "./core/persistence";
+import { installNativeSaveBarrier } from "./core/native-save-barrier";
+import {
+  BackupController,
+  createDefaultBackupPort,
+  nativeErrorMessage,
+  type BackupPort,
+} from "./core/history";
+import { HistoryPane, type HistorySession } from "./components/HistoryPane";
+import {
+  BackupDialog,
+  type BackupDialogSession,
+} from "./components/BackupDialog";
 import { noteDisplayTitle, type NoteDocument } from "./core/documents";
 import type {
   WorkspaceSearchScope,
@@ -49,6 +61,10 @@ import {
   type WorkspaceSearchSession,
 } from "./components/WorkspaceSearchPalette";
 import { WorkspaceTree } from "./components/WorkspaceTree";
+import {
+  GroupNameDialog,
+  type GroupNameSession,
+} from "./components/GroupNameDialog";
 import { WorkspaceOutline } from "./components/WorkspaceOutline";
 import { ApplicationTabBar } from "./components/ApplicationTabBar";
 import { DevelopmentDebugTasks } from "./components/DevelopmentDebugTasks";
@@ -57,6 +73,7 @@ import {
   ApplicationShutdownProgress,
   type ApplicationShutdownProgressState,
 } from "./components/ApplicationShutdownProgress";
+import { ApplicationDeparture } from "./core/application-departure";
 import {
   ApplicationWindowControls,
   ApplicationWindowDragRegion,
@@ -149,11 +166,6 @@ import {
   type DataAreaPort,
 } from "./platform/data-area";
 import {
-  createDefaultPortableMirrorPort,
-  PortableMirrorController,
-  type PortableMirrorPort,
-} from "./core/portable-mirror";
-import {
   createDefaultApplicationUpdatePort,
   type ApplicationRelease,
   type ApplicationUpdatePort,
@@ -193,11 +205,10 @@ export interface AppProps {
   showDebugLine?: boolean;
   desktopWindow?: DesktopWindowPort | null;
   dataArea?: DataAreaPort;
-  portableMirror?: PortableMirrorPort | null;
+  backup?: BackupPort | null;
   applicationUpdate?: ApplicationUpdatePort;
   diagnostics?: ApplicationDiagnosticsPort;
   startupUpdateDelayMs?: number;
-  waitForMirrorOnExit?: boolean;
 }
 
 type VimCommandOrigin = "window" | "left-sidebar" | "right-sidebar";
@@ -220,11 +231,10 @@ export function App({
   ),
   desktopWindow: desktopWindowOverride,
   dataArea: dataAreaOverride,
-  portableMirror: portableMirrorOverride,
+  backup: backupOverride,
   applicationUpdate: applicationUpdateOverride,
   diagnostics: diagnosticsOverride,
   startupUpdateDelayMs = 10_000,
-  waitForMirrorOnExit = true,
 }: AppProps = {}) {
   validateApplicationKeyConfig(keyConfig);
   validateVimKeyConfig(keyConfig);
@@ -252,11 +262,8 @@ export function App({
   const [attachmentRepository] = useState(createDefaultAttachmentRepository);
   const [defaultDataArea] = useState(createDefaultDataAreaPort);
   const dataArea = dataAreaOverride ?? defaultDataArea;
-  const [defaultPortableMirror] = useState(createDefaultPortableMirrorPort);
-  const portableMirror =
-    portableMirrorOverride === undefined
-      ? defaultPortableMirror
-      : portableMirrorOverride;
+  const [defaultBackup] = useState(createDefaultBackupPort);
+  const backup = backupOverride === undefined ? defaultBackup : backupOverride;
   const [defaultApplicationUpdate] = useState(
     createDefaultApplicationUpdatePort,
   );
@@ -296,8 +303,25 @@ export function App({
   const [themePicker, setThemePicker] = useState<ThemePickerSession | null>(
     null,
   );
-  const [fontPicker, setFontPicker] = useState<FontPickerSession | null>(null);
+  const [groupName, setGroupName] = useState<GroupNameSession | null>(null);
+  const [historySession, setHistorySession] = useState<HistorySession | null>(
+    null,
+  );
+  const [backupDialog, setBackupDialog] = useState<BackupDialogSession | null>(
+    null,
+  );
+
   const [commandMessage, setCommandMessage] = useState(keyConfigWarning ?? "");
+  useEffect(() => {
+    const reportEditorError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message: string }>).detail;
+      if (detail?.message) setCommandMessage(detail.message);
+    };
+    window.addEventListener("memoka-editor-error", reportEditorError);
+    return () =>
+      window.removeEventListener("memoka-editor-error", reportEditorError);
+  }, []);
+  const [fontPicker, setFontPicker] = useState<FontPickerSession | null>(null);
   const [availableUpdate, setAvailableUpdate] =
     useState<ApplicationRelease | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<{
@@ -309,6 +333,9 @@ export function App({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [shutdownProgress, setShutdownProgress] =
     useState<ApplicationShutdownProgressState | null>(null);
+  const [departure] = useState(
+    () => new ApplicationDeparture(setShutdownProgress, nextBrowserPaint),
+  );
   const [applicationActive, setApplicationActive] = useState(true);
   const [, setAttachmentLabelRevision] = useState(0);
   const [treeFocusRequest, setTreeFocusRequest] = useState(0);
@@ -349,10 +376,7 @@ export function App({
   const pointerEditorFocusIntent = useRef<string | null>(null);
   const editorFocusRequestSequence = useRef(0);
   const runtimeRef = useRef<CoreRuntime | null>(null);
-  const portableMirrorController = useRef<PortableMirrorController | null>(
-    null,
-  );
-  const shutdownInFlight = useRef(false);
+  const backupController = useRef<BackupController | null>(null);
   const startupUpdateCheckStarted = useRef(false);
 
   useLayoutEffect(() => {
@@ -1112,6 +1136,13 @@ export function App({
     if (previous && previous !== next) previous.destroy();
   }, []);
 
+  useEffect(() => {
+    const installed = installNativeSaveBarrier(() => runtimeRef.current);
+    return () => {
+      void installed.then((stop) => stop());
+    };
+  }, []);
+
   const openSelectedDataArea = useCallback(async (): Promise<CoreRuntime> => {
     return CoreRuntime.open(createDefaultPersistencePort(), {
       onError: (error) => setStartupError(error.message),
@@ -1162,61 +1193,112 @@ export function App({
   );
 
   const chooseAndOpenDataArea = useCallback(async (): Promise<boolean> => {
+    if (departure.active) return false;
     const selected = await dataArea.chooseDirectory();
     if (!selected) return false;
     const previousStatus = await dataArea.status().catch(() => null);
     const current = runtimeRef.current;
     let activated = false;
-    setDataAreaBusy(true);
     setStartupError(null);
+    const activate = async (): Promise<void> => {
+      try {
+        await dataArea.activate(selected);
+        activated = true;
+        const next = await openSelectedDataArea();
+        replaceRuntime(next);
+        setDataAreaRequired(false);
+      } catch (error) {
+        if (
+          activated &&
+          current &&
+          previousStatus?.selected &&
+          previousStatus.path
+        ) {
+          await dataArea.activate(previousStatus.path);
+          activated = false;
+        }
+        throw error;
+      }
+    };
+    if (current) {
+      // Keep the editors mounted while the modal owns focus: unmounting before
+      // the Core barrier could discard their pending confirmed edits.
+      return departure.start({
+        kind: "switch-workspace",
+        save: () => current.flushDurableState(),
+        backup,
+        controller: backupController.current,
+        complete: activate,
+      });
+    }
+    setDataAreaBusy(true);
     try {
-      await portableMirrorController.current?.flush();
-      await current?.flush();
-      await dataArea.activate(selected);
-      activated = true;
-      const next = await openSelectedDataArea();
-      replaceRuntime(next);
-      setDataAreaRequired(false);
+      await activate();
       return true;
     } catch (error) {
-      if (
-        activated &&
-        current &&
-        previousStatus?.selected &&
-        previousStatus.path
-      ) {
-        await dataArea.activate(previousStatus.path).catch(() => undefined);
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      if (current) setCommandMessage(`:switch-workspace · ${message}`);
-      else {
-        setStartupError(message);
-        setDataAreaRequired(true);
-      }
+      setStartupError(nativeErrorMessage(error));
+      setDataAreaRequired(true);
       return false;
     } finally {
       setDataAreaStatusChecked(true);
       setDataAreaBusy(false);
     }
-  }, [dataArea, openSelectedDataArea, replaceRuntime]);
+  }, [backup, dataArea, departure, openSelectedDataArea, replaceRuntime]);
+
+  const requestApplicationShutdown = useCallback(async (): Promise<void> => {
+    if (departure.active) return;
+    if (!runtime || !desktopWindow?.forceClose) {
+      setCommandMessage(":quit · デスクトップの終了処理を利用できません");
+      return;
+    }
+    await departure.start({
+      kind: "quit",
+      save: () => runtime.flushDurableState(),
+      backup,
+      controller: backupController.current,
+      complete: () => desktopWindow.forceClose!(),
+    });
+  }, [backup, departure, desktopWindow, runtime]);
 
   useEffect(() => {
-    portableMirrorController.current?.destroy();
-    portableMirrorController.current = null;
-    if (!runtime || !portableMirror) return;
-    const controller = new PortableMirrorController(
-      runtime,
-      portableMirror,
-      (error) => setCommandMessage(`mirror · ${error.message}`),
+    if (!runtime || !desktopWindow?.subscribeToCloseRequested) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void desktopWindow
+      .subscribeToCloseRequested(() => {
+        if (disposed) return;
+        return requestApplicationShutdown();
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch((error: unknown) => {
+        setCommandMessage(
+          `終了処理を準備できませんでした: ${nativeErrorMessage(error)}`,
+        );
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [desktopWindow, requestApplicationShutdown, runtime]);
+
+  useEffect(() => {
+    backupController.current?.destroy();
+    backupController.current = null;
+    if (!runtime || !backup) return;
+    const controller = new BackupController(runtime, backup, (error) =>
+      setCommandMessage(`backup · ${nativeErrorMessage(error)}`),
     );
-    portableMirrorController.current = controller;
+    backupController.current = controller;
     return () => {
       controller.destroy();
-      if (portableMirrorController.current === controller) {
-        portableMirrorController.current = null;
+      if (backupController.current === controller) {
+        backupController.current = null;
       }
     };
-  }, [portableMirror, runtime]);
+  }, [backup, runtime]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -1245,78 +1327,6 @@ export function App({
     if (!startupError) return;
     recordDiagnostic("workspace-open-failed");
   }, [recordDiagnostic, startupError]);
-
-  const requestApplicationShutdown = useCallback(async (): Promise<void> => {
-    if (shutdownInFlight.current) return;
-    if (!runtime || !desktopWindow?.forceClose) {
-      setCommandMessage(":quit · デスクトップの終了処理を利用できません");
-      return;
-    }
-    shutdownInFlight.current = true;
-    let failureStage: ApplicationShutdownProgressState["stage"] = "saving";
-    try {
-      setShutdownProgress({ stage: "saving", mirror: null });
-      await nextBrowserPaint();
-      await runtime.flushDurableState();
-      const mirrorController = portableMirrorController.current;
-      if (waitForMirrorOnExit && mirrorController) {
-        failureStage = "mirror";
-        const refreshMirrorProgress = (): void => {
-          setShutdownProgress({
-            stage: "mirror",
-            mirror: mirrorController.activitySnapshot(),
-          });
-        };
-        refreshMirrorProgress();
-        const refreshTimer = globalThis.setInterval(refreshMirrorProgress, 75);
-        try {
-          await nextBrowserPaint();
-          await mirrorController.flush();
-        } finally {
-          globalThis.clearInterval(refreshTimer);
-        }
-      }
-      failureStage = "closing";
-      setShutdownProgress({ stage: "closing", mirror: null });
-      await desktopWindow.forceClose();
-    } catch (error) {
-      shutdownInFlight.current = false;
-      setShutdownProgress(null);
-      const operation =
-        failureStage === "mirror"
-          ? "mirror生成"
-          : failureStage === "closing"
-            ? "終了処理"
-            : "保存";
-      setCommandMessage(
-        `終了前の${operation}に失敗しました: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }, [desktopWindow, runtime, waitForMirrorOnExit]);
-
-  useEffect(() => {
-    if (!runtime || !desktopWindow?.subscribeToCloseRequested) return;
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    void desktopWindow
-      .subscribeToCloseRequested(() => {
-        if (disposed) return;
-        return requestApplicationShutdown();
-      })
-      .then((dispose) => {
-        if (disposed) dispose();
-        else unlisten = dispose;
-      })
-      .catch((error: unknown) => {
-        setCommandMessage(
-          `終了処理を準備できませんでした: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [desktopWindow, requestApplicationShutdown, runtime]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -1422,6 +1432,22 @@ export function App({
     if (shutdownProgress) {
       appRoot.current
         ?.querySelector<HTMLElement>("[data-memoka-focus-surface='shutdown']")
+        ?.focus();
+      return;
+    }
+    if (historySession || backupDialog) {
+      appRoot.current
+        ?.querySelector<HTMLElement>(
+          historySession
+            ? "[data-memoka-focus-surface='history'] input"
+            : "[data-memoka-focus-surface='backup'] input:not(:disabled), [data-memoka-focus-surface='backup'] button:not(:disabled)",
+        )
+        ?.focus();
+      return;
+    }
+    if (groupName) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>("input[aria-label='グループ名']")
         ?.focus();
       return;
     }
@@ -1537,6 +1563,9 @@ export function App({
     shutdownProgress,
     snapshot,
     themePicker,
+    groupName,
+    historySession,
+    backupDialog,
     updatePrompt,
     workspaceSearch,
   ]);
@@ -1713,8 +1742,7 @@ export function App({
           {dataAreaRequired ? (
             <>
               <p>
-                内部データと自動Markdown
-                mirrorを保存する空のディレクトリを選びます。
+                内部データと自動バックアップ履歴を保存する空のディレクトリを選びます。
               </p>
               <button
                 className="startup-panel__action"
@@ -1770,23 +1798,29 @@ export function App({
     .join(" ");
   const transientFocus = shutdownProgress
     ? "shutdown"
-    : workspaceSearch
-      ? "workspace-search"
-      : themePicker
-        ? "theme-picker"
-        : blockTypePicker
-          ? "block-type-picker"
-          : inlineFormatPicker
-            ? "inline-format-picker"
-            : tableActionPicker
-              ? "table-action-picker"
-              : noteSearch
-                ? "note-search"
-                : commandPicker
-                  ? "command-picker"
-                  : commandLine
-                    ? "command-line"
-                    : null;
+    : historySession
+      ? "history"
+      : backupDialog
+        ? "backup"
+        : groupName
+          ? "group-name"
+          : workspaceSearch
+            ? "workspace-search"
+            : themePicker
+              ? "theme-picker"
+              : blockTypePicker
+                ? "block-type-picker"
+                : inlineFormatPicker
+                  ? "inline-format-picker"
+                  : tableActionPicker
+                    ? "table-action-picker"
+                    : noteSearch
+                      ? "note-search"
+                      : commandPicker
+                        ? "command-picker"
+                        : commandLine
+                          ? "command-line"
+                          : null;
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1807,6 +1841,7 @@ export function App({
       return;
     }
     if (
+      !shutdownProgress &&
       updateProgress &&
       !target.closest("[data-memoka-focus-surface='update']")
     ) {
@@ -2120,7 +2155,7 @@ export function App({
   };
 
   const performApplicationUpdate = async (): Promise<void> => {
-    if (!updatePrompt || !runtime || updateProgress) return;
+    if (!updatePrompt || !runtime || updateProgress || departure.active) return;
     const { release, restoreFocus } = updatePrompt;
     setUpdateError(null);
     if (!release.canSelfUpdate) {
@@ -2143,30 +2178,36 @@ export function App({
       contentLength: null,
     });
     recordDiagnostic("update-install-started");
-    try {
-      // The updater may launch the installer as soon as download completes.
-      // Publish the latest mirror and durable CRDT state before giving it that
-      // authority; a flush failure must leave the running version untouched.
-      await portableMirrorController.current?.flush();
-      await runtime.flush();
-      setUpdateProgress({
-        phase: "downloading",
-        downloadedBytes: 0,
-        contentLength: null,
-      });
-      await applicationUpdate.downloadAndInstall(setUpdateProgress);
-      await applicationUpdate.relaunch();
-      // A native relaunch normally terminates the process before resolving.
-      // Keep the UI usable if a platform adapter returns without exiting.
+    const completed = await departure.start({
+      kind: "update",
+      save: () => runtime.flushDurableState(),
+      backup,
+      controller: backupController.current,
+      complete: async () => {
+        // No updater authority until confirmed Core changes are durable and
+        // history is accepted (or the user explicitly skipped backup).
+        setUpdateProgress({
+          phase: "downloading",
+          downloadedBytes: 0,
+          contentLength: null,
+        });
+        try {
+          await applicationUpdate.downloadAndInstall(setUpdateProgress);
+          await applicationUpdate.relaunch();
+        } catch {
+          recordDiagnostic("update-install-failed");
+          throw new Error(
+            "更新を適用できませんでした。現在のバージョンを継続します。診断ログを確認してください。",
+          );
+        }
+      },
+    });
+    setUpdateProgress(null);
+    if (completed) {
+      // Test/platform adapters can return without relaunching the process.
+      backupController.current?.resume();
       setUpdatePrompt(null);
-      setUpdateProgress(null);
       queueMicrotask(restoreFocus);
-    } catch {
-      recordDiagnostic("update-install-failed");
-      setUpdateProgress(null);
-      setUpdateError(
-        "更新を適用できませんでした。現在のバージョンを継続します。診断ログを確認してください。",
-      );
     }
   };
 
@@ -2179,6 +2220,77 @@ export function App({
     setCommandLine(null);
     setCommandMessage(message);
     switch (command) {
+      case "workspace.backup":
+        if (!backupController.current) {
+          setCommandMessage("バックアップはデスクトップ版で利用できます");
+          session?.restoreFocus();
+          return;
+        }
+        void backupController.current.flush().then(
+          () =>
+            setCommandMessage(
+              "backup · 処理完了。追加先の保護状態は:backup-statusで確認できます",
+            ),
+          (error) => setCommandMessage(`backup · ${nativeErrorMessage(error)}`),
+        );
+        session?.restoreFocus();
+        return;
+      case "workspace.history":
+      case "workspace.backup_status":
+      case "workspace.backup_settings": {
+        if (!backup) {
+          setCommandMessage("履歴はデスクトップ版で利用できます");
+          session?.restoreFocus();
+          return;
+        }
+        const restoreFocus =
+          session?.restoreFocus ??
+          (() => requestEditorFocus(effectiveTargetWindowId));
+        clearEditorFocusRequests();
+        if (command === "workspace.history") {
+          const target = runtime
+            .snapshot()
+            .windows.find(
+              (window) => window.windowId === effectiveTargetWindowId,
+            );
+          setHistorySession({ id: target?.noteId ?? null, restoreFocus });
+        } else
+          setBackupDialog({
+            settings: command === "workspace.backup_settings",
+            restoreFocus,
+          });
+        return;
+      }
+      case "namespace.group":
+      case "namespace.rename_group": {
+        const entryId = snapshot.applicationWindow.tabs.find(
+          (tab) => tab.id === snapshot.applicationWindow!.activeTabId,
+        )?.leftSidebar.tree.selectedEntryId;
+        const entry = snapshot.namespaceEntries.find(
+          (item) => item.entryId === entryId,
+        );
+        if (
+          command === "namespace.rename_group" &&
+          (!entry || entry.targetNoteId)
+        ) {
+          setCommandMessage(
+            entry?.targetNoteId
+              ? "ノート名はバッファ内のタイトルを編集してください"
+              : "Treeでグループを選択してください",
+          );
+          return;
+        }
+        setGroupName({
+          initialName: command === "namespace.rename_group" ? entry!.title : "",
+          rename: command === "namespace.rename_group",
+          restoreFocus: session?.restoreFocus ?? (() => restoreManagedFocus()),
+          accept: (name) =>
+            command === "namespace.rename_group"
+              ? runtime.renameNamespaceGroup(entry!.entryId, name)
+              : runtime.createNamespaceGroup(entry?.entryId ?? null, name),
+        });
+        return;
+      }
       case "utility.tree":
         openTree();
         return;
@@ -2719,6 +2831,17 @@ export function App({
           : applicationFocusOwner.area)
       }
       onMouseDownCapture={handleApplicationPointerDown}
+      onKeyDownCapture={(event) => {
+        if (
+          shutdownProgress &&
+          event.target instanceof Element &&
+          !event.target.closest("[data-memoka-focus-surface='shutdown']")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          restoreManagedFocus();
+        }
+      }}
     >
       <ApplicationTabBar
         state={snapshot.applicationWindow}
@@ -2876,7 +2999,20 @@ export function App({
       </div>
 
       {shutdownProgress ? (
-        <ApplicationShutdownProgress progress={shutdownProgress} />
+        <ApplicationShutdownProgress
+          progress={shutdownProgress}
+          detail={
+            shutdownProgress.kind === "update" &&
+            shutdownProgress.stage === "closing"
+              ? updateProgress?.phase === "downloading"
+                ? `ダウンロード中…${updateProgress.contentLength ? ` ${Math.round((100 * updateProgress.downloadedBytes) / updateProgress.contentLength)}%` : ""}`
+                : "インストール・再起動中…"
+              : undefined
+          }
+          onRetry={() => departure.retry()}
+          onCancel={() => void departure.leave(false)}
+          onSkip={() => void departure.leave(true)}
+        />
       ) : updatePrompt ? (
         <ApplicationUpdatePrompt
           release={updatePrompt.release}
@@ -2898,6 +3034,30 @@ export function App({
           session={workspaceSearch}
           onClose={() => setWorkspaceSearch(null)}
           focused
+        />
+      ) : historySession && backup ? (
+        <HistoryPane
+          port={backup}
+          session={historySession}
+          onClose={() => setHistorySession(null)}
+        />
+      ) : backupDialog && backup ? (
+        <BackupDialog
+          port={backup}
+          session={backupDialog}
+          onClose={() => setBackupDialog(null)}
+          onSaved={() => {
+            void backupController.current
+              ?.flush()
+              .catch((error) =>
+                setCommandMessage(`backup · ${nativeErrorMessage(error)}`),
+              );
+          }}
+        />
+      ) : groupName ? (
+        <GroupNameDialog
+          session={groupName}
+          onClose={() => setGroupName(null)}
         />
       ) : themePicker ? (
         <ThemePicker
@@ -3004,7 +3164,7 @@ export function App({
           <span>window {effectiveTargetWindowId}</span>
           <DevelopmentDebugTasks
             runtime={runtime}
-            mirrorController={portableMirrorController}
+            backup={backup}
             applicationRoot={appRoot}
           />
           {keyConfigWarning && <span>keymap {keyConfigWarning}</span>}

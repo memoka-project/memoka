@@ -9,7 +9,15 @@ import {
   type WorkspaceSearchScope,
 } from "./workspace-search";
 
-export const WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION = 8;
+export const WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION = 9;
+
+export interface WorkspaceSearchNamespaceEntry {
+  readonly entryId: string;
+  readonly parentEntryId: string | null;
+  readonly targetNoteId: string | null;
+  readonly name: string;
+  readonly normalizedName: string;
+}
 
 export interface WorkspaceSearchIndexedDocument extends WorkspaceSearchDocument {
   readonly sourceRevision: number;
@@ -20,6 +28,7 @@ export interface WorkspaceSearchIndexRebuildRequest {
   readonly workspaceId: string;
   readonly workspaceRevision: number;
   readonly documents: readonly WorkspaceSearchIndexedDocument[];
+  readonly namespaceEntries?: readonly WorkspaceSearchNamespaceEntry[];
 }
 
 export interface WorkspaceSearchIndexReplaceRequest {
@@ -51,6 +60,7 @@ export interface WorkspaceSearchIndexHierarchyUpdateRequest {
   readonly baseRevision: number;
   readonly workspaceRevision: number;
   readonly entries: readonly WorkspaceSearchIndexHierarchyEntry[];
+  readonly namespaceEntries?: readonly WorkspaceSearchNamespaceEntry[];
 }
 
 export type WorkspaceSearchIndexStrategy =
@@ -356,10 +366,16 @@ export class MemoryWorkspaceSearchIndexPort implements WorkspaceSearchIndexPort 
         ),
       };
     });
+    const namespace = new Map(
+      indexed.namespaceEntries?.map((entry) => [entry.entryId, entry]),
+    );
+    for (const entry of request.namespaceEntries ?? [])
+      namespace.set(entry.entryId, entry);
     this.request = {
       ...indexed,
       workspaceRevision: request.workspaceRevision,
-      documents: reprojectMemoryHierarchy(documents),
+      namespaceEntries: [...namespace.values()],
+      documents,
     };
     return "updated";
   }
@@ -380,9 +396,10 @@ export class MemoryWorkspaceSearchIndexPort implements WorkspaceSearchIndexPort 
     }
     const excluded = new Set(request.excludedNoteIds);
     const catalog: WorkspaceSearchCatalog = {
-      documents: indexed.documents.filter(
-        ({ noteId }) => !excluded.has(noteId),
-      ),
+      documents: reprojectMemoryHierarchy(
+        indexed.documents,
+        indexed.namespaceEntries,
+      ).filter(({ noteId }) => !excluded.has(noteId)),
       failures: [],
     };
     return {
@@ -492,17 +509,38 @@ function toWireWorkspaceSearchDocument(
 
 function reprojectMemoryHierarchy(
   documents: readonly WorkspaceSearchIndexedDocument[],
+  namespace: readonly WorkspaceSearchNamespaceEntry[] = [],
 ): WorkspaceSearchIndexedDocument[] {
   const nodes = new Map<
     string,
     { readonly parentId: string | null; readonly title: string }
   >();
+  const placements = new Map(
+    namespace
+      .filter((entry) => entry.targetNoteId)
+      .map((entry) => [entry.targetNoteId!, entry]),
+  );
+  const titles = new Map(
+    documents.map((document) => [
+      document.noteId,
+      document.title || "新しいノート",
+    ]),
+  );
+  for (const entry of namespace)
+    nodes.set(entry.entryId, {
+      parentId: entry.parentEntryId,
+      title: entry.targetNoteId
+        ? (titles.get(entry.targetNoteId) ?? "新しいノート")
+        : entry.name,
+    });
   for (const document of documents) {
     for (const [index, section] of (document.sections ?? []).entries()) {
       nodes.set(section.sectionId, {
         parentId:
           index === 0
-            ? (document.parentNoteId ?? null)
+            ? placements.has(document.noteId)
+              ? placements.get(document.noteId)!.parentEntryId
+              : (document.parentNoteId ?? null)
             : (section.parentSectionId ?? null),
         title: section.title || (index === 0 ? "新しいノート" : "無題"),
       });

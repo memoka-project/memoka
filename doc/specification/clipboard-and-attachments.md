@@ -161,7 +161,7 @@ null、旧形式、範囲外値は100%として扱う。
 - 小数、10未満、100超、画像外での実行は拒否する。
 
 100%は通常のMarkdown image、10〜99%は限定的な`<img src="…" alt="…" width="50%">`として
-Clipboardとportable mirrorへ出力し、同じ限定形式から幅を復元する。任意HTML styleやpixel幅は受理しない。
+ClipboardとNative Markdown readへ出力し、同じ限定形式から幅を復元する。任意HTML styleやpixel幅は受理しない。
 
 ## 11. Image BufferとAttachment open
 
@@ -176,8 +176,12 @@ Clipboardとportable mirrorへ出力し、同じ限定形式から幅を復元�
 
 ## 12. Markdown表現
 
-generic Attachmentは`[label](attachment:<UUIDv7>)`、Imageは
-`![alt](attachment:<UUIDv7>)`として表現する。portable mirrorではmanifestによりAttachment IDと
-mirror pathを対応付け、通常表示用Markdownは相対pathへ投影する。
+Clipboardではgeneric Attachmentは`[label](attachment:<UUIDv7>)`、Imageは
+`![alt](attachment:<UUIDv7>)`として表現する。Native CLIと履歴readでは
+`memoka://workspace/<workspace-id>/attachment/<attachment-id>`のlogical URIを用い、実体の絶対pathを埋め込まない。
+内部linkは同じWorkspace・同じ世代のSection titleを解決する。外部linkはURLを保持するがfetchしない。
+
+旧portable mirror readerだけはmanifestからAttachment IDと相対pathを解決する。旧mirrorを新規publishしない。
+Resticは参照の有無に関係なくAttachment catalog全件と既知欠損を保存し、復旧ではcatalogとhashを照合する。
 
 Markdownだけから未知のAttachment bytesを生成しない。既存Workspaceで解決できないIDはmissingとして保持する。

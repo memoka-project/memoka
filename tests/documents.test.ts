@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
+  namespaceNoteEntries,
+  readMainNamespace,
+} from "../app/src/core/namespace";
+import {
   addNoteMetadata,
   createNoteDocument,
   createNoteSectionFromParagraph,
@@ -94,7 +98,7 @@ describe("Memoka CRDT document schema v3", () => {
     workspace.doc.destroy();
   });
 
-  it("rejects unknown parents and cycles in persisted Note metadata", () => {
+  it("rejects cycles in persisted Namespace placement", () => {
     const secondId = "01900000-0000-7000-8000-000000000005";
     const workspace = createWorkspaceDocument(WORKSPACE_ID);
     for (const [noteId, position] of [
@@ -109,8 +113,14 @@ describe("Memoka CRDT document schema v3", () => {
         updatedAt: "2026-07-27T00:00:00.000Z",
       });
     }
-    workspace.notes.get(NOTE_ID)!.set("parent_note_id", secondId);
-    workspace.notes.get(secondId)!.set("parent_note_id", NOTE_ID);
+    const targets = namespaceNoteEntries(workspace.root);
+    const entries = readMainNamespace(workspace.root).entries;
+    entries
+      .get(targets.get(NOTE_ID)!.entryId)!
+      .set("parent_entry_id", targets.get(secondId)!.entryId);
+    entries
+      .get(targets.get(secondId)!.entryId)!
+      .set("parent_entry_id", targets.get(NOTE_ID)!.entryId);
 
     expect(() =>
       loadProductDocument(

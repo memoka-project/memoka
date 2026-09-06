@@ -156,7 +156,8 @@ struct KeymapConfigFile {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShutdownConfigFile {
-    wait_for_mirror: Option<bool>,
+    // Recognized legacy key, deliberately ignored without resetting keymaps.
+    wait_for_mirror: Option<toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,7 +191,6 @@ pub struct ApplicationKeyConfigLoadResult {
     indent_width_px: u16,
     japanese_word_segmentation: JapaneseWordSegmentation,
     japanese_line_break_segmentation: JapaneseLineBreakSegmentation,
-    wait_for_mirror_on_exit: bool,
     warning: Option<String>,
 }
 
@@ -210,7 +210,6 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
                 japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
                 japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-                wait_for_mirror_on_exit: true,
                 warning: Some(format!(
                     "config.toml: 設定ディレクトリを取得できません: {error}"
                 )),
@@ -336,7 +335,6 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
             japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
             japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-            wait_for_mirror_on_exit: true,
             warning: None,
         };
     }
@@ -352,11 +350,9 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             return warning_result(path, format!("TOMLを解釈できません: {error}"));
         }
     };
-    let wait_for_mirror_on_exit = parsed
+    let _legacy_mirror_setting = parsed
         .shutdown
-        .as_ref()
-        .and_then(|shutdown| shutdown.wait_for_mirror)
-        .unwrap_or(true);
+        .and_then(|shutdown| shutdown.wait_for_mirror);
     let theme = parsed.theme.unwrap_or(DEFAULT_APPLICATION_THEME);
     let font_family = match parsed.font_family.as_deref() {
         Some(value) => match validate_application_font_family(value) {
@@ -430,7 +426,6 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         indent_width_px,
         japanese_word_segmentation,
         japanese_line_break_segmentation,
-        wait_for_mirror_on_exit,
         warning,
     }
 }
@@ -617,7 +612,6 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
         indent_width_px: DEFAULT_APPLICATION_INDENT_WIDTH_PX,
         japanese_word_segmentation: DEFAULT_JAPANESE_WORD_SEGMENTATION,
         japanese_line_break_segmentation: DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
-        wait_for_mirror_on_exit: true,
         warning: Some(format!(
             "{}: {detail}; 既定設定を使用します",
             path.display()
@@ -744,7 +738,6 @@ wait_for_mirror = false
                 .get("selection.format"),
             Some(&vec!["M".to_owned()])
         );
-        assert!(!loaded.wait_for_mirror_on_exit);
         assert!(
             loaded
                 .warning
@@ -806,7 +799,6 @@ wait_for_mirror = false
             loaded.japanese_line_break_segmentation,
             JapaneseLineBreakSegmentation::Budoux
         );
-        assert!(!loaded.wait_for_mirror_on_exit);
     }
 
     #[test]
@@ -829,7 +821,6 @@ wait_for_mirror = false
         fs::write(&path, "unknown = true\n").expect("write fixture");
         let loaded = load_application_key_config(&path);
         assert!(loaded.config.is_none());
-        assert!(loaded.wait_for_mirror_on_exit);
         assert!(
             loaded
                 .warning

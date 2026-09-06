@@ -1774,10 +1774,10 @@ describe("Memoka Application utilities", () => {
     note.doc.destroy();
   });
 
-  it("cycles H1-H6 colors for deep Outline Section titles", () => {
+  it("uses H1-H6 colors for Outline Section titles", () => {
     const noteId = createUuidV7();
     let parentSectionId = noteId;
-    const sections = Array.from({ length: 7 }, (_, index) => {
+    const sections = Array.from({ length: 5 }, (_, index) => {
       const sectionId = createUuidV7();
       const entry = {
         sectionId,
@@ -1802,7 +1802,7 @@ describe("Memoka Application utilities", () => {
         .getByRole("tree", { name: "Sectionアウトライン" })
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
-    expect(levels).toEqual(["1", "2", "3", "4", "5", "6", "1", "2"]);
+    expect(levels).toEqual(["1", "2", "3", "4", "5", "6"]);
 
     view.rerender(
       <WorkspaceOutline
@@ -1819,7 +1819,7 @@ describe("Memoka Application utilities", () => {
         .getByRole("tree", { name: "Sectionアウトライン" })
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
-    expect(focusedLevels).toEqual(["4", "5", "6", "1", "2"]);
+    expect(focusedLevels).toEqual(["4", "5", "6"]);
 
     view.unmount();
     note.doc.destroy();

@@ -4,7 +4,8 @@
 固定の文書バージョンや更新日は持たず、仕様とソースコードを同じcommitで更新する。
 
 Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ローカルファーストのメモ帳である。
-利用者が編集する正本はCRDT文書であり、Markdownは選択したデータ領域へ自動生成される可搬mirrorである。
+利用者が編集する正本はCRDT文書である。Namespaceで配置を整理し、Markdownは必要時に読み出す。
+過去状態はWorkspace内のRestic履歴で保護し、独立した追加保存先も設定できる。
 
 ## 仕様の読み方
 
@@ -19,9 +20,9 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 ## 重要な不変条件
 
 1. 1 Windowが編集するのは常に1つのNoteDocであり、親子Noteを連結編集しない。
-2. Note TreeとNoteDoc内のSection treeは別の構造である。
+2. Namespaceの配置treeとNoteDoc内のSection treeは別の構造である。SectionはRoot H1〜H6に限定する。
 3. SQLite、Yjs snapshot/update log、Attachment CASから成る内部データが正本である。
-4. Markdown mirror、検索index、title cache、画面表示は正本から再構築できる派生物である。
+4. 検索index、title cache、画面表示は正本から再構築できる派生物である。常時Markdown mirrorは生成しない。
 5. 永続的な変更はCore transactionを通し、UIから保存層を直接変更しない。
 6. Workspaceを通常利用するMemoka processは同時に1つだけである。
 7. Clipboardはversion付きtransportであり、第二の永続データ源ではない。
@@ -38,7 +39,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 | [Application UI](specification/application-ui.md)                            | focus、Tab、Window、Buffer、Sidebar、Outline、表示    |
 | [検索とリンク](specification/search-and-links.md)                            | Note内検索、Workspace検索、FTS、内部・外部リンク      |
 | [Clipboardと添付](specification/clipboard-and-attachments.md)                | Clipboard形式、Markdown、Attachment CAS、画像         |
-| [Workspace保存と復旧](specification/workspace-storage-and-recovery.md)       | データ領域、mirror、終了、排他、復旧CLI               |
+| [Workspace保存と復旧](specification/workspace-storage-and-recovery.md)       | データ領域、Restic履歴、排他、読み出し・復旧CLI       |
 | [設定とCommand](specification/configuration-and-commands.md)                 | config.toml、Leader、Command-line、外観設定           |
 | [Platform、配布、Security](specification/platform-release-and-security.md)   | 対応OS、配布、Updater、privacy、diagnostics           |
 | [検証](specification/validation.md)                                          | 自動試験、native手動確認、性能基準                    |
@@ -46,7 +47,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 ## 用語
 
 - **Workspace**: 1つのデータ領域で管理するNote、添付、設定可能な表示状態の集合。
-- **Note Tree**: Workspace内のNote間の1親階層とsibling順序。
+- **Namespace / Tree**: Noteへの配置参照と整理用グループから成る1親階層。Entry IDはNote IDとは別である。
 - **NoteDoc**: 1 Noteの内容を保持するYjs文書。
 - **Root Section**: NoteDocのroot。IDはNote IDと同一で、titleがNote titleになる。
 - **Section**: Header、Body、Childrenを持つNote内の再帰構造。

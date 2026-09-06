@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 export interface DataAreaStatus {
   readonly selected: boolean;
   readonly path: string | null;
-  readonly mirrorNeedsRepair: boolean;
 }
 
 export interface DataAreaPort {
@@ -23,7 +22,6 @@ export class MemoryDataAreaPort implements DataAreaPort {
     this.current = {
       selected,
       path: selected ? "memory://workspace" : null,
-      mirrorNeedsRepair: false,
     };
   }
 
@@ -40,7 +38,6 @@ export class MemoryDataAreaPort implements DataAreaPort {
     this.current = {
       selected: true,
       path,
-      mirrorNeedsRepair: false,
     };
     return { ...this.current };
   }

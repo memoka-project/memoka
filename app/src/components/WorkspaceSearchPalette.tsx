@@ -136,7 +136,7 @@ export function WorkspaceSearchPalette({
   ]);
 
   const openResult = async (result: WorkspaceSearchResult): Promise<void> => {
-    if (busy || session.target === "trash") return;
+    if (busy || session.target === "trash" || result.kind === "group") return;
     setBusy(true);
     setError(null);
     try {
@@ -180,7 +180,9 @@ export function WorkspaceSearchPalette({
     setBusy(true);
     setError(null);
     try {
-      await runtime.restoreNoteFromTrash(result.noteId);
+      if (result.namespaceEntryId)
+        await runtime.restoreNamespaceEntry(result.namespaceEntryId);
+      else await runtime.restoreNoteFromTrash(result.noteId);
       setSearchState(null);
       setRefreshVersion((version) => version + 1);
     } catch (cause) {
@@ -209,7 +211,11 @@ export function WorkspaceSearchPalette({
               {formatWorkspaceSearchAge(result.updatedAt)}
             </span>
             <span className="workspace-search-icon" aria-hidden="true">
-              {result.kind === "image" ? "📷" : "📄"}
+              {result.kind === "image"
+                ? "📷"
+                : result.kind === "group"
+                  ? "📁"
+                  : "📄"}
             </span>
             {session.scope === "title" ? (
               <span className="workspace-search-note-title">
@@ -244,6 +250,11 @@ export function WorkspaceSearchPalette({
             title={result.title}
             repository={attachmentRepository}
           />
+        ) : result?.kind === "group" ? (
+          <div className="workspace-search-preview-document">
+            <p>{result.title}</p>
+            <p>整理用グループです。rで同じ削除操作の項目を復元します。</p>
+          </div>
         ) : result ? (
           <WorkspaceSearchPreview
             runtime={runtime}

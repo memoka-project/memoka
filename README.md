@@ -18,7 +18,7 @@ Microsoft Store、apt repositoryは提供しません。
 
 ### Linux x86_64
 
-公式binaryとして配布するのはLinux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを
+公式GUI binaryとして配布するのはLinux x86_64向けAppImageだけです。GitHub ReleasesからAppImageを
 取得し、同じReleaseの`SHA256SUMS`でdownloadを検証してから実行権限を付けて起動します。
 AppImageの更新artifactはTauri Updater用の鍵で署名します。
 
@@ -95,6 +95,7 @@ Source code archiveを展開した場合は、`git clone`の代わりに展開�
 CI相当の主要検証は次で実行します。
 
 ```powershell
+corepack pnpm restic:prepare
 corepack pnpm verify
 ```
 
@@ -137,9 +138,6 @@ whichwrap = true
 word_segmentation = "fine" # fine/budoux/unicode
 line_break_segmentation = "fine" # fine/budoux/native
 
-[shutdown]
-wait_for_mirror = true
-
 [keymap.shared_navigation]
 "cursor.logical-up" = ["k"]
 "cursor.logical-down" = ["j"]
@@ -171,14 +169,41 @@ wait_for_mirror = true
 
 カラーテーマには[Nightfox](https://github.com/EdenEast/nightfox.nvim)を基にした7テーマを収録しています。
 
+バックアップ間隔と追加保存先は、Workspaceごとに`:backup-settings`で設定します。追加先のパスワードは
+OS資格情報ストアへ保存し、`config.toml`には書きません。旧設定`shutdown.wait_for_mirror`は無視します。
+
 ## CLI
 
-`memoka-cli`は、Memokaがデータ領域へ出力したportable mirrorの検証と、空のデータ領域への復旧に使用します。
-復旧時はMemokaを終了し、復旧元と復旧先に別のディレクトリを指定してください。
+`memoka-cli`はGUIなしでWorkspaceの読み出し、検索、履歴の確認と復旧に使えます。起動中のMemokaが
+同じWorkspaceを開いていれば、そのprocessへ接続します。読み出しのためにデータ移行やHelp更新は行いません。
 
 ```bash
-memoka-cli verify --source <portable-mirror-data-area>
-memoka-cli restore --source <portable-mirror-data-area> --target <empty-data-area>
+memoka-cli tree --workspace <data-area> --format json
+memoka-cli read --workspace <data-area> --id <note-or-section-id> --format markdown
+memoka-cli search <query> --workspace <data-area> --format json
+memoka-cli attachment get --workspace <data-area> --id <attachment-id> --output <new-file>
+memoka-cli history --workspace <data-area> --format json
+memoka-cli backup run --workspace <data-area>
+memoka-cli backup status --workspace <data-area>
+memoka-cli backup copy --workspace <data-area>
+memoka-cli backup maintain --workspace <data-area> --dry-run
+```
+
+Restic repositoryからの一覧・検証・復旧は元のWorkspaceがなくても実行できます。復旧先には新しい、または
+空の別ディレクトリを選びます。ローカル履歴は`<data-area>/.memoka-backups/restic`に保存され、パスワードを使いません。
+
+```bash
+memoka-cli backup list --repository <restic-directory> --insecure-no-password
+memoka-cli backup check --repository <restic-directory> --insecure-no-password --full
+memoka-cli backup restore --repository <restic-directory> --generation <generation-id> --target <new-data-area> --insecure-no-password
+```
+
+パスワード付きの追加保存先では`--insecure-no-password`の代わりに対話入力または`--password-stdin`を使います。
+パスワードを直接コマンド引数へ渡すオプションはありません。旧portable mirrorからの復旧も利用できます。
+
+```bash
+memoka-cli verify --source <legacy-mirror-data-area>
+memoka-cli restore --source <legacy-mirror-data-area> --target <empty-data-area>
 ```
 
 CLIをsourceからbuildするには、repository rootで次を実行します。
@@ -188,6 +213,8 @@ corepack pnpm cli:build
 ```
 
 出力先はLinuxでは`target/release/memoka-cli`、Windowsでは`target\release\memoka-cli.exe`です。
+固定版Resticも同じディレクトリへ配置されます。CLIを別の場所へコピーする場合は`restic`（Windowsは`restic.exe`）を
+隣に置いてください。CLIの実行にNode.js、GTK、WebViewは不要です。Linux ReleaseではCLIとResticをまとめたarchiveも提供します。
 
 ## 開発
 
@@ -195,6 +222,7 @@ corepack pnpm cli:build
 
 ```bash
 corepack pnpm install --frozen-lockfile
+corepack pnpm restic:prepare
 corepack pnpm tauri:dev
 ```
 
@@ -206,9 +234,13 @@ corepack pnpm large-note-gate
 corepack pnpm tauri:build
 ```
 
+`restic:prepare`は対応OSの固定artifactを取得し、archiveと実行ファイルのSHA-256を検証します。
+Tauriの開発起動・buildと`cli:build`でも自動実行します。Cargo testを直接実行する場合は先に準備してください。
+
 ## ライセンス
 
 [MIT License](LICENSE)
 
 組み込みカラーパレットはNightfox（MIT License、Copyright (c) 2021 James Simpson）に基づきます。
 固定した上流commitとライセンス全文は[Third-party notices](THIRD_PARTY_NOTICES.md)に記載しています。
+同梱ResticはBSD-2-Clauseです。ライセンス全文は[LICENSES/restic.txt](LICENSES/restic.txt)にも収録しています。

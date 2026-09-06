@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager};
 use yrs::updates::decoder::Decode;
 use yrs::{Doc, ReadTxn, StateVector, Transact, Update};
 
@@ -16,10 +16,8 @@ use crate::search_index::{
     SearchIndexRebuildRequest, SearchIndexReplaceRequest,
 };
 
-const DATABASE_SCHEMA_VERSION: i64 = 4;
-const PREVIOUS_DATABASE_SCHEMA_VERSION: i64 = 3;
-const LEGACY_DATABASE_SCHEMA_VERSION: i64 = 2;
-const WORKSPACE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
+const DATABASE_SCHEMA_VERSION: i64 = 5;
+const WORKSPACE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 const LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
 const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 #[cfg(test)]
@@ -230,8 +228,14 @@ pub struct ProductStore {
 impl ProductStore {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, PersistenceError> {
         let root = root.as_ref();
+        let prepared = crate::workspace_migration::preflight(root)
+            .map_err(crate::workspace_migration::persistence_error)?;
         fs::create_dir_all(root)?;
         let connection = Connection::open(root.join("memoka.sqlite3"))?;
+        if prepared.is_some() {
+            crate::workspace_migration::migration_rollback_copy(root, &connection)
+                .map_err(crate::workspace_migration::persistence_error)?;
+        }
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(
             "
@@ -334,14 +338,9 @@ impl ProductStore {
                 PersistenceError::InvalidInput(format!("invalid database_schema_version: {error}"))
             })?;
         match stored_schema_version {
-            DATABASE_SCHEMA_VERSION => {
+            DATABASE_SCHEMA_VERSION | 2..=4 => {
                 ensure_attachment_schema(&connection)?;
                 ensure_document_schema_backup_tables(&connection)?;
-            }
-            PREVIOUS_DATABASE_SCHEMA_VERSION => migrate_database_v3_to_v4(&connection)?,
-            LEGACY_DATABASE_SCHEMA_VERSION => {
-                migrate_database_v2_to_v3(&connection)?;
-                migrate_database_v3_to_v4(&connection)?;
             }
             _ => {
                 return Err(PersistenceError::InvalidInput(format!(
@@ -349,12 +348,17 @@ impl ProductStore {
                 )));
             }
         }
+        if let Some(prepared) = prepared {
+            crate::workspace_migration::apply(&connection, &prepared)
+                .map_err(crate::workspace_migration::persistence_error)?;
+        }
         let mut store = Self {
             connection,
             root: root.to_path_buf(),
         };
         crate::attachment::recover_attachment_operations(&mut store)?;
-        crate::portable_mirror::recover_portable_mirror_operations(&mut store)?;
+        // Old mirror artifacts and interrupted journals are retained as legacy
+        // recovery material, but opening a Workspace never republishes them.
         Ok(store)
     }
 
@@ -410,7 +414,10 @@ impl ProductStore {
         }
 
         let transaction = self.connection.transaction()?;
+        let canonical_before =
+            crate::workspace_migration::canonical_workspace_before(&transaction, request)?;
         let revisions = commit_documents(&transaction, request)?;
+        crate::workspace_migration::advance_content_epoch(&transaction, request, canonical_before)?;
         commit_local_states(&transaction, request)?;
         advance_search_index_metadata_revision(&transaction, request, &revisions)?;
         let response = PersistenceCommitResponse {
@@ -578,26 +585,6 @@ impl ProductStore {
         })
     }
 
-    pub fn document_revisions(&self) -> Result<Vec<DocumentRevision>, PersistenceError> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT kind, document_id, revision
-            FROM documents
-            ORDER BY kind, document_id
-            ",
-        )?;
-        statement
-            .query_map([], |row| {
-                Ok(DocumentRevision {
-                    kind: row.get(0)?,
-                    document_id: row.get(1)?,
-                    revision: row.get(2)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PersistenceError::from)
-    }
-
     pub fn load_local_states(&self) -> Result<Vec<PersistedLocalState>, PersistenceError> {
         let mut statement = self.connection.prepare(
             "
@@ -662,6 +649,38 @@ impl ProductStore {
 struct ProductPersistenceInner {
     store: Option<ProductStore>,
     data_area: Option<PathBuf>,
+    owner: Option<NativeOwner>,
+}
+
+struct NativeOwner {
+    _lease: crate::workspace_owner::WorkspaceLease,
+    _server: crate::workspace_owner::Server,
+    service: std::sync::Arc<crate::native_service::NativeService>,
+}
+
+fn open_owned_data_area(
+    app: &AppHandle,
+    path: &Path,
+) -> Result<(ProductStore, NativeOwner), PersistenceError> {
+    let lease = crate::workspace_owner::WorkspaceLease::acquire(path)
+        .map_err(|error| PersistenceError::InvalidInput(error.to_string()))?;
+    // The lock is acquired before preflight/migration and held for the entire
+    // store lifetime, including outstanding IPC readers during retirement.
+    let store = crate::data_area::open_data_area(&lease.workspace)?;
+    let service = std::sync::Arc::new(crate::native_service::NativeService::owned(lease.clone()));
+    let server = crate::workspace_owner::Server::start(
+        lease.clone(),
+        crate::native_service::gui_handler(app.clone(), service.clone()),
+    )
+    .map_err(|error| PersistenceError::InvalidInput(error.to_string()))?;
+    Ok((
+        store,
+        NativeOwner {
+            _lease: lease,
+            _server: server,
+            service,
+        },
+    ))
 }
 
 #[derive(Default)]
@@ -680,9 +699,10 @@ impl ProductPersistenceState {
         })?;
         if guard.store.is_none() {
             if let Some(path) = crate::data_area::load_selected_data_area(app)? {
-                let store = crate::data_area::open_data_area(&path)?;
+                let (store, owner) = open_owned_data_area(app, &path)?;
                 guard.data_area = Some(path);
                 guard.store = Some(store);
+                guard.owner = Some(owner);
             }
         }
         let store = guard.store.as_mut().ok_or_else(|| {
@@ -697,13 +717,27 @@ impl ProductPersistenceState {
         path: PathBuf,
     ) -> Result<PathBuf, PersistenceError> {
         let canonical = crate::data_area::prepare_data_area(&path)?;
-        let store = crate::data_area::open_data_area(&canonical)?;
-        crate::data_area::save_selected_data_area(app, &canonical)?;
         let mut guard = self.inner.lock().map_err(|_| {
             PersistenceError::InvalidInput("product persistence lock is poisoned".to_owned())
         })?;
+        if guard.data_area.as_ref() == Some(&canonical) {
+            return Ok(canonical);
+        }
+        if guard
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.service.running())
+        {
+            return Err(PersistenceError::InvalidInput(
+                "BACKUP_BUSY: Wait for or cancel the current backup before switching Workspace"
+                    .into(),
+            ));
+        }
+        let (store, owner) = open_owned_data_area(app, &canonical)?;
+        crate::data_area::save_selected_data_area(app, &canonical)?;
         guard.data_area = Some(canonical.clone());
         guard.store = Some(store);
+        guard.owner = Some(owner);
         Ok(canonical)
     }
 
@@ -720,10 +754,33 @@ impl ProductPersistenceState {
         let Some(path) = crate::data_area::load_selected_data_area(app)? else {
             return Ok(None);
         };
-        let store = crate::data_area::open_data_area(&path)?;
+        let (store, owner) = open_owned_data_area(app, &path)?;
         guard.data_area = Some(path.clone());
         guard.store = Some(store);
+        guard.owner = Some(owner);
         Ok(Some(path))
+    }
+
+    pub(crate) fn native_service(
+        &self,
+    ) -> Result<
+        std::sync::Arc<crate::native_service::NativeService>,
+        crate::document_model::ReadError,
+    > {
+        self.inner
+            .lock()
+            .map_err(|_| {
+                crate::document_model::ReadError::new("DATABASE", "Persistence lock is unavailable")
+            })?
+            .owner
+            .as_ref()
+            .map(|owner| owner.service.clone())
+            .ok_or_else(|| {
+                crate::document_model::ReadError::new(
+                    "WORKSPACE_REQUIRED",
+                    "Select a Workspace first",
+                )
+            })
     }
 }
 
@@ -742,6 +799,7 @@ fn attachment_schema_sql() -> &'static str {
         original_filename TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        known_missing INTEGER NOT NULL DEFAULT 0 CHECK (known_missing IN (0,1)),
         FOREIGN KEY (sha256) REFERENCES attachment_objects(sha256)
     );
 
@@ -784,20 +842,6 @@ fn ensure_attachment_schema(connection: &Connection) -> Result<(), PersistenceEr
     Ok(())
 }
 
-fn migrate_database_v2_to_v3(connection: &Connection) -> Result<(), PersistenceError> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(attachment_schema_sql())?;
-    transaction.execute(
-        "UPDATE settings SET value = ?1 WHERE key = 'database_schema_version' AND value = ?2",
-        params![
-            PREVIOUS_DATABASE_SCHEMA_VERSION.to_string(),
-            LEGACY_DATABASE_SCHEMA_VERSION.to_string()
-        ],
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
 fn document_schema_backup_sql() -> &'static str {
     "
     CREATE TABLE IF NOT EXISTS document_schema_backups (
@@ -833,20 +877,6 @@ fn ensure_document_schema_backup_tables(connection: &Connection) -> Result<(), P
     Ok(())
 }
 
-fn migrate_database_v3_to_v4(connection: &Connection) -> Result<(), PersistenceError> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(document_schema_backup_sql())?;
-    transaction.execute(
-        "UPDATE settings SET value = ?1 WHERE key = 'database_schema_version' AND value = ?2",
-        params![
-            DATABASE_SCHEMA_VERSION.to_string(),
-            PREVIOUS_DATABASE_SCHEMA_VERSION.to_string()
-        ],
-    )?;
-    transaction.commit()?;
-    Ok(())
-}
-
 fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
     match kind {
         "workspace" => schema_version == WORKSPACE_DOCUMENT_SCHEMA_VERSION,
@@ -858,7 +888,7 @@ fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
     }
 }
 
-fn backup_document_before_schema_migration(
+pub(crate) fn backup_document_before_schema_migration(
     transaction: &Transaction<'_>,
     kind: &str,
     document_id: &str,
@@ -1392,106 +1422,102 @@ fn hash_value(hasher: &mut Sha256, value: &[u8]) {
     hasher.update(value);
 }
 
-#[tauri::command]
-pub fn persistence_manifest(
+// SQLite can wait for backup metadata writers or perform compaction/FTS work.
+// Never execute those operations (or wait on the store mutex) in Wry's UI
+// thread. The same store mutex, revision checks and frontend journal preserve
+// transaction ordering; moving the work does not weaken the save barrier.
+async fn background_store<T: Send + 'static>(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
-) -> Result<PersistenceManifest, String> {
-    state
-        .with_store(&app, |store| store.manifest())
-        .map_err(|error| error.to_string())
+    action: impl FnOnce(&mut ProductStore) -> Result<T, PersistenceError> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<ProductPersistenceState>()
+            .with_store(&app, action)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|_| "Persistence worker did not complete".to_owned())?
 }
 
 #[tauri::command]
-pub fn persistence_commit(
+pub async fn persistence_manifest(app: AppHandle) -> Result<PersistenceManifest, String> {
+    background_store(app, |store| store.manifest()).await
+}
+
+#[tauri::command]
+pub async fn persistence_commit(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: PersistenceCommitRequest,
 ) -> Result<PersistenceCommitResponse, String> {
-    state
-        .with_store(&app, |store| store.commit(&request))
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| store.commit(&request)).await
 }
 
 #[tauri::command]
-pub fn persistence_compact(
+pub async fn persistence_compact(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: PersistenceCompactionRequest,
 ) -> Result<PersistenceCommitResponse, String> {
-    state
-        .with_store(&app, |store| store.compact(&request))
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| store.compact(&request)).await
 }
 
 #[tauri::command]
-pub fn persistence_load_document(
+pub async fn persistence_load_document(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     kind: String,
     document_id: String,
 ) -> Result<PersistedDocument, String> {
-    state
-        .with_store(&app, |store| store.load_document(&kind, &document_id))
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| store.load_document(&kind, &document_id)).await
 }
 
 #[tauri::command]
-pub fn persistence_load_local_states(
+pub async fn persistence_load_local_states(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
 ) -> Result<Vec<PersistedLocalState>, String> {
-    state
-        .with_store(&app, |store| store.load_local_states())
-        .map_err(|error| error.to_string())
+    background_store(app, |store| store.load_local_states()).await
 }
 
 #[tauri::command]
-pub fn workspace_search_index_rebuild(
+pub async fn workspace_search_index_rebuild(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: SearchIndexRebuildRequest,
 ) -> Result<(), String> {
-    state
-        .with_store(&app, |store| store.rebuild_workspace_search_index(&request))
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| {
+        store.rebuild_workspace_search_index(&request)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn workspace_search_index_replace_document(
+pub async fn workspace_search_index_replace_document(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: SearchIndexReplaceRequest,
 ) -> Result<String, String> {
-    state
-        .with_store(&app, |store| {
-            store.replace_workspace_search_index_document(&request)
-        })
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| {
+        store.replace_workspace_search_index_document(&request)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn workspace_search_index_update_hierarchy(
+pub async fn workspace_search_index_update_hierarchy(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: SearchIndexHierarchyUpdateRequest,
 ) -> Result<String, String> {
-    state
-        .with_store(&app, |store| {
-            store.update_workspace_search_index_hierarchy(&request)
-        })
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| {
+        store.update_workspace_search_index_hierarchy(&request)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn workspace_search_index_query(
+pub async fn workspace_search_index_query(
     app: AppHandle,
-    state: State<'_, ProductPersistenceState>,
     request: SearchIndexQueryRequest,
 ) -> Result<SearchIndexQueryResponse, String> {
-    state
-        .with_store(&app, |store| store.query_workspace_search_index(&request))
-        .map_err(|error| error.to_string())
+    background_store(app, move |store| {
+        store.query_workspace_search_index(&request)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -1517,7 +1543,11 @@ mod tests {
         DocumentCommitInput {
             kind: kind.to_owned(),
             document_id: document_id.to_owned(),
-            schema_version: DOCUMENT_SCHEMA_VERSION,
+            schema_version: if kind == "workspace" {
+                WORKSPACE_DOCUMENT_SCHEMA_VERSION
+            } else {
+                DOCUMENT_SCHEMA_VERSION
+            },
             base_revision: 0,
             snapshot: Some(bytes.to_vec()),
             update: None,

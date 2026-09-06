@@ -29,10 +29,10 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - lowercase UUIDv7のvalidationと一意性
 - Root Section IDとNote IDの一致
 - missing IDの限定repairとinvalid/duplicate IDの拒否
-- Workspace parent欠損互換、cycle、self-parent、orphan、deleted-parent/live-child拒否
+- Namespaceのcycle、self-parent、orphan、deleted-parent/live-child、一意配置の検査
 - jitter付きFractional Indexingの順序、衝突tie-break、局所再採番
 - NoteDoc v2からBodyChunkを持つv3へのmigration
-- SQLite v2/v3からv4へのmigration backup
+- SQLite v2/v3/v4からv5への全件preflightとrollback copy
 - snapshot/update log replay、revision conflict、compaction failure recovery
 - 2 Windowで同じNoteDocを開いた場合のcontent共有とWindow-local state分離
 
@@ -115,20 +115,39 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - Note最大幅、indent grid、theme、font、Zoom
 - release buildにdebug line/入力計測が存在しないこと
 
-## 9. Workspace、mirror、復旧
+## 9. Namespace、履歴、移行・復旧
 
 - 初回data area選択、既存area再open、非空未知directory拒否
 - Workspace切替成功と全失敗点でのrollback
 - 同一Workspaceの二重起動拒否と既存Window activation
-- 起動時revision一致ならmirrorをskipすること
-- 通常編集で変更Noteだけをdelta publishすること
-- title/path変更または破損時の完全再構築
-- frontend generationのyield/cancel/coalescingとEditor応答性
-- staging chunk retry、hash/size、fsync、manifest-last、旧managed file削除
-- crash marker、stale staging、symlink、path traversal、case/NFC衝突
-- 終了時mirror待機のtrue/falseとprogress、flush失敗時の終了中止
-- CLI verifyとfresh target restore
-- restore後revision 1、Attachment CAS、FTS再構築、UI/Undo非復元
+- group-onlyとNote付きNamespace、Entry/Note ID分離、一意配置、循環・dangling・duplicate拒否
+- Entry IDとposition tie-breakによる安定順序、旧Note順序とTabの選択/foldの移行
+- subtree Trash/restoreの原子性、独立して削除済みの子孫の扱い、group-only Trash検索
+- Namespace親・group名変更で本文FTS行とNote updated_atを更新しないこと
+- Root H1〜H6境界、Focused Sectionの絶対深さ、複数H1正規化によるH7の全体拒否
+- 失敗時にNote、IDs、revision、Undoが変化せず、plain text fallbackもしないこと
+- DB2/3/4の最終Yjs状態をlive/Trash/Help全件preflightし、H6超過・破損時は元DB/WAL/添付/旧mirrorを変更しないこと
+- rollback用SQLite Online Backup、DB5へのatomic移行、途中失敗後の再試行
+- 空Workspaceの初回世代、dirty起動・interval・終了・切替・更新前capture、UI/cacheだけならepoch不変
+- 長いNoteのcapture/copy中も編集可能であること、snapshotとdescriptorの同一時点・hash/revision/catalog一致
+- 添付全件（未参照を含む）とknown_missing、破損・symlink・reparse拒否、1 GiB reserve不足
+- 独立repositoryのkey/id、password漏洩防止、repository消失・取り違え、crash後のaccepted世代再構築
+- 新しい世代からのcopy、capture日時保持、idempotence、未接続時のpending/expired/protected区別
+- 直近48 OR 日次30 OR 月次12、dry-runと実削除の一致、最新valid世代保護、24時間のidle prune
+- capture/copyとmaintenanceのlease、cancel後のphase開始禁止、timeout/cancel時の子process回収
+- 終了進捗・retry/cancel、Core保存失敗時はskip禁止、追加先待機時間上限
+- Native CLIとGUIの論理行契約、revision/query-bound cursor、Trash明示、同世代link/画像、URLをfetchしないこと
+- GUIありは保存barrier付きowner IPC、GUIなしは同じlease。IPC失敗後にheadless fallbackしないこと
+- readのみではmigration・Help同期・repo初期化をせず、DISPLAY/DBUSなしでCLIが動くこと
+- repository-only list/check/full/restore、fresh target、ID/revision保持とUI/cache/Undoの非復元
+- 旧mirror verify/restore互換のみrevision 1 baseline。旧ファイルを自動削除しないこと
+- `shutdown.wait_for_mirror`を無視しても、他の有効な設定が保持されること
+
+`corepack pnpm tauri:history-e2e`は一時Workspaceで実GUI・owner IPC・同梱Resticを接続する。
+group作成/改名、子Note配置、確定保存barrier、現在と過去のNamespace/本文の分離、
+backup処理中の別WindowのInsert入力、読み取り専用preview、previewの一覧遷移後のCtrl-cとfocus復帰を確認する。
+入力計測はkeydownから次のanimation frameまでの参考値であり、実機IMEの計測とは区別する。
+実行前に`corepack pnpm tauri:build`と`corepack pnpm cli:build`で対象binaryを生成する。
 
 ## 10. 大規模dataと性能
 
@@ -149,6 +168,8 @@ Note open 50 ms、検索初回100 msである。debug計測は直近120件のrol
 - Linux/Windows CIの通常検証を通す。
 - AppImage内にhost runtimeと衝突する不要libraryを含めない。
 - AppImage signatureと`latest.json`を検証する。
+- AppImageとstandalone CLIに同じ固定版Resticとlicenseを同梱し、Releaseに添付するSBOMへResticのGo moduleを含める。
+- CLIのLinux dynamic dependencyにGTK/WebKitを含まないこと。Windows source buildでもIPC・履歴・restoreを検証する。
 - 公開ReleaseへWindows executable/MSIを添付しない。
 - draft assetそのものをGNOMEとSwayで確認してから、再buildせず公開する。
 - Updaterのno-update、offline、署名不正、download失敗、flush失敗を確認する。

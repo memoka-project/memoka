@@ -4,6 +4,12 @@ import {
 } from "./workspace-search";
 
 export type ApplicationCommandId =
+  | "workspace.backup"
+  | "workspace.backup_status"
+  | "workspace.backup_settings"
+  | "workspace.history"
+  | "namespace.group"
+  | "namespace.rename_group"
   | "utility.tree"
   | "workspace.search_trash"
   | "workspace.search_buffers"
@@ -44,6 +50,48 @@ export interface ApplicationCommandDefinition {
 }
 
 export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
+  {
+    id: "workspace.backup",
+    name: "backup",
+    aliases: [],
+    description: "未保存の履歴を作成し追加保存先へ転送する",
+    argument: "none",
+  },
+  {
+    id: "workspace.backup_status",
+    name: "backup-status",
+    aliases: [],
+    description: "履歴の保存状態と追加先の保護状態を確認する",
+    argument: "none",
+  },
+  {
+    id: "workspace.backup_settings",
+    name: "backup-settings",
+    aliases: [],
+    description: "バックアップ間隔・追加保存先・資格情報を設定する",
+    argument: "none",
+  },
+  {
+    id: "workspace.history",
+    name: "history",
+    aliases: [],
+    description: "現在のノートまたはWorkspaceの履歴を読み取り専用で参照する",
+    argument: "none",
+  },
+  {
+    id: "namespace.group",
+    name: "group",
+    aliases: [],
+    description: "選択Entryの子に整理用グループを作る",
+    argument: "none",
+  },
+  {
+    id: "namespace.rename_group",
+    name: "rename-group",
+    aliases: [],
+    description: "Treeで選択したグループの名前を変更する",
+    argument: "none",
+  },
   {
     id: "utility.tree",
     name: "tree",

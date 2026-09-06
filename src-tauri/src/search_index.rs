@@ -6,7 +6,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-const SEARCH_INDEX_SCHEMA_VERSION: i64 = 8;
+const SEARCH_INDEX_SCHEMA_VERSION: i64 = 9;
 const RECENT_SEARCH_PREFIX_ROWS: i64 = 4_096;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -55,6 +55,8 @@ pub struct SearchIndexRebuildRequest {
     workspace_id: String,
     workspace_revision: i64,
     documents: Vec<SearchIndexDocumentInput>,
+    #[serde(default)]
+    namespace_entries: Vec<SearchNamespaceEntry>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -84,6 +86,18 @@ pub struct SearchIndexHierarchyUpdateRequest {
     base_revision: i64,
     workspace_revision: i64,
     entries: Vec<SearchIndexHierarchyEntry>,
+    #[serde(default)]
+    namespace_entries: Vec<SearchNamespaceEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchNamespaceEntry {
+    entry_id: String,
+    parent_entry_id: Option<String>,
+    target_note_id: Option<String>,
+    name: String,
+    normalized_name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,6 +167,11 @@ pub fn rebuild(
     for document in &request.documents {
         insert_document(&transaction, &request.workspace_id, document)?;
     }
+    update_namespace_paths(
+        &transaction,
+        &request.workspace_id,
+        &request.namespace_entries,
+    )?;
     transaction.execute(
         "
         INSERT INTO workspace_search_state (
@@ -279,6 +298,11 @@ pub fn update_hierarchy(
         request.workspace_revision,
     )?;
     let transaction = connection.transaction()?;
+    update_namespace_paths(
+        &transaction,
+        &request.workspace_id,
+        &request.namespace_entries,
+    )?;
     for entry in &request.entries {
         if entry.note_id.is_empty() {
             return Err(PersistenceError::InvalidInput(
@@ -332,6 +356,8 @@ pub fn update_hierarchy(
         if changed != 1 {
             return Ok("stale");
         }
+        transaction.execute("UPDATE workspace_search_paths SET parent_node_id=?3,title=?4,normalized_title=?5 WHERE workspace_id=?1 AND node_id=?2", params![request.workspace_id,entry.note_id,entry.parent_note_id,entry.title,entry.normalized_title])?;
+        refresh_note_namespace_path(&transaction, &request.workspace_id, &entry.note_id)?;
         transaction.execute(
             "DELETE FROM workspace_search_title_trigram WHERE rowid = ?1",
             [row_id],
@@ -497,6 +523,16 @@ fn ensure_schema(connection: &Connection) -> Result<(), PersistenceError> {
 
         CREATE INDEX IF NOT EXISTS workspace_search_documents_recency
         ON workspace_search_documents (workspace_id, updated_at DESC, note_id);
+
+        CREATE TABLE IF NOT EXISTS workspace_search_paths (
+            workspace_id TEXT NOT NULL, node_id TEXT NOT NULL,
+            parent_node_id TEXT, title TEXT NOT NULL, normalized_title TEXT NOT NULL,
+            owner_note_id TEXT, target_note_id TEXT,
+            PRIMARY KEY(workspace_id,node_id)
+        );
+        CREATE INDEX IF NOT EXISTS workspace_search_paths_parent ON workspace_search_paths(workspace_id,parent_node_id,node_id);
+        CREATE INDEX IF NOT EXISTS workspace_search_paths_target ON workspace_search_paths(workspace_id,target_note_id);
+        CREATE INDEX IF NOT EXISTS workspace_search_paths_owner ON workspace_search_paths(workspace_id,owner_note_id);
 
         CREATE INDEX IF NOT EXISTS workspace_search_sections_note_order
         ON workspace_search_sections (workspace_id, note_id, section_order);
@@ -741,6 +777,10 @@ fn delete_workspace(
     workspace_id: &str,
 ) -> Result<(), PersistenceError> {
     transaction.execute(
+        "DELETE FROM workspace_search_paths WHERE workspace_id=?1",
+        [workspace_id],
+    )?;
+    transaction.execute(
         "DELETE FROM workspace_search_title_trigram WHERE rowid IN (
             SELECT row_id FROM workspace_search_sections WHERE workspace_id = ?1
         )",
@@ -788,6 +828,10 @@ fn delete_document(
     workspace_id: &str,
     note_id: &str,
 ) -> Result<(), PersistenceError> {
+    transaction.execute(
+        "DELETE FROM workspace_search_paths WHERE workspace_id=?1 AND owner_note_id=?2",
+        params![workspace_id, note_id],
+    )?;
     transaction.execute(
         "DELETE FROM workspace_search_title_trigram WHERE rowid IN (
             SELECT row_id FROM workspace_search_sections
@@ -877,6 +921,7 @@ fn insert_document(
                 section.order
             ])?;
         let row_id = transaction.last_insert_rowid();
+        transaction.execute("INSERT INTO workspace_search_paths(workspace_id,node_id,parent_node_id,title,normalized_title,owner_note_id) VALUES(?1,?2,?3,?4,?5,?6)", params![workspace_id,section.section_id,parent_section_id,section.title,section.normalized_title,document.note_id])?;
         transaction
             .prepare_cached(
                 "INSERT INTO workspace_search_title_trigram (rowid, title)
@@ -892,6 +937,7 @@ fn insert_document(
                 .execute(params![row_id, section.title_japanese_grams])?;
         }
     }
+    refresh_note_namespace_path(transaction, workspace_id, &document.note_id)?;
     for (block_order, block) in document.blocks.iter().enumerate() {
         sections.get(block.section_id.as_str()).ok_or_else(|| {
             PersistenceError::InvalidInput(format!(
@@ -949,6 +995,46 @@ const TITLE_HIT_COLUMNS: &str = "
     s.note_id, s.section_id, s.title, '', d.updated_at,
     'title', '', NULL, NULL, NULL, 0, 0
 ";
+
+// This is only a normalized, disposable ancestry graph. Groups never acquire
+// Note documents, Section results or body FTS rows. Parent/name changes update
+// the affected placement, not every descendant's stored search text.
+fn update_namespace_paths(
+    transaction: &Transaction<'_>,
+    workspace: &str,
+    entries: &[SearchNamespaceEntry],
+) -> Result<(), PersistenceError> {
+    for entry in entries {
+        if entry.entry_id.is_empty()
+            || entry.parent_entry_id.as_ref() == Some(&entry.entry_id)
+            || entry.target_note_id.as_ref() == Some(&entry.entry_id)
+        {
+            return Err(PersistenceError::InvalidInput(
+                "Invalid Namespace projection".into(),
+            ));
+        }
+        let (title, normalized) = if let Some(note) = &entry.target_note_id {
+            transaction.query_row("SELECT title, normalized_title FROM workspace_search_sections WHERE workspace_id=?1 AND section_id=?2 AND note_id=?2",params![workspace,note],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?
+        } else {
+            (entry.name.clone(), entry.normalized_name.clone())
+        };
+        transaction.execute("INSERT INTO workspace_search_paths(workspace_id,node_id,parent_node_id,title,normalized_title,target_note_id) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(workspace_id,node_id) DO UPDATE SET parent_node_id=excluded.parent_node_id,title=excluded.title,normalized_title=excluded.normalized_title,target_note_id=excluded.target_note_id",params![workspace,entry.entry_id,entry.parent_entry_id,title,normalized,entry.target_note_id])?;
+        if let Some(note) = &entry.target_note_id {
+            transaction.execute("UPDATE workspace_search_paths SET parent_node_id=?3 WHERE workspace_id=?1 AND node_id=?2 AND owner_note_id=?2",params![workspace,note,entry.parent_entry_id])?;
+        }
+    }
+    Ok(())
+}
+
+fn refresh_note_namespace_path(
+    transaction: &Transaction<'_>,
+    workspace: &str,
+    note: &str,
+) -> Result<(), PersistenceError> {
+    transaction.execute("UPDATE workspace_search_paths SET title=(SELECT title FROM workspace_search_sections WHERE workspace_id=?1 AND section_id=?2),normalized_title=(SELECT normalized_title FROM workspace_search_sections WHERE workspace_id=?1 AND section_id=?2) WHERE workspace_id=?1 AND target_note_id=?2",params![workspace,note])?;
+    transaction.execute("UPDATE workspace_search_paths SET parent_node_id=(SELECT parent_node_id FROM workspace_search_paths WHERE workspace_id=?1 AND target_note_id=?2) WHERE workspace_id=?1 AND node_id=?2 AND EXISTS(SELECT 1 FROM workspace_search_paths WHERE workspace_id=?1 AND target_note_id=?2)",params![workspace,note])?;
+    Ok(())
+}
 
 const BODY_HIT_COLUMNS: &str = "
     b.result_id, b.note_id, b.section_id, s.title, '', d.updated_at,
@@ -1051,14 +1137,22 @@ fn query_title_terms(
                    AND instr(seed.normalized_title, ?{exact_parameter}) > 0"
             )
         };
+        parameters.push(Value::Text(term.clone()));
+        let group_parameter = parameters.len();
         terms.push(format!(
-            "{name}(section_id) AS (
-                {seed}
+            "seed_{index}(section_id) AS ({seed}),
+             {name}(section_id) AS (
+                SELECT section_id FROM seed_{index}
                 UNION
-                SELECT child.section_id
-                FROM workspace_search_sections AS child
+                SELECT node_id FROM workspace_search_paths
+                WHERE workspace_id=?1 AND owner_note_id IS NULL AND
+                  (target_note_id IN (SELECT section_id FROM seed_{index}) OR
+                   (target_note_id IS NULL AND instr(normalized_title,?{group_parameter})>0))
+                UNION
+                SELECT child.node_id
+                FROM workspace_search_paths AS child
                 JOIN {name} AS ancestor
-                  ON child.parent_section_id = ancestor.section_id
+                  ON child.parent_node_id = ancestor.section_id
                 WHERE child.workspace_id = ?1
             )"
         ));
@@ -1128,18 +1222,18 @@ fn query_recent_title_prefix(
              LIMIT {RECENT_SEARCH_PREFIX_ROWS}
          ),
          ancestry(target_id, section_id, parent_section_id, normalized_title) AS (
-             SELECT recent.section_id, s.section_id, s.parent_section_id,
+             SELECT recent.section_id, s.node_id, s.parent_node_id,
                     s.normalized_title
              FROM recent
-             JOIN workspace_search_sections AS s
-               ON s.workspace_id = ?1 AND s.section_id = recent.section_id
+             JOIN workspace_search_paths AS s
+               ON s.workspace_id = ?1 AND s.node_id = recent.section_id
              UNION
-             SELECT ancestry.target_id, parent.section_id,
-                    parent.parent_section_id, parent.normalized_title
+             SELECT ancestry.target_id, parent.node_id,
+                    parent.parent_node_id, parent.normalized_title
              FROM ancestry
-             JOIN workspace_search_sections AS parent
+             JOIN workspace_search_paths AS parent
                ON parent.workspace_id = ?1
-              AND parent.section_id = ancestry.parent_section_id
+              AND parent.node_id = ancestry.parent_section_id
          ),
          matched(section_id) AS (
              SELECT ancestry.target_id
@@ -1318,9 +1412,9 @@ fn hydrate_parent_paths(
 ) -> Result<(), PersistenceError> {
     let mut nodes = HashMap::<String, (Option<String>, String)>::new();
     let mut statement = connection.prepare_cached(
-        "SELECT parent_section_id, title
-         FROM workspace_search_sections
-         WHERE workspace_id = ?1 AND section_id = ?2",
+        "SELECT parent_node_id, title
+         FROM workspace_search_paths
+         WHERE workspace_id = ?1 AND node_id = ?2",
     )?;
     for hit in hits {
         let mut current_id = hit.section_id.clone();
@@ -1415,6 +1509,7 @@ fn drop_derived_tables_impl(connection: &Connection) -> Result<(), PersistenceEr
         DROP TABLE IF EXISTS workspace_search_title_trigram;
         DROP TABLE IF EXISTS workspace_search_body_rows;
         DROP TABLE IF EXISTS workspace_search_sections;
+        DROP TABLE IF EXISTS workspace_search_paths;
         DROP TABLE IF EXISTS workspace_search_japanese_grams;
         DROP TABLE IF EXISTS workspace_search_trigram;
         DROP TABLE IF EXISTS workspace_search_rows;
@@ -1536,6 +1631,7 @@ mod tests {
         rebuild(
             &mut connection,
             &SearchIndexRebuildRequest {
+                namespace_entries: Vec::new(),
                 schema_version: SEARCH_INDEX_SCHEMA_VERSION,
                 workspace_id: "workspace-1".to_owned(),
                 workspace_revision: 1,
@@ -1570,6 +1666,7 @@ mod tests {
             update_hierarchy(
                 &mut connection,
                 &SearchIndexHierarchyUpdateRequest {
+                    namespace_entries: Vec::new(),
                     schema_version: SEARCH_INDEX_SCHEMA_VERSION,
                     workspace_id: "workspace-1".to_owned(),
                     base_revision: 1,
@@ -1639,6 +1736,7 @@ mod tests {
             update_hierarchy(
                 &mut connection,
                 &SearchIndexHierarchyUpdateRequest {
+                    namespace_entries: Vec::new(),
                     schema_version: SEARCH_INDEX_SCHEMA_VERSION,
                     workspace_id: "workspace-1".to_owned(),
                     base_revision: 2,
@@ -1711,6 +1809,7 @@ mod tests {
             update_hierarchy(
                 &mut connection,
                 &SearchIndexHierarchyUpdateRequest {
+                    namespace_entries: Vec::new(),
                     schema_version: SEARCH_INDEX_SCHEMA_VERSION,
                     workspace_id: "workspace-1".to_owned(),
                     base_revision: 3,
@@ -1752,6 +1851,7 @@ mod tests {
 
     fn rebuild_request(documents: Vec<SearchIndexDocumentInput>) -> SearchIndexRebuildRequest {
         SearchIndexRebuildRequest {
+            namespace_entries: Vec::new(),
             schema_version: SEARCH_INDEX_SCHEMA_VERSION,
             workspace_id: "workspace-1".to_owned(),
             workspace_revision: 1,
@@ -1810,7 +1910,7 @@ mod tests {
 
     #[test]
     fn treats_the_previous_visible_text_projection_as_stale() {
-        assert_eq!(SEARCH_INDEX_SCHEMA_VERSION, 8);
+        assert_eq!(SEARCH_INDEX_SCHEMA_VERSION, 9);
         let mut connection = connection_with_sources(1);
         rebuild(
             &mut connection,
@@ -1819,7 +1919,7 @@ mod tests {
         .unwrap();
         connection
             .execute(
-                "UPDATE workspace_search_state SET schema_version = 7 WHERE workspace_id = ?1",
+                "UPDATE workspace_search_state SET schema_version = 8 WHERE workspace_id = ?1",
                 ["workspace-1"],
             )
             .unwrap();
@@ -1831,6 +1931,93 @@ mod tests {
         .unwrap();
         assert_eq!(response.status, "stale");
         assert!(response.hits.is_empty());
+    }
+
+    #[test]
+    fn namespace_group_rename_and_move_preserve_body_rows_and_note_timestamps() {
+        let mut connection = connection_with_sources(1);
+        let group = |name: &str, parent: Option<&str>| SearchNamespaceEntry {
+            entry_id: "group".into(),
+            parent_entry_id: parent.map(str::to_owned),
+            target_note_id: None,
+            name: name.into(),
+            normalized_name: name.to_lowercase(),
+        };
+        let mut request =
+            rebuild_request(vec![document("note-0", "Child", "/", "durable body", 1)]);
+        request.namespace_entries = vec![
+            group("Before", None),
+            SearchNamespaceEntry {
+                entry_id: "note-entry".into(),
+                parent_entry_id: Some("group".into()),
+                target_note_id: Some("note-0".into()),
+                name: String::new(),
+                normalized_name: String::new(),
+            },
+            SearchNamespaceEntry {
+                entry_id: "destination".into(),
+                parent_entry_id: None,
+                target_note_id: None,
+                name: "Destination".into(),
+                normalized_name: "destination".into(),
+            },
+        ];
+        rebuild(&mut connection, &request).unwrap();
+        let before = query(
+            &mut connection,
+            &query_request("durable", "trigram", "body"),
+        )
+        .unwrap()
+        .hits
+        .remove(0);
+        assert_eq!(before.parent_path, "/Before");
+        // Detect even delete/reinsert with reused row IDs, not only changed row values.
+        connection.execute_batch("CREATE TEMP TRIGGER no_body_delete BEFORE DELETE ON workspace_search_body_rows BEGIN SELECT RAISE(ABORT, 'body rewrite'); END;
+            CREATE TEMP TRIGGER no_body_update BEFORE UPDATE ON workspace_search_body_rows BEGIN SELECT RAISE(ABORT, 'body rewrite'); END;
+            CREATE TEMP TRIGGER no_body_insert BEFORE INSERT ON workspace_search_body_rows BEGIN SELECT RAISE(ABORT, 'body rewrite'); END;
+            UPDATE documents SET revision = 2 WHERE kind = 'workspace';
+            INSERT INTO workspace_search_invalidations (kind, document_id, source_revision) VALUES ('workspace', 'workspace-1', 2);").unwrap();
+        assert_eq!(
+            update_hierarchy(
+                &mut connection,
+                &SearchIndexHierarchyUpdateRequest {
+                    schema_version: SEARCH_INDEX_SCHEMA_VERSION,
+                    workspace_id: "workspace-1".into(),
+                    base_revision: 1,
+                    workspace_revision: 2,
+                    entries: Vec::new(),
+                    namespace_entries: vec![group("Renamed", Some("destination"))],
+                }
+            )
+            .unwrap(),
+            "updated"
+        );
+        let result = query(
+            &mut connection,
+            &query_request_at_revision("destination renamed child", "trigram", "title", 2),
+        )
+        .unwrap();
+        assert_eq!(result.hits.len(), 1);
+        assert_eq!(result.hits[0].parent_path, "/Destination/Renamed");
+        let after = query(
+            &mut connection,
+            &query_request_at_revision("durable", "trigram", "body", 2),
+        )
+        .unwrap()
+        .hits
+        .remove(0);
+        assert_eq!(after.updated_at, before.updated_at);
+        assert_eq!(after.text, before.text);
+        assert_eq!(after.parent_path, "/Destination/Renamed");
+        assert!(
+            query(
+                &mut connection,
+                &query_request_at_revision("before", "trigram", "title", 2)
+            )
+            .unwrap()
+            .hits
+            .is_empty()
+        );
     }
 
     #[test]
@@ -1978,7 +2165,7 @@ mod tests {
                     DocumentCommitInput {
                         kind: "workspace".to_owned(),
                         document_id: "workspace-1".to_owned(),
-                        schema_version: 2,
+                        schema_version: 3,
                         base_revision: 0,
                         snapshot: Some(b"workspace".to_vec()),
                         update: None,
@@ -2064,7 +2251,7 @@ mod tests {
                     DocumentCommitInput {
                         kind: "workspace".to_owned(),
                         document_id: "workspace-1".to_owned(),
-                        schema_version: 2,
+                        schema_version: 3,
                         base_revision: 0,
                         snapshot: Some(b"workspace".to_vec()),
                         update: None,
@@ -2096,7 +2283,7 @@ mod tests {
                 DocumentCommitInput {
                     kind: "workspace".to_owned(),
                     document_id: "workspace-1".to_owned(),
-                    schema_version: 2,
+                    schema_version: 3,
                     base_revision: 1,
                     snapshot: None,
                     update: Some(b"timestamp".to_vec()),
@@ -2232,6 +2419,7 @@ mod tests {
         rebuild(
             &mut connection,
             &SearchIndexRebuildRequest {
+                namespace_entries: Vec::new(),
                 schema_version: SEARCH_INDEX_SCHEMA_VERSION,
                 workspace_id: "workspace-2".to_owned(),
                 workspace_revision: 1,
@@ -2310,7 +2498,7 @@ mod tests {
     }
 
     #[test]
-    fn discards_legacy_denormalized_rows_and_creates_v8_tables() {
+    fn discards_legacy_denormalized_rows_and_creates_v9_tables() {
         let connection = connection_with_sources(0);
         connection
             .execute_batch(

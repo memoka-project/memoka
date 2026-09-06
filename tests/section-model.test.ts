@@ -4,12 +4,14 @@ import {
   blockToYXml,
   cloneProductDocument,
   createNoteDocument,
+  planNoteSectionDepthShift,
   replaceNoteSectionTree,
   type NoteDocument,
 } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
   applySectionHierarchySnapshot,
+  applySectionSnapshot,
   childSections,
   cloneSectionSubtree,
   createSectionXml,
@@ -486,7 +488,7 @@ describe("Memoka recursive Section model", () => {
     second.destroy();
   });
 
-  it("supports 1,000 wide and 1,000 deep Sections without recursive JS traversal", () => {
+  it("supports 1,000 wide Sections and atomically rejects depth beyond H6", () => {
     const ids = deterministicIds();
     const wide = createNoteDocument(ids(), [], "Wide");
     const wideSnapshot: SectionSnapshot = {
@@ -516,18 +518,86 @@ describe("Memoka recursive Section model", () => {
       body: [paragraphSnapshot(ids(), "root")],
       children: [nested],
     };
-    replaceNoteSectionTree(deep, deepSnapshot, "");
+    const before = Y.encodeStateAsUpdate(deep.doc);
+    expect(() => replaceNoteSectionTree(deep, deepSnapshot, "")).toThrow("H6");
+    expect(Y.encodeStateAsUpdate(deep.doc)).toEqual(before);
     expect(validateSectionTree(deep.rootSection, deep.noteId)).toEqual({
-      sectionCount: 1_001,
-      maximumDepth: 1_000,
+      sectionCount: 1,
+      maximumDepth: 0,
     });
-    const deepest = deriveSectionCatalog(deep.noteId, deep.rootSection).at(-1);
-    expect(deepest?.depth).toBe(1_000);
-    expect(
-      findSectionById(deep.rootSection, deepest!.sectionId),
-    ).not.toBeNull();
     expect(sectionId(deep.rootSection)).toBe(deep.noteId);
     destroyNotes(wide, deep);
+  });
+
+  it("rejects insert and focused replacement at H6 without CRDT updates or Undo items", () => {
+    const ids = deterministicIds();
+    const note = createNoteDocument(ids(), [], "Root");
+    let parent = note.rootSection;
+    for (let depth = 1; depth <= 5; depth++) {
+      const child = createSectionXml(ids(), `H${depth + 1}`);
+      insertChildSection(parent, child);
+      parent = child;
+    }
+    const undo = new Y.UndoManager(note.rootSection);
+    let updates = 0;
+    note.doc.on("update", () => updates++);
+    const before = Y.encodeStateAsUpdate(note.doc);
+    expect(() =>
+      note.doc.transact(() =>
+        insertChildSection(parent, createSectionXml(ids(), "H7")),
+      ),
+    ).toThrow("H6");
+    expect(() =>
+      note.doc.transact(() =>
+        applySectionSnapshot(parent, {
+          ...sectionSnapshot(parent),
+          title: "Changed",
+          children: [snapshotSection(ids(), "H7")],
+        }),
+      ),
+    ).toThrow("H6");
+    expect(Y.encodeStateAsUpdate(note.doc)).toEqual(before);
+    expect(updates).toBe(0);
+    expect(undo.undoStack).toHaveLength(0);
+    undo.destroy();
+    note.doc.destroy();
+  });
+
+  it("rejects demotion of the selected H5/H6 subtree, including inside zf, atomically", () => {
+    const ids = deterministicIds();
+    const note = createNoteDocument(ids(), [], "Root");
+    const parentId = ids();
+    const childId = ids();
+    const focused = snapshotSection(ids(), "H4", [
+      snapshotSection(ids(), "Earlier H5"),
+      snapshotSection(parentId, "H5", [snapshotSection(childId, "H6")]),
+    ]);
+    const tree = snapshotSection(note.noteId, "Root", [
+      snapshotSection(ids(), "H2", [snapshotSection(ids(), "H3", [focused])]),
+    ]);
+    replaceNoteSectionTree(note, tree, "before");
+    const before = Y.encodeStateAsUpdate(note.doc);
+    const undo = new Y.UndoManager(note.rootSection);
+    let updates = 0;
+    note.doc.on("update", () => updates++);
+    expect(() =>
+      planSectionDepthShift(tree, [parentId, childId], "deeper"),
+    ).toThrow("H6");
+    for (const boundary of [note.noteId, focused.sectionId]) {
+      expect(() =>
+        planNoteSectionDepthShift(
+          note,
+          boundary,
+          [parentId, childId],
+          "deeper",
+        ),
+      ).toThrow("H6");
+    }
+    expect(Y.encodeStateAsUpdate(note.doc)).toEqual(before);
+    expect(updates).toBe(0);
+    expect(undo.undoStack).toHaveLength(0);
+    undo.destroy();
+    note.doc.destroy();
   });
 });
 

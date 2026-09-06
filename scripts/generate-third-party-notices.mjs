@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { format } from "prettier";
+import { RESTIC_VERSION, RESTIC_ARTIFACTS } from "./restic-artifacts.mjs";
 
 const root = new URL("../", import.meta.url);
 const pnpm = JSON.parse(
@@ -85,6 +86,25 @@ SOFTWARE.
 \`\`\`
 `;
 
+const resticNotice = `## Bundled Restic
+
+[Restic ${RESTIC_VERSION}](https://github.com/restic/restic/releases/tag/v${RESTIC_VERSION}) is bundled unchanged as a local backup sidecar, under the [BSD 2-Clause license](https://github.com/restic/restic/blob/v${RESTIC_VERSION}/LICENSE).
+The build verifies these official release archive SHA-256 values:
+
+${Object.values(RESTIC_ARTIFACTS)
+  .map(
+    (artifact) =>
+      `- restic_${RESTIC_VERSION}_${artifact.suffix}: \`${artifact.sha256}\``,
+  )
+  .join("\n")}
+
+The release SBOM also inventories the Go modules embedded in the bundled executable.
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/restic.txt", root), "utf8")).trimEnd()}
+\`\`\`
+`;
+
 const document = `# Third-party notices
 
 Memoka includes open-source dependencies and bundled palette data listed below. The dependency inventory is generated from the
@@ -94,6 +114,7 @@ machine-readable inventory. Each project remains subject to its listed license; 
 linked upstream project and the dependency source package for the complete license text.
 
 ${nightfoxNotice}
+${resticNotice}
 ${render("JavaScript dependencies", javascript)}
 ${render("Rust dependencies", rust)}
 `;

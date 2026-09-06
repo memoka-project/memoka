@@ -63,18 +63,18 @@ export function WorkspaceTree({
   const treeState = tab.leftSidebar.tree;
   const [localTreeState, setLocalTreeState] = useState(() => ({
     source: treeState,
-    selectedNoteId: treeState.selectedNoteId,
-    collapsedNoteIds: treeState.collapsedNoteIds,
+    selectedEntryId: treeState.selectedEntryId,
+    collapsedEntryIds: treeState.collapsedEntryIds,
   }));
   if (localTreeState.source !== treeState) {
     setLocalTreeState({
       source: treeState,
-      selectedNoteId: treeState.selectedNoteId,
-      collapsedNoteIds: treeState.collapsedNoteIds,
+      selectedEntryId: treeState.selectedEntryId,
+      collapsedEntryIds: treeState.collapsedEntryIds,
     });
   }
-  const localSelectedNoteId = localTreeState.selectedNoteId;
-  const localCollapsedNoteIds = localTreeState.collapsedNoteIds;
+  const localSelectedNoteId = localTreeState.selectedEntryId;
+  const localCollapsedNoteIds = localTreeState.collapsedEntryIds;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(
     TREE_ROW_HEIGHT_PX * DEFAULT_VIEWPORT_ROWS,
@@ -86,17 +86,17 @@ export function WorkspaceTree({
     [localCollapsedNoteIds],
   );
   const entries = useMemo(
-    () => deriveVisibleNoteTree(snapshot.notes, collapsed),
-    [snapshot.notes, collapsed],
+    () => deriveVisibleNoteTree(snapshot.namespaceEntries, collapsed),
+    [snapshot.namespaceEntries, collapsed],
   );
-  const selectedNoteId = entries.some(
+  const selectedEntryId = entries.some(
     (entry) => entry.note.noteId === localSelectedNoteId,
   )
     ? localSelectedNoteId
     : (entries[0]?.note.noteId ?? null);
   const selectedIndex = Math.max(
     0,
-    entries.findIndex((entry) => entry.note.noteId === selectedNoteId),
+    entries.findIndex((entry) => entry.note.noteId === selectedEntryId),
   );
   const firstVisible = Math.max(
     0,
@@ -125,7 +125,7 @@ export function WorkspaceTree({
 
   useEffect(() => {
     const element = root.current;
-    if (!element || selectedNoteId === null || entries.length === 0) return;
+    if (!element || selectedEntryId === null || entries.length === 0) return;
     const top = selectedIndex * TREE_ROW_HEIGHT_PX;
     const bottom = top + TREE_ROW_HEIGHT_PX;
     let nextScrollTop = element.scrollTop;
@@ -137,7 +137,7 @@ export function WorkspaceTree({
     setScrollTop((current) =>
       current === nextScrollTop ? current : nextScrollTop,
     );
-  }, [entries.length, selectedIndex, selectedNoteId]);
+  }, [entries.length, selectedIndex, selectedEntryId]);
 
   const showError = (cause: unknown): void => {
     setError(cause instanceof Error ? cause.message : String(cause));
@@ -145,17 +145,17 @@ export function WorkspaceTree({
 
   const persistTree = (
     selected: string | null,
-    collapsedNoteIds = localCollapsedNoteIds,
+    collapsedEntryIds = localCollapsedNoteIds,
   ): void => {
     setLocalTreeState({
       source: treeState,
-      selectedNoteId: selected,
-      collapsedNoteIds,
+      selectedEntryId: selected,
+      collapsedEntryIds,
     });
     void runtime
       .updateSidebar({
         side: "left",
-        tree: { selectedNoteId: selected, collapsedNoteIds },
+        tree: { selectedEntryId: selected, collapsedEntryIds },
       })
       .catch(showError);
   };
@@ -164,7 +164,7 @@ export function WorkspaceTree({
     const next = new Set(localCollapsedNoteIds);
     if (shouldCollapse) next.add(noteId);
     else next.delete(noteId);
-    persistTree(selectedNoteId, [...next].sort());
+    persistTree(selectedEntryId, [...next].sort());
   };
 
   const selectIndex = (index: number): void => {
@@ -173,29 +173,39 @@ export function WorkspaceTree({
   };
 
   const openSelected = async (): Promise<void> => {
-    if (!selectedNoteId) return;
-    await run(() => onOpenNote(targetWindowId, selectedNoteId));
+    if (!selectedEntryId) return;
+    const entry = snapshot.namespaceEntries.find(
+      (entry) => entry.entryId === selectedEntryId,
+    );
+    if (!entry?.targetNoteId) {
+      setCollapsed(selectedEntryId, !collapsed.has(selectedEntryId));
+      return;
+    }
+    await run(() => onOpenNote(targetWindowId, entry.targetNoteId!));
     onRequestEditorFocus(targetWindowId);
   };
 
   const create = async (kind: "root" | "child" | "sibling"): Promise<void> => {
-    if (kind !== "root" && !selectedNoteId) return;
+    if (kind !== "root" && !selectedEntryId) return;
     await run(async () => {
-      const result =
-        kind === "root"
-          ? await runtime.createRootNote(targetWindowId)
-          : kind === "child"
-            ? await runtime.createChildNote(targetWindowId, selectedNoteId!)
-            : await runtime.createSiblingNote(targetWindowId, selectedNoteId!);
+      const result = await runtime.createNoteAtEntry(
+        targetWindowId,
+        selectedEntryId,
+        kind,
+      );
       const nextCollapsed = new Set(localCollapsedNoteIds);
-      if (kind === "child" && selectedNoteId) {
-        nextCollapsed.delete(selectedNoteId);
+      if (kind === "child" && selectedEntryId) {
+        nextCollapsed.delete(selectedEntryId);
       }
       await runtime.updateSidebar({
         side: "left",
         tree: {
-          selectedNoteId: result.noteId,
-          collapsedNoteIds: [...nextCollapsed].sort(),
+          selectedEntryId:
+            runtime
+              .snapshot()
+              .notes.find((note) => note.noteId === result.noteId)?.entryId ??
+            null,
+          collapsedEntryIds: [...nextCollapsed].sort(),
         },
       });
       onRequestEditorFocus(targetWindowId);
@@ -206,22 +216,25 @@ export function WorkspaceTree({
     direction: TreeMoveDirection,
     count: number,
   ): Promise<void> => {
-    if (!selectedNoteId) return;
+    if (!selectedEntryId) return;
     await run(async () => {
       for (let index = 0; index < count; index += 1) {
-        const result = await runtime.moveNoteInTree(selectedNoteId, direction);
+        const result = await runtime.moveNamespaceEntry(
+          selectedEntryId,
+          direction,
+        );
         if (!result.changed) break;
       }
       if (direction === "indent") {
         const moved = runtime
           .snapshot()
-          .notes.find((note) => note.noteId === selectedNoteId);
+          .namespaceEntries.find((note) => note.entryId === selectedEntryId);
         if (moved?.parentNoteId) {
           const next = new Set(localCollapsedNoteIds);
           next.delete(moved.parentNoteId);
           await runtime.updateSidebar({
             side: "left",
-            tree: { collapsedNoteIds: [...next].sort() },
+            tree: { collapsedEntryIds: [...next].sort() },
           });
         }
       }
@@ -229,12 +242,12 @@ export function WorkspaceTree({
   };
 
   const trash = async (): Promise<void> => {
-    if (!selectedNoteId) return;
+    if (!selectedEntryId) return;
     await run(async () => {
-      const result = await runtime.moveNoteToTrash(selectedNoteId);
+      const result = await runtime.trashNamespaceEntry(selectedEntryId);
       setLocalTreeState((current) => ({
         ...current,
-        selectedNoteId: result.fallbackNoteId,
+        selectedEntryId: result.fallbackEntryId,
       }));
     });
   };
@@ -287,7 +300,7 @@ export function WorkspaceTree({
           setCollapsed(selected.note.noteId, false);
         } else if (selected?.hasChildren) {
           persistTree(
-            entries[selectedIndex + 1]?.note.noteId ?? selectedNoteId,
+            entries[selectedIndex + 1]?.note.noteId ?? selectedEntryId,
           );
         }
         return;
@@ -356,7 +369,7 @@ export function WorkspaceTree({
         aria-label="ノートツリー"
         tabIndex={0}
         aria-activedescendant={
-          selectedNoteId ? `tree-note-${selectedNoteId}` : undefined
+          selectedEntryId ? `tree-note-${selectedEntryId}` : undefined
         }
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         onKeyDown={(event) => {
@@ -384,7 +397,7 @@ export function WorkspaceTree({
         >
           {visibleEntries.map((entry, offset) => {
             const index = firstVisible + offset;
-            const selected = entry.note.noteId === selectedNoteId;
+            const selected = entry.note.noteId === selectedEntryId;
             return (
               <div
                 id={`tree-note-${entry.note.noteId}`}

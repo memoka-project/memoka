@@ -71,6 +71,7 @@ import {
 } from "./body-chunk-viewport-event";
 import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
+import { sectionDepthLimit } from "./section-depth-limit";
 import {
   deriveEditorSectionFoldEntries,
   SectionFolding,
@@ -2146,6 +2147,9 @@ const TableShortcuts = Extension.create({
 const SectionEditing = Extension.create({
   name: "memokaSectionEditing",
   priority: 2_000,
+  addOptions() {
+    return { absoluteDepth: 0 };
+  },
   addProseMirrorPlugins() {
     return [
       new Plugin({
@@ -2170,6 +2174,11 @@ const SectionEditing = Extension.create({
             }
             const body = $from.node(bodyDepth);
             const section = $from.node(sectionDepth);
+            let absoluteDepth = this.options.absoluteDepth;
+            for (let depth = 1; depth <= sectionDepth; depth++) {
+              if ($from.node(depth).type.name === SECTION_NODE) absoluteDepth++;
+            }
+            if (absoluteDepth >= 5) return false;
             const sectionType = state.schema.nodes[SECTION_NODE];
             const headerType = state.schema.nodes[SECTION_HEADER_NODE];
             const bodyType = state.schema.nodes[SECTION_BODY_NODE];
@@ -2377,6 +2386,9 @@ export function productEditorExtensions(
           SectionChildren,
         ]),
     ...(!options.directBodyOnly ? [sectionTitlePlaceholders(note.noteId)] : []),
+    ...(!options.directBodyOnly
+      ? [sectionDepthLimit(focusedSection?.depth ?? 0)]
+      : []),
     ...(!options.directBodyOnly && !options.readOnly
       ? [
           SectionFolding.configure({
@@ -2418,7 +2430,7 @@ export function productEditorExtensions(
     BlockIdentity,
     AttachmentIdentity,
     TableShortcuts,
-    SectionEditing,
+    SectionEditing.configure({ absoluteDepth: focusedSection?.depth ?? 0 }),
     Collaboration.configure({
       fragment,
       yUndoOptions: {

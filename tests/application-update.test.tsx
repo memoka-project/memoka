@@ -11,7 +11,7 @@ import {
   MemoryApplicationUpdatePort,
   type ApplicationRelease,
 } from "../app/src/platform/application-update";
-import type { PortableMirrorPort } from "../app/src/core/portable-mirror";
+import { backupFixture } from "./backup-fixture";
 
 const RELEASE: ApplicationRelease = {
   currentVersion: "0.1.0",
@@ -189,25 +189,19 @@ describe("Memoka application update", () => {
     view.unmount();
   });
 
-  it("keeps the current version when the portable mirror flush fails", async () => {
+  it("keeps the current version when the backup flush fails", async () => {
     const update = new MemoryApplicationUpdatePort(RELEASE);
     const diagnostics = new MemoryApplicationDiagnosticsPort(DIAGNOSTICS);
-    const failingMirror: PortableMirrorPort = {
-      status: async () => ({
-        manifest: null,
-        mirrorNeedsRepair: false,
-        documentRevisions: [],
-      }),
-      listAttachments: async () => {
-        throw new Error("injected mirror failure");
+    const failingBackup = backupFixture({
+      run: async () => {
+        throw new Error("injected backup failure");
       },
-      publish: async () => undefined,
-    };
+    });
     const view = render(
       <App
         applicationUpdate={update}
         diagnostics={diagnostics}
-        portableMirror={failingMirror}
+        backup={failingBackup}
         startupUpdateDelayMs={0}
       />,
     );
@@ -237,12 +231,24 @@ describe("Memoka application update", () => {
       name: "Memokaを更新",
     });
     fireEvent.keyDown(confirmation, { key: "Enter" });
-    await screen.findByText(
-      /更新を適用できませんでした。現在のバージョンを継続します/u,
-    );
+    await screen.findByRole("dialog", { name: "更新前の保存" });
+    await screen.findByText("injected backup failure");
     expect(update.installCount).toBe(0);
     expect(update.relaunchCount).toBe(0);
-    expect(diagnostics.events).toContain("update-install-failed");
+    fireEvent.click(screen.getByRole("button", { name: "更新を取り消す" }));
+    await screen.findByRole("dialog", { name: "Memokaを更新" });
+    expect(update.installCount).toBe(0);
+    // Installing requires a separate confirmation after cancelling the
+    // preparation. Skipping backup is explicit, never an automatic fallback.
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Memokaを更新" }), {
+      key: "Enter",
+    });
+    await screen.findByText("injected backup failure");
+    fireEvent.click(
+      screen.getByRole("button", { name: /バックアップを中断して更新/ }),
+    );
+    await waitFor(() => expect(update.installCount).toBe(1));
+    await waitFor(() => expect(update.relaunchCount).toBe(1));
     view.unmount();
   });
 });

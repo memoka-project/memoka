@@ -9,7 +9,7 @@ describe("application focus surfaces", () => {
     const debug = screen.getByLabelText("開発デバッグ情報");
     expect(debug.querySelector('[data-background-task="fts"]')).not.toBeNull();
     expect(
-      debug.querySelector('[data-background-task="mirror"]'),
+      debug.querySelector('[data-background-task="backup"]'),
     ).not.toBeNull();
     expect(debug.querySelector("[data-input-latency-p95-ms]")).not.toBeNull();
     expect(debug.textContent).toContain("input -");

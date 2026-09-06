@@ -11,7 +11,7 @@ export type WorkspaceSearchScope = "title" | "body";
 export type WorkspaceSearchTarget = "workspace" | "buffers" | "trash";
 export type WorkspaceSearchBlockKind = "body";
 export type WorkspaceSearchResultKind =
-  "title" | "image" | WorkspaceSearchBlockKind;
+  "title" | "image" | "group" | WorkspaceSearchBlockKind;
 
 export interface WorkspaceSearchSection {
   readonly sectionId: string;
@@ -75,6 +75,8 @@ export interface WorkspaceSearchResult {
   readonly lineMatchOffset: number;
   readonly query: string;
   readonly attachmentId?: string;
+  /** Group results have no Note/Section resource; only this placement is restored. */
+  readonly namespaceEntryId?: string;
 }
 
 export interface WorkspaceSearchResponse {
