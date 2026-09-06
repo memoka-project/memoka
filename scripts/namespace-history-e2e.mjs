@@ -40,6 +40,8 @@ export async function runNamespaceHistory({
   sendActiveKey,
   sendActiveChord,
   clickElement,
+  windowRect,
+  screenshot,
 }) {
   assert.ok(workspace, "The isolated E2E Workspace is required");
   const ENTER = "\uE007";
@@ -88,6 +90,91 @@ export async function runNamespaceHistory({
     (text) => text.includes("backup · 処理完了"),
     120_000,
   );
+
+  const originalRect = await windowRect();
+  const modalLayouts = [];
+  try {
+    for (const size of [null, { width: 620, height: 460 }]) {
+      if (size) await windowRect(size);
+      for (const name of ["backup-status", "backup-settings"]) {
+        await command(name);
+        await waitForElement(sessionId, ".backup-dialog");
+        await waitFor(
+          sessionId,
+          `const dialog = document.querySelector('.backup-dialog');
+          return !!dialog && !dialog.textContent.includes('読み込み中')
+            && (dialog.querySelector('input')?.matches(':enabled') ?? true);`,
+          Boolean,
+        );
+        const geometry = await execute(
+          sessionId,
+          `const dialog = document.querySelector('.backup-dialog');
+          const rect = dialog.getBoundingClientRect();
+          return {
+            viewport: { width: innerWidth, height: innerHeight },
+            dialog: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            centeredX: Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1,
+            centeredY: Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1,
+            bounded: rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+            scrollable: dialog.scrollHeight > dialog.clientHeight,
+            backdrop: document.elementFromPoint(2, 2)?.classList.contains('application-modal-overlay'),
+            focused: dialog.contains(document.activeElement),
+            controls: dialog.querySelectorAll('input:not(:disabled),button:not(:disabled)').length
+          };`,
+        );
+        assert.ok(
+          geometry.centeredX && geometry.centeredY,
+          JSON.stringify(geometry),
+        );
+        assert.ok(geometry.bounded && geometry.backdrop && geometry.focused);
+        if (size && name === "backup-settings") assert.ok(geometry.scrollable);
+        modalLayouts.push({ name, ...geometry });
+
+        // Tab must wrap within the dialog and reveal the focused control by
+        // scrolling this panel, even when the complete form cannot fit.
+        for (let index = 0; index <= geometry.controls; index++) {
+          await sendActiveKey(sessionId, "\uE004");
+          assert.equal(
+            await execute(
+              sessionId,
+              `const dialog = document.querySelector('.backup-dialog');
+              const active = document.activeElement;
+              const panel = dialog.getBoundingClientRect();
+              const control = active.getBoundingClientRect();
+              return dialog.contains(active) && control.top >= panel.top
+                && control.bottom <= panel.bottom;`,
+            ),
+            true,
+            "Tab focus must remain visible inside the modal",
+          );
+        }
+        assert.equal(
+          await execute(
+            sessionId,
+            `document.querySelector('.memoka-editor').focus();
+            return document.querySelector('.backup-dialog').contains(document.activeElement);`,
+          ),
+          true,
+          "Background editors must not steal modal focus",
+        );
+        await execute(
+          sessionId,
+          "document.querySelector('.backup-dialog').scrollTop = 0; return true;",
+        );
+        await screenshot(`${name}${size ? "-small" : ""}.png`);
+        if (name === "backup-settings")
+          await sendActiveChord(sessionId, CONTROL, "c");
+        else await sendActiveKey(sessionId, ESCAPE);
+        await waitFor(
+          sessionId,
+          'return !document.querySelector(".backup-dialog") && document.activeElement?.closest(".memoka-editor")?.dataset.noteId',
+          (id) => id === initialNoteId,
+        );
+      }
+    }
+  } finally {
+    await windowRect(originalRect);
+  }
 
   await command("group");
   const nameInput = await waitForElement(
@@ -346,7 +433,48 @@ export async function runNamespaceHistory({
   );
   assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
 
+  // The newer live edit still needs a generation, so quit must show its
+  // real save/backup dialog. Cancel it; never exit a user's application or
+  // substitute a fake dialog for this private Workspace lifecycle check.
+  await command("quit");
+  await waitFor(
+    sessionId,
+    `return [...document.querySelectorAll('.application-shutdown-progress button')]
+      .some(button => button.textContent === '終了を取り消す');`,
+    Boolean,
+  );
+  const shutdownLayout = await execute(
+    sessionId,
+    `const dialog = document.querySelector('.application-shutdown-progress');
+    const rect = dialog.getBoundingClientRect();
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      dialog: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      centered: Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1
+        && Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1,
+      backdrop: document.elementFromPoint(2, 2)?.classList.contains('application-modal-overlay'),
+      focused: dialog.contains(document.activeElement)
+    };`,
+  );
+  assert.ok(
+    shutdownLayout.centered &&
+      shutdownLayout.backdrop &&
+      shutdownLayout.focused,
+    JSON.stringify(shutdownLayout),
+  );
+  await screenshot("shutdown-preparation.png");
+  await sendActiveChord(sessionId, CONTROL, "c");
+  await waitFor(
+    sessionId,
+    'return !document.querySelector(".application-shutdown-progress") && document.activeElement?.closest(".memoka-editor")?.dataset.noteId',
+    (id) => id === noteId,
+    30_000,
+  );
+  assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
+
   return {
+    modalLayouts,
+    shutdownLayout,
     groupEntryId: group.entry_id,
     childEntryId: childEntry.entry_id,
     childNoteId: noteId,
@@ -363,6 +491,9 @@ export async function runNamespaceHistory({
     idleInsertKeyToNextFrameMs: latencySummary(idleSamples),
     fixtureBytes: sizes,
     checks: [
+      "centered-backup-modals-and-bounded-small-window-scrolling",
+      "backup-modal-tab-cycle-and-editor-focus-restoration",
+      "centered-native-shutdown-progress-and-cancel-focus-restoration",
       "group-create-and-rename-without-note-mutation",
       "child-note-placement-and-distinct-entry-id",
       "native-cli-owner-save-barrier-without-focus-change",

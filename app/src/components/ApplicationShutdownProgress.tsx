@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { ModalDialog } from "./ModalDialog";
 import type { ApplicationDepartureProgress } from "../core/application-departure";
 export type ApplicationShutdownProgressState = ApplicationDepartureProgress;
 
@@ -15,9 +15,6 @@ export function ApplicationShutdownProgress({
   onSkip: () => void;
   detail?: string;
 }) {
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => root.current?.focus({ preventScroll: true }), []);
-
   const failed = progress.stage.endsWith("-error");
   const action =
     progress.kind === "switch-workspace"
@@ -30,64 +27,39 @@ export function ApplicationShutdownProgress({
   );
 
   return (
-    <div
-      ref={root}
-      className="application-shutdown-overlay focus-surface focus-surface--focused"
-      data-memoka-focus-surface="shutdown"
-      role="dialog"
-      aria-label={
+    <ModalDialog
+      className="application-shutdown-progress"
+      focusSurface="shutdown"
+      ariaLabel={
         progress.kind === "switch-workspace"
           ? "Workspaceを切り替え"
           : progress.kind === "update"
             ? "更新前の保存"
             : "Memokaを終了"
       }
-      aria-modal="true"
-      aria-busy={!failed}
-      tabIndex={0}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Tab") {
-          event.preventDefault();
-          const buttons = [
-            ...(root.current?.querySelectorAll<HTMLButtonElement>(
-              "button:not(:disabled)",
-            ) ?? []),
-          ];
-          const index = buttons.indexOf(
-            document.activeElement as HTMLButtonElement,
-          );
-          buttons[
-            (index + (event.shiftKey ? -1 : 1) + buttons.length) %
-              buttons.length
-          ]?.focus();
-        }
-        if (
-          (event.key === "Escape" ||
-            (event.ctrlKey && event.key.toLowerCase() === "c")) &&
-          canCancel
-        ) {
-          event.preventDefault();
-          onCancel();
-        }
-      }}
+      busy={!failed}
+      compact
+      onClose={canCancel ? onCancel : undefined}
     >
-      <section className="application-shutdown-progress" role="status">
-        <span className="eyebrow">Memoka</span>
-        <h2>{failed ? `${action}前の確認` : `${action}の準備をしています`}</h2>
-        {!failed && <progress />}
-        <p>{shutdownProgressLabel(progress)}</p>
-        {detail && <p>{detail}</p>}
-        {progress.error && <p role="alert">{progress.error}</p>}
-        {failed && <button onClick={onRetry}>再試行</button>}
-        {canCancel && <button onClick={onCancel}>{action}を取り消す</button>}
-        {(progress.stage === "backup" || progress.stage === "backup-error") && (
-          <button onClick={onSkip}>
-            バックアップを中断して{action}（編集内容は保存済み）
-          </button>
-        )}
-      </section>
-    </div>
+      <span className="eyebrow">Memoka</span>
+      <h2>{failed ? `${action}前の確認` : `${action}の準備をしています`}</h2>
+      {!failed && <progress />}
+      <p role="status">{shutdownProgressLabel(progress)}</p>
+      {detail && <p>{detail}</p>}
+      {progress.error && <p role="alert">{progress.error}</p>}
+      {(failed || canCancel) && (
+        <div className="application-modal-actions">
+          {failed && <button onClick={onRetry}>再試行</button>}
+          {canCancel && <button onClick={onCancel}>{action}を取り消す</button>}
+          {(progress.stage === "backup" ||
+            progress.stage === "backup-error") && (
+            <button onClick={onSkip}>
+              バックアップを中断して{action}（編集内容は保存済み）
+            </button>
+          )}
+        </div>
+      )}
+    </ModalDialog>
   );
 }
 

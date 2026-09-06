@@ -164,10 +164,18 @@ inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当
 
 終了、Workspace切替、Updaterは共通の保存待ち画面を使い、確定Core保存、ローカル履歴の作成、追加先への転送、
 キャンセル待ち、操作実行、失敗を区別する。ローカル成功と追加先だけの失敗は別に表示する。
+保存待ち・失敗時の確認と`:update`の更新確認・配布ページを開く確認は、Application Window中央のfloating modalに統一する。
+バックアップ画面と同じmodal部品・背景・focus制御を使い、progressや長いmessageはdialog内でscrollする。
 Core保存失敗を無視する操作は用意しない。バックアップ待ちでは再試行、取り消し、バックアップのみ中断して続行を選べる。
 待機中も旧Editorをmountしたまま保つが、modalがfocusを所有し、背後へのキー入力・pointer操作を遮断する。
+Tab/Shift-Tabは有効なcontrol間を循環し、controlがないstageでもdialogへfocusを保持する。
+更新確認ではEnterまたは確認buttonで進め、取り消しbutton上のEnterは更新を実行しない。Esc/Ctrl-cは取り消し可能なstageだけ受け付ける。
+Command-line入力とNote内`/`検索入力、通常の通知messageは引き続き下部に表示する。
 
-`:backup-status`と`:backup-settings`は同じ状態表示を使う。設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
+`:backup-status`と`:backup-settings`はApplication Window中央のfloating modal dialogで表示し、同じ状態表示を使う。
+背景を覆って背後への操作を遮断し、Tab/Shift-Tabはdialog内を循環する。小さいWindowではdialog内をscrollする。
+閉じるbuttonまたはEsc/Ctrl-cで元の操作領域へfocusを戻す。背景clickでは閉じず、設定保存中は閉じる操作を受け付けない。
+設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
 `:history`は共通検索ペインの読み取り専用previewを使い、過去Note、内部link、添付を選択世代の範囲で表示する。
 preview内のbuttonへfocusした後もEsc/Ctrl-cで閉じられる。現在Noteへの直接上書き機能はない。
 

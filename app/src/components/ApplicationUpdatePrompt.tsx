@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { ModalDialog } from "./ModalDialog";
 import type {
   ApplicationRelease,
   ApplicationUpdateProgress,
@@ -17,10 +17,7 @@ export function ApplicationUpdatePrompt({
   onConfirm: () => void;
   onClose: () => void;
 }) {
-  const root = useRef<HTMLDivElement>(null);
   const busy = progress !== null;
-
-  useEffect(() => root.current?.focus(), []);
 
   const percent =
     progress?.contentLength && progress.contentLength > 0
@@ -31,34 +28,28 @@ export function ApplicationUpdatePrompt({
       : null;
 
   return (
-    <div
-      ref={root}
-      className="application-commandline application-commandline--active application-update-prompt focus-surface focus-surface--focused"
-      data-memoka-focus-surface="update"
-      role="dialog"
-      aria-label="Memokaを更新"
-      aria-busy={busy}
-      tabIndex={0}
+    <ModalDialog
+      className="application-update-prompt"
+      focusSurface="update"
+      ariaLabel="Memokaを更新"
+      busy={busy}
+      compact
+      onClose={busy ? undefined : onClose}
       onKeyDown={(event) => {
-        if (busy) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        if (event.key === "Enter") {
-          event.preventDefault();
-          onConfirm();
-        } else if (
-          event.key === "Escape" ||
-          (event.ctrlKey && event.key.toLocaleLowerCase() === "c")
+        // Enter on the panel confirms as before. On a focused button, leave
+        // native activation intact so Enter on Cancel never installs updates.
+        if (
+          !busy &&
+          event.key === "Enter" &&
+          event.target === event.currentTarget
         ) {
           event.preventDefault();
-          onClose();
+          onConfirm();
         }
       }}
     >
-      <span className="commandline-prompt">:</span>
-      <span>
+      <h2>Memokaを更新</h2>
+      <p role="status">
         {progress
           ? progress.phase === "preparing"
             ? `v${release.version}の更新準備中…`
@@ -68,11 +59,22 @@ export function ApplicationUpdatePrompt({
           : release.canSelfUpdate
             ? `v${release.version}へ更新しますか？ Enter: 更新 / Esc: 取消`
             : `v${release.version}を配布ページで開きますか？ Enter: 開く / Esc: 取消`}
-      </span>
+      </p>
+      {progress && <progress max={100} value={percent ?? undefined} />}
       {!progress && release.notes && (
-        <span className="application-update-notes">{release.notes}</span>
+        <p className="application-update-notes">{release.notes}</p>
       )}
-      {error && <span className="commandline-error">{error}</span>}
-    </div>
+      {error && <p role="alert">{error}</p>}
+      {!busy && (
+        <div className="application-modal-actions">
+          <button type="button" onClick={onConfirm}>
+            {release.canSelfUpdate ? "更新する" : "配布ページを開く"}
+          </button>
+          <button type="button" onClick={onClose}>
+            取り消す
+          </button>
+        </div>
+      )}
+    </ModalDialog>
   );
 }

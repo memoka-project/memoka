@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ModalDialog } from "./ModalDialog";
 import {
   nativeErrorMessage,
   type BackupPort,
@@ -37,9 +38,6 @@ export function BackupDialog({
   };
   useEffect(() => {
     let active = true;
-    root.current
-      ?.querySelector<HTMLElement>("input:not(:disabled),button:not(:disabled)")
-      ?.focus();
     let initialized = false;
     const refresh = (): void => {
       void port.status().then(
@@ -65,37 +63,14 @@ export function BackupDialog({
     };
   }, [port]);
   return (
-    <div
-      ref={root}
-      className="backup-dialog focus-surface focus-surface--focused"
-      role="dialog"
-      aria-modal="true"
-      aria-label={session.settings ? "バックアップ設定" : "バックアップ状態"}
-      data-memoka-focus-surface="backup"
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (
-          !event.nativeEvent.isComposing &&
-          (event.key === "Escape" ||
-            (event.ctrlKey && event.key.toLowerCase() === "c"))
-        ) {
-          event.preventDefault();
-          close();
-        }
-        if (event.key === "Tab") {
-          const elements = [
-            ...(root.current?.querySelectorAll<HTMLElement>(
-              "input:not(:disabled),button:not(:disabled)",
-            ) ?? []),
-          ];
-          const index = elements.indexOf(document.activeElement as HTMLElement);
-          event.preventDefault();
-          elements[
-            (index + (event.shiftKey ? -1 : 1) + elements.length) %
-              elements.length
-          ]?.focus();
-        }
-      }}
+    <ModalDialog
+      dialogRef={root}
+      className="backup-dialog"
+      focusSurface="backup"
+      ariaLabel={session.settings ? "バックアップ設定" : "バックアップ状態"}
+      busy={busy}
+      initialFocus="first-control"
+      onClose={close}
     >
       <form
         onSubmit={(event) => {
@@ -108,6 +83,9 @@ export function BackupDialog({
             setError("空でないパスワードを同じ内容で2回入力してください");
             return;
           }
+          // Every control is disabled during the save. Keep a focusable target
+          // for Tab/Escape instead of letting focus fall back to the document.
+          root.current?.focus({ preventScroll: true });
           setBusy(true);
           setError("");
           void port
@@ -262,15 +240,17 @@ export function BackupDialog({
           </fieldset>
         )}
         {error && <p role="alert">{error}</p>}
-        {session.settings && (
-          <button type="submit" disabled={busy || !state}>
-            {busy ? "保存中…" : "設定を保存"}
+        <div className="application-modal-actions">
+          {session.settings && (
+            <button type="submit" disabled={busy || !state}>
+              {busy ? "保存中…" : "設定を保存"}
+            </button>
+          )}
+          <button type="button" disabled={busy} onClick={close}>
+            閉じる
           </button>
-        )}
-        <button type="button" disabled={busy} onClick={close}>
-          閉じる
-        </button>
+        </div>
       </form>
-    </div>
+    </ModalDialog>
   );
 }

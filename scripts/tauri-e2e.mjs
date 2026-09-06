@@ -3948,6 +3948,12 @@ if (namespaceHistoryOnly) {
         sendActiveKey,
         sendActiveChord,
         clickElement,
+        windowRect: (rect) =>
+          request(
+            `/session/${firstSession}/window/rect`,
+            rect ? { method: "POST", body: rect } : {},
+          ),
+        screenshot: (name) => screenshot(firstSession, name),
       }),
     };
     await screenshot(firstSession, "namespace-history-tauri.png");

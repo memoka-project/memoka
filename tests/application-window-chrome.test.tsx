@@ -283,6 +283,68 @@ describe("custom application window chrome", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it.each(["window", "sidebar"])(
+    "restores %s focus after cancelling the shutdown modal",
+    async (owner) => {
+      let holdBackup = false;
+      let releaseBackup!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseBackup = resolve;
+      });
+      const run = vi.fn(async () => {
+        if (holdBackup) await gate;
+      });
+      const fixture = createDesktopWindowFixture();
+      const forceClose = vi.fn(async () => undefined);
+      fixture.port.forceClose = forceClose;
+      const view = render(
+        <App
+          desktopWindow={fixture.port}
+          backup={backupFixture({ run, cancel: async () => releaseBackup() })}
+        />,
+      );
+      const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+      await waitFor(() => expect(run).toHaveBeenCalled());
+      holdBackup = true;
+      const editor =
+        view.container.querySelector<HTMLElement>(".memoka-editor")!;
+      const origin = owner === "sidebar" ? tree : editor;
+      origin.focus();
+      if (owner === "window") {
+        fireEvent.keyDown(origin, { key: "Escape", code: "Escape" });
+      } else {
+        // Escape in Tree intentionally moves focus to the editor. Open ':'
+        // directly to exercise cancellation back to the Sidebar itself.
+        await waitFor(() =>
+          expect(
+            view.container.querySelector("main")?.dataset.applicationFocus,
+          ).toBe("left-sidebar"),
+        );
+      }
+      fireEvent.keyDown(origin, {
+        key: ":",
+        code: "Semicolon",
+        shiftKey: true,
+      });
+      const command = await screen.findByRole("textbox", {
+        name: "Memoka Command",
+      });
+      fireEvent.change(command, { target: { value: "quit" } });
+      fireEvent.keyDown(command, { key: "Enter" });
+      await screen.findByRole("button", { name: "終了を取り消す" });
+      const dialog = screen.getByRole("dialog", { name: "Memokaを終了" });
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      fireEvent.keyDown(dialog, { key: "c", ctrlKey: true });
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "Memokaを終了" }),
+        ).toBeNull(),
+      );
+      await waitFor(() => expect(document.activeElement).toBe(origin));
+      expect(forceClose).not.toHaveBeenCalled();
+    },
+  );
+
   it("reports native failures and omits native controls in browser mode", async () => {
     const fixture = createDesktopWindowFixture();
     fixture.port.minimize = vi.fn(async () => {

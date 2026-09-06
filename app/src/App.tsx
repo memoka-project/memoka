@@ -333,6 +333,13 @@ export function App({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [shutdownProgress, setShutdownProgress] =
     useState<ApplicationShutdownProgressState | null>(null);
+  const modalFocusSurface = shutdownProgress
+    ? "shutdown"
+    : updatePrompt
+      ? "update"
+      : backupDialog
+        ? "backup"
+        : null;
   const [departure] = useState(
     () => new ApplicationDeparture(setShutdownProgress, nextBrowserPaint),
   );
@@ -371,6 +378,7 @@ export function App({
   );
   const japaneseLineBreakSegmentationRequestGeneration = useRef(0);
   const appRoot = useRef<HTMLElement>(null);
+  const previousModalSurface = useRef<string | null>(null);
   const applicationActiveRef = useRef(true);
   const requestedEditorFocus = useRef<string | null>(null);
   const pointerEditorFocusIntent = useRef<string | null>(null);
@@ -1429,18 +1437,22 @@ export function App({
 
   const restoreManagedFocus = useCallback((): void => {
     if (!runtime || !snapshot) return;
-    if (shutdownProgress) {
-      appRoot.current
-        ?.querySelector<HTMLElement>("[data-memoka-focus-surface='shutdown']")
-        ?.focus();
+    if (modalFocusSurface) {
+      const dialog = appRoot.current?.querySelector<HTMLElement>(
+        `[data-memoka-focus-surface='${modalFocusSurface}'] [role='dialog']`,
+      );
+      if (
+        !dialog?.contains(document.activeElement) ||
+        document.activeElement?.matches(":disabled")
+      ) {
+        dialog?.focus({ preventScroll: true });
+      }
       return;
     }
-    if (historySession || backupDialog) {
+    if (historySession) {
       appRoot.current
         ?.querySelector<HTMLElement>(
-          historySession
-            ? "[data-memoka-focus-surface='history'] input"
-            : "[data-memoka-focus-surface='backup'] input:not(:disabled), [data-memoka-focus-surface='backup'] button:not(:disabled)",
+          "[data-memoka-focus-surface='history'] input",
         )
         ?.focus();
       return;
@@ -1448,12 +1460,6 @@ export function App({
     if (groupName) {
       appRoot.current
         ?.querySelector<HTMLInputElement>("input[aria-label='グループ名']")
-        ?.focus();
-      return;
-    }
-    if (updatePrompt) {
-      appRoot.current
-        ?.querySelector<HTMLElement>("[data-memoka-focus-surface='update']")
         ?.focus();
       return;
     }
@@ -1560,15 +1566,35 @@ export function App({
     requestEditorFocus,
     requestLeftUtilityFocus,
     runtime,
-    shutdownProgress,
+    modalFocusSurface,
     snapshot,
     themePicker,
     groupName,
     historySession,
-    backupDialog,
-    updatePrompt,
     workspaceSearch,
   ]);
+
+  useEffect(() => {
+    const previous = previousModalSurface.current;
+    previousModalSurface.current = modalFocusSurface;
+    if (previous === null || previous === modalFocusSurface) return;
+    let cancelled = false;
+    // WebKit can remove the focused modal without firing focusout. After a
+    // departure is cancelled (or another modal replaces it), recover against
+    // the new UI state instead of leaving BODY as the keyboard target.
+    queueMicrotask(() => {
+      if (
+        !cancelled &&
+        applicationActiveRef.current &&
+        !isOperableFocusTarget(document.activeElement, appRoot.current)
+      ) {
+        restoreManagedFocus();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [modalFocusSurface, restoreManagedFocus]);
 
   useEffect(() => {
     if (!runtime || !snapshot || restoredFocusRuntime.current === runtime) {
@@ -1796,31 +1822,29 @@ export function App({
   ]
     .filter((column): column is string => column !== null)
     .join(" ");
-  const transientFocus = shutdownProgress
-    ? "shutdown"
-    : historySession
+  const transientFocus =
+    modalFocusSurface ??
+    (historySession
       ? "history"
-      : backupDialog
-        ? "backup"
-        : groupName
-          ? "group-name"
-          : workspaceSearch
-            ? "workspace-search"
-            : themePicker
-              ? "theme-picker"
-              : blockTypePicker
-                ? "block-type-picker"
-                : inlineFormatPicker
-                  ? "inline-format-picker"
-                  : tableActionPicker
-                    ? "table-action-picker"
-                    : noteSearch
-                      ? "note-search"
-                      : commandPicker
-                        ? "command-picker"
-                        : commandLine
-                          ? "command-line"
-                          : null;
+      : groupName
+        ? "group-name"
+        : workspaceSearch
+          ? "workspace-search"
+          : themePicker
+            ? "theme-picker"
+            : blockTypePicker
+              ? "block-type-picker"
+              : inlineFormatPicker
+                ? "inline-format-picker"
+                : tableActionPicker
+                  ? "table-action-picker"
+                  : noteSearch
+                    ? "note-search"
+                    : commandPicker
+                      ? "command-picker"
+                      : commandLine
+                        ? "command-line"
+                        : null);
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -1831,23 +1855,13 @@ export function App({
     event: MouseEvent<HTMLElement>,
   ): void => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) return;
+    if (!(target instanceof Element)) return;
     if (
-      shutdownProgress &&
-      !target.closest("[data-memoka-focus-surface='shutdown']")
+      modalFocusSurface &&
+      !target.closest(`[data-memoka-focus-surface='${modalFocusSurface}']`)
     ) {
       event.preventDefault();
       event.stopPropagation();
-      return;
-    }
-    if (
-      !shutdownProgress &&
-      updateProgress &&
-      !target.closest("[data-memoka-focus-surface='update']")
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      queueMicrotask(restoreManagedFocus);
       return;
     }
     if (
@@ -2833,9 +2847,11 @@ export function App({
       onMouseDownCapture={handleApplicationPointerDown}
       onKeyDownCapture={(event) => {
         if (
-          shutdownProgress &&
+          modalFocusSurface &&
           event.target instanceof Element &&
-          !event.target.closest("[data-memoka-focus-surface='shutdown']")
+          !event.target.closest(
+            `[data-memoka-focus-surface='${modalFocusSurface}']`,
+          )
         ) {
           event.preventDefault();
           event.stopPropagation();

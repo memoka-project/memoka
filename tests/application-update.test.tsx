@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "../app/src/App";
 import { ApplicationUpdatePrompt } from "../app/src/components/ApplicationUpdatePrompt";
 import {
@@ -86,6 +86,37 @@ describe("Memoka application update", () => {
     expect(closes).toBe(1);
   });
 
+  it("offers keyboard-accessible confirmation and cancellation without Enter double activation", () => {
+    const confirm = vi.fn();
+    const close = vi.fn();
+    render(
+      <ApplicationUpdatePrompt
+        release={RELEASE}
+        progress={null}
+        error={null}
+        onConfirm={confirm}
+        onClose={close}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Memokaを更新" });
+    fireEvent.keyDown(dialog, { key: "Enter", isComposing: true });
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    const accept = screen.getByRole("button", { name: "更新する" });
+    expect(document.activeElement).toBe(accept);
+    fireEvent.keyDown(accept, { key: "Enter" });
+    expect(confirm).not.toHaveBeenCalled();
+    // The browser's native button activation supplies the click, once.
+    fireEvent.click(accept);
+    expect(confirm).toHaveBeenCalledOnce();
+    const cancel = screen.getByRole("button", { name: "取り消す" });
+    cancel.focus();
+    fireEvent.keyDown(cancel, { key: "Enter" });
+    fireEvent.click(cancel);
+    expect(close).toHaveBeenCalledOnce();
+    expect(confirm).toHaveBeenCalledOnce();
+  });
+
   it("checks after startup but installs only after :update confirmation", async () => {
     const update = new MemoryApplicationUpdatePort(RELEASE);
     const diagnostics = new MemoryApplicationDiagnosticsPort();
@@ -125,6 +156,11 @@ describe("Memoka application update", () => {
       name: "Memokaを更新",
     });
     expect(update.installCount).toBe(0);
+    expect(view.container.querySelector("main")?.dataset.applicationFocus).toBe(
+      "update",
+    );
+    expect(fireEvent.keyDown(editor, { key: "i", code: "KeyI" })).toBe(false);
+    expect(confirmation.contains(document.activeElement)).toBe(true);
     fireEvent.keyDown(confirmation, { key: "Enter" });
     await waitFor(() => expect(update.installCount).toBe(1));
     await waitFor(() => expect(update.relaunchCount).toBe(1));
