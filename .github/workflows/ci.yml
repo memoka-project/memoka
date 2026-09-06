@@ -56,10 +56,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
+          cache-on-failure: true
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm restic:prepare
       - run: corepack pnpm rclone:prepare
+      - name: Verify Workspace owner IPC
+        run: cargo test -p memoka-desktop workspace_owner::tests -- --nocapture
+        timeout-minutes: 10
       - run: corepack pnpm format:check
       - run: corepack pnpm lint
       - run: corepack pnpm typecheck

@@ -261,7 +261,14 @@ impl Server {
             while !stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok(mut stream) => {
-                        if authenticate(&stream).is_err() || active.load(Ordering::Acquire) >= 8 {
+                        if let Err(error) = authenticate(&stream) {
+                            #[cfg(test)]
+                            eprintln!("owner IPC authenticate: {}", error.code);
+                            #[cfg(not(test))]
+                            let _ = error;
+                            continue;
+                        }
+                        if active.load(Ordering::Acquire) >= 8 {
                             continue;
                         }
                         active.fetch_add(1, Ordering::AcqRel);
@@ -272,14 +279,25 @@ impl Server {
                             // The reader retains the actual database lease even while a
                             // Workspace switch is retiring the listening endpoint.
                             let _lease = lease;
-                            let _ = serve(&mut stream, &handler);
+                            let result = serve(&mut stream, &handler);
+                            #[cfg(test)]
+                            if let Err(error) = &result {
+                                eprintln!("owner IPC serve: {}", error.code);
+                            }
+                            let _ = result;
                             active.fetch_sub(1, Ordering::AcqRel);
                         });
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(10))
                     }
-                    Err(_) => break,
+                    Err(error) => {
+                        #[cfg(test)]
+                        eprintln!("owner IPC accept: {:?}", error.raw_os_error());
+                        #[cfg(not(test))]
+                        let _ = error;
+                        break;
+                    }
                 }
             }
         });
@@ -478,6 +496,8 @@ fn read_exact(
     mut bytes: &mut [u8],
     deadline: Instant,
 ) -> Result<(), ReadError> {
+    #[cfg(all(test, windows))]
+    let original_length = bytes.len();
     while !bytes.is_empty() {
         #[cfg(windows)]
         let count = {
@@ -487,7 +507,14 @@ fn read_exact(
             // from an actual disconnect, and the deadline can still run.
             let available = readable_pipe_bytes(stream)?;
             if available == 0 {
-                pause(deadline)?;
+                if let Err(error) = pause(deadline) {
+                    #[cfg(test)]
+                    eprintln!(
+                        "owner IPC read timed out: {} of {original_length} bytes remain",
+                        bytes.len()
+                    );
+                    return Err(error);
+                }
                 continue;
             }
             bytes.len().min(available)
@@ -676,6 +703,7 @@ mod tests {
         let server = Server::start(
             lease.clone(),
             Arc::new(|_| {
+                eprintln!("owner IPC fixture handler entered");
                 // Force an idle-but-connected read and a response larger than
                 // the pipe buffer, rather than depending on a scheduling race.
                 thread::sleep(Duration::from_millis(30));
