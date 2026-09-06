@@ -284,5 +284,13 @@ try {
     "PASS: encrypted config / secret-free argv / real stdio init-copy-retry-list-check-restore / independent keys / spaces and Japanese executable path",
   );
 } finally {
-  await rm(scratch, { recursive: true, force: true });
+  // On Windows the executable can remain mapped briefly after Restic has
+  // closed its stdio transport. Bound the cleanup retry; a persistent child
+  // or file lock must still fail this test instead of leaving fixtures behind.
+  await rm(scratch, {
+    recursive: true,
+    force: true,
+    maxRetries: windows ? 20 : 0,
+    retryDelay: 100,
+  });
 }
