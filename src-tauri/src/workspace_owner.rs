@@ -641,7 +641,7 @@ mod tests {
     fn idle_pipe_reaches_its_deadline_and_detects_a_real_disconnect() {
         let name = format!("memoka-ipc-test-{}", uuid::Uuid::now_v7());
         let listener = ListenerOptions::new()
-            .name(name.to_ns_name::<GenericNamespaced>().unwrap())
+            .name(name.as_str().to_ns_name::<GenericNamespaced>().unwrap())
             .nonblocking(ListenerNonblockingMode::Both)
             .create_sync()
             .unwrap();
