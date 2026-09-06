@@ -24,6 +24,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -35,10 +37,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm restic:prepare
+      - run: corepack pnpm rclone:prepare
       - name: Verify the committed third-party inventory
         run: |
           corepack pnpm release:notices
-          git diff --exit-code -- THIRD_PARTY_NOTICES.md
+          git diff --exit-code -- THIRD_PARTY_NOTICES.md SIDECARS.json
       - id: version
         name: Verify one canonical version
         shell: bash
@@ -61,6 +65,8 @@ jobs:
       MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON: ${{ secrets.MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -111,6 +117,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version && format('v{0}', inputs.version) || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
