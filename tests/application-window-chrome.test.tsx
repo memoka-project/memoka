@@ -1,12 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "../app/src/App";
 import { ApplicationTabBar } from "../app/src/components/ApplicationTabBar";
@@ -207,7 +201,7 @@ describe("custom application window chrome", () => {
     },
   );
 
-  it("waits for the backup and shows its shutdown progress", async () => {
+  it("stops an active backup on close, showing cleanup rather than waiting for upload", async () => {
     let closeRequested: (() => void | Promise<void>) | null = null;
     let releasePublish!: () => void;
     let markPublishStarted!: () => void;
@@ -217,6 +211,19 @@ describe("custom application window chrome", () => {
     const publishGate = new Promise<void>((resolve) => {
       releasePublish = resolve;
     });
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const run = vi.fn(async () => {
+      markPublishStarted();
+      await publishGate;
+    });
+    const cancel = vi.fn(async () => {
+      await cleanup;
+      releasePublish();
+    });
+    const waitTransfers = vi.fn(async () => undefined);
     const forceClose = vi.fn(async () => undefined);
     const fixture = createDesktopWindowFixture();
     fixture.port.subscribeToCloseRequested = vi.fn(async (listener) => {
@@ -231,20 +238,15 @@ describe("custom application window chrome", () => {
     const view = render(
       <App
         desktopWindow={fixture.port}
-        backup={backupFixture({
-          run: async () => {
-            markPublishStarted();
-            await publishGate;
-          },
-        })}
+        backup={backupFixture({ run, cancel, waitTransfers })}
         showDebugLine={false}
       />,
     );
 
     await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(closeRequested).not.toBeNull());
-    const closing = requestNativeClose();
     await publishStarted;
+    const closing = requestNativeClose();
 
     expect(forceClose).not.toHaveBeenCalled();
     expect(
@@ -252,9 +254,12 @@ describe("custom application window chrome", () => {
         await screen.findByRole("dialog", { name: "Memokaを終了" })
       ).getAttribute("aria-busy"),
     ).toBe("true");
-    await screen.findByText(/バックアップの完了を待っています/u);
+    await screen.findByText(/バックグラウンド処理を停止しています/u);
+    await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledOnce();
+    expect(waitTransfers).not.toHaveBeenCalled();
 
-    releasePublish();
+    releaseCleanup();
     await closing;
     await waitFor(() => expect(forceClose).toHaveBeenCalledOnce());
     view.unmount();
@@ -290,19 +295,14 @@ describe("custom application window chrome", () => {
   });
 
   it.each(["window", "sidebar"])(
-    "restores %s focus after cancelling the shutdown modal",
+    "restores %s focus after a failed close is withdrawn",
     async (owner) => {
-      let holdBackup = false;
-      let releaseBackup!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        releaseBackup = resolve;
-      });
-      const run = vi.fn(async () => {
-        if (holdBackup) await gate;
-      });
-      const cancel = vi.fn(async () => releaseBackup());
+      const run = vi.fn(async () => undefined);
+      const cancel = vi.fn(async () => undefined);
       const fixture = createDesktopWindowFixture();
-      const forceClose = vi.fn(async () => undefined);
+      const forceClose = vi.fn(async () => {
+        throw new Error("injected close failure");
+      });
       fixture.port.forceClose = forceClose;
       const view = render(
         <App
@@ -312,7 +312,6 @@ describe("custom application window chrome", () => {
       );
       const tree = await screen.findByRole("tree", { name: "ノートツリー" });
       await waitFor(() => expect(run).toHaveBeenCalled());
-      holdBackup = true;
       const editor =
         view.container.querySelector<HTMLElement>(".memoka-editor")!;
       const origin = owner === "sidebar" ? tree : editor;
@@ -348,9 +347,9 @@ describe("custom application window chrome", () => {
         ).toBeNull(),
       );
       await waitFor(() => expect(document.activeElement).toBe(origin));
-      expect(forceClose).not.toHaveBeenCalled();
-      expect(cancel).not.toHaveBeenCalled();
-      await act(async () => releaseBackup());
+      expect(forceClose).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+      view.unmount();
     },
   );
 

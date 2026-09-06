@@ -49,7 +49,7 @@ export async function runNamespaceHistory({
   const CONTROL = "\uE009";
   const cli = async (...args) => {
     const { stdout, stderr } = await runFile(
-      join(dirname(application), "memoka-cli"),
+      process.env.MEMOKA_E2E_CLI ?? join(dirname(application), "memoka-cli"),
       [...args, "--workspace", workspace, "--format", "json"],
       { encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
     );
@@ -110,12 +110,16 @@ export async function runNamespaceHistory({
             && (dialog.querySelector('input')?.matches(':enabled') ?? true);`,
           Boolean,
         );
-        // The isolated application config has no OAuth profile. Opening the
-        // integrated panel must expose the feature without starting OAuth,
-        // touching a keyring, or blocking ordinary local settings.
+        // A release may embed a client; source builds can intentionally omit
+        // it. Merely displaying either variant must not authorize or connect.
+        const googleConfigured =
+          process.env.MEMOKA_E2E_GOOGLE_CONFIGURED === "1";
         await waitFor(
           sessionId,
-          `return document.querySelector('.backup-dialog')?.textContent.includes('Google接続は未設定です');`,
+          `const panel = document.querySelector('.backup-dialog');
+          const connect = Array.from(panel?.querySelectorAll('button') ?? []).find(button => button.textContent === 'Googleへ新規接続');
+          return !!connect && connect.disabled === ${!googleConfigured}
+            && (${googleConfigured} || panel.textContent.includes('Google接続は未設定です'));`,
           Boolean,
         );
         const cloudUi = await execute(
@@ -126,7 +130,7 @@ export async function runNamespaceHistory({
               types: Array.from(panel.querySelectorAll('select option')).map(option => option.textContent),
               tokenFields: panel.querySelectorAll('input[type=password]').length };`,
         );
-        assert.equal(cloudUi.disabled, true);
+        assert.equal(cloudUi.disabled, !googleConfigured);
         assert.ok(cloudUi.types.includes("Google Drive"));
         assert.ok(cloudUi.types.includes("ローカルディレクトリ"));
         assert.equal(cloudUi.tokenFields, 0);
@@ -509,44 +513,9 @@ export async function runNamespaceHistory({
   );
   assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
 
-  // Reproduce :backup -> :qa -> withdraw quit in the private Workspace.
-  // The manual capture must continue without CANCELLED or a late close.
+  // Explicit backup still captures the latest Core state. Quit no longer
+  // creates a backup or waits for its success; exercise that separately below.
   await command("backup");
-  await command("qa");
-  await waitFor(
-    sessionId,
-    `return [...document.querySelectorAll('.application-shutdown-progress button')]
-      .some(button => button.textContent === '終了を取り消す');`,
-    Boolean,
-  );
-  const shutdownLayout = await execute(
-    sessionId,
-    `const dialog = document.querySelector('.application-shutdown-progress');
-    const rect = dialog.getBoundingClientRect();
-    return {
-      viewport: { width: innerWidth, height: innerHeight },
-      dialog: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      centered: Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1
-        && Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1,
-      backdrop: document.elementFromPoint(2, 2)?.classList.contains('application-modal-overlay'),
-      focused: dialog.contains(document.activeElement)
-    };`,
-  );
-  assert.ok(
-    shutdownLayout.centered &&
-      shutdownLayout.backdrop &&
-      shutdownLayout.focused,
-    JSON.stringify(shutdownLayout),
-  );
-  await screenshot("shutdown-preparation.png");
-  await sendActiveChord(sessionId, CONTROL, "c");
-  await waitFor(
-    sessionId,
-    'return !document.querySelector(".application-shutdown-progress") && document.activeElement?.closest(".memoka-editor")?.dataset.noteId',
-    (id) => id === noteId,
-    30_000,
-  );
-  assert.equal((await cli("read", "--id", noteId)).markdown, newer.markdown);
   await waitFor(
     sessionId,
     'return document.querySelector(".application-commandline")?.textContent ?? ""',
@@ -566,8 +535,7 @@ export async function runNamespaceHistory({
     resumedGeneration,
   );
   assert.equal(resumedRead.markdown, newer.markdown);
-  // Same native cycle as :qa, including the GUI owner's Core save barrier,
-  // without actually closing the WebDriver application mid-assertion.
+  // Explicit no-op backup still uses the verified receipt and Core barrier.
   const unchangedStart = performance.now();
   const unchanged = await cli("backup", "run");
   const unchangedBackupMs = Math.round(performance.now() - unchangedStart);
@@ -582,19 +550,113 @@ export async function runNamespaceHistory({
     true,
   );
 
+  // Start another real local capture, then edit after its immutable input is
+  // taken. Exit must save that edit without creating a final backup for it.
+  await sendActiveKey(sessionId, "A");
+  await sendKeys(sessionId, editor, " before interrupted backup");
+  await sendActiveKey(sessionId, ESCAPE);
+  await command("backup");
+  const captureDeadline = performance.now() + 30_000;
+  let captureStarted = false;
+  while (performance.now() < captureDeadline) {
+    if ((await cli("backup", "status")).status.phase === "saving") {
+      captureStarted = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.ok(captureStarted, "Expected the real Restic capture to start");
+  const exitMarker = " saved on quit without final backup";
+  await sendActiveKey(sessionId, "A");
+  await sendKeys(sessionId, editor, exitMarker);
+  await sendActiveKey(sessionId, ESCAPE);
+  await screenshot("namespace-history-tauri.png");
+  await sendActiveKey(sessionId, ":");
+  const quitInput = await waitForElement(
+    sessionId,
+    'input[aria-label="Memoka Command"]',
+  );
+  await sendKeys(sessionId, quitInput, "qa");
+  const quitStart = performance.now();
+  // Return from the synchronous script before the async save/close destroys
+  // the WebDriver window; no GUI reads are performed after this dispatch.
+  await execute(
+    sessionId,
+    `document.querySelector('input[aria-label="Memoka Command"]')
+    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return true;`,
+  );
+  let released = false;
+  while (performance.now() - quitStart < 30_000) {
+    try {
+      // Linux native gate: read the lock already created in this private
+      // Workspace. Never unlink/replace it or signal a process by PID.
+      await runFile("flock", [
+        "--exclusive",
+        "--nonblock",
+        join(workspace, ".memoka/workspace.lock"),
+        "true",
+      ]);
+      released = true;
+      break;
+    } catch (error) {
+      if (error.code !== 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  const quitMs = Math.round(performance.now() - quitStart);
+  assert.ok(
+    released,
+    "Quit must stop native work and release the Workspace lease",
+  );
+  const savedAfterQuit = await cli("read", "--id", noteId);
+  assert.ok(savedAfterQuit.markdown.includes(exitMarker));
+  assert.ok(
+    savedAfterQuit.source.document_revision > newer.source.document_revision,
+  );
+  const historyAfterQuit = await cli("history", "--id", noteId);
+  const lastBeforeRestart = await cli(
+    "read",
+    "--id",
+    noteId,
+    "--generation",
+    historyAfterQuit.generations[0].descriptor.generation_id,
+  );
+  assert.ok(
+    !lastBeforeRestart.markdown.includes(exitMarker),
+    "Quit must not create a final capture",
+  );
+  // A new standalone service resumes uncaptured edits from the saved epoch.
+  const restarted = await cli("backup", "run");
+  assert.ok(restarted.local_generation);
+  assert.equal(
+    (
+      await cli(
+        "read",
+        "--id",
+        noteId,
+        "--generation",
+        restarted.local_generation.descriptor.generation_id,
+      )
+    ).markdown,
+    savedAfterQuit.markdown,
+  );
+
   return {
     modalLayouts,
-    shutdownLayout,
     groupEntryId: group.entry_id,
     childEntryId: childEntry.entry_id,
     childNoteId: noteId,
     generation,
-    generationAfterCancelledQuit: resumedGeneration,
+    generationAfterManualBackup: resumedGeneration,
+    generationAfterRestart: restarted.local_generation.descriptor.generation_id,
+    savedRevisionAfterQuit: savedAfterQuit.source.document_revision,
+    applicationClosed: true,
     capturedRevision: child.source.document_revision,
     liveRevision: newer.source.document_revision,
     timingMs: {
       backupCycle: captureMs,
       unchangedBackupCycle: unchangedBackupMs,
+      quitDuringBackup: quitMs,
       historicalRead: historicalReadMs,
       preview: previewMs,
     },
@@ -608,8 +670,9 @@ export async function runNamespaceHistory({
       "backup-settings-native-save-without-capture-or-modal-dismissal",
       "unconfigured-google-native-panel-and-typed-destination-chooser",
       "history-absolute-local-datetime-with-ago",
-      "centered-native-shutdown-progress-and-cancel-focus-restoration",
-      "manual-backup-survives-qa-withdrawal-and-captures-latest-note",
+      "manual-backup-captures-latest-note",
+      "qa-during-backup-saves-core-and-releases-lease-without-final-capture",
+      "uncaptured-edits-survive-exit-and-are-backed-up-by-restarted-service",
       "unchanged-backup-receipt-skips-restic-and-transfer-restart",
       "group-create-and-rename-without-note-mutation",
       "child-note-placement-and-distinct-entry-id",

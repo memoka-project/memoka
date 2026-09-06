@@ -13,7 +13,7 @@ Memokaは、Vimが手に馴染んでしまいメモ帳では満足できず、Ma
 
 ## 対応環境とインストール
 
-v0.1.8の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
+v0.2.0の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
 Microsoft Store、apt repositoryは提供しません。
 
 ### Linux x86_64
@@ -217,8 +217,9 @@ corepack pnpm cli:build
 固定版Resticとrcloneも同じディレクトリへ配置されます。CLIを移動する場合は`restic`と`rclone`（Windowsは`.exe`付き）も
 隣に置いてください。CLIの実行にNode.js、GTK、WebViewは不要です。Linux Releaseでは両sidecarを含むarchiveも提供します。
 
-Google Drive用のCLI接続は`memoka-cli cloud connect google-drive --name <label>`です。専用Desktop OAuth client設定が必要です。
-実験的機能の設定と復旧commandは[Help](doc/help.md)、clientの安全な配置と未検証事項は[開発者向け手順](doc/development/google-drive-backup.md)を参照してください。
+Google Drive用のCLI接続は`memoka-cli cloud connect google-drive --name <label>`です。公式AppImageとCLIはMemoka用Desktop OAuth client設定を組み込み済みです。
+source buildでは`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`にDesktop client JSONの絶対pathを指定するか、CLIの`--client-file`で指定できます。
+実験的機能の設定と復旧commandは[Help](doc/help.md)、OAuthの配置・配布条件は[認証設定の仕様](doc/specification/platform-release-and-security.md#72-oauth-clientの設定と配布)を参照してください。
 
 ## 開発
 

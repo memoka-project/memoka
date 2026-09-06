@@ -62,7 +62,7 @@ Restic 0.19.1を同梱し、`.memoka-backups/restic/`へ自動保存する。
 利用者にパスワード入力を要求しないが、秘密保護のある保存先とは表示しない。
 
 初期世代がない場合、および未包含の変更がある場合に保存する。既定間隔は15分で、
-`:backup-settings`から1〜1440分に変更できる。起動時、終了時、Workspace切替、更新適用前にも確認する。
+`:backup-settings`から1〜1440分に変更できる。起動時、Workspace切替、更新適用前にも確認する。通常終了では新しいcaptureを作らない。
 アプリ停止中の常駐serviceは作らない。`:backup`で未包含変更の保存と追加先転送を要求できる。
 
 `content_epoch`はNote内容、Namespace配置・名前・Trash、添付catalogの確定と同じSQLite transactionで進む。
@@ -138,7 +138,8 @@ schema 2の`path`/`credential`、旧単一`additional`、status、転送台帳�
 表示名で場所を特定せず、作成応答で得たfolder IDと検証済みrepository IDを保持する。
 
 Google接続はOSユーザー単位でWorkspace外へ保存し、複数保存先から共有できる。OAuth tokenとResticパスワードは別の秘密である。
-専用Desktop OAuth client未設定時はGoogle接続だけを無効化する。OSブラウザ、loopback callback、state、PKCE S256を用い、
+公式AppImageとCLIは同じMemoka用Desktop OAuth clientを組み込む。client未設定のsource buildではGoogle接続だけを無効化する。
+OSブラウザ、loopback callback、state、PKCE S256を用い、
 要求scopeは`drive.file`のみ。これは専用folderだけのOAuth権限ではなく、アプリが扱えるfileへの権限である。
 再認証は別の暗号化configで行い、同じclient/account、scope、登録root・repository IDの検証後に切り替える。
 
@@ -148,7 +149,9 @@ folder作成応答が不明な場合はnonce照合し、未発見/複数候補�
 
 通常Google転送は1世代の転送、検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
 新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
-自動転送はuploadを先に完了し、検証・整理は30秒以上入力操作がないidle判定時のtickで開始する。明示的な「今すぐ転送」も検証・整理を再試行できる。
+自動転送はuploadを先に完了し、検証・整理は30秒以上キー入力・クリック・スクロールがなく、検索索引更新がidleで、
+先行するcapture等がないtickで開始する。tick完了から次の確認まで60秒待つため、転送完了から検証開始までの固定期限はない。
+明示的な「今すぐ転送」はこの無操作待ちによらず検証・整理も再試行できる。
 複数先に転送できるデータがある場合、後続の検証・整理よりuploadを優先する。
 copy前には接続先identityとローカルsourceを確認するが、毎回のremote全世代一覧・検証は行わない。
 成功したcopyは期待descriptorを`TransferLedger.awaiting_verification`に永続化し、転送待ちから外す。`delivered`・保護済み日時は進めない。
@@ -176,7 +179,9 @@ Google上のfolderと世代は削除しない。status/設定の通常表示はm
 ユーザーによる実Driveの接続・保存先登録と一部世代の転送は確認済みである。
 **token更新・認可取消後の再アクセス・別OSプロファイル復旧は未検証であり、正式提供可とは判定しない。**
 OAuth client変更で以前のbackupにアクセスできる保証はなく、scopeの自動拡大や空repositoryへの置換は行わない。
-設定手順と受け入れ試験の結果は[Google Drive開発・検証記録](../development/google-drive-backup.md)を参照する。
+client設定・配布条件は[Platform、配布、Security](platform-release-and-security.md#72-oauth-clientの設定と配布)、
+正式提供へ移行するための条件は[検証](validation.md#google-driveの追加検証)に集約する。
+実験的機能としての同梱は、長期利用・別PC復旧の検証完了を意味しない。
 
 ## 7. 保持と容量回収
 
@@ -214,7 +219,12 @@ Googleは1世代のcopy後に別の整理単位を巡回する。整理前には
 ## 8. 終了・切替・キャンセル
 
 OS close、`:quit`、`:q`、`:qa`は共通shutdown処理を使う。
-確定Core保存を先にflushし、未包含変更のローカル履歴と追加先への転送を待つ。
+確定Core保存を先にflushし、バックグラウンド処理の安全な中断・子process回収後に終了する。
+終了のためのlocal captureや転送を開始せず、転送/検証/保持整理の成功は待たない。
+既存の未包含epoch、pending/awaiting_verification台帳と最後の正常世代を残し、次回起動後に再開する。
+終了後は常駐処理を持たない。端末に保存済みでも外部には未保護の場合があり、終了ごとの世代作成は保証しない。
+Core保存失敗は終了を阻止する。停止失敗も独立したstopping-errorとし、子processを残した強制続行を提供しない。
+停止失敗から編集へ戻る場合も停止を再確認してからbackground admissionを再開する。
 
 同じNativeServiceで確認済みのbackup cycleについて、process-local receiptでno-opを早期判定する。
 Core保存barrier自体は省かず、SQLite read transactionで現在のcontent_epoch、保存済みepoch、保存先設定、転送台帳を照合する。
@@ -224,25 +234,26 @@ receiptが成立する場合は全Noteのvalidate、Restic起動・世代一覧�
 receiptは永続化せず、再起動時は通常確認する。編集、保存先の追加/変更、転送失敗や台帳不一致、明示check/maintain等は通常経路へ戻す。
 snapshotを変更しない正常なidle保持確認はreceiptを捨てない。これは完全性検査ではなく、明示checkや変更時の検証を代替しない。
 通常のcloud tickもreceiptにより未転送がなければ新しいworkerを起動しない。idle/manualの検証・整理は独立して実行する。
-開始済みworkerは省略判定で中断しないため、終了時に実行中の検証・整理が残れば従来どおり完了を待つ。
+通常のbackup no-op判定だけでは開始済みworkerを中断しない。quitはこの判定とは別に中断し、切替・更新は完了待ちを継続する。
 
 終了・Workspace切替・Updaterは同じ進捗overlayで、保存中、履歴作成・転送中、編集復帰中、中断待ち、実行中、失敗を区別する。
 再試行、操作のキャンセル、バックアップだけを中断して続行する選択肢を用意する。
 省略はCore保存成功後に限り、正本保存の失敗を無視して終了する選択肢は提供しない。
-「終了/切替/更新を取り消す」（Esc/Ctrl-cを含む）はdeparture待機だけを解除し、開始済みのcapture/copy/検証を継続する。
+「切替/更新を取り消す」（Esc/Ctrl-cを含む）はdeparture待機だけを解除し、開始済みのcapture/copy/検証を継続する。
 進捗pollと未開始の最終capture待機を解除し、転送のcancel token・失敗状態・保護済み日時には触れない。
 nativeのdeparture待機は操作IDに所属させ、取消済み操作の遅延応答や解除が新しいdepartureへ作用しないようにする。
 CLI単独実行の転送待機はGUIのdepartureに所属せず、GUIの操作取消では解除しない。
-「バックアップを中断して続行」だけが処理全体に属するtokenで後続phaseも停止し、子processの回収後に完了する。
+通常quitと切替/更新の「バックアップを中断して続行」は処理全体に属するtokenで後続phaseも停止し、子processの回収後に完了する。
 LinuxではRestic本体だけへSIGINTを送り、rcloneを生かしたまま最大20秒のlock解除猶予を与える。
 Windowsの非console childでは自然終了を同じ上限まで待つ。正常解除を保証するものではない。
 猶予を過ぎたらprocess group / Job Objectの子孫まで強制終了・回収し、leaseを解放する。
 
-終了・切替・更新の追加先待機には時間上限を設けず、30秒でtimeoutにしない。通常の1時間処理上限と接続・無応答timeoutは別に維持する。
-終了準備の開始時にnative workerを転送優先・後続検証/整理保留へ切り替える。進行中の単位は中断せず、その完了を待つ。
-未開始の検証・整理は終了を妨げず、検証台帳から次回起動後に再開する。操作取消で通常のidle検証を再び許可する。
-未検証は保護済みではなく、転送後の検証エラーだけで終了を阻止しない。GUIにこの違いを表示する。
-明示中断ではResticとrcloneの子孫まで終了し、lease解放を待つ。キャンセル後に遅れて届いたtickは再開操作まで拒否する。
+切替・更新の追加先待機には時間上限を設けず、30秒でtimeoutにしない。通常の1時間処理上限と接続・無応答timeoutは別に維持する。
+切替・更新準備の開始時にnative workerを転送優先・後続検証/整理保留へ切り替え、進行中の単位は自然終了を待つ。
+未開始の検証・整理は検証台帳から再開できる。切替・更新の操作取消で通常のidle検証を再び許可する。
+未検証は保護済みではなく、転送後の検証エラーだけで切替・更新を阻止しない。GUIにこの違いを表示する。
+中断ではResticとrcloneの子孫まで終了し、lease解放を待つ。キャンセル後に遅れて届いたtickは再開操作まで拒否する。
+意図したCANCELLEDは失敗回数へ加算せず、次回再開用の通信backoffを付けない。過去のCANCELLEDに残るbackoffも無視するが、認証/identity等の恒久障害は無視しない。
 
 ローカル成功/追加先のみ失敗は別表示し、追加先未完了を自動的に無視して切替・更新へ進まない。
 `:switch-workspace`では旧EditorをCore保存とバックアップの完了までmountしたまま保ち、旧controllerは切替後に再開しない。
@@ -308,9 +319,9 @@ allowlistだけをprivate stagingへ取り出し、DB integrity、Yjs replay、N
 ### 11.1 Google接続とrepository単独復旧
 
 ```bash
-memoka-cli cloud connect google-drive --name recovery --client-file /absolute/google-desktop-client.json
+memoka-cli cloud connect google-drive --name recovery
 memoka-cli cloud list --format json
-memoka-cli cloud reconnect --connection <id> --client-file /absolute/google-desktop-client.json
+memoka-cli cloud reconnect --connection <id>
 memoka-cli cloud disconnect --connection <id>
 memoka-cli cloud disconnect --connection <id> --stop-destinations
 memoka-cli backup list --connection <id> --drive-folder-id <folder-id> --password-stdin
@@ -318,6 +329,7 @@ memoka-cli backup check --connection <id> --drive-folder-id <folder-id> --passwo
 memoka-cli backup restore --connection <id> --drive-folder-id <folder-id> --generation <generation-id> --target <empty-data-area> --password-stdin
 ```
 
+公式CLIは組み込みclientを使用する。元接続が異なるclientを使う場合やsource buildでは、同じclient JSONを`--client-file <absolute-path>`で指定する。
 接続操作とpassword入力は別commandにし、stdinを競合させない。`--no-browser`はこの端末のloopback URLを自動openせず表示する。
 OOB code貼り付け認証ではない。GUIや元Workspaceを要求せず、OS資格情報ストアを使う。keyringなしで平文保存するfallbackはない。
 `--repository`とcloud locatorは排他的で、Googleへの`--insecure-no-password`を拒否する。

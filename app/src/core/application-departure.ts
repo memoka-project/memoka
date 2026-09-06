@@ -13,11 +13,13 @@ export interface ApplicationDepartureProgress {
   readonly stage:
     | "saving"
     | "backup"
+    | "stopping"
     | "resuming"
     | "cancelling"
     | "closing"
     | "saving-error"
     | "backup-error"
+    | "stopping-error"
     | "operation-error";
   readonly backup: BackupState | null;
   readonly error?: string;
@@ -48,10 +50,10 @@ interface Departure {
   attempt: AbortController | null;
 }
 
-/** One save/backup barrier for quit, workspace switching and the updater.
- * Errors remain interactive; only a successful Core save permits skipping
- * backup. Withdrawing departure detaches its wait, not the backup. Only an
- * explicit skip cancels/reaps native children before closing the workspace. */
+/** All departures require durable Core saves. Quit stops/reaps background work
+ * without creating a final backup or waiting for upload/verification success.
+ * Switching/updating still wait for backup unless explicitly skipped;
+ * withdrawing their wait does not cancel a running backup. */
 export class ApplicationDeparture {
   private current: Departure | null = null;
   constructor(
@@ -113,12 +115,21 @@ export class ApplicationDeparture {
     this.show(session, stage);
     try {
       await this.paint();
-      await session.options.backup?.setDeparture?.(true, session.id);
+      if (session.options.kind !== "quit")
+        await session.options.backup?.setDeparture?.(true, session.id);
       await session.options.save();
       session.coreSaved = true;
       if (!this.waiting(session, attempt)) return;
       const { controller, backup } = session.options;
-      if (controller && backup) {
+      if (session.options.kind === "quit" && controller) {
+        // Do not query a repository or start a final capture on exit. Stop
+        // existing work only after Core edits are durable, and retain the
+        // native lease until child processes and their lock cleanup finish.
+        stage = "stopping";
+        this.show(session, stage);
+        await this.paint();
+        await controller.cancel();
+      } else if (controller && backup) {
         stage = "backup";
         this.show(session, stage);
         const timer = setInterval(() => {
@@ -165,7 +176,11 @@ export class ApplicationDeparture {
       if (this.waiting(session, attempt))
         this.show(
           session,
-          stage === "saving" ? "saving-error" : "backup-error",
+          stage === "saving"
+            ? "saving-error"
+            : stage === "stopping"
+              ? "stopping-error"
+              : "backup-error",
           error,
         );
     } finally {
@@ -205,13 +220,16 @@ export class ApplicationDeparture {
     if (
       !session ||
       session.action !== "wait" ||
-      ["saving", "closing", "cancelling", "resuming"].includes(
+      ["saving", "closing", "stopping", "cancelling", "resuming"].includes(
         session.progress.stage,
       ) ||
       (proceed &&
-        (!session.coreSaved || session.progress.stage === "operation-error"))
+        (!session.coreSaved ||
+          session.progress.stage === "operation-error" ||
+          session.progress.stage === "stopping-error"))
     )
       return;
+    const stoppingFailed = session.progress.stage === "stopping-error";
     session.action = proceed ? "skip" : "cancel";
     session.attempt?.abort();
     this.show(session, proceed ? "cancelling" : "resuming");
@@ -220,16 +238,24 @@ export class ApplicationDeparture {
         await session.options.controller?.cancel();
         await this.complete(session);
       } else {
+        // If stopping timed out, do not reopen background admission before
+        // native children are reaped. The local editing state remains intact.
+        if (stoppingFailed) await session.options.controller?.cancel();
         // Release only this departure's observer. Cloud copy and verification
         // keep their own cancellation tokens and continue in the background.
-        await session.options.backup?.setDeparture?.(false, session.id);
+        if (session.options.kind !== "quit")
+          await session.options.backup?.setDeparture?.(false, session.id);
         this.finish(session, false);
       }
     } catch (error) {
       session.action = "wait";
       this.show(
         session,
-        session.coreSaved ? "backup-error" : "saving-error",
+        stoppingFailed
+          ? "stopping-error"
+          : session.coreSaved
+            ? "backup-error"
+            : "saving-error",
         error,
       );
     }

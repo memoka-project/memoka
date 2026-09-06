@@ -126,9 +126,11 @@ schema 3移行、資格情報/環境/子孫process、lease、scheduler、GUI入�
 転送後検証のremote `dump/ls`回数が無関係な世代数に比例しないこと、対象世代・欠損・再試行の検証が残ることを確認する。
 Driveのupload完了を保護済みと混同しないこと、検証待ちの再起動/元世代のlocal保持整理後の再開、copy応答喪失時の非重複、検証不一致時の保護日時維持を実Resticで検査する。
 未検証世代がある追加先ではforget/pruneを保留し、検証・整理の一時障害は新規uploadをbackoffしない。
-終了の待機上限はなく、nativeで31秒・frontendで仮想120秒待機してもtimeout/cancelしない。終了準備中に未開始の検証・整理を開始せず、取消で再開できることを確認する。
-`:backup`→`:qa`→終了取消では転送を中止せず、編集へfocusが戻り、古い進捗poll・未開始の最終captureを止める。
-取消直後の再`:qa`と遅延応答、取消済みIDの再解除、CLIの独立した待機を検査する。切替・更新取消も同様とし、明示中断時だけ子processの回収を待つ。
+通常quitは確定Core保存を最初に完了し、backup flush/status/転送待機を呼ばずにcancel・子process回収を行う。
+実行中backupがあってもfinal captureを開始せず、Core保存失敗や停止失敗から強制終了しない。未包含編集は再起動後にcaptureできることをnative gateで確認する。
+意図したCANCELLEDは既存のpending/保護日時を維持し、通信失敗回数やbackoffを追加しない。実際の通信失敗や認証障害は通常処理する。
+切替・更新の転送待機はnativeで31秒・frontendで仮想120秒待機してもtimeout/cancelしない。未開始の検証・整理は保留し、取消で再開できる。
+切替・更新取消では転送を中止せず、古い進捗poll・未開始の最終captureを止める。取消直後の再操作と遅延応答、取消済みIDの再解除、CLIの独立した待機も検査する。
 確認済みの無変更cycleではCore barrier後のRestic/転送起動を省き、status・保護日時・世代を変更しない。cold startは省略しない。
 変更epoch、保存先追加/変更/無効化、待ち件数0だが未包含世代がある台帳、repository ID不一致、local履歴/保存先の欠落・snapshot差替えを検査する。
 転送済み検証待ちはno-op判定を妨げず、実行中のworkerを中断しない。native GUI＋owner CLI経由で無変更cycleの省略と経過時間を記録する。
@@ -142,7 +144,25 @@ Linuxでは実Resticの中断後にlock fileが消えること、後始末中に
 実Googleアカウントの認証、token更新、認可取消後の既存root参照、元config/keyringを使わない別OSユーザー/別PC復旧が正式提供のgateである。
 Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切替/Updater、中断後の子孫回収もnative確認する。
 未知object、shortcut、同名衝突では整理を止める。ゴミ箱移動と空き容量の区別を実確認する。
-未実施を省略せず、[Google Drive開発・検証記録](../development/google-drive-backup.md)に環境と受け入れID別結果を残す。
+次の境界を別々に検証し、未実施を合格扱いしない。実験的機能の同梱と、Google Driveの正式な復旧保証を区別する。
+
+| 境界       | 確認条件                                                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 認証       | OSブラウザの許可・拒否・取消、state不一致、callback再送、token期限後のrefresh、旧client/accountと一致しない再認証の拒否             |
+| 資格情報   | keyring lock/利用不能、Linux権限・Windows ACL/reparse、GUI/CLI・別Workspaceの共有接続lease、更新失敗で旧config/keyを保持            |
+| repository | 専用root作成の応答喪失とnonce照合、folder rename後のID継続、重複名・shortcut・unknown object・root/ID不一致で操作停止               |
+| 実転送     | 複数先、独立password、30秒超の転送中の編集・local Capture・履歴read、再起動後のpending/検証再開、429/403/容量不足/通信断            |
+| 終了と保持 | 通常quitの安全な中断、切替/更新の待機と取消、process/lock回収、最新世代保持、検証待ちの整理保留、Driveのゴミ箱移動                  |
+| 単独復旧   | 元Workspace・config・keyringのない別OSユーザー/PCで同じclientへ認証し、保管folder IDとpasswordだけでlist/check/restore              |
+| 認可取消   | Google側でproject認可を取り消した後の再認証と既存rootアクセス。不可なら自動scope拡大・空repository再作成で回避しない                |
+| 配布       | AppImageとCLIに同じ有効なDesktop clientを同梱し、個人の設定fileなしで認証操作が有効。通常panel表示だけではkeyring/networkを使わない |
+
+実アカウント試験は専用の非機密Workspaceで行う。OS、Git revision、sidecar hash、日時、試験条件と成否を
+CI/ローカル証拠/Release本文へ記録し、本文・token・password・認可code・生の子process出力を残さない。
+通常の自動試験は実Googleへ接続せず、配布OAuth設定の不足・Web client・利用者tokenの混入・binaryへの組み込み漏れも検査する。
+署名付きassetそのものの検査と、local/fake transportの検査を混同しない。
+`tauri:history-e2e`は`MEMOKA_TAURI_APP`と`MEMOKA_E2E_CLI`で取得済み配布物を指定できる。
+OAuth組み込み版のpanel試験には`MEMOKA_E2E_GOOGLE_CONFIGURED=1`を指定し、個人設定なしで接続操作が有効になることを確認する。
 
 ### 共通回帰試験
 
@@ -157,7 +177,7 @@ Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切�
 - 失敗時にNote、IDs、revision、Undoが変化せず、plain text fallbackもしないこと
 - DB2/3/4の最終Yjs状態をlive/Trash/Help全件preflightし、H6超過・破損時は元DB/WAL/添付/旧mirrorを変更しないこと
 - rollback用SQLite Online Backup、DB5へのatomic移行、途中失敗後の再試行
-- 空Workspaceの初回世代、dirty起動・interval・終了・切替・更新前capture、UI/cacheだけならepoch不変
+- 空Workspaceの初回世代、dirty起動・interval・切替・更新前capture、通常終了ではcaptureせず次回起動へ持越し、UI/cacheだけならepoch不変
 - 長いNoteのcapture/copy中も編集可能であること、snapshotとdescriptorの同一時点・hash/revision/catalog一致
 - 添付全件（未参照を含む）とknown_missing、破損・symlink・reparse拒否、1 GiB reserve不足
 - 独立repositoryのkey/id、password漏洩防止、repository消失・取り違え、crash後のaccepted世代再構築
@@ -166,7 +186,7 @@ Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切�
 - 複数保存先の独立パスワード・再登録・無効化/再開・一部未接続・転送時間切れ、旧単一先/初期化intent移行
 - 統合backup-settings modalの状態pollと編集draft保持、絶対日時+ago、狭幅表示、日時clockによるEditor再描画がないこと
 - capture/copyとmaintenanceのlease、cancel後のphase開始禁止、timeout/cancel時の子process回収
-- 終了進捗・retry/cancel、Core保存失敗時はskip禁止、追加先待機時間上限
+- 終了進捗・retry/cancel、Core保存失敗/停止失敗時は強制終了禁止、切替・更新の追加先待機には30秒上限なし
 - Native CLIとGUIの論理行契約、revision/query-bound cursor、Trash明示、同世代link/画像、URLをfetchしないこと
 - GUIありは保存barrier付きowner IPC、GUIなしは同じlease。IPC失敗後にheadless fallbackしないこと
 - readのみではmigration・Help同期・repo初期化をせず、DISPLAY/DBUSなしでCLIが動くこと

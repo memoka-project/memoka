@@ -132,6 +132,8 @@ describe("Memoka Workspace search palette", () => {
       idFactory: deterministicIds(),
       initialTitle: "fallback target",
       workspaceSearchIndex: index,
+      // Past-event assertions must not race the shared display clock's tick.
+      clock: () => "2026-08-04T00:00:00.000Z",
     });
     await runtime.flush();
     index.failQuery = new Error("injected FTS failure");

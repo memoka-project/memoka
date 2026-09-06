@@ -136,7 +136,7 @@ describe("shared floating modal dialogs", () => {
     expect(document.documentElement.scrollTop).toBe(pageScroll);
   });
 
-  it.each(["saving", "closing", "cancelling", "resuming"] as const)(
+  it.each(["saving", "closing", "stopping", "cancelling", "resuming"] as const)(
     "does not cancel the protected %s stage or pass keys through to the editor",
     (stage) => {
       const cancel = vi.fn();
@@ -175,7 +175,7 @@ describe("shared floating modal dialogs", () => {
     const skip = vi.fn();
     const props = { onRetry: retry, onCancel: cancel, onSkip: skip };
     const progress: ApplicationDepartureProgress = {
-      kind: "quit",
+      kind: "switch-workspace",
       stage: "backup-error",
       backup: null,
       error: "保存先がオフライン",
@@ -193,7 +193,7 @@ describe("shared floating modal dialogs", () => {
     expect(retry).toHaveBeenCalledOnce();
     expect(skip).not.toHaveBeenCalled();
     fireEvent.click(
-      screen.getByRole("button", { name: /バックアップを中断して終了/ }),
+      screen.getByRole("button", { name: /バックアップを中断して切り替え/ }),
     );
     expect(skip).toHaveBeenCalledOnce();
     view.rerender(
@@ -204,6 +204,35 @@ describe("shared floating modal dialogs", () => {
     );
     expect(
       screen.queryByRole("button", { name: /バックアップを中断/ }),
+    ).toBeNull();
+  });
+
+  it("explains deferred quit backup and never offers to bypass child cleanup", () => {
+    const props = { onRetry: vi.fn(), onCancel: vi.fn(), onSkip: vi.fn() };
+    const view = render(
+      <ApplicationShutdownProgress
+        {...props}
+        progress={{ kind: "quit", stage: "stopping", backup: null }}
+      />,
+    );
+    expect(screen.getByRole("dialog").textContent).toContain(
+      "バックアップの完了は待たず",
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    view.rerender(
+      <ApplicationShutdownProgress
+        {...props}
+        progress={{
+          kind: "quit",
+          stage: "stopping-error",
+          backup: null,
+          error: "cleanup failed",
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "再試行" })).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: /バックアップを中断して終了/ }),
     ).toBeNull();
   });
 });

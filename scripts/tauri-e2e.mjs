@@ -3956,14 +3956,17 @@ if (namespaceHistoryOnly) {
         screenshot: (name) => screenshot(firstSession, name),
       }),
     };
-    await screenshot(firstSession, "namespace-history-tauri.png");
+    // This suite now exercises a real :qa and finishes with headless reads.
+    // Its last GUI screenshot is taken before the application is closed.
     writeFileSync(
       `${evidenceDirectory}/namespace-history-tauri.json`,
       `${JSON.stringify(result, null, 2)}\n`,
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
-    await screenshot(firstSession, "namespace-history-tauri-failure.png");
+    await screenshot(firstSession, "namespace-history-tauri-failure.png").catch(
+      () => undefined,
+    );
     throw error;
   } finally {
     await closeSession(firstSession);

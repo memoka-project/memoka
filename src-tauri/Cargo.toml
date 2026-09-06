@@ -1,6 +1,6 @@
 [package]
 name = "memoka-desktop"
-version = "0.1.8"
+version = "0.2.0"
 description = "Memoka local-first structured notes desktop application"
 edition = "2024"
 publish = false

@@ -62,15 +62,31 @@ cross compileも行う。
 Linux release workflowがdraftを生成する。
 
 1. version、third-party notice、通常検証、large-note gateを確認する。
-2. release専用Tauri設定を生成する。
+2. release専用Tauri設定を生成し、配布するDesktop OAuth clientが正しいGoogle `installed`形式で利用者token等を含まないことを検証する。
 3. Linux AppImageとUpdater signature/`latest.json`をbuildする。
-4. standalone Linux CLI、SHA-256、SBOMを添付する。
+4. GUI/CLI binaryに指定したOAuth client設定が組み込まれていることを検査し、standalone Linux CLI、SHA-256、SBOMを添付する。
 5. Windows executable/MSIが添付されていないことを確認する。
 6. draft assetそのものをnative環境で手動確認する。
 7. publish workflowで同じdraftを再buildせず公開する。
 
 公開時はGitHub Releaseをlatestにする。private signing keyはGitHub Environment secretとoffline backupだけで管理し、
 repositoryやartifactへ含めない。
+
+### 5.1 公開手順と互換性
+
+`corepack pnpm verify`、`corepack pnpm large-note-gate`、`corepack pnpm release:check-version -- --version=X.Y.Z`、
+`corepack pnpm release:notices`を実行する。native履歴・終了経路は隔離した一時Workspaceで`corepack pnpm tauri:history-e2e`を実行する。
+手元の試験・CI・署名付き配布物の試験を区別し、結果はCI、`evidence/generated/`のローカル証拠、Release本文へ記録する。
+仕様書へ開発経緯や過去の全試験ログを複製しない。
+
+動作確認済みの`develop`を`main`へ統合し、通常CI成功後にtagをpushする。
+`release-draft.yml`完了後、assetを取得してSHA-256、Updater署名、AppImageの起動、CLIと両sidecarを確認する。
+`release-publish.yml`を対象versionで実行し、試験済みdraftをそのまま公開する。build失敗・asset不足は公開しない。
+
+Namespace対応前のWorkspaceはDB schema 5 / NoteDoc・WorkspaceMetadataDoc schema 3へ移行する。
+更新前にMemokaを閉じ、Workspace全体を外部へコピーする。移行後のWorkspaceを旧版で開かない。
+H6超過・破損のpreflight拒否とrollback copyは外部バックアップの代わりではない。
+常時Markdown mirrorは生成せず、既存mirrorは削除しない。旧mirrorから別の空Workspaceへの復旧CLIは維持する。
 
 ## 6. Updater
 
@@ -81,7 +97,7 @@ Updaterは公式Linux AppImageだけで有効にする。release buildへ埋め�
 - 自動download/installしない。
 - `:update`でrelease情報を表示し、利用者がEnterで確定した場合だけ適用する。
 - offline、no update、download失敗、署名不正では現在versionとWorkspaceを変更しない。
-- 適用前にCore保存barrierと必要なlocal履歴をflushし、追加先copyには待機時間上限を設ける。
+- 適用前にCore保存barrierと必要なlocal履歴をflushし、追加先copyを待つ。通常quitの「完了を待たない」方針はUpdaterには適用しない。
 
 source buildとWindows local buildではUpdaterを無効にし、`:update`は署名済み配布版だけで利用可能であることを通知する。
 
@@ -112,6 +128,46 @@ Resticパスワードとは別のkeyであり、Workspace DB/Captureへ入れな
 親directoryと更新・失敗時のside fileにもUnix 0700/0600またはWindows owner/SYSTEM ACLを適用し、symlink/reparseを拒否する。
 接続単位とrepository ID単位のOS-user leaseにより、別Workspace/GUI/CLIをまたぐ並行利用を除外する。
 再認証では旧configを上書きせず、新configの検証が成功してからmetadataの参照を切り替える。
+
+### 7.2 OAuth clientの設定と配布
+
+公式AppImageとstandalone CLIは同じMemoka用Google Desktop OAuth client JSONをcompile時に組み込む。
+配布物の利用者はJSONを別途配置せず、`:backup-settings`または`cloud connect`から認可できる。
+同梱はGoogleへの自動接続・利用者の認可・バックアップ完了を意味しない。
+
+Desktop clientは配布先から抽出できるアプリ識別情報であり、`client_secret`の秘匿を安全性の前提にしない。
+利用者のaccess/refresh token、認可code、Resticパスワード、config暗号鍵は同梱しない。
+これは[Googleのinstalled appモデル](https://developers.google.com/identity/protocols/oauth2/native-app)に従う。
+配布元はJSONをGitHub `release-signing` Environmentの`MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON` secretで管理し、
+GUI/CLIのbuild環境へだけ渡す。ソース、生成Tauri設定、frontend、ログ、SBOMへJSONを複製しない。
+secret管理は誤露出防止であり、配布binary内での秘匿を保証しない。未設定・不正な設定の公式release buildは失敗させる。
+
+Google Cloud側で配布元が管理する設定は次である。Memokaがproject作成や公開設定の変更を自動実行することはない。
+
+1. Memoka用projectでGoogle Drive APIを有効にする。
+2. 同意画面のアプリ情報、連絡先、ホームページ・Privacy情報を設定し、Testingの場合はtest userを登録する。
+3. OAuth clientは**Desktop app**とし、Web application、service account、rclone共用clientを使わない。
+4. scopeは`https://www.googleapis.com/auth/drive.file`だけとする。[Drive scopeの定義](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)に従い、自動拡大しない。
+5. `installed.client_id` / `installed.client_secret`を持つGoogle形式のJSONを配布設定に登録し、元のclientを復旧時にも維持する。
+
+Google projectの公開範囲・審査とGitHub Releaseの公開は別である。Testing状態では対象アカウントが限定され、
+refresh tokenが通常7日で失効する条件もある。[Googleのtoken期限](https://developers.google.com/identity/protocols/oauth2#expiration)を確認する。
+アプリ公開だけでGoogle側の条件が変わったと扱わない。
+
+自前clientを使用する場合の解決順は、CLIの`--client-file`、環境変数`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`、
+標準配置、組み込み設定である。標準配置はLinuxでは通常`$XDG_CONFIG_HOME/dev.memoka.desktop/google-desktop-client.json`
+（未設定時は`$HOME/.config`以下）、Windowsでは通常`%APPDATA%\dev.memoka.desktop\google-desktop-client.json`である。
+指定fileは絶対pathの通常fileに限定し、file・祖先directoryのsymlink/reparseを拒否する。
+明示指定が不正でも他のclientへfallbackしない。すべて未設定ならGoogle接続だけを無効化する。
+
+```bash
+MEMOKA_GOOGLE_OAUTH_CLIENT_FILE=/absolute/google-desktop-client.json corepack pnpm tauri:dev
+memoka-cli cloud connect google-drive --name recovery --client-file /absolute/google-desktop-client.json
+```
+
+sourceから配布物を作る際も`MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON`をcompile環境へ設定すれば組み込める。
+再認証でclientを変更すると旧folderへのアクセスを保証できないため、既存接続は同じclientを要求する。
+Googleの認可取消後の再アクセス・別PC復旧は実験的機能の未検証条件として[検証仕様](validation.md#google-driveの追加検証)に残す。
 
 ## 8. 外部contentの安全性
 

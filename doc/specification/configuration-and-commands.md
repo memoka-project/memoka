@@ -35,10 +35,14 @@ Workspaceごとの設定であり、`:backup-settings`から変更する。パ�
 `:backup-settings`は状態表示を兼ねる中央floating modalで、ローカル/Google Driveの種類選択、保存先追加、
 保持数、無効化、解除、既存パスワード再登録を扱う。Google接続はWorkspace設定と別のOSユーザー単位で共有し、
 認証operationの進捗だけをpollする。接続の再認証/取消/ローカル解除と転送の開始/中断は別の操作である。
-Googleは実験的で、専用Desktop OAuth client未設定なら接続操作だけを無効化する。
-source buildは`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`で指定した絶対path、またはapplication config directoryの
-`google-desktop-client.json`を読む。tokenやパスワードを`config.toml`へ記載してはならない。
-通常cloudの転送・検証・整理は1単位1時間の固定上限を持つ。終了時の追加先待機には上限を設けず、未開始のDrive検証・整理は次回へ回す。
+Googleは実験的で、公式AppImageとstandalone CLIへMemoka用Desktop OAuth clientを組み込む。
+CLIの`--client-file`、`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`で指定した絶対path、application config directoryの
+`google-desktop-client.json`、組み込み設定の順に解決する。明示設定が不正なら組み込み設定へfallbackしない。
+source buildでいずれも設定されていない場合は接続操作だけを無効化する。
+配置・配布と管理者設定は[OAuth clientの仕様](platform-release-and-security.md#72-oauth-clientの設定と配布)を参照する。
+tokenやパスワードを`config.toml`へ記載してはならない。
+通常cloudの転送・検証・整理は1単位1時間の固定上限を持つ。通常終了はCore保存後に処理を中断し、未完了分を次回へ回す。
+切替・更新は追加先の転送を待ち、待機全体の時間上限は設けない。未開始のDrive検証・整理は後回しにする。
 
 既定font stackは次である。
 
@@ -188,7 +192,7 @@ Sidebar focus中も利用できる。
 | `:indent-width [16..64]`                          | 共通indent幅を表示/変更                                                       |
 | `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を表示/変更                                                     |
 | `:line-break-segmentation [mode]` / `:line-break` | 日本語表示改行を表示/変更                                                     |
-| `:quit` / `:q` / `:qa`                            | 確定編集と必要なlocal履歴を保存後に終了                                       |
+| `:quit` / `:q` / `:qa`                            | 確定編集を保存し、バックアップを安全に中断して終了（完了は待たない）          |
 | `:help`                                           | 管理Help Noteを同期して開く                                                   |
 
 ## 8. live setting picker

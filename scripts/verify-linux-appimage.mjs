@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { RESTIC_ARTIFACTS } from "./restic-artifacts.mjs";
 import { RCLONE_ARTIFACTS } from "./rclone-artifacts.mjs";
+import { assertEmbeddedGoogleDesktopClient } from "./google-oauth-client.mjs";
 import {
   appImageLauncherMarker,
   inspectSanitizedAppDir,
@@ -39,6 +40,12 @@ try {
     );
   }
   const appDir = join(extractionRoot, "squashfs-root");
+  if (process.env.MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON) {
+    assertEmbeddedGoogleDesktopClient(
+      await readFile(join(appDir, "usr", "bin", "memoka")),
+      process.env.MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON,
+    );
+  }
   const restic = await readFile(join(appDir, "usr", "bin", "restic"));
   if (
     createHash("sha256").update(restic).digest("hex") !==

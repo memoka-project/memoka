@@ -18,8 +18,10 @@ Workspace内の`.memoka-backups/restic`には、ノートと添付ファイル�
 Restic子processの環境へ渡します。引数、通常ログ、設定ファイルやバックアップ内容には保存しません。
 別環境での復旧に必要なパスワードは利用者自身でも安全に保管してください。追加先を解除しても既存repositoryは削除しません。
 
-Google Driveは現在実験的で、実アカウントでの認証更新・別PC復旧は未検証です。専用Desktop OAuth clientがない場合は
-接続できません。明示的な認可後だけ、同梱rcloneからGoogleへRestic暗号化済みのバックアップを送ります。
+Google Driveは現在実験的で、実アカウントでの認証更新・別PC復旧は未検証です。公式AppImageとCLIにはMemoka用の
+Desktop OAuth client設定を組み込みます。これはアプリの識別用設定であり、利用者のGoogle tokenやバックアップパスワードではありません。
+client設定を同梱していても、利用者が接続を開始・認可するまでGoogleへ接続しません。
+明示的な認可後だけ、同梱rcloneからGoogleへRestic暗号化済みのバックアップを送ります。
 ローカル履歴と同じく、過去・Trash・本文から参照されなくなった添付も保存対象です。
 scopeは`drive.file`で、アプリが扱えるファイルへの権限です。「特定の1フォルダーだけのOAuth権限」ではありません。
 GoogleにはIP、API request、転送量、時刻、objectサイズ、専用フォルダー表示名等が伝わります。これらまで暗号化で隠すものではありません。

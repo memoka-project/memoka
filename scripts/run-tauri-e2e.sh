@@ -3,7 +3,7 @@ set -euo pipefail
 
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence_dir="${MEMOKA_EVIDENCE_DIR:-${workspace_dir}/evidence/generated}"
-application="${workspace_dir}/target/release/memoka"
+application="${MEMOKA_TAURI_APP:-${workspace_dir}/target/release/memoka}"
 runtime_dir="$(mktemp -d)"
 driver_pid=""
 

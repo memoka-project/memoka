@@ -26,9 +26,13 @@ export function ApplicationShutdownProgress({
       : progress.kind === "update"
         ? "更新"
         : "終了";
-  const canCancel = !["saving", "closing", "cancelling", "resuming"].includes(
-    progress.stage,
-  );
+  const canCancel = ![
+    "saving",
+    "closing",
+    "stopping",
+    "cancelling",
+    "resuming",
+  ].includes(progress.stage);
 
   return (
     <ModalDialog
@@ -49,6 +53,11 @@ export function ApplicationShutdownProgress({
       <h2>{failed ? `${action}前の確認` : `${action}の準備をしています`}</h2>
       {!failed && <progress />}
       <p role="status">{shutdownProgressLabel(progress)}</p>
+      {progress.stage === "stopping" && (
+        <p>
+          編集内容はこの端末へ保存済みです。バックアップの完了は待たず、未完了分は次回起動後に再開します。実行中の処理があれば、安全な中断と後片付けだけを待ちます。
+        </p>
+      )}
       {progress.stage === "backup" && (
         <p>
           時間制限を設けず転送の完了を待ちます。Driveの未開始の検証・保持整理は後回しにし、次回起動後も再開します。実行中の検証・整理がある場合は、その処理の終了を待ちます。「
@@ -78,6 +87,8 @@ function shutdownProgressLabel(
   progress: ApplicationShutdownProgressState,
 ): string {
   if (progress.stage === "saving") return "変更を保存しています…";
+  if (progress.stage === "stopping")
+    return "バックグラウンド処理を停止しています…";
   if (progress.stage === "resuming")
     return "バックアップを継続して編集画面に戻ります…";
   if (progress.stage === "cancelling")
@@ -92,6 +103,8 @@ function shutdownProgressLabel(
     return "編集内容を保存できていないため、そのまま続行できません。";
   if (progress.stage === "operation-error")
     return "操作を完了できませんでした。現在のWorkspaceは保持されています。";
+  if (progress.stage === "stopping-error")
+    return "編集内容は保存済みですが、バックグラウンド処理の停止を確認できませんでした。再試行してください。";
   if (progress.stage === "backup-error")
     return "編集内容は保存済みです。履歴の保存または追加先への転送が完了していません。";
   const copying = progress.backup

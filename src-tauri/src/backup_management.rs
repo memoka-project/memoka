@@ -205,6 +205,46 @@ mod tests {
         );
     }
     #[test]
+    fn planned_cancellation_preserves_protection_and_does_not_add_retry_backoff() {
+        let now = chrono::Utc::now();
+        for kind in [CloudWork::Upload, CloudWork::Verify, CloudWork::Maintain] {
+            let mut status = DestinationStatus {
+                failure_count: 2,
+                pending_copy_count: 3,
+                pending_verification_count: 1,
+                protected_capture_at: Some("2026-09-06T00:00:00Z".into()),
+                ..Default::default()
+            };
+            record_cloud_failure(
+                &mut status,
+                kind,
+                &ReadError::new("CANCELLED", "stopped"),
+                now,
+            );
+            assert_eq!(status.phase, "cancelled");
+            assert_eq!(status.failure_count, 2);
+            assert!(status.next_retry_at.is_none());
+            assert_eq!(status.pending_copy_count, 3);
+            assert_eq!(status.pending_verification_count, 1);
+            assert_eq!(
+                status.protected_capture_at.as_deref(),
+                Some("2026-09-06T00:00:00Z")
+            );
+            // Also migrate the behavior of old CANCELLED statuses that still
+            // contain an exponential retry timestamp from an earlier version.
+            status.next_retry_at = Some((now + chrono::Duration::hours(1)).to_rfc3339());
+            assert!(cloud_retry_due(Some(&status), now, kind));
+            record_cloud_failure(
+                &mut status,
+                kind,
+                &ReadError::new("TEMPORARY", "offline"),
+                now,
+            );
+            assert_eq!(status.failure_count, 3);
+            assert!(!cloud_retry_due(Some(&status), now, kind));
+        }
+    }
+    #[test]
     fn deferred_failure_does_not_backoff_new_uploads() {
         let now = chrono::Utc::now();
         let mut status = DestinationStatus {
@@ -1511,25 +1551,7 @@ pub(crate) fn cloud_unit(
                         .into();
                     }
                     Err(error) => {
-                        state.phase = if error.code == "CANCELLED" {
-                            "cancelled"
-                        } else {
-                            "error"
-                        }
-                        .into();
-                        match kind {
-                            CloudWork::Upload => state.error = Some(error.clone()),
-                            CloudWork::Verify => state.verification_error = Some(error.clone()),
-                            CloudWork::Maintain => state.maintenance_error = Some(error.clone()),
-                        }
-                        state.failure_count = state.failure_count.saturating_add(1);
-                        let seconds = 30i64
-                            .saturating_mul(1i64 << state.failure_count.min(10))
-                            .min(3600)
-                            + (rand::random::<u16>() % 31) as i64;
-                        state.next_retry_at = Some(
-                            (chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339(),
-                        );
+                        record_cloud_failure(state, kind, error, chrono::Utc::now());
                     }
                 }
             })?;
@@ -1539,6 +1561,37 @@ pub(crate) fn cloud_unit(
         }
     }
     Ok(false)
+}
+fn record_cloud_failure(
+    state: &mut DestinationStatus,
+    kind: CloudWork,
+    error: &ReadError,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    state.phase = if error.code == "CANCELLED" {
+        "cancelled"
+    } else {
+        "error"
+    }
+    .into();
+    match kind {
+        CloudWork::Upload => state.error = Some(error.clone()),
+        CloudWork::Verify => state.verification_error = Some(error.clone()),
+        CloudWork::Maintain => state.maintenance_error = Some(error.clone()),
+    }
+    if error.code == "CANCELLED" {
+        // Normal quit now interrupts background work. This is not a network
+        // failure: keep the queue/protection intact and allow the next startup
+        // (or explicit resume) to retry without accumulating failure backoff.
+        state.next_retry_at = None;
+        return;
+    }
+    state.failure_count = state.failure_count.saturating_add(1);
+    let seconds = 30i64
+        .saturating_mul(1i64 << state.failure_count.min(10))
+        .min(3600)
+        + (rand::random::<u16>() % 31) as i64;
+    state.next_retry_at = Some((now + chrono::Duration::seconds(seconds)).to_rfc3339());
 }
 fn cloud_retry_due(
     state: Option<&DestinationStatus>,
@@ -1582,7 +1635,7 @@ fn cloud_retry_due(
         CloudWork::Maintain => &state.maintenance_error,
     };
     // A failed deferred check/cleanup must not delay the next upload.
-    if error.is_none() {
+    if error.as_ref().is_none_or(|error| error.code == "CANCELLED") {
         return true;
     }
     state

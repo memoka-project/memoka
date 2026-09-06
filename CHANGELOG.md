@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-07
+
+- **互換性の変更:** WorkspaceをNamespace付きのデータモデルへ移行。更新前にアプリを閉じてデータ領域全体の外部バックアップを取り、移行後の領域を旧版で開かないでください。深さH6を超える既存Section等は移行前検査で停止します。
+- Noteと整理専用Groupを分離したTreeを追加。常時Markdown mirrorを廃止し、MarkdownはClipboardとCLIの読み出しで出力。
+- ResticによるWorkspace内の自動履歴、履歴プレビュー、GUIなしの読み出し・検索・履歴検証・復旧CLIを追加。
+- パスワードと保持世代数（直近・日次・月次）が独立した複数バックアップ先、および保存先ごとの一時無効化に対応。
+- Google Driveを実験的な追加バックアップ先として追加。公式AppImageとCLIへMemoka用Desktop OAuth client設定を組み込み、利用者によるJSON配置を不要に変更。Googleへの明示認証は必要。転送を優先し、内容検証と保持整理は後のアイドル時へ分離。
+- 転送状況・検証待ち・工程別診断を拡充し、確認済みで変更のないbackup cycleの再走査と不要な転送worker起動を省略。
+- 通常終了は確定編集のローカル保存後にバックアップを安全に中断し、完了を待たず未完了分を次回起動へ持ち越すよう変更。Workspace切替とUpdaterは従来どおり必要なバックアップを待機。
+- バックアップ設定・終了準備等のダイアログを中央floating modalへ統一。日時は`YYYY/MM/DD HH:mm:ss`、過去のイベントは相対経過時間も併記。
+- ユーザー向け`:help`を`doc/help.md`から取り込むよう変更し、カテゴリ別の現行仕様書を`doc/`へ整理。Carbonfoxの配色も調整。
+- `doc/development`の開発記録から現行の契約・設定・検証条件をカテゴリ別仕様書へ統合し、開発記録を削除。
+
 ## [0.1.8] - 2026-09-05
 
 - 巨大なplain text貼り付けのUUID乱数生成をbatch化し、変更blockの再検索と通常文に対する不要なMarkdown全文解析を省いてLinux release gateを安定化。
@@ -74,7 +87,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/memoka-project/memoka/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/memoka-project/memoka/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/memoka-project/memoka/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/memoka-project/memoka/compare/v0.1.5...v0.1.6

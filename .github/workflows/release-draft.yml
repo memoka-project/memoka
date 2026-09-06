@@ -58,6 +58,7 @@ jobs:
       MEMOKA_UPDATER_PUBLIC_KEY: ${{ vars.MEMOKA_UPDATER_PUBLIC_KEY }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON: ${{ secrets.MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,6 +91,8 @@ jobs:
         run: corepack pnpm release:verify-appimage
       - name: Build standalone read and recovery CLI
         run: corepack pnpm cli:build
+      - name: Verify the distributed OAuth client in both binaries
+        run: node scripts/verify-release-oauth.mjs target/release/memoka target/release/memoka-cli
       - name: Stage CLI with its verified Restic and rclone sidecars
         run: node scripts/stage-cli-release.mjs
       - name: Archive CLI on Linux

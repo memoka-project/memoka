@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ApplicationDeparture,
+  type ApplicationDepartureKind,
   type ApplicationDepartureProgress,
 } from "../app/src/core/application-departure";
 import { backupFixture } from "./backup-fixture";
@@ -14,13 +15,13 @@ function deferred() {
   });
   return { promise, resolve };
 }
-function fixture() {
+function fixture(kind: ApplicationDepartureKind = "switch-workspace") {
   let progress: ApplicationDepartureProgress | null = null;
   const coordinator = new ApplicationDeparture((value) => {
     progress = value;
   });
   const options = {
-    kind: "quit" as const,
+    kind,
     save: vi.fn(async () => undefined),
     backup: backupFixture(),
     controller: {
@@ -35,6 +36,108 @@ function fixture() {
 }
 
 describe("shared quit/switch/update durability barrier", () => {
+  it("quits after Core save and safe child cleanup without waiting for backup success", async () => {
+    const { coordinator, options, progress } = fixture("quit");
+    const saved = deferred();
+    const reaped = deferred();
+    const order: string[] = [];
+    options.save.mockImplementation(async () => {
+      await saved.promise;
+      order.push("core");
+    });
+    options.controller.cancel.mockImplementation(async () => {
+      order.push("stop");
+      await reaped.promise;
+    });
+    options.complete.mockImplementation(async () => {
+      order.push("close");
+    });
+    options.backup.status = vi.fn(async () => {
+      throw new Error("Backup destination is offline");
+    });
+    options.backup.waitTransfers = vi.fn(() => new Promise(() => undefined));
+    options.backup.setDeparture = vi.fn(async () => undefined);
+    const result = coordinator.start(options);
+    expect(options.controller.pause).toHaveBeenCalledOnce();
+    expect(await coordinator.start(options)).toBe(false);
+    await vi.waitFor(() => expect(options.save).toHaveBeenCalledOnce());
+    expect(options.controller.cancel).not.toHaveBeenCalled();
+    expect(options.complete).not.toHaveBeenCalled();
+    saved.resolve();
+    await vi.waitFor(() => expect(progress()?.stage).toBe("stopping"));
+    await coordinator.leave(false);
+    expect(options.controller.resume).not.toHaveBeenCalled();
+    expect(options.complete).not.toHaveBeenCalled();
+    reaped.resolve();
+    expect(await result).toBe(true);
+    expect(order).toEqual(["core", "stop", "close"]);
+    expect(options.controller.flush).not.toHaveBeenCalled();
+    expect(options.backup.status).not.toHaveBeenCalled();
+    expect(options.backup.waitTransfers).not.toHaveBeenCalled();
+    expect(options.backup.setDeparture).not.toHaveBeenCalled();
+  });
+
+  it("does not force quit if child cleanup fails; retry saves and stops again", async () => {
+    const { coordinator, options, progress } = fixture("quit");
+    options.controller.cancel.mockRejectedValueOnce(
+      new Error("cleanup failed"),
+    );
+    const result = coordinator.start(options);
+    await vi.waitFor(() => expect(progress()?.stage).toBe("stopping-error"));
+    await coordinator.leave(true);
+    expect(options.complete).not.toHaveBeenCalled();
+    coordinator.retry();
+    expect(await result).toBe(true);
+    expect(options.save).toHaveBeenCalledTimes(2);
+    expect(options.controller.cancel).toHaveBeenCalledTimes(2);
+    expect(options.controller.flush).not.toHaveBeenCalled();
+  });
+
+  it("waits for failed quit cleanup before reopening background admission", async () => {
+    const { coordinator, options, progress } = fixture("quit");
+    const reaped = deferred();
+    options.controller.cancel
+      .mockRejectedValueOnce(new Error("cleanup failed"))
+      .mockImplementationOnce(() => reaped.promise);
+    const result = coordinator.start(options);
+    await vi.waitFor(() => expect(progress()?.stage).toBe("stopping-error"));
+    const leaving = coordinator.leave(false);
+    expect(options.controller.resume).not.toHaveBeenCalled();
+    reaped.resolve();
+    await leaving;
+    expect(await result).toBe(false);
+    expect(options.controller.resume).toHaveBeenCalledOnce();
+    expect(options.complete).not.toHaveBeenCalled();
+  });
+
+  it("stops an earlier manual capture without starting a final capture on quit", async () => {
+    const { coordinator, options } = fixture("quit");
+    const active = deferred();
+    const nativeRun = vi.fn(() => active.promise);
+    const nativeCancel = vi.fn(async () => active.resolve());
+    const port = backupFixture({ run: nativeRun, cancel: nativeCancel });
+    const controller = new BackupController(
+      { flushDurableState: async () => undefined } as unknown as CoreRuntime,
+      port,
+      vi.fn(),
+    );
+    controller.pause();
+    try {
+      const manual = controller.run();
+      await vi.waitFor(() => expect(nativeRun).toHaveBeenCalledOnce());
+      expect(
+        await coordinator.start({ ...options, backup: port, controller }),
+      ).toBe(true);
+      await manual;
+      expect(nativeCancel).toHaveBeenCalledOnce();
+      expect(nativeRun).toHaveBeenCalledOnce();
+      expect(options.complete).toHaveBeenCalledOnce();
+    } finally {
+      active.resolve();
+      controller.destroy();
+    }
+  });
+
   it("keeps waiting beyond 30 seconds without cancelling a transfer or entering an error", async () => {
     const { coordinator, options, progress } = fixture();
     vi.useFakeTimers();
@@ -63,7 +166,7 @@ describe("shared quit/switch/update durability barrier", () => {
       vi.useRealTimers();
     }
   });
-  it.each(["quit", "switch-workspace", "update"] as const)(
+  it.each(["switch-workspace", "update"] as const)(
     "%s only proceeds after Core, local capture and transfer",
     async (kind) => {
       const { coordinator, options } = fixture();
@@ -130,18 +233,22 @@ describe("shared quit/switch/update durability barrier", () => {
     expect(options.controller.cancel).not.toHaveBeenCalled();
   });
 
-  it("never skips a failed Core save, and retry establishes a new barrier", async () => {
-    const { coordinator, options, progress } = fixture();
-    options.save.mockRejectedValueOnce(new Error("disk full"));
-    const result = coordinator.start(options);
-    await vi.waitFor(() => expect(progress()?.stage).toBe("saving-error"));
-    await coordinator.leave(true);
-    expect(options.complete).not.toHaveBeenCalled();
-    expect(options.controller.flush).not.toHaveBeenCalled();
-    coordinator.retry();
-    expect(await result).toBe(true);
-    expect(options.save).toHaveBeenCalledTimes(2);
-  });
+  it.each(["quit", "switch-workspace", "update"] as const)(
+    "%s never skips a failed Core save, and retry establishes a new barrier",
+    async (kind) => {
+      const { coordinator, options, progress } = fixture(kind);
+      options.save.mockRejectedValueOnce(new Error("disk full"));
+      const result = coordinator.start(options);
+      await vi.waitFor(() => expect(progress()?.stage).toBe("saving-error"));
+      await coordinator.leave(true);
+      expect(options.complete).not.toHaveBeenCalled();
+      expect(options.controller.flush).not.toHaveBeenCalled();
+      expect(options.controller.cancel).not.toHaveBeenCalled();
+      coordinator.retry();
+      expect(await result).toBe(true);
+      expect(options.save).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("retains local success on transfer failure until retry or explicit skip", async () => {
     const { coordinator, options, progress } = fixture();
@@ -246,7 +353,7 @@ describe("shared quit/switch/update durability barrier", () => {
     expect(progress()).toBeNull();
   });
 
-  it.each(["quit", "switch-workspace", "update"] as const)(
+  it.each(["switch-workspace", "update"] as const)(
     "withdraws %s without cancelling a manual backup or a queued final capture",
     async (kind) => {
       vi.useFakeTimers();
@@ -305,7 +412,7 @@ describe("shared quit/switch/update durability barrier", () => {
     },
   );
 
-  it("detaches cloud waiting, preserving the transfer and isolating a subsequent quit", async () => {
+  it("detaches cloud waiting, preserving the transfer and isolating a subsequent switch", async () => {
     const { coordinator, options, progress } = fixture();
     const firstWait = deferred();
     const secondWait = deferred();
