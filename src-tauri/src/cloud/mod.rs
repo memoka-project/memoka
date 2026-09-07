@@ -411,6 +411,22 @@ impl CloudService {
                 enabled: true,
             },
         )?;
+        if !settings::config(workspace)?
+            .destinations
+            .iter()
+            .any(|t| t.id == id)
+        {
+            settings::save_setting(
+                workspace,
+                &format!("backup.cache.{repository_id}"),
+                &Vec::<crate::backup::Generation>::new(),
+            )?;
+            settings::save_setting(
+                workspace,
+                &format!("backup.inventory_uncertain.{repository_id}"),
+                &false,
+            )?;
+        }
         settings::update_config(workspace, |config| {
             if !config.destinations.iter().any(|t| t.id == id) {
                 config.destinations.push(AdditionalTarget {
@@ -464,6 +480,49 @@ impl CloudService {
         repository_id: Option<&str>,
         restic: &Restic,
     ) -> Result<Repository, ReadError> {
+        self.open_repository(id, folder, password, repository_id, restic, None)
+    }
+    /// Automatic backup/maintenance/recovery is only available to the OS-user
+    /// registration that created this destination. A recovery connection may
+    /// read the same folder, but cannot adopt it as a writer just by knowing
+    /// the Workspace ID, folder ID and password.
+    pub(crate) fn registered_repository(
+        &self,
+        workspace_id: &str,
+        target: &crate::backup_settings::AdditionalTarget,
+        password: Password,
+        restic: &Restic,
+    ) -> Result<Repository, ReadError> {
+        let crate::backup_settings::DestinationLocation::GoogleDrive {
+            connection_id,
+            root_folder_id,
+            ..
+        } = &target.location
+        else {
+            return Err(ReadError::new(
+                "INVALID_ARGUMENT",
+                "Expected a Google Drive destination",
+            ));
+        };
+        let repository = self.open_repository(
+            connection_id,
+            root_folder_id,
+            password,
+            Some(&target.repository_id),
+            restic,
+            Some((workspace_id, target)),
+        )?;
+        Ok(repository.with_automatic_lock_recovery(target.repository_id.clone()))
+    }
+    fn open_repository(
+        &self,
+        id: &str,
+        folder: &str,
+        password: Password,
+        repository_id: Option<&str>,
+        restic: &Restic,
+        writer: Option<(&str, &crate::backup_settings::AdditionalTarget)>,
+    ) -> Result<Repository, ReadError> {
         validate_folder_id(folder)?;
         if !matches!(&password, Password::Secret(secret) if !secret.is_empty()) {
             return Err(ReadError::new(
@@ -473,9 +532,22 @@ impl CloudService {
         }
         let lease = self.lease(id)?;
         let meta = self.connection(id)?;
+        if let Some((workspace_id, target)) = writer {
+            validate_writer_binding(&meta, workspace_id, target)?;
+        }
         let context = self.context(&meta, lease, folder)?;
         let token = drive::access_token(&context, &restic.cancel)?;
-        drive::validate_root(&token, folder, &restic.cancel)?;
+        let root = drive::validate_root(&token, folder, &restic.cancel)?;
+        if let Some((workspace_id, target)) = writer {
+            if root["appProperties"]["memoka_workspace_id"] != workspace_id
+                || root["appProperties"]["memoka_destination_id"] != target.id
+            {
+                return Err(ReadError::new(
+                    "CLOUD_WRITER_MISMATCH",
+                    "Driveの保存先登録が一致しません。この端末用の保存先を新しく追加してください。",
+                ));
+            }
+        }
         let mut context = context;
         if let Some(expected) = repository_id {
             context._repository_lease = Some(self.repository_lease(expected)?);
@@ -722,6 +794,35 @@ impl CloudService {
         result
     }
 }
+fn validate_writer_binding(
+    meta: &CloudConnection,
+    workspace_id: &str,
+    target: &crate::backup_settings::AdditionalTarget,
+) -> Result<(), ReadError> {
+    let crate::backup_settings::DestinationLocation::GoogleDrive {
+        connection_id,
+        root_folder_id,
+        ..
+    } = &target.location
+    else {
+        return Err(state_error());
+    };
+    if meta.id == *connection_id
+        && meta.bindings.iter().any(|b| {
+            b.workspace_id == workspace_id
+                && b.destination_id == target.id
+                && b.root_folder_id == *root_folder_id
+                && b.repository_id == target.repository_id
+                && b.credential_ref == target.credential_ref
+        })
+    {
+        return Ok(());
+    }
+    Err(ReadError::new(
+        "CLOUD_WRITER_NOT_REGISTERED",
+        "このDrive保存先はこの端末に書き込み用として登録されていません。復旧元は読み取り専用で使用し、この端末用の保存先を新しく追加してください。",
+    ))
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriveInitIntent {
@@ -864,6 +965,51 @@ mod tests {
             last_verified_at: None,
             bindings: Vec::new(),
         }
+    }
+    #[test]
+    fn same_workspace_and_password_do_not_authorize_a_different_devices_writer() {
+        use crate::backup_settings::{AdditionalTarget, DestinationLocation, Retention};
+        let connection = uuid::Uuid::now_v7().to_string();
+        let workspace = uuid::Uuid::now_v7().to_string();
+        let destination = uuid::Uuid::now_v7().to_string();
+        let mut original = metadata(&connection);
+        let target = AdditionalTarget {
+            id: destination.clone(),
+            enabled: true,
+            retention: Retention::default(),
+            repository_id: "a".repeat(64),
+            credential_ref: "repo:test".into(),
+            location: DestinationLocation::GoogleDrive {
+                connection_id: connection.clone(),
+                root_folder_id: "folder123".into(),
+                display_name: "renamed folder".into(),
+            },
+        };
+        // Another OS user/PC's connection has no writer registrations, even
+        // when it can authenticate to the same account and recover this ID.
+        assert_eq!(
+            validate_writer_binding(&original, &workspace, &target)
+                .unwrap_err()
+                .code,
+            "CLOUD_WRITER_NOT_REGISTERED"
+        );
+        original.bindings.push(Binding {
+            workspace_id: workspace.clone(),
+            destination_id: destination,
+            root_folder_id: "folder123".into(),
+            repository_id: target.repository_id.clone(),
+            credential_ref: target.credential_ref.clone(),
+            enabled: true,
+        });
+        validate_writer_binding(&original, &workspace, &target).unwrap();
+        assert!(
+            validate_writer_binding(&original, &uuid::Uuid::now_v7().to_string(), &target).is_err()
+        );
+        let mut replaced = target.clone();
+        replaced.repository_id = "b".repeat(64);
+        assert!(validate_writer_binding(&original, &workspace, &replaced).is_err());
+        original.bindings.clear();
+        assert!(validate_writer_binding(&original, &workspace, &target).is_err());
     }
     #[test]
     fn failed_reconnect_locked_keyring_and_cancel_leave_the_previous_connection_unchanged() {

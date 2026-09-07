@@ -16,6 +16,7 @@ import {
   DEFAULT_BACKUP_RETENTION,
   type HistoricalResource,
   type BackupDestination,
+  type BackupSettingsRequest,
 } from "../app/src/core/history";
 import { backupFixture } from "./backup-fixture";
 
@@ -27,18 +28,98 @@ const destination = (id: string, enabled = true): BackupDestination => ({
   retention: { ...DEFAULT_BACKUP_RETENTION },
 });
 
+async function details(name = "ローカル履歴", tab = "設定") {
+  const row = await screen.findByRole("row", { name });
+  fireEvent.click(within(row).getByRole("button", { name: tab }));
+}
+async function addLocal() {
+  fireEvent.click(screen.getByRole("button", { name: "保存先を追加" }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "ディレクトリを選択" }));
+  });
+}
 describe("backup settings and read-only history", () => {
   afterEach(() => vi.useRealTimers());
 
-  it("keeps drafts across polling, saves local settings without closing, and rejects mismatched passwords", async () => {
+  it("opens an overview without forms or remote work, with counts and a single notice area", async () => {
+    const base = await backupFixture().status();
+    const run = vi.fn(),
+      scheduleCloud = vi.fn(),
+      settings = vi.fn();
+    render(
+      <BackupDialog
+        port={backupFixture({
+          run,
+          scheduleCloud,
+          settings,
+          status: async () => ({
+            ...base,
+            config: {
+              ...base.config,
+              destinations: [destination("one"), destination("two", false)],
+            },
+            status: {
+              ...base.status,
+              generation_counts: { verified: 10, transferred: 10, target: 10 },
+              destinations: {
+                one: {
+                  phase: "verification-pending",
+                  protected_capture_at: "2026-09-01T00:00:00Z",
+                  last_copy_at: null,
+                  error: null,
+                  maintenance_error: null,
+                  pending_copy_count: 1,
+                  expired_copy_count: 0,
+                  pending_verification_count: 2,
+                  generation_counts: {
+                    verified: 7,
+                    transferred: 9,
+                    target: 10,
+                  },
+                },
+              },
+            },
+          }),
+        })}
+        session={{ restoreFocus: vi.fn() }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    const table = await screen.findByRole("table", {
+      name: "バックアップ保存先",
+    });
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getByText("7 / 9 / 10")).toBeTruthy();
+    expect(within(table).getByText("10 / 10 / 10")).toBeTruthy();
+    expect(within(table).getByText("無効")).toBeTruthy();
+    expect(within(table).getByText(/2026\/09\/01.*ago/)).toBeTruthy();
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(
+      screen.getAllByRole("complementary", { name: "注意事項" }),
+    ).toHaveLength(1);
+    expect(run).not.toHaveBeenCalled();
+    expect(scheduleCloud).not.toHaveBeenCalled();
+    expect(settings).not.toHaveBeenCalled();
+  });
+
+  it("keeps a draft across polling and tabs, saves without closing, then registers a destination", async () => {
     vi.useFakeTimers();
-    const settings = vi.fn(async () => undefined);
-    const close = vi.fn();
-    const saved = vi.fn();
+    let state = await backupFixture().status();
+    const settings = vi.fn(async (request: BackupSettingsRequest) => {
+      if (request.kind === "add")
+        state = {
+          ...state,
+          config: { ...state.config, destinations: [destination("new")] },
+        };
+    });
+    const close = vi.fn(),
+      saved = vi.fn();
     render(
       <BackupDialog
         port={backupFixture({
           settings,
+          status: async () => state,
           chooseAdditional: async () => "/test-backup",
         })}
         session={{ restoreFocus: vi.fn() }}
@@ -47,15 +128,24 @@ describe("backup settings and read-only history", () => {
       />,
     );
     await act(async () => {});
+    fireEvent.click(
+      within(screen.getByRole("row", { name: "ローカル履歴" })).getByRole(
+        "button",
+        { name: "設定" },
+      ),
+    );
     fireEvent.change(screen.getByLabelText("自動保存間隔（分）"), {
       target: { value: "23" },
     });
     fireEvent.change(screen.getByLabelText("直近（世代）"), {
       target: { value: "72" },
     });
+    fireEvent.click(screen.getByRole("tab", { name: "進捗" }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
+    fireEvent.click(screen.getByRole("tab", { name: "設定" }));
     expect(
       (screen.getByLabelText("直近（世代）") as HTMLInputElement).value,
     ).toBe("72");
@@ -70,9 +160,11 @@ describe("backup settings and read-only history", () => {
       retention: { last: 72, daily: 30, monthly: 12 },
     });
     expect(close).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "保存先を追加" }));
-    });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(document.activeElement?.getAttribute("data-backup-focus")).toBe(
+      "local-history:settings",
+    );
+    await addLocal();
     fireEvent.change(screen.getByLabelText("パスワード"), {
       target: { value: "temporary-secret" },
     });
@@ -95,12 +187,14 @@ describe("backup settings and read-only history", () => {
       retention: DEFAULT_BACKUP_RETENTION,
     });
     expect(screen.queryByLabelText("パスワード")).toBeNull();
+    expect(document.activeElement?.getAttribute("data-backup-focus")).toBe(
+      "new:settings",
+    );
     expect(saved).toHaveBeenCalledTimes(2);
     expect(close).not.toHaveBeenCalled();
-    expect(screen.queryByText(/Workspace内の履歴には/)).toBeNull();
   });
 
-  it("edits independent targets, preserves drafts, and keeps failed/offline targets visible", async () => {
+  it("edits independent targets and keeps disabled errors visible without mixing settings", async () => {
     let state = await backupFixture().status();
     state = {
       ...state,
@@ -117,7 +211,7 @@ describe("backup settings and read-only history", () => {
         destinations: {
           two: {
             phase: "disabled",
-            protected_capture_at: "2026-09-01T00:00:00Z",
+            protected_capture_at: null,
             last_copy_at: null,
             error: { code: "OFFLINE", message: "Target offline" },
             maintenance_error: null,
@@ -127,95 +221,179 @@ describe("backup settings and read-only history", () => {
         },
       },
     };
-    const settings = vi.fn(
-      async (
-        request: Parameters<ReturnType<typeof backupFixture>["settings"]>[0],
-      ) => {
-        if (request.kind === "enabled")
-          state = {
-            ...state,
-            config: {
-              ...state.config,
-              destinations: state.config.destinations.map((target) =>
-                target.id === request.id
-                  ? { ...target, enabled: request.enabled }
-                  : target,
-              ),
-            },
-          };
-        if (request.kind === "remove")
-          state = {
-            ...state,
-            config: {
-              ...state.config,
-              destinations: state.config.destinations.filter(
-                (target) => target.id !== request.id,
-              ),
-            },
-          };
-      },
-    );
+    const settings = vi.fn(async (request: BackupSettingsRequest) => {
+      if (request.kind === "enabled")
+        state = {
+          ...state,
+          config: {
+            ...state.config,
+            destinations: state.config.destinations.map((t) =>
+              t.id === request.id ? { ...t, enabled: request.enabled } : t,
+            ),
+          },
+        };
+      if (request.kind === "remove")
+        state = {
+          ...state,
+          config: {
+            ...state.config,
+            destinations: state.config.destinations.filter(
+              (t) => t.id !== request.id,
+            ),
+          },
+        };
+    });
     render(
       <BackupDialog
-        port={backupFixture({ status: async () => state, settings })}
+        port={backupFixture({ settings, status: async () => state })}
         session={{ restoreFocus: vi.fn() }}
         onClose={vi.fn()}
         onSaved={vi.fn()}
       />,
     );
-    const one = within(
-      await screen.findByRole("region", { name: "/backup/one" }),
-    );
-    const two = within(screen.getByRole("region", { name: "/backup/two" }));
-    fireEvent.change(one.getByLabelText("日次（世代）"), {
+    await details("/backup/one");
+    fireEvent.change(screen.getByLabelText("日次（世代）"), {
       target: { value: "0" },
     });
-    expect(one.getByText(/次回の整理/)).toBeTruthy();
+    expect(
+      within(screen.getByRole("complementary", { name: "注意事項" })).getByText(
+        /次回の整理/,
+      ),
+    ).toBeTruthy();
     await act(async () => {
-      fireEvent.click(two.getByRole("checkbox", { name: "有効" }));
-    });
-    expect(settings).toHaveBeenLastCalledWith({
-      kind: "enabled",
-      id: "two",
-      enabled: true,
-    });
-    expect((one.getByLabelText("日次（世代）") as HTMLInputElement).value).toBe(
-      "0",
-    );
-    expect(two.getByText(/Target offline/)).toBeTruthy();
-    await act(async () => {
-      fireEvent.click(one.getByRole("button", { name: "保持設定を保存" }));
+      fireEvent.click(screen.getByRole("button", { name: "保持設定を保存" }));
     });
     expect(settings).toHaveBeenLastCalledWith({
       kind: "retention",
       id: "one",
       retention: { last: 48, daily: 0, monthly: 12 },
     });
-    fireEvent.click(
-      two.getByRole("button", { name: "既存パスワードを再登録" }),
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+    await details("/backup/two", "進捗");
+    expect(screen.getByRole("alert").textContent).toContain(
+      "停止前のエラー: Target offline",
     );
-    fireEvent.change(two.getByLabelText("パスワード"), {
+    fireEvent.click(screen.getByRole("tab", { name: "設定" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: "有効" }));
+    });
+    expect(settings).toHaveBeenLastCalledWith({
+      kind: "enabled",
+      id: "two",
+      enabled: true,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "既存パスワードを再登録" }),
+    );
+    fireEvent.change(screen.getByLabelText("パスワード"), {
       target: { value: "target-two-secret" },
     });
-    fireEvent.change(two.getByLabelText("パスワードを再入力"), {
+    fireEvent.change(screen.getByLabelText("パスワードを再入力"), {
       target: { value: "target-two-secret" },
     });
     await act(async () => {
-      fireEvent.click(two.getByRole("button", { name: "パスワードを再登録" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "パスワードを再登録" }),
+      );
     });
     expect(settings).toHaveBeenLastCalledWith({
       kind: "credential",
       id: "two",
       password: "target-two-secret",
     });
-    const three = within(screen.getByRole("region", { name: "/backup/three" }));
-    fireEvent.click(three.getByRole("button", { name: "保存先を解除" }));
-    expect(three.getByText(/保存済みバックアップは削除しません/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+    await details("/backup/three");
+    fireEvent.click(screen.getByRole("button", { name: "保存先を解除" }));
+    expect(
+      within(screen.getByRole("complementary", { name: "注意事項" })).getByText(
+        /この保存先の登録を解除/,
+      ),
+    ).toBeTruthy();
     await act(async () => {
-      fireEvent.click(three.getByRole("button", { name: "登録を解除する" }));
+      fireEvent.click(screen.getByRole("button", { name: "登録を解除する" }));
     });
-    expect(screen.queryByRole("region", { name: "/backup/three" })).toBeNull();
-    expect(screen.getByRole("region", { name: "/backup/one" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "/backup/three" })).toBeNull();
+    expect(screen.getByRole("row", { name: "/backup/one" })).toBeTruthy();
+  });
+
+  it("does not mark an unsaved retention draft as saved when toggling the destination", async () => {
+    let state = await backupFixture().status();
+    state = {
+      ...state,
+      config: { ...state.config, destinations: [destination("one")] },
+    };
+    const settings = vi.fn(async (request: BackupSettingsRequest) => {
+      if (request.kind === "enabled")
+        state = {
+          ...state,
+          config: {
+            ...state.config,
+            destinations: [destination("one", request.enabled)],
+          },
+        };
+    });
+    render(
+      <BackupDialog
+        port={backupFixture({ settings, status: async () => state })}
+        session={{ restoreFocus: vi.fn() }}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+    await details("/backup/one");
+    fireEvent.change(screen.getByLabelText("直近（世代）"), {
+      target: { value: "72" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("checkbox", { name: "有効" }));
+    });
+    expect(settings).toHaveBeenCalledExactlyOnceWith({
+      kind: "enabled",
+      id: "one",
+      enabled: false,
+    });
+    expect(
+      (screen.getByLabelText("直近（世代）") as HTMLInputElement).value,
+    ).toBe("72");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByText("未保存の入力を破棄しますか？")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "破棄して戻る" }));
+    expect(
+      within(screen.getByRole("row", { name: "/backup/one" })).getByText(
+        "無効",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("confirms abandoning a draft and clears passwords when leaving the detail", async () => {
+    const close = vi.fn(),
+      restoreFocus = vi.fn();
+    render(
+      <BackupDialog
+        port={backupFixture({ chooseAdditional: async () => "/new" })}
+        session={{ restoreFocus }}
+        onClose={close}
+        onSaved={vi.fn()}
+      />,
+    );
+    await screen.findByRole("row", { name: "ローカル履歴" });
+    await addLocal();
+    const password = screen.getByLabelText("パスワード") as HTMLInputElement;
+    fireEvent.change(password, { target: { value: "sensitive-draft" } });
+    fireEvent.keyDown(password, { key: "Escape" });
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByText("未保存の入力を破棄しますか？")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "編集を続ける" }));
+    expect(password.value).toBe("sensitive-draft");
+    fireEvent.keyDown(password, { key: "c", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: "破棄して戻る" }));
+    expect(password.value).toBe("");
+    expect(screen.queryByLabelText("パスワード")).toBeNull();
+    expect(restoreFocus).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await act(async () => {});
+    expect(close).toHaveBeenCalledOnce();
+    expect(restoreFocus).toHaveBeenCalledOnce();
   });
 
   it("does not mistake a failed status refresh for a failed committed Add", async () => {
@@ -239,10 +417,8 @@ describe("backup settings and read-only history", () => {
         onSaved={vi.fn()}
       />,
     );
-    await act(async () => {});
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "保存先を追加" }));
-    });
+    await screen.findByRole("row", { name: "ローカル履歴" });
+    await addLocal();
     fireEvent.change(screen.getByLabelText("パスワード"), {
       target: { value: "secret" },
     });
@@ -257,78 +433,15 @@ describe("backup settings and read-only history", () => {
     expect(settings).toHaveBeenCalledOnce();
   });
 
-  it("focuses Close while loading", () => {
-    const close = vi.fn();
-    render(
-      <BackupDialog
-        port={backupFixture({ status: () => new Promise(() => undefined) })}
-        session={{ restoreFocus: vi.fn() }}
-        onClose={close}
-        onSaved={vi.fn()}
-      />,
-    );
-    expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "閉じる" }),
-    );
-    fireEvent.keyDown(document.activeElement!, { key: "c", ctrlKey: true });
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it("centers the scroll-bounded modal and traps focus", async () => {
-    const style = document.createElement("style");
-    style.textContent = readFileSync(
-      resolve(process.cwd(), "app/src/styles.css"),
-      "utf8",
-    );
-    document.head.append(style);
-    try {
-      const close = vi.fn();
-      render(
-        <>
-          <button>背後の操作</button>
-          <BackupDialog
-            port={backupFixture()}
-            session={{ restoreFocus: vi.fn() }}
-            onClose={close}
-            onSaved={vi.fn()}
-          />
-        </>,
-      );
-      await act(async () => {});
-      const dialog = screen.getByRole("dialog", { name: "バックアップ設定" });
-      expect(dialog.getAttribute("aria-modal")).toBe("true");
-      const overlay = dialog.parentElement!;
-      expect(getComputedStyle(overlay).position).toBe("fixed");
-      expect(getComputedStyle(overlay).inset).toBe("0");
-      expect(getComputedStyle(overlay).placeItems).toBe("center");
-      expect(getComputedStyle(dialog).overflow).toBe("auto");
-      expect(getComputedStyle(dialog).maxHeight).toBe("100%");
-      const interval = screen.getByLabelText("自動保存間隔（分）");
-      interval.focus();
-      fireEvent.keyDown(interval, { key: "Tab", shiftKey: true });
-      expect(document.activeElement).toBe(
-        screen.getByRole("button", { name: "閉じる" }),
-      );
-      fireEvent.keyDown(document.activeElement!, { key: "Tab" });
-      expect(document.activeElement).toBe(interval);
-      screen.getByRole("button", { name: "背後の操作" }).focus();
-      expect(document.activeElement).toBe(interval);
-      fireEvent.mouseDown(overlay);
-      expect(close).not.toHaveBeenCalled();
-    } finally {
-      style.remove();
-    }
-  });
-
-  it("keeps a keyboard target during save and restores focus only when closed", async () => {
+  it("keeps loading and save focus inside the modal and closes only from the overview", async () => {
     let finish!: () => void;
     const settings = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve;
-        }),
-    );
-    const close = vi.fn(),
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+      close = vi.fn(),
       restoreFocus = vi.fn();
     render(
       <BackupDialog
@@ -338,11 +451,8 @@ describe("backup settings and read-only history", () => {
         onSaved={vi.fn()}
       />,
     );
-    const save = await screen.findByRole("button", {
-      name: "ローカル設定を保存",
-    });
-    save.focus();
-    fireEvent.click(save);
+    await details();
+    fireEvent.click(screen.getByRole("button", { name: "ローカル設定を保存" }));
     const dialog = screen.getByRole("dialog");
     expect(dialog.getAttribute("aria-busy")).toBe("true");
     for (const event of [
@@ -352,15 +462,67 @@ describe("backup settings and read-only history", () => {
       { key: "c", ctrlKey: true },
     ]) {
       fireEvent.keyDown(dialog, event);
-      expect(document.activeElement).toBe(dialog);
+      expect(dialog.contains(document.activeElement)).toBe(true);
     }
     expect(close).not.toHaveBeenCalled();
     await act(async () => finish());
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("table")).toBeTruthy();
     expect(close).not.toHaveBeenCalled();
     fireEvent.keyDown(dialog, { key: "Escape" });
     await act(async () => {});
     expect(close).toHaveBeenCalledOnce();
     expect(restoreFocus).toHaveBeenCalledOnce();
+  });
+
+  it("centers the bounded modal, traps focus, and skips hidden forms and collapsed notes", async () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    document.head.append(style);
+    try {
+      render(
+        <>
+          <button>背後の操作</button>
+          <BackupDialog
+            port={backupFixture()}
+            session={{ restoreFocus: vi.fn() }}
+            onClose={vi.fn()}
+            onSaved={vi.fn()}
+          />
+        </>,
+      );
+      await screen.findByRole("row", { name: "ローカル履歴" });
+      const dialog = screen.getByRole("dialog"),
+        overlay = dialog.parentElement!;
+      expect(getComputedStyle(overlay).placeItems).toBe("center");
+      expect(getComputedStyle(dialog).overflow).toBe("hidden");
+      expect(
+        getComputedStyle(dialog.querySelector(".backup-dialog-body")!).overflow,
+      ).toBe("auto");
+      expect(getComputedStyle(dialog).maxHeight).toBe("100%");
+      await details();
+      fireEvent.click(screen.getByRole("tab", { name: "進捗" }));
+      const first = screen.getByRole("button", { name: "戻る" });
+      first.focus();
+      fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "閉じる" }),
+      );
+      fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+      expect(document.activeElement).toBe(first);
+      for (let i = 0; i < 10; i++) {
+        fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+        expect(document.activeElement?.closest("[hidden]")).toBeNull();
+      }
+      const previous = document.activeElement;
+      screen.getByRole("button", { name: "背後の操作" }).focus();
+      expect(document.activeElement).toBe(previous);
+    } finally {
+      style.remove();
+    }
   });
 
   it("opens :backup-settings modally from Sidebar and restores it", async () => {

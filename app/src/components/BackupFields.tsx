@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { BackupRetention } from "../core/history";
+import { useBackupNotice } from "./backup-notice-context";
 export function PasswordForm({
   busy,
   newRepository = false,
@@ -66,11 +67,6 @@ export function PasswordForm({
             ref={confirmationInput}
           />
         </label>
-        <p>
-          {newRepository
-            ? "OS資格情報ストアへ保存します。復旧に備えパスワードを別途保管してください。"
-            : "この保存先の既存パスワードを再登録します。バックアップのパスワードを変更する操作ではありません。"}
-        </p>
         {error && <p role="alert">{error}</p>}
         <button type="submit">
           {newRepository ? "保存先を登録" : "パスワードを再登録"}
@@ -91,6 +87,15 @@ export function RetentionFields({
   previous?: BackupRetention;
   onChange: (value: BackupRetention) => void;
 }) {
+  useBackupNotice(
+    "retention",
+    previous &&
+      (["last", "daily", "monthly"] as const).some(
+        (key) => value[key] < previous[key],
+      )
+      ? "保持数を減らすと、次回の整理で古い世代が削除される場合があります。"
+      : null,
+  );
   return (
     <>
       <div className="backup-retention-fields">
@@ -117,17 +122,6 @@ export function RetentionFields({
           </label>
         ))}
       </div>
-      <p className="backup-setting-hint">
-        いずれかの条件に該当する世代を保持します。日次・月次の0は、その条件を無効にします。
-      </p>
-      {previous &&
-        (["last", "daily", "monthly"] as const).some(
-          (key) => value[key] < previous[key],
-        ) && (
-          <p className="backup-retention-warning">
-            保持数を減らすと、次回の整理で古い世代が削除される場合があります。
-          </p>
-        )}
     </>
   );
 }

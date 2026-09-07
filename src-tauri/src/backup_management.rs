@@ -44,7 +44,7 @@ mod tests {
         )
         .unwrap();
         let target = backup::config(&workspace).unwrap().destinations.remove(0);
-        let repo = open_destination(&target, &restic, &credentials).unwrap();
+        let repo = open_destination(&workspace, &target, &restic, &credentials).unwrap();
         copy_target(
             &workspace,
             &restic,
@@ -88,6 +88,14 @@ mod tests {
         assert_eq!(status.phase, "verification-pending");
         assert_eq!(status.pending_copy_count, 0);
         assert_eq!(status.pending_verification_count, 1);
+        assert_eq!(
+            status.generation_counts,
+            Some(settings::GenerationCounts {
+                verified: 1,
+                transferred: 2,
+                target: 2
+            })
+        );
         assert_eq!(
             status.protected_capture_at.as_deref(),
             Some(first.descriptor.captured_at.as_str())
@@ -186,6 +194,14 @@ mod tests {
         let status = backup::status(&workspace).unwrap().destinations[&target.id].clone();
         assert!(status.verification_error.is_none());
         assert_eq!(status.pending_verification_count, 0);
+        assert_eq!(
+            status.generation_counts,
+            Some(settings::GenerationCounts {
+                verified: 2,
+                transferred: 2,
+                target: 3
+            })
+        );
         assert_eq!(
             status.protected_capture_at.as_deref(),
             Some(second.descriptor.captured_at.as_str())
@@ -621,7 +637,7 @@ mod tests {
             "{copied}"
         );
         for target in &targets {
-            let repo = open_destination(target, &restic, &credentials).unwrap();
+            let repo = open_destination(&workspace, target, &restic, &credentials).unwrap();
             let snapshots = backup::generations(&restic, &repo, None, None).unwrap();
             assert_eq!(snapshots.len(), 1);
             assert_eq!(
@@ -686,7 +702,7 @@ mod tests {
         )
         .unwrap();
         // Paused destinations are never maintained, even when explicitly asked.
-        let b = open_destination(&targets[1], &restic, &credentials).unwrap();
+        let b = open_destination(&workspace, &targets[1], &restic, &credentials).unwrap();
         assert_eq!(
             maintain_repository(&workspace, &restic, &b, false, false)
                 .unwrap_err()
@@ -743,7 +759,7 @@ mod tests {
             let status = backup::status(&workspace).unwrap();
             assert!(status.destinations[&target.id].error.is_none());
             assert_eq!(status.destinations[&target.id].pending_copy_count, 0);
-            let repo = open_destination(target, &restic, &credentials).unwrap();
+            let repo = open_destination(&workspace, target, &restic, &credentials).unwrap();
             let kept = backup::generations(&restic, &repo, None, None).unwrap();
             assert_eq!(kept.len(), if target.id == targets[0].id { 3 } else { 2 });
             assert_eq!(
@@ -760,7 +776,7 @@ mod tests {
             }
         })
         .unwrap();
-        let a = open_destination(&targets[0], &restic, &credentials).unwrap();
+        let a = open_destination(&workspace, &targets[0], &restic, &credentials).unwrap();
         let plan = maintain_repository(&workspace, &restic, &a, true, false).unwrap();
         assert_eq!(plan.keep.len(), 1);
         assert_eq!(plan.remove.len(), 2);
@@ -837,27 +853,23 @@ mod tests {
     }
 }
 pub fn additional_repository(
+    workspace: &Path,
     target: &AdditionalTarget,
     restic: &Restic,
 ) -> Result<Repository, ReadError> {
-    open_destination(target, restic, &OsCredentials)
+    open_destination(workspace, target, restic, &OsCredentials)
 }
 fn open_destination(
+    workspace: &Path,
     target: &AdditionalTarget,
     restic: &Restic,
     credentials: &dyn Credentials,
 ) -> Result<Repository, ReadError> {
-    if let DestinationLocation::GoogleDrive {
-        connection_id,
-        root_folder_id,
-        ..
-    } = &target.location
-    {
-        return crate::cloud::CloudService::discover()?.repository(
-            connection_id,
-            root_folder_id,
+    if target.location.is_cloud() {
+        return crate::cloud::CloudService::discover()?.registered_repository(
+            &WorkspaceReader::open(workspace)?.workspace_id,
+            target,
             Password::Secret(credentials.get(&target.credential_ref)?),
-            Some(&target.repository_id),
             restic,
         );
     }
@@ -881,7 +893,7 @@ fn open_destination(
             "Backup destination identity changed",
         ));
     }
-    Ok(repo)
+    Ok(repo.with_automatic_lock_recovery(target.repository_id.clone()))
 }
 pub fn configure_additional(
     workspace: &Path,
@@ -997,6 +1009,17 @@ fn configure_destination(
     if let Password::Secret(secret) = &repo.password {
         credentials.set(&credential_id, secret)?;
     }
+    // This initialization intent has not yet been exposed to a copy worker.
+    backup::save_setting(
+        &workspace,
+        &format!("backup.cache.{repository_id}"),
+        &Vec::<Generation>::new(),
+    )?;
+    backup::save_setting(
+        &workspace,
+        &format!("backup.inventory_uncertain.{repository_id}"),
+        &false,
+    )?;
     backup::update_config(&workspace, |config| {
         config.destinations.push(AdditionalTarget {
             id: id.clone(),
@@ -1241,7 +1264,7 @@ fn copy_target(
         } else {
             restic
         };
-        let repo = open_destination(target, restic, credentials)?;
+        let repo = open_destination(workspace, target, restic, credentials)?;
         // Restic copy is idempotent by source snapshot identity. For deferred
         // cloud transfers, do not re-list/verify the remote history before
         // sending new data. A lost copy response can safely retry the copy.
@@ -1519,7 +1542,7 @@ pub(crate) fn cloud_unit(
                 let result = restic
                     .with_transfer_cache()
                     .and_then(|restic| {
-                        let repo = additional_repository(target, &restic)?;
+                        let repo = additional_repository(workspace, target, &restic)?;
                         maintain_repository(workspace, &restic, &repo, false, true)
                     })
                     .map(|_| ());
@@ -1623,6 +1646,8 @@ fn cloud_retry_due(
                 | "CLOUD_ACCOUNT_CHANGED"
                 | "CLOUD_ROOT_UNAVAILABLE"
                 | "CLOUD_ROOT_INVALID"
+                | "CLOUD_WRITER_NOT_REGISTERED"
+                | "CLOUD_WRITER_MISMATCH"
                 | "DRIVE_UNSAFE_LAYOUT"
                 | "CLOUD_ACCESS_DENIED"
                 | "CLOUD_QUOTA"
@@ -1693,17 +1718,7 @@ fn upload_generation(
         ));
     }
     restic.stage(Stage::Uploading);
-    restic.run(
-        target,
-        &[
-            OsString::from("copy"),
-            "--from-repo".into(),
-            source.local_path()?.as_os_str().to_owned(),
-            "--from-insecure-no-password".into(),
-            generation.snapshot_id.clone().into(),
-        ],
-        None,
-    )?;
+    restic.copy_snapshot(source, target, &generation.snapshot_id)?;
     Ok(())
 }
 
@@ -1773,7 +1788,7 @@ fn verify_target(
     })?;
     let result = (|| {
         let restic = observed.with_transfer_cache()?;
-        let repo = open_destination(target, &restic, credentials)?;
+        let repo = open_destination(workspace, target, &restic, credentials)?;
         let verified =
             verify_copied_generation(&restic, &repo, &target.repository_id, &generation)?;
         backup::remember_generation(workspace, &verified)?;
@@ -2014,7 +2029,14 @@ pub fn maintain_repository(
         // Persist BEFORE deleting, so a crash/partial failure cannot lose the
         // need to reclaim packs on the next successful idle maintenance.
         begin_repository_write(workspace, &repository_id)?;
+        let inventory_key = format!("backup.inventory_uncertain.{repository_id}");
+        backup::save_setting(workspace, &inventory_key, &true)?;
         restic.run(repo, &command, None)?;
+        let cache_key = format!("backup.cache.{repository_id}");
+        let mut remaining: Vec<Generation> = backup::setting(workspace, &cache_key)?;
+        remaining.retain(|generation| !batch.contains(&generation.snapshot_id));
+        backup::save_setting(workspace, &cache_key, &remaining)?;
+        backup::save_setting(workspace, &inventory_key, &false)?;
         if local {
             for target in &config.destinations {
                 let key = ledger_key(&target.id);

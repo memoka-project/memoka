@@ -106,6 +106,7 @@ impl Default for BackupConfig {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DestinationStatus {
+    pub generation_counts: Option<GenerationCounts>,
     pub phase: String,
     pub last_copy_at: Option<String>,
     pub protected_capture_at: Option<String>,
@@ -123,6 +124,7 @@ pub struct DestinationStatus {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BackupStatus {
+    pub generation_counts: Option<GenerationCounts>,
     pub phase: String,
     pub maintenance_error: Option<ReadError>,
     pub local_error: Option<ReadError>,
@@ -130,6 +132,102 @@ pub struct BackupStatus {
     pub last_local_capture_at: Option<String>,
     pub known_missing_count: usize,
     pub destinations: BTreeMap<String, DestinationStatus>,
+}
+/// Cumulative stages within the currently retained/transferable generation set,
+/// not lifetime transfer totals and not retention limits.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenerationCounts {
+    pub verified: usize,
+    pub transferred: usize,
+    pub target: usize,
+}
+
+// Read just the identities from the existing catalog, skipping large descriptors.
+#[derive(Deserialize)]
+struct CountedGeneration {
+    repository_id: String,
+    descriptor: CountedDescriptor,
+}
+#[derive(Deserialize)]
+struct CountedDescriptor {
+    generation_id: String,
+}
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct CountedLedger {
+    repository_id: Option<String>,
+    delivered: BTreeSet<String>,
+    expired: BTreeMap<String, serde::de::IgnoredAny>,
+    awaiting_verification: BTreeMap<String, serde::de::IgnoredAny>,
+}
+fn catalog_ids(db: &Connection, repository: &str) -> Result<Option<BTreeSet<String>>, ReadError> {
+    // Older catalogs were not trimmed immediately after forget. Do not trust
+    // one for current inventory until this version has observed a full listing.
+    if read::<Option<bool>>(db, &format!("backup.inventory_uncertain.{repository}"))? != Some(false)
+    {
+        return Ok(None);
+    }
+    let catalog: Option<Vec<CountedGeneration>> = read(db, &format!("backup.cache.{repository}"))?;
+    Ok(catalog.map(|items| {
+        items
+            .into_iter()
+            .filter(|g| g.repository_id == repository)
+            .map(|g| g.descriptor.generation_id)
+            .collect()
+    }))
+}
+
+/// Only called from background/configuration writes. Status polling never
+/// enumerates snapshots, reads credentials, runs Restic or connects to Drive.
+fn refresh_generation_counts(db: &Connection) -> Result<(), ReadError> {
+    let raw: Value = read(db, "backup.config")?;
+    if raw["schema_version"] != 3 {
+        return Ok(());
+    }
+    let config: BackupConfig = serde_json::from_value(raw)?;
+    let local = match &config.local_repository_id {
+        Some(id) => catalog_ids(db, id)?,
+        None => Some(BTreeSet::new()),
+    };
+    let mut status: BackupStatus = read(db, "backup.status")?;
+    status.generation_counts = local.as_ref().map(|ids| GenerationCounts {
+        verified: ids.len(),
+        transferred: ids.len(),
+        target: ids.len(),
+    });
+    for destination in &config.destinations {
+        let verified = catalog_ids(db, &destination.repository_id)?;
+        let mut ledger: CountedLedger = read(db, &ledger_key(&destination.id))?;
+        if ledger.repository_id.as_deref() != Some(&destination.repository_id) {
+            ledger = CountedLedger::default();
+        }
+        let counts = local.as_ref().zip(verified).map(|(local, verified)| {
+            let mut transferred = verified.clone();
+            transferred.extend(ledger.awaiting_verification.keys().cloned());
+            let mut target = transferred.clone();
+            // delivered is deliberately a lifetime set: a generation already
+            // removed by destination retention must not be queued/count again.
+            target.extend(
+                local
+                    .iter()
+                    .filter(|id| {
+                        !ledger.delivered.contains(*id) && !ledger.expired.contains_key(*id)
+                    })
+                    .cloned(),
+            );
+            GenerationCounts {
+                verified: verified.len(),
+                transferred: transferred.len(),
+                target: target.len(),
+            }
+        });
+        status
+            .destinations
+            .entry(destination.id.clone())
+            .or_default()
+            .generation_counts = counts;
+    }
+    write(db, "backup.status", &status)
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -192,7 +290,19 @@ pub(crate) fn save_setting<T: Serialize>(
     key: &str,
     value: &T,
 ) -> Result<(), ReadError> {
-    write(&connection(workspace)?, key, value)
+    let mut db = connection(workspace)?;
+    if key.starts_with("backup.cache.")
+        || key.starts_with("backup.transfers.")
+        || key.starts_with("backup.inventory_uncertain.")
+    {
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        write(&tx, key, value)?;
+        refresh_generation_counts(&tx)?;
+        tx.commit()?;
+        Ok(())
+    } else {
+        write(&db, key, value)
+    }
 }
 
 /// Commit the durable queue and its public counts/protection together. A crash
@@ -213,6 +323,7 @@ pub(crate) fn save_transfer(
     update(target);
     write(&tx, &ledger_key(id), ledger)?;
     write(&tx, "backup.status", &status)?;
+    refresh_generation_counts(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -368,6 +479,7 @@ pub(crate) fn update_config(
     let mut value = read(&tx, "backup.config")?;
     update(&mut value)?;
     write(&tx, "backup.config", &value)?;
+    refresh_generation_counts(&tx)?;
     tx.commit()?;
     Ok(())
 }
@@ -423,6 +535,140 @@ pub fn update_destination(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generation_counts_cover_retained_remote_history_and_exclude_expired_or_forgotten() {
+        use super::*;
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        crate::backup::tests::fixture(workspace);
+        update_config(workspace, |config| {
+            config.local_repository_id = Some("local-counts".into());
+            config.destinations.push(AdditionalTarget {
+                id: "destination-counts".into(),
+                repository_id: "remote-counts".into(),
+                location: DestinationLocation::LocalDirectory {
+                    path: workspace.join("not-opened"),
+                },
+                credential_ref: "never-read".into(),
+                enabled: false,
+                retention: Retention::default(),
+            });
+            Ok(())
+        })
+        .unwrap();
+        assert!(status(workspace).unwrap().generation_counts.is_none());
+        let catalog = |repo: &str, ids: &[&str]| {
+            ids.iter()
+                .map(|id| {
+                    json!({
+                        "repository_id": repo, "descriptor": {"generation_id": id}
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let counts = || {
+            status(workspace).unwrap().destinations["destination-counts"]
+                .generation_counts
+                .clone()
+        };
+        save_setting(
+            workspace,
+            "backup.cache.local-counts",
+            &catalog(
+                "local-counts",
+                &["one", "upload", "waiting", "forgotten", "expired"],
+            ),
+        )
+        .unwrap();
+        assert!(counts().is_none()); // unknown target is not an empty target
+        save_setting(
+            workspace,
+            "backup.cache.remote-counts",
+            &catalog("remote-counts", &["old", "one"]),
+        )
+        .unwrap();
+        assert!(counts().is_none()); // legacy catalogs lack inventory confirmation
+        save_setting(workspace, "backup.inventory_uncertain.local-counts", &false).unwrap();
+        save_setting(
+            workspace,
+            "backup.inventory_uncertain.remote-counts",
+            &false,
+        )
+        .unwrap();
+        let mut ledger = json!({"repository_id":"remote-counts", "delivered":["old","one","forgotten"], "expired":{"expired":"old"}, "awaiting_verification":{"upload":{}}});
+        save_setting(workspace, &ledger_key("destination-counts"), &ledger).unwrap();
+        assert_eq!(
+            counts(),
+            Some(GenerationCounts {
+                verified: 2,
+                transferred: 3,
+                target: 4
+            })
+        );
+        save_setting(
+            workspace,
+            "backup.cache.remote-counts",
+            &catalog("remote-counts", &["old", "one", "upload"]),
+        )
+        .unwrap();
+        ledger["delivered"] = json!(["old", "one", "forgotten", "upload"]);
+        ledger["awaiting_verification"] = json!({});
+        save_setting(workspace, &ledger_key("destination-counts"), &ledger).unwrap();
+        assert_eq!(
+            counts(),
+            Some(GenerationCounts {
+                verified: 3,
+                transferred: 3,
+                target: 4
+            })
+        );
+        save_setting(
+            workspace,
+            "backup.cache.local-counts",
+            &catalog("local-counts", &["waiting"]),
+        )
+        .unwrap();
+        assert_eq!(counts().unwrap().target, 4); // remote-only generations remain counted
+        save_setting(
+            workspace,
+            "backup.cache.local-counts",
+            &catalog("local-counts", &[]),
+        )
+        .unwrap();
+        assert_eq!(counts().unwrap().target, 3); // expired source no longer a target
+        save_setting(workspace, "backup.inventory_uncertain.remote-counts", &true).unwrap();
+        assert!(counts().is_none()); // interrupted forget is not claimed as known
+        save_setting(
+            workspace,
+            "backup.cache.remote-counts",
+            &catalog("remote-counts", &["one", "upload"]),
+        )
+        .unwrap();
+        assert!(counts().is_none());
+        save_setting(
+            workspace,
+            "backup.inventory_uncertain.remote-counts",
+            &false,
+        )
+        .unwrap();
+        assert_eq!(
+            counts(),
+            Some(GenerationCounts {
+                verified: 2,
+                transferred: 2,
+                target: 2
+            })
+        );
+        let before: Value = setting(workspace, "backup.status").unwrap();
+        connection(workspace).unwrap().execute_batch("CREATE TRIGGER counts_read_only BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT, 'status must not write'); END;").unwrap();
+        for _ in 0..20 {
+            assert_eq!(counts().unwrap().target, 2);
+        }
+        assert_eq!(
+            setting::<Value>(workspace, "backup.status").unwrap(),
+            before
+        );
+    }
     use super::*;
     fn fixture() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

@@ -141,6 +141,63 @@ fn current_read_is_headless_and_does_not_migrate_initialize_or_sync_help() {
     assert!(!workspace.path().join(".memoka/history-cache").exists());
 }
 #[test]
+fn lock_commands_are_explicit_scoped_and_do_not_create_history_or_accept_force_flags() {
+    let workspace = fixture();
+    // Match ProductStore's WAL mode: history listing can update a derived
+    // catalog while WorkspaceReader holds a read transaction.
+    Connection::open(workspace.path().join(".memoka/memoka.sqlite3"))
+        .unwrap()
+        .execute_batch("PRAGMA journal_mode=WAL;")
+        .unwrap();
+    let initial = cli(workspace.path(), &["backup", "run"]);
+    assert!(
+        initial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initial.stderr)
+    );
+    let before = cli(workspace.path(), &["backup", "list"]);
+    assert!(
+        before.status.success(),
+        "{}; initial: {}",
+        String::from_utf8_lossy(&before.stderr),
+        String::from_utf8_lossy(&initial.stdout)
+    );
+    for (action, repair) in [("locks", false), ("unlock", true)] {
+        let output = cli(workspace.path(), &["backup", action]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["schema_version"], 3);
+        assert_eq!(value["unlock_attempted"], repair);
+        assert_eq!(value["locks"], json!([]));
+        assert_eq!(value["repository_id"].as_str().unwrap().len(), 64);
+    }
+    for options in [
+        vec!["backup", "unlock", "--remove-all"],
+        vec!["backup", "unlock", "--force"],
+        vec!["backup", "unlock", "--destination", "missing"],
+        vec![
+            "backup",
+            "unlock",
+            "--repository",
+            "/not-an-authorized-target",
+        ],
+    ] {
+        let output = cli(workspace.path(), &options);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+    let after = cli(workspace.path(), &["backup", "list"]);
+    assert!(after.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&before.stdout).unwrap(),
+        serde_json::from_slice::<Value>(&after.stdout).unwrap()
+    );
+}
+#[test]
 fn search_uses_body_logical_rows_unicode_and_query_bound_cursors() {
     let workspace = fixture();
     // Contract shared with workspace-search.test.ts: headings don't consume

@@ -125,6 +125,11 @@ pub enum BackupAction {
     Status,
     List,
     Copy,
+    RepositoryLocks {
+        destination_id: Option<String>,
+        #[serde(default)]
+        repair: bool,
+    },
     CloudTick {
         id: Option<String>,
     },
@@ -154,6 +159,7 @@ impl Request {
                     BackupAction::Run
                     | BackupAction::WaitTransfers { .. }
                     | BackupAction::Copy
+                    | BackupAction::RepositoryLocks { .. }
                     | BackupAction::IdleMaintain
                     | BackupAction::Maintain { .. }
                     | BackupAction::Check { .. },

@@ -7,10 +7,50 @@ import {
 } from "react";
 
 const CONTROL_SELECTOR =
-  "input:not(:disabled),button:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex='-1'])";
+  "input,button,select,textarea,a[href],summary,[tabindex]";
+
+function controls(dialog: HTMLElement): HTMLElement[] {
+  return [...dialog.querySelectorAll<HTMLElement>(CONTROL_SELECTOR)].filter(
+    (element) => {
+      if (
+        element.tabIndex < 0 ||
+        element.matches(":disabled") ||
+        element.closest("[hidden],[inert]")
+      )
+        return false;
+      let parent = element.parentElement;
+      while (parent && parent !== dialog) {
+        if (
+          parent instanceof HTMLDetailsElement &&
+          !parent.open &&
+          !parent.querySelector("summary")?.contains(element)
+        )
+          return false;
+        parent = parent.parentElement;
+      }
+      return true;
+    },
+  );
+}
 
 function revealControl(dialog: HTMLElement, control: HTMLElement): void {
   if (control === dialog || dialog.clientHeight === 0) return;
+  let ancestor = control.parentElement;
+  while (ancestor && ancestor !== dialog) {
+    if (ancestor.hasAttribute("data-modal-scroll")) {
+      const panel = ancestor.getBoundingClientRect(),
+        rect = control.getBoundingClientRect();
+      if (rect.top < panel.top + 8)
+        ancestor.scrollTop += rect.top - panel.top - 8;
+      else if (rect.bottom > panel.bottom - 8)
+        ancestor.scrollTop += rect.bottom - panel.bottom + 8;
+      if (rect.left < panel.left + 8)
+        ancestor.scrollLeft += rect.left - panel.left - 8;
+      else if (rect.right > panel.right - 8)
+        ancestor.scrollLeft += rect.right - panel.right + 8;
+    }
+    ancestor = ancestor.parentElement;
+  }
   const panel = dialog.getBoundingClientRect();
   const rect = control.getBoundingClientRect();
   const top = panel.top + dialog.clientTop + 8;
@@ -62,16 +102,15 @@ export function ModalDialog({
       // progress. Do not let that change the application's active Window.
       event.stopPropagation();
       const target =
-        lastFocused?.isConnected && !lastFocused.matches(":disabled")
+        lastFocused?.isConnected &&
+        !lastFocused.matches(":disabled") &&
+        !lastFocused.closest("[hidden],[inert]")
           ? lastFocused
           : dialog;
       target.focus({ preventScroll: true });
     };
     document.addEventListener("focusin", keepFocusInside, true);
-    const first =
-      initialFocus === "first-control"
-        ? dialog.querySelector<HTMLElement>(CONTROL_SELECTOR)
-        : null;
+    const first = initialFocus === "first-control" ? controls(dialog)[0] : null;
     (first ?? dialog).focus({ preventScroll: true });
     return () => document.removeEventListener("focusin", keepFocusInside, true);
   }, [initialFocus, root]);
@@ -83,7 +122,8 @@ export function ModalDialog({
     if (
       dialog &&
       (!dialog.contains(document.activeElement) ||
-        document.activeElement?.matches(":disabled"))
+        document.activeElement?.matches(":disabled") ||
+        document.activeElement?.closest("[hidden],[inert]"))
     ) {
       dialog.focus({ preventScroll: true });
     }
@@ -111,24 +151,20 @@ export function ModalDialog({
           if (event.nativeEvent.isComposing) return;
           if (event.key === "Tab") {
             event.preventDefault();
-            const controls = [
-              ...event.currentTarget.querySelectorAll<HTMLElement>(
-                CONTROL_SELECTOR,
-              ),
-            ];
-            const index = controls.indexOf(
+            const available = controls(event.currentTarget);
+            const index = available.indexOf(
               document.activeElement as HTMLElement,
             );
             const next =
               index < 0
                 ? event.shiftKey
-                  ? controls.length - 1
+                  ? available.length - 1
                   : 0
-                : (index + (event.shiftKey ? -1 : 1) + controls.length) %
-                  controls.length;
+                : (index + (event.shiftKey ? -1 : 1) + available.length) %
+                  available.length;
             // WebKit may leave focused number inputs below an overflow panel.
             // Scroll this panel explicitly, never the background editor.
-            const target = controls[next] ?? event.currentTarget;
+            const target = available[next] ?? event.currentTarget;
             target.focus({ preventScroll: true });
             revealControl(event.currentTarget, target);
           } else if (

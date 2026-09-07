@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  within,
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -218,11 +219,11 @@ describe("Google backup settings boundary", () => {
         onSaved={vi.fn()}
       />,
     );
-    await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Drive backup" })).toBeTruthy(),
-    );
-    expect(screen.getByRole("region", { name: "/offline/local" })).toBeTruthy();
-    expect(screen.getByLabelText("追加する保存先の種類")).toBeTruthy();
+    const row = await screen.findByRole("row", { name: "Drive backup" });
+    expect(screen.getByRole("row", { name: "/offline/local" })).toBeTruthy();
+    expect(screen.queryByLabelText("追加する保存先の種類")).toBeNull();
+    expect(cloud.list).not.toHaveBeenCalled();
+    fireEvent.click(within(row).getByRole("button", { name: "設定" }));
     expect(cloud.reconnect).not.toHaveBeenCalled();
     expect(cloud.connect).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "復旧用情報を表示" }));

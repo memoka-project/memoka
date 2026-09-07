@@ -15,6 +15,7 @@ export interface BackupState {
     destinations: readonly BackupDestination[];
   };
   readonly status: {
+    generation_counts?: BackupGenerationCounts | null;
     phase: string;
     last_local_capture_at: string | null;
     local_error: NativeError | null;
@@ -53,6 +54,7 @@ export function backupDestinationLabel(target: BackupDestination): string {
     : target.location.display_name;
 }
 export interface BackupDestinationStatus {
+  readonly generation_counts?: BackupGenerationCounts | null;
   readonly phase: string;
   readonly protected_capture_at: string | null;
   readonly last_copy_at: string | null;
@@ -67,6 +69,11 @@ export interface BackupDestinationStatus {
   readonly failure_count?: number;
   readonly progress?: BackupTransferProgress | null;
 }
+export interface BackupGenerationCounts {
+  readonly verified: number;
+  readonly transferred: number;
+  readonly target: number;
+}
 export type BackupTransferStage =
   | "connecting"
   | "listing"
@@ -74,6 +81,7 @@ export type BackupTransferStage =
   | "uploading"
   | "target-verification"
   | "maintaining"
+  | "lock-recovery"
   | "complete";
 export type BackupTransferOperation =
   | "repository"
@@ -84,6 +92,7 @@ export type BackupTransferOperation =
   | "forget"
   | "prune"
   | "check"
+  | "unlock"
   | "other";
 export interface BackupTransferProgress {
   readonly running: boolean;
@@ -182,12 +191,28 @@ export interface HistoricalResource {
     mime_type: string | null;
   }[];
 }
+export interface BackupLockReport {
+  readonly schema_version: 3;
+  readonly repository_id: string;
+  readonly unlock_attempted: boolean;
+  readonly locks: readonly {
+    readonly id: string;
+    readonly time: string;
+    readonly hostname: string;
+    readonly pid: number;
+    readonly exclusive: boolean;
+  }[];
+}
 export interface BackupPort {
   status(): Promise<BackupState>;
   run(): Promise<unknown>;
   cancel(): Promise<void>;
   resume(): Promise<void>;
   maintainIdle(): Promise<unknown>;
+  repositoryLocks?(
+    destinationId: string | null,
+    repair: boolean,
+  ): Promise<BackupLockReport>;
   cloud?: CloudPort;
   scheduleCloud?(id?: string): Promise<unknown>;
   waitTransfers?(departureId: string): Promise<unknown>;
@@ -269,6 +294,15 @@ export function createDefaultBackupPort(): BackupPort | null {
     resume: () => invoke("workspace_backup_resume"),
     maintainIdle: () =>
       request({ operation: "backup", action: { kind: "idle_maintain" } }),
+    repositoryLocks: (destinationId, repair) =>
+      request({
+        operation: "backup",
+        action: {
+          kind: "repository_locks",
+          destination_id: destinationId,
+          repair,
+        },
+      }),
     scheduleCloud: (id) =>
       request({
         operation: "backup",

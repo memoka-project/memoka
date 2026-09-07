@@ -1611,6 +1611,238 @@ textarea {
   color: var(--memoka-color-text-muted);
 }
 
+.backup-dialog {
+  width: min(1100px, 100%);
+  height: min(740px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.backup-dialog [hidden] {
+  display: none !important;
+}
+.backup-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding-bottom: 12px;
+}
+.backup-dialog-header h2 {
+  margin: 0;
+}
+.backup-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.backup-overview {
+  height: 100%;
+}
+.backup-table-scroll {
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.backup-destination-table {
+  width: 100%;
+  min-width: 860px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.backup-destination-table th,
+.backup-destination-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--memoka-color-border-subtle);
+}
+.backup-destination-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--memoka-color-overlay-surface);
+  color: var(--memoka-color-text-muted);
+  font-size: 12px;
+}
+.backup-destination-table th:first-child {
+  width: 24%;
+}
+.backup-destination-table th:nth-child(2) {
+  width: 20%;
+}
+.backup-destination-table th:nth-child(3) {
+  width: 22%;
+}
+.backup-destination-table th:nth-child(4) {
+  width: 20%;
+}
+.backup-destination-table th:nth-child(5) {
+  width: 14%;
+}
+.backup-destination-table tbody th {
+  font-weight: 500;
+}
+.backup-destination-table small {
+  display: block;
+  font-size: 12px;
+  color: var(--memoka-color-text-muted);
+  font-weight: normal;
+}
+.backup-destination-table .backup-location-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backup-destination-table time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.backup-generation-count {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.backup-destination-table tr[data-disabled="true"] {
+  color: var(--memoka-color-text-muted);
+}
+.backup-destination-table .backup-row-error {
+  color: var(--memoka-color-danger-text);
+}
+.backup-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.backup-row-actions button {
+  padding: 4px 8px;
+}
+.backup-lock-recovery {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--memoka-color-border-subtle);
+}
+.backup-lock-recovery h4 {
+  margin: 0 0 10px;
+}
+.backup-lock-table {
+  width: 100%;
+  min-width: 600px;
+  border-collapse: collapse;
+}
+.backup-lock-table th,
+.backup-lock-table td {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 1px solid var(--memoka-color-border-subtle);
+  overflow-wrap: anywhere;
+}
+.backup-lock-table th {
+  color: var(--memoka-color-text-muted);
+  font-weight: normal;
+}
+.backup-lock-confirmation {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.backup-detail-title {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+.backup-detail-tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--memoka-color-border-subtle);
+  padding-bottom: 8px;
+}
+.backup-detail-tabs [aria-selected="true"] {
+  background: var(--memoka-color-surface-hover);
+  border-color: var(--memoka-color-focus);
+}
+.backup-dialog .backup-destination-card {
+  margin: 12px 0;
+  border: 0;
+  padding: 0 8px 0 0;
+}
+.backup-dialog dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
+  gap: 8px 18px;
+}
+.backup-dialog dd {
+  margin: 0;
+}
+.backup-dialog select {
+  max-width: 100%;
+  color: var(--memoka-color-text);
+  background: var(--memoka-color-surface-inset);
+  padding: 6px 8px;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 4px;
+}
+.backup-dialog pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.backup-dialog .backup-notices {
+  flex: 0 1 auto;
+  max-height: 30%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--memoka-color-border);
+  border-inline-start: 3px solid var(--memoka-color-focus);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.backup-notices h3 {
+  margin: 0 0 3px;
+  font-size: 13px;
+}
+.backup-notices summary {
+  cursor: pointer;
+}
+.backup-notices ul {
+  padding-inline-start: 20px;
+  margin-block: 6px;
+}
+.backup-notices li + li {
+  margin-top: 5px;
+}
+.backup-notices .backup-notice-important {
+  margin: 4px 0;
+}
+.backup-dialog .application-modal-actions {
+  flex: 0 0 auto;
+  margin-top: 12px;
+}
+.backup-leave-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.backup-dialog .backup-save-message {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .backup-dialog dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .backup-dialog dd {
+    margin-bottom: 8px;
+  }
+}
+
 .backup-dialog dd {
   margin: 0 0 8px;
 }
@@ -1710,7 +1942,8 @@ textarea {
   opacity: 0.6;
 }
 
-.application-modal-dialog :is(button, input, select, textarea):focus-visible {
+.application-modal-dialog
+  :is(button, input, select, textarea, summary):focus-visible {
   outline: 2px solid var(--memoka-color-focus);
   outline-offset: 2px;
 }

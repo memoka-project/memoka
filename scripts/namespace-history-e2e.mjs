@@ -57,7 +57,9 @@ export async function runNamespaceHistory({
     const result = JSON.parse(stdout);
     const backupStateV3 =
       args[0] === "backup" &&
-      ["status", "run", "copy", "maintain"].includes(args[1]);
+      ["status", "run", "copy", "maintain", "locks", "unlock"].includes(
+        args[1],
+      );
     assert.equal(result.schema_version, backupStateV3 ? 3 : 1);
     return result;
   };
@@ -114,6 +116,24 @@ export async function runNamespaceHistory({
         // it. Merely displaying either variant must not authorize or connect.
         const googleConfigured =
           process.env.MEMOKA_E2E_GOOGLE_CONFIGURED === "1";
+        await waitForElement(sessionId, ".backup-destination-table");
+        await screenshot(`backup-overview${size ? "-small" : ""}.png`);
+        await clickElement(
+          sessionId,
+          await waitForElement(sessionId, '[data-backup-focus="add"]'),
+        );
+        const kinds = await execute(
+          sessionId,
+          `const select = document.querySelector('.backup-dialog select');
+          const types = Array.from(select.options).map(option => option.textContent);
+          select.value = 'google'; select.dispatchEvent(new Event('change', {bubbles:true})); return types;`,
+        );
+        assert.ok(kinds.includes("Google Drive"));
+        assert.ok(kinds.includes("ローカルディレクトリ"));
+        await clickElement(
+          sessionId,
+          await waitForElement(sessionId, '[data-backup-focus="connections"]'),
+        );
         await waitFor(
           sessionId,
           `const panel = document.querySelector('.backup-dialog');
@@ -127,13 +147,25 @@ export async function runNamespaceHistory({
           `const panel = document.querySelector('.backup-dialog');
             const connect = Array.from(panel.querySelectorAll('button')).find(button => button.textContent === 'Googleへ新規接続');
             return { disabled: connect?.disabled,
-              types: Array.from(panel.querySelectorAll('select option')).map(option => option.textContent),
-              tokenFields: panel.querySelectorAll('input[type=password]').length };`,
+              tokenFields: Array.from(panel.querySelectorAll('input[type=password]')).filter(input => !input.closest('[hidden]')).length };`,
         );
         assert.equal(cloudUi.disabled, !googleConfigured);
-        assert.ok(cloudUi.types.includes("Google Drive"));
-        assert.ok(cloudUi.types.includes("ローカルディレクトリ"));
         assert.equal(cloudUi.tokenFields, 0);
+        await clickElement(
+          sessionId,
+          await waitForElement(sessionId, ".backup-dialog-header button"),
+        );
+        await clickElement(
+          sessionId,
+          await waitForElement(sessionId, ".backup-dialog-header button"),
+        );
+        await clickElement(
+          sessionId,
+          await waitForElement(
+            sessionId,
+            '[data-backup-focus="local-history:settings"]',
+          ),
+        );
         if (!size) {
           // Exercise the real settings IPC, not only mocked dialog forms.
           // Retention changes are configuration-only and must not capture or
@@ -173,6 +205,35 @@ export async function runNamespaceHistory({
             saved.status.last_local_capture_at,
             originalBackup.status.last_local_capture_at,
           );
+          // Inspect only this harness's private local repository via the real
+          // Progress UI, then exercise stale-only unlock through owner IPC.
+          await clickElement(
+            sessionId,
+            await waitForElement(sessionId, "#backup-tab-progress"),
+          );
+          await clickElement(
+            sessionId,
+            await waitForElement(sessionId, ".backup-lock-recovery button"),
+          );
+          await waitFor(
+            sessionId,
+            `return document.querySelector('.backup-lock-recovery [role="status"]')?.textContent;`,
+            (text) => text?.includes("現在のロック: 0 件"),
+          );
+          const locks = await cli("backup", "unlock");
+          assert.equal(locks.unlock_attempted, true);
+          assert.deepEqual(locks.locks, []);
+          const afterLocks = await cli("backup", "status");
+          assert.equal(afterLocks.content_epoch, originalBackup.content_epoch);
+          assert.equal(
+            afterLocks.status.last_local_capture_at,
+            originalBackup.status.last_local_capture_at,
+          );
+          await screenshot("backup-lock-diagnostics.png");
+          await clickElement(
+            sessionId,
+            await waitForElement(sessionId, "#backup-tab-settings"),
+          );
         }
         const geometry = await execute(
           sessionId,
@@ -184,10 +245,10 @@ export async function runNamespaceHistory({
             centeredX: Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1,
             centeredY: Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1,
             bounded: rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
-            scrollable: dialog.scrollHeight > dialog.clientHeight,
+            scrollable: Array.from(dialog.querySelectorAll('[data-modal-scroll]')).some(panel => !panel.closest('[hidden]') && panel.scrollHeight > panel.clientHeight),
             backdrop: document.elementFromPoint(2, 2)?.classList.contains('application-modal-overlay'),
             focused: dialog.contains(document.activeElement),
-            controls: dialog.querySelectorAll('input:not(:disabled),button:not(:disabled)').length
+            controls: Array.from(dialog.querySelectorAll('input,button,select,summary')).filter(control => !control.closest('[hidden]') && !control.matches(':disabled') && control.tabIndex >= 0).length
           };`,
         );
         assert.ok(
@@ -234,6 +295,8 @@ export async function runNamespaceHistory({
         await screenshot(`${name}${size ? "-small" : ""}.png`);
         if (size) await sendActiveChord(sessionId, CONTROL, "c");
         else await sendActiveKey(sessionId, ESCAPE);
+        await waitForElement(sessionId, '[data-backup-focus="add"]');
+        await sendActiveKey(sessionId, ESCAPE);
         await waitFor(
           sessionId,
           'return !document.querySelector(".backup-dialog") && document.activeElement?.closest(".memoka-editor")?.dataset.noteId',
@@ -244,6 +307,50 @@ export async function runNamespaceHistory({
   } finally {
     await windowRect(originalRect);
   }
+
+  const unzoomedWidth = await execute(sessionId, "return innerWidth;");
+  await command("colorscheme dayfox");
+  await command("zoom 120");
+  await waitFor(
+    sessionId,
+    `return document.documentElement.dataset.memokaThemeAppearance === 'light'
+      && innerWidth < ${unzoomedWidth} - 10;`,
+    Boolean,
+  );
+  await command("backup-settings");
+  await waitForElement(sessionId, ".backup-destination-table");
+  const lightZoomLayout = await execute(
+    sessionId,
+    `const dialog = document.querySelector('.backup-dialog');
+    const rect = dialog.getBoundingClientRect();
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      centered: Math.abs(rect.x + rect.width / 2 - innerWidth / 2) < 1
+        && Math.abs(rect.y + rect.height / 2 - innerHeight / 2) < 1,
+      bounded: rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+      focused: dialog.contains(document.activeElement)
+    };`,
+  );
+  assert.ok(
+    lightZoomLayout.centered &&
+      lightZoomLayout.bounded &&
+      lightZoomLayout.focused,
+    JSON.stringify(lightZoomLayout),
+  );
+  modalLayouts.push({
+    name: "backup-overview-light-120-percent",
+    ...lightZoomLayout,
+  });
+  await screenshot("backup-overview-light-zoom.png");
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    "return !document.querySelector('.backup-dialog');",
+    Boolean,
+  );
+  await command("zoom 100");
+  await waitFor(sessionId, `return innerWidth === ${unzoomedWidth};`, Boolean);
+  await command("colorscheme nightfox");
 
   await command("group");
   const nameInput = await waitForElement(
@@ -668,6 +775,8 @@ export async function runNamespaceHistory({
       "centered-backup-modals-and-bounded-small-window-scrolling",
       "backup-modal-tab-cycle-and-editor-focus-restoration",
       "backup-settings-native-save-without-capture-or-modal-dismissal",
+      "explicit-backup-lock-diagnostics-and-stale-only-owner-unlock",
+      "backup-overview-light-theme-and-120-percent-zoom",
       process.env.MEMOKA_E2E_GOOGLE_CONFIGURED === "1"
         ? "bundled-google-native-panel-and-typed-destination-chooser"
         : "unconfigured-google-native-panel-and-typed-destination-chooser",

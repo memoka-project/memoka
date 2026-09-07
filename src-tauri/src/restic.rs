@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::{
     ffi::{OsStr, OsString},
     fs::{self, File, OpenOptions},
+    io::{Seek, SeekFrom},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -40,6 +41,10 @@ impl std::fmt::Debug for Password {
 pub struct Repository {
     pub location: RepositoryLocation,
     pub password: Password,
+    // Granted only after a Workspace destination's identity (and, on Drive,
+    // local writer binding) has been validated. Arbitrary restore sources do
+    // not acquire this capability merely by supplying a path/password.
+    automatic_lock_recovery: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub enum RepositoryLocation {
@@ -51,13 +56,19 @@ impl Repository {
         Self {
             location: RepositoryLocation::LocalDirectory { path },
             password,
+            automatic_lock_recovery: None,
         }
     }
     pub(crate) fn drive(context: crate::rclone::DriveRepository, password: Password) -> Self {
         Self {
             location: RepositoryLocation::GoogleDrive(context),
             password,
+            automatic_lock_recovery: None,
         }
+    }
+    pub(crate) fn with_automatic_lock_recovery(mut self, expected: String) -> Self {
+        self.automatic_lock_recovery = Some(expected);
+        self
     }
     pub fn local_path(&self) -> Result<&Path, ReadError> {
         match &self.location {
@@ -221,7 +232,34 @@ impl Restic {
         args: &[OsString],
         cwd: Option<&Path>,
     ) -> Result<Vec<u8>, ReadError> {
-        self.execute(repo, args, cwd, None)
+        self.execute(repo, args, cwd, None, None)
+    }
+    pub(crate) fn copy_snapshot(
+        &self,
+        source: &Repository,
+        target: &Repository,
+        snapshot: &str,
+    ) -> Result<(), ReadError> {
+        if !matches!(source.password, Password::Insecure) {
+            return Err(ReadError::new(
+                "INVALID_ARGUMENT",
+                "Copy source must be local history",
+            ));
+        }
+        self.execute(
+            target,
+            &[
+                "copy".into(),
+                "--from-repo".into(),
+                source.local_path()?.as_os_str().to_owned(),
+                "--from-insecure-no-password".into(),
+                snapshot.into(),
+            ],
+            None,
+            None,
+            Some(source),
+        )?;
+        Ok(())
     }
     pub fn json(&self, repo: &Repository, args: &[&str]) -> Result<Value, ReadError> {
         let mut args = args.iter().map(OsString::from).collect::<Vec<_>>();
@@ -245,11 +283,61 @@ impl Restic {
             &["dump".into(), snapshot.into(), path.into()],
             None,
             Some(file.try_clone()?),
+            None,
         )?;
         file.sync_all()?;
         Ok(())
     }
     fn execute(
+        &self,
+        repo: &Repository,
+        args: &[OsString],
+        cwd: Option<&Path>,
+        mut output: Option<File>,
+        source: Option<&Repository>,
+    ) -> Result<Vec<u8>, ReadError> {
+        let first = self.execute_once(
+            repo,
+            args,
+            cwd,
+            output.as_ref().map(File::try_clone).transpose()?,
+        );
+        let Err(error) = &first else { return first };
+        // Exit 11 is a lock-acquisition failure. Do not replay incomplete
+        // writes, authentication failures, cancellations or arbitrary commands.
+        let eligible = matches!(
+            args.first().and_then(|arg| arg.to_str()),
+            Some("backup" | "snapshots" | "dump" | "ls" | "copy" | "forget" | "prune" | "check")
+        );
+        let repositories = source
+            .into_iter()
+            .chain(std::iter::once(repo))
+            .filter_map(|r| r.automatic_lock_recovery.as_deref().map(|id| (r, id)))
+            .collect::<Vec<_>>();
+        if error.code != "REPOSITORY_LOCKED" || !eligible || repositories.is_empty() {
+            return first;
+        }
+        // Child/transport cleanup has completed before execute_once returns.
+        // Reuse the existing leases, cancellation and whole-operation deadline.
+        let stage = self.progress.as_ref().map(|p| p.snapshot().stage);
+        self.stage(crate::backup_progress::Stage::LockRecovery);
+        for (repository, expected) in repositories {
+            crate::backup_locks::recover_for_retry(self, repository, expected)?;
+        }
+        if let Some(stage) = stage {
+            self.stage(stage);
+        }
+        if let Some(file) = &mut output {
+            // dump_file's original output is new and private. Never append to
+            // bytes from the failed attempt (try_clone shares the file offset).
+            file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
+        }
+        // No recursive retry: live locks are respected by Restic again. The
+        // caller retains its normal backoff/status and verification semantics.
+        self.execute_once(repo, args, cwd, output)
+    }
+    fn execute_once(
         &self,
         repo: &Repository,
         args: &[OsString],
@@ -322,6 +410,7 @@ impl Restic {
             Some("forget") => Operation::Forget,
             Some("prune") => Operation::Prune,
             Some("check") => Operation::Check,
+            Some("unlock") => Operation::Unlock,
             _ => Operation::Other,
         };
         if let Some(progress) = &self.progress {
@@ -450,6 +539,223 @@ pub fn args(values: &[impl AsRef<OsStr>]) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    fn automatic_fixture(root: &Path) -> (Restic, Repository) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(root).unwrap();
+        let binary = root.join("fake-restic");
+        // All files/paths belong to this private fixture. No real repository,
+        // keyring, Drive connection or ambient Restic configuration is used.
+        fs::write(
+            &binary,
+            r#"#!/bin/sh
+repo=; source=; op=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo) shift; repo="$1" ;;
+    --from-repo) shift; source="$1" ;;
+    cat|snapshots|dump|copy|unlock|check) op="$1" ;;
+    --remove-all) exit 99 ;;
+  esac
+  shift
+done
+printf '%s\n' "$op" >> "$repo/calls"
+case "$op" in
+  cat) printf '{"id":"%s"}' "$(cat "$repo/identity")" ;;
+  unlock)
+    [ ! -f "$repo/unlock-fails" ] || exit 1
+    touch "$repo/unlocked"
+    if [ -f "$repo/unlock-delay" ]; then sleep 1; fi
+    if [ -f "$repo/new-identity" ]; then cp "$repo/new-identity" "$repo/identity"; fi
+    ;;
+  *)
+    if [ -n "$source" ] && [ -f "$source/fault" ] && [ ! -f "$source/unlocked" ]; then exit 11; fi
+    if [ -f "$repo/fault" ] && { [ ! -f "$repo/unlocked" ] || [ -f "$repo/persistent" ]; }; then
+      printf partial
+      exit "$(cat "$repo/fault")"
+    fi
+    printf complete
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(root.join("identity"), "a".repeat(64)).unwrap();
+        let restic = Restic {
+            binary,
+            cancel: cancellation(),
+            timeout: Duration::from_secs(10),
+            deadline: None,
+            cache: None,
+            progress: None,
+        };
+        (
+            restic,
+            Repository::at(root.to_path_buf(), Password::Insecure),
+        )
+    }
+    #[cfg(unix)]
+    fn calls(path: &Path, operation: &str) -> usize {
+        fs::read_to_string(path.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|s| *s == operation)
+            .count()
+    }
+    #[cfg(unix)]
+    #[test]
+    fn automatic_unlock_is_opt_in_bounded_and_only_retries_lock_acquisition_errors() {
+        let temporary = tempfile::tempdir().unwrap();
+        for (name, enabled, fault, persistent, expected) in [
+            ("healthy", true, None, false, None),
+            (
+                "read-only",
+                false,
+                Some(11),
+                false,
+                Some("REPOSITORY_LOCKED"),
+            ),
+            ("stale", true, Some(11), false, None),
+            ("live", true, Some(11), true, Some("REPOSITORY_LOCKED")),
+            (
+                "incomplete",
+                true,
+                Some(3),
+                false,
+                Some("RESTIC_INCOMPLETE"),
+            ),
+            ("missing", true, Some(10), false, Some("REPOSITORY_MISSING")),
+            ("credentials", true, Some(12), false, Some("CREDENTIALS")),
+            ("unrelated", true, Some(1), false, Some("RESTIC_FAILED")),
+        ] {
+            let root = temporary.path().join(name);
+            let (restic, mut repo) = automatic_fixture(&root);
+            if enabled {
+                repo = repo.with_automatic_lock_recovery("a".repeat(64));
+            }
+            if let Some(code) = fault {
+                fs::write(root.join("fault"), code.to_string()).unwrap();
+            }
+            if persistent {
+                fs::write(root.join("persistent"), "").unwrap();
+            }
+            let result = restic.run(&repo, &args(&["snapshots"]), None);
+            assert_eq!(
+                result.as_ref().err().map(|e| e.code.as_str()),
+                expected,
+                "{name}"
+            );
+            let recovers = enabled && fault == Some(11);
+            assert_eq!(calls(&root, "unlock"), usize::from(recovers), "{name}");
+            assert_eq!(
+                calls(&root, "snapshots"),
+                1 + usize::from(recovers),
+                "{name}"
+            );
+            assert_eq!(calls(&root, "cat"), 2 * usize::from(recovers), "{name}");
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn automatic_unlock_preserves_identity_deadline_and_cancellation_guards() {
+        let temporary = tempfile::tempdir().unwrap();
+        for (name, expected) in [
+            ("wrong-identity", "REPOSITORY_MISMATCH"),
+            ("replaced-during-unlock", "REPOSITORY_MISMATCH"),
+            ("unlock-error", "RESTIC_FAILED"),
+            ("deadline", "TIMEOUT"),
+            ("cancel", "CANCELLED"),
+        ] {
+            let root = temporary.path().join(name);
+            let (mut restic, repo) = automatic_fixture(&root);
+            let repo = repo.with_automatic_lock_recovery("a".repeat(64));
+            fs::write(root.join("fault"), "11").unwrap();
+            match name {
+                "wrong-identity" => fs::write(root.join("identity"), "b".repeat(64)).unwrap(),
+                "replaced-during-unlock" => {
+                    fs::write(root.join("new-identity"), "b".repeat(64)).unwrap()
+                }
+                "unlock-error" => fs::write(root.join("unlock-fails"), "").unwrap(),
+                "deadline" => {
+                    restic = restic.within(Duration::from_millis(700));
+                    fs::write(root.join("unlock-delay"), "").unwrap();
+                }
+                _ => restic.cancel.store(true, Ordering::Release),
+            }
+            assert_eq!(
+                restic
+                    .run(&repo, &args(&["snapshots"]), None)
+                    .unwrap_err()
+                    .code,
+                expected,
+                "{name}"
+            );
+            assert_eq!(
+                calls(&root, "snapshots"),
+                usize::from(name != "cancel"),
+                "{name}"
+            );
+            assert_eq!(
+                calls(&root, "unlock"),
+                usize::from(name != "cancel" && name != "wrong-identity"),
+                "{name}"
+            );
+        }
+        // Cancellation arriving DURING recovery must not launch the original
+        // data operation again after the unlock child has been reaped.
+        let root = temporary.path().join("cancel-during-unlock");
+        let (restic, repo) = automatic_fixture(&root);
+        let repo = repo.with_automatic_lock_recovery("a".repeat(64));
+        fs::write(root.join("fault"), "11").unwrap();
+        fs::write(root.join("unlock-delay"), "").unwrap();
+        let cancel = restic.cancel.clone();
+        let worker = std::thread::spawn(move || restic.run(&repo, &args(&["snapshots"]), None));
+        let began = Instant::now();
+        while !root.join("unlocked").exists()
+            && !worker.is_finished()
+            && began.elapsed() < Duration::from_secs(3)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let reached_unlock = root.join("unlocked").exists();
+        cancel.store(true, Ordering::Release);
+        let result = worker.join().unwrap();
+        assert!(reached_unlock, "unlock fixture was not reached");
+        assert_eq!(result.unwrap_err().code, "CANCELLED");
+        assert_eq!(calls(&root, "snapshots"), 1);
+        assert_eq!(calls(&root, "unlock"), 1);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn automatic_unlock_retries_dump_from_start_and_recovers_only_registered_copy_endpoints() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target_path = temporary.path().join("target");
+        let (restic, target) = automatic_fixture(&target_path);
+        let target = target.with_automatic_lock_recovery("a".repeat(64));
+        fs::write(target_path.join("fault"), "11").unwrap();
+        let output = temporary.path().join("dump");
+        restic
+            .dump_file(&target, "snapshot", "/state.sqlite", &output)
+            .unwrap();
+        assert_eq!(fs::read(output).unwrap(), b"complete");
+        let source_path = temporary.path().join("source");
+        let (_, source) = automatic_fixture(&source_path);
+        fs::write(source_path.join("fault"), "11").unwrap();
+        // Raw source can be read explicitly, but must not be auto-unlocked.
+        assert_eq!(
+            restic
+                .copy_snapshot(&source, &target, "snapshot")
+                .unwrap_err()
+                .code,
+            "REPOSITORY_LOCKED"
+        );
+        assert_eq!(calls(&source_path, "unlock"), 0);
+        let source = source.with_automatic_lock_recovery("a".repeat(64));
+        restic.copy_snapshot(&source, &target, "snapshot").unwrap();
+        assert_eq!(calls(&source_path, "unlock"), 1);
+        assert_eq!(calls(&target_path, "copy"), 4);
+    }
     #[cfg(unix)]
     #[test]
     fn only_config_identity_reads_skip_locks_and_leased_identity_never_replaces_a_fresh_check() {

@@ -25,6 +25,7 @@ const USAGE: &str = "Memoka CLI\n\n\
   memoka-cli history [--id ID] [--workspace DIR] --format json\n\
   memoka-cli backup run|status|list|copy [--workspace DIR]\n\
   memoka-cli backup maintain [--workspace DIR] [--dry-run]\n\
+  memoka-cli backup locks|unlock [--workspace DIR] [--destination ID]\n\
   memoka-cli cloud connect google-drive --name NAME [--client-file FILE] [--no-browser]\n\
   memoka-cli cloud list --format json\n\
   memoka-cli cloud reconnect --connection ID [--client-file FILE] [--no-browser]\n\
@@ -68,6 +69,7 @@ impl Options {
             "--drive-folder-id",
             "--client-file",
             "--name",
+            "--destination",
         ];
         let mut result = Self {
             positional: Vec::new(),
@@ -347,6 +349,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
             options.allow(match *action {
                 "maintain" => &["--workspace", "--format", "--dry-run"],
                 "check" => &["--workspace", "--format", "--full"],
+                "locks" | "unlock" => &["--workspace", "--format", "--destination"],
                 _ => &["--workspace", "--format"],
             })?;
             Request::Backup {
@@ -355,6 +358,10 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
                     "status" => BackupAction::Status,
                     "list" => BackupAction::List,
                     "copy" => BackupAction::Copy,
+                    "locks" | "unlock" => BackupAction::RepositoryLocks {
+                        destination_id: options.get("--destination").map(str::to_owned),
+                        repair: *action == "unlock",
+                    },
                     "maintain" => BackupAction::Maintain {
                         dry_run: options.flag("--dry-run"),
                     },

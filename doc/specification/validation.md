@@ -138,10 +138,18 @@ Driveのupload完了を保護済みと混同しないこと、検証待ちの再
 転送済み検証待ちはno-op判定を妨げず、実行中のworkerを中断しない。native GUI＋owner CLI経由で無変更cycleの省略と経過時間を記録する。
 一時cacheのowner-only権限・共有・破棄、uncached full check、実stdio JSON統計、長い/不正logの上限と秘密の非公開を確認する。
 工程別表示、世代数と通信量の区別、未計測値、失敗/中断、poll中の入力draft保持を確認する。
-ID再利用がleased handle内だけであり、copy後・実削除前のfresh照合が残ること、`cat config`以外のlockを省略しないことを確認する。
+ID再利用がleased handle内だけであり、copy後・実削除前のfresh照合が残ること、`cat config`と明示lock metadata診断以外のlockを省略しないことを確認する。
 保持数以下のno-op、保持数超過・設定変更・24時間後の再評価、未完了writeの回収待ち永続化、
 後続成功時にも古い回収待ちを失わないこと、prune前の未知snapshot拒否を確認する。
 Linuxでは実Resticの中断後にlock fileが消えること、後始末中にtransportが生存すること、猶予超過で子孫が回収されることを確認する。
+private repository内だけで異常終了を再現し、失効lockは明示unlockで解除、実行中lockは解除されず、世代の数・snapshot ID・check結果を維持することを実Resticで確認する。
+同じ実Restic fixtureで、登録済みhandleの自動解除・元commandの再試行、稼働中lockでの有限失敗、正常な後続操作でunlockが増えないことを確認する。
+単独復旧用handleと不一致IDには自動解除せず、copyでは登録済みsource/targetだけを扱うこと、解除前後のID照合、解除失敗、期限切れ、キャンセル、dump出力の巻き戻しを検査する。
+正常時・exit 11以外では自動unlockを起動せず、恒常的なlock競合でも1 commandあたり各対象repositoryの解除1回・command再試行1回までとする。UIは自動復旧の工程と解除command数を世代の保護状態から区別する。
+GUI表示・pollでlock診断が走らず、確認→解除確認→実行を必要とし、取消・遅延応答・保存先切替・BACKUP_BUSY・残存lockを正しく表示することを検査する。
+CLIのlocks/unlockは登録対象だけに限定し、--remove-all/--force/任意repositoryを拒否する。owner内の稼働中leaseと排他し、capture/保護日時を変更せず、無関係なエラーを消さない。
+復旧のWorkspace ID維持と追加保存先の除外、別OS-user接続のbinding未登録・不一致でwriter拒否、単独read/restoreとの分離を検証する。
+実Driveでの残存lock復旧と異なるPCからのwriter拒否は別途手動確認し、local Restic/registry単体テストを実Driveの検証済みと扱わない。
 
 実Googleアカウントの認証、token更新、認可取消後の既存root参照、元config/keyringを使わない別OSユーザー/別PC復旧が正式提供のgateである。
 Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切替/Updater、中断後の子孫回収もnative確認する。
@@ -186,7 +194,9 @@ OAuth組み込み版のpanel試験には`MEMOKA_E2E_GOOGLE_CONFIGURED=1`を指�
 - 新しい世代からのcopy、capture日時保持、idempotence、未接続時のpending/expired/protected区別
 - 保存先別の保持数（既定: 直近48 OR 日次30 OR 月次12）、0指定、dry-runと実削除の一致、最新valid世代保護、24時間のidle prune
 - 複数保存先の独立パスワード・再登録・無効化/再開・一部未接続・転送時間切れ、旧単一先/初期化intent移行
-- 統合backup-settings modalの状態pollと編集draft保持、絶対日時+ago、狭幅表示、日時clockによるEditor再描画がないこと
+- backup-settingsの保存先一覧→進捗/設定→一覧、追加/Google接続管理、未保存入力の破棄確認、フォーカス復帰、hiddenタブと折り畳み注意欄のTab順
+- 一覧の検証済み/転送済み/対象数、保存先だけに残る古い世代、保持削除・期限切れ・検証待ち・中断/再起動・未確定値。表示だけでは外部通信やstatus書き込みが起きないこと
+- 状態pollと詳細タブ切替でのdraft保持、絶対日時+ago、狭幅での一覧/本文内部scrollと固定ヘッダー/フッター、Light/Dark themeとZoom、日時clockによるEditor再描画がないこと
 - capture/copyとmaintenanceのlease、cancel後のphase開始禁止、timeout/cancel時の子process回収
 - 終了進捗・retry/cancel、Core保存失敗/停止失敗時は強制終了禁止、切替・更新の追加先待機には30秒上限なし
 - Native CLIとGUIの論理行契約、revision/query-bound cursor、Trash明示、同世代link/画像、URLをfetchしないこと

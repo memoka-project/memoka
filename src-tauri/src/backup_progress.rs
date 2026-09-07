@@ -19,6 +19,7 @@ pub enum Stage {
     Uploading,
     TargetVerification,
     Maintaining,
+    LockRecovery,
     Complete,
 }
 
@@ -33,6 +34,7 @@ pub enum Operation {
     Forget,
     Prune,
     Check,
+    Unlock,
     Other,
 }
 

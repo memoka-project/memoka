@@ -1,20 +1,11 @@
 import { Fragment } from "react";
+import { backupStageLabels } from "../core/backup-display";
 import type {
   BackupTransferProgress as TransferProgress,
-  BackupTransferStage,
   BackupTransferOperation,
 } from "../core/history";
 import { EventDateTime } from "./EventDateTime";
 
-const stages: Record<BackupTransferStage, string> = {
-  connecting: "接続・保存先の確認",
-  listing: "転送先の履歴一覧を確認",
-  "source-verification": "転送元の世代を検証",
-  uploading: "データ転送",
-  "target-verification": "転送した世代を検証",
-  maintaining: "保持世代の整理",
-  complete: "処理完了",
-};
 const operations: Record<BackupTransferOperation, string> = {
   repository: "リポジトリ情報の確認",
   snapshots: "世代一覧の取得",
@@ -24,6 +15,7 @@ const operations: Record<BackupTransferOperation, string> = {
   forget: "保持世代の選定・整理",
   prune: "不要データの整理",
   check: "整合性検査",
+  unlock: "失効ロックの確認・解除",
   other: "その他の処理",
 };
 function duration(ms: number): string {
@@ -48,7 +40,7 @@ export function BackupTransferProgress({ value }: { value: TransferProgress }) {
     <section aria-label="転送の詳細" className="backup-transfer-progress">
       <dl>
         <dt>{value.running ? "現在の工程" : "前回の工程"}</dt>
-        <dd>{stages[value.stage] ?? value.stage}</dd>
+        <dd>{backupStageLabels[value.stage] ?? value.stage}</dd>
         {value.total_generations > 0 && (
           <>
             <dt>この工程で処理済みの世代</dt>
@@ -123,9 +115,6 @@ export function BackupTransferProgress({ value }: { value: TransferProgress }) {
           <dt>通信エラー数（内部再試行を含む）</dt>
           <dd>{value.transport_errors}</dd>
         </dl>
-        <p>
-          転送待ちはノート数ではなく履歴の世代数です。Driveでは転送完了後に検証待ちへ移り、検証が成功した世代だけを保護済みと表示します。通信量は取得できたファイル転送の統計で、進捗率や残り時間ではありません。
-        </p>
       </details>
     </section>
   );

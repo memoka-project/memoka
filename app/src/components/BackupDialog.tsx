@@ -1,27 +1,37 @@
-import { useEffect, useRef, useState } from "react";
-import { PasswordForm, RetentionFields } from "./BackupFields";
 import {
-  CloudBackupSettings,
-  CloudDestinationActions,
-} from "./CloudBackupSettings";
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { CloudBackupSettings } from "./CloudBackupSettings";
 import { ModalDialog } from "./ModalDialog";
-import { EventDateTime } from "./EventDateTime";
-import { BackupTransferProgress } from "./BackupTransferProgress";
+import { BackupNotices } from "./BackupNotices";
+import { BackupNoticeContext } from "./backup-notice-context";
+import { backupStageLabels, phaseLabel } from "../core/backup-display";
 import {
-  DEFAULT_BACKUP_RETENTION,
+  LocalBackupDetails,
+  BackupDestinationDetails,
+  NewDestination,
+  BackupTime,
+  type Save,
+} from "./BackupDestinationDetails";
+import {
   backupDestinationLabel,
   nativeErrorMessage,
   type BackupPort,
   type BackupState,
-  type BackupDestination,
-  type BackupDestinationStatus,
   type BackupSettingsRequest,
+  type BackupGenerationCounts,
 } from "../core/history";
 
 export interface BackupDialogSession {
   readonly restoreFocus: () => void;
 }
-type Save = (request: BackupSettingsRequest, key: string) => Promise<boolean>;
+type Tab = "progress" | "settings";
+type View =
+  { kind: "list" } | { kind: "detail"; id: string; tab: Tab } | { kind: "add" };
 export function BackupDialog({
   port,
   session,
@@ -34,50 +44,109 @@ export function BackupDialog({
   onSaved: (request: BackupSettingsRequest) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const mounted = useRef(false);
-  const saving = useRef(false);
+  const mounted = useRef(false),
+    saving = useRef(false);
   const [state, setState] = useState<BackupState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(
     null,
   );
-  const [directory, setDirectory] = useState<string | null>(null);
-  const [destinationKind, setDestinationKind] = useState("local");
+  const [view, setView] = useState<View>({ kind: "list" });
+  const [connections, setConnections] = useState(false);
+  const [connectionRevision, setConnectionRevision] = useState(0);
+  const [dirtyForms, setDirtyForms] = useState<ReadonlySet<string>>(new Set());
+  const dirty = dirtyForms.size > 0;
+  const [leave, setLeave] = useState<(() => void) | null>(null);
+  const [notices, setNotices] = useState<Record<string, string>>({});
+  const reportNotice = useCallback((id: string, message: string | null) => {
+    setNotices((current) => {
+      if ((current[id] ?? null) === message) return current;
+      const next = { ...current };
+      if (message === null) delete next[id];
+      else next[id] = message;
+      return next;
+    });
+  }, []);
   const refreshSequence = useRef(0);
-  const refresh = async (): Promise<void> => {
-    const sequence = ++refreshSequence.current;
-    const value = await port.status();
-    if (mounted.current && sequence === refreshSequence.current)
-      setState(value);
-  };
+  const focusAfterNavigation = useRef<string | null>(null);
+  const returnTo = useRef("add"),
+    addedId = useRef<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     mounted.current = true;
-    const refresh = (): void => {
+    let polling = false;
+    const refresh = () => {
+      if (polling || saving.current) return;
+      polling = true;
       const sequence = ++refreshSequence.current;
-      void port.status().then(
-        (value) => {
-          if (mounted.current && sequence === refreshSequence.current) {
-            setState(value);
-            setError((current) => (current?.key === "status" ? null : current));
-          }
-        },
-        (cause) => {
-          if (mounted.current && sequence === refreshSequence.current)
-            setError({ key: "status", message: nativeErrorMessage(cause) });
-        },
-      );
+      void port
+        .status()
+        .then(
+          (value) => {
+            if (mounted.current && sequence === refreshSequence.current) {
+              setState(value);
+              setError((current) =>
+                current?.key === "status" ? null : current,
+              );
+            }
+          },
+          (cause) => {
+            if (mounted.current && sequence === refreshSequence.current)
+              setError({ key: "status", message: nativeErrorMessage(cause) });
+          },
+        )
+        .finally(() => {
+          polling = false;
+        });
     };
     refresh();
-    const timer = setInterval(refresh, 2_000);
+    const timer = setInterval(refresh, 2000);
     return () => {
       mounted.current = false;
       clearInterval(timer);
     };
   }, [port]);
-  const close = (): void => {
-    if (saving.current) return;
+  useLayoutEffect(() => {
+    const key = focusAfterNavigation.current;
+    if (!key) return;
+    const target = Array.from(
+      root.current?.querySelectorAll<HTMLElement>("[data-backup-focus]") ?? [],
+    ).find(
+      (element) =>
+        element.dataset.backupFocus === key && !element.closest("[hidden]"),
+    );
+    (target ?? root.current)?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    focusAfterNavigation.current = null;
+  }, [view, connections, state, busy]);
+
+  const finishClose = () => {
     onClose();
     queueMicrotask(session.restoreFocus);
+  };
+  const navigate = (action: () => void) => {
+    if (saving.current) return;
+    if (dirty) setLeave(() => action);
+    else action();
+  };
+  const showList = (focus = returnTo.current) => {
+    setView({ kind: "list" });
+    setDirtyForms(new Set());
+    setNotice(null);
+    focusAfterNavigation.current = focus;
+  };
+  const back = () => {
+    if (saving.current) return;
+    if (leave) {
+      setLeave(null);
+      return;
+    }
+    if (connections) {
+      setConnections(false);
+      setConnectionRevision((value) => value + 1);
+      focusAfterNavigation.current = "connections";
+    } else if (view.kind === "list") navigate(finishClose);
+    else navigate(() => showList());
   };
   const save: Save = async (request, key) => {
     if (saving.current) return false;
@@ -88,9 +157,29 @@ export function BackupDialog({
     try {
       await port.settings(request);
       onSaved(request);
-      // Never report a committed Add as failed just because polling failed.
+      if (!mounted.current) return true;
+      setDirtyForms((current) => {
+        const next = new Set(current);
+        if (request.kind === "local" || request.kind === "retention")
+          next.delete(request.kind);
+        else if (
+          ["credential", "add", "add-google-drive"].includes(request.kind)
+        )
+          next.delete("password");
+        return next;
+      });
+      setNotice("設定を保存しました");
       try {
-        await refresh();
+        const sequence = ++refreshSequence.current;
+        const value = await port.status();
+        if (mounted.current && sequence === refreshSequence.current) {
+          addedId.current =
+            value.config.destinations.find(
+              (target) =>
+                !state?.config.destinations.some((old) => old.id === target.id),
+            )?.id ?? null;
+          setState(value);
+        }
       } catch (cause) {
         if (mounted.current)
           setError({ key: "status", message: nativeErrorMessage(cause) });
@@ -102,428 +191,525 @@ export function BackupDialog({
       return false;
     } finally {
       saving.current = false;
-      if (mounted.current) setBusy(null);
+      if (mounted.current) {
+        setBusy(null);
+        focusAfterNavigation.current =
+          view.kind === "detail" ? view.tab : "add";
+      }
     }
   };
+  const selected =
+    view.kind === "detail" && view.id !== "local-history"
+      ? state?.config.destinations.find((target) => target.id === view.id)
+      : undefined;
+  const openDetail = (id: string, tab: Tab) => {
+    returnTo.current = id + ":" + tab;
+    focusAfterNavigation.current = tab;
+    setView({ kind: "detail", id, tab });
+    setNotice(null);
+  };
+  const openConnections = () => {
+    focusAfterNavigation.current = "connections-title";
+    setConnections(true);
+  };
+  const added = () =>
+    showList(addedId.current ? addedId.current + ":settings" : "add");
+
+  useLayoutEffect(() => {
+    if (leave)
+      root.current
+        ?.querySelector<HTMLElement>(".backup-leave-confirmation button")
+        ?.focus({ preventScroll: true });
+  }, [leave]);
+
   return (
-    <ModalDialog
-      dialogRef={root}
-      className="backup-dialog"
-      focusSurface="backup"
-      ariaLabel="バックアップ設定"
-      busy={busy !== null}
-      initialFocus="first-control"
-      onClose={close}
-    >
-      <h2>バックアップ設定</h2>
-      {error?.key === "status" && <p role="alert">{error.message}</p>}
-      {state ? (
-        <>
-          <LocalSettings
-            state={state}
-            busy={busy !== null}
-            save={save}
-            error={error?.key === "local" ? error.message : null}
-          />
-          <h3>追加保存先</h3>
-          {state.config.destinations.map((target) => (
-            <DestinationSettings
-              key={target.id}
-              target={target}
-              port={port}
-              status={state.status.destinations[target.id]}
-              busy={busy !== null}
-              save={save}
-              error={error?.key === target.id ? error.message : null}
-            />
-          ))}
-          {port.cloud && (
-            <label>
-              追加する保存先の種類
-              <select
-                value={destinationKind}
-                disabled={busy !== null}
-                onChange={(event) => setDestinationKind(event.target.value)}
-              >
-                <option value="local">ローカルディレクトリ</option>
-                <option value="google">Google Drive</option>
-              </select>
-            </label>
+    <BackupNoticeContext.Provider value={reportNotice}>
+      <ModalDialog
+        dialogRef={root}
+        className="backup-dialog"
+        focusSurface="backup"
+        ariaLabel="バックアップ設定"
+        busy={busy !== null}
+        initialFocus="first-control"
+        onClose={back}
+      >
+        <header className="backup-dialog-header" inert={leave !== null}>
+          <h2>
+            {connections
+              ? "Google接続の管理"
+              : view.kind === "add"
+                ? "保存先を追加"
+                : view.kind === "detail"
+                  ? "保存先の詳細"
+                  : "バックアップ設定"}
+          </h2>
+          {view.kind === "list" && !connections && (
+            <button
+              type="button"
+              disabled={!state || busy !== null}
+              data-backup-focus="add"
+              onClick={() => {
+                returnTo.current = "add";
+                focusAfterNavigation.current = "kind";
+                setView({ kind: "add" });
+              }}
+            >
+              保存先を追加
+            </button>
           )}
-          {directory ? (
-            <NewDestination
-              key={directory}
-              directory={directory}
-              busy={busy !== null}
-              save={save}
-              error={error?.key === "new" ? error.message : null}
-              onCancel={() => setDirectory(null)}
-              onAdded={() => setDirectory(null)}
-            />
+          {(view.kind !== "list" || connections) && (
+            <button type="button" disabled={busy !== null} onClick={back}>
+              戻る
+            </button>
+          )}
+        </header>
+        {error?.key === "status" && <p role="alert">{error.message}</p>}
+        {notice && (
+          <p role="status" className="backup-save-message">
+            {notice}
+          </p>
+        )}
+        <div
+          className="backup-dialog-body"
+          inert={leave !== null}
+          data-modal-scroll
+          onChangeCapture={(event) => {
+            if (
+              event.target instanceof HTMLInputElement &&
+              event.target.form &&
+              !connections
+            ) {
+              const key = event.target.form.dataset.backupDraft ?? "password";
+              setDirtyForms((current) => new Set([...current, key]));
+            }
+          }}
+        >
+          {!state ? (
+            <p role="status">読み込み中…</p>
           ) : (
-            destinationKind === "local" && (
+            <>
+              <div
+                className="backup-overview"
+                hidden={view.kind !== "list" || connections}
+              >
+                <BackupOverview state={state} onDetail={openDetail} />
+              </div>
+              <div hidden={connections}>
+                {view.kind === "detail" && (
+                  <>
+                    <h3 className="backup-detail-title">
+                      {view.id === "local-history"
+                        ? "ローカル履歴"
+                        : selected
+                          ? backupDestinationLabel(selected)
+                          : "保存先が解除されました"}
+                    </h3>
+                    <div
+                      className="backup-detail-tabs"
+                      role="tablist"
+                      aria-label="保存先の詳細"
+                    >
+                      {(["progress", "settings"] as const).map((tab) => (
+                        <button
+                          type="button"
+                          key={tab}
+                          role="tab"
+                          id={"backup-tab-" + tab}
+                          aria-controls={"backup-panel-" + tab}
+                          aria-selected={view.tab === tab}
+                          tabIndex={view.tab === tab ? 0 : -1}
+                          data-backup-focus={tab}
+                          disabled={busy !== null}
+                          onKeyDown={(event) => {
+                            if (
+                              [
+                                "ArrowLeft",
+                                "ArrowRight",
+                                "Home",
+                                "End",
+                              ].includes(event.key)
+                            ) {
+                              event.preventDefault();
+                              const next =
+                                event.key === "Home"
+                                  ? "progress"
+                                  : event.key === "End"
+                                    ? "settings"
+                                    : view.tab === "progress"
+                                      ? "settings"
+                                      : "progress";
+                              focusAfterNavigation.current = next;
+                              setView({ ...view, tab: next });
+                            }
+                          }}
+                          onClick={() => {
+                            focusAfterNavigation.current = tab;
+                            setView({ ...view, tab });
+                          }}
+                        >
+                          {tab === "progress" ? "進捗" : "設定"}
+                        </button>
+                      ))}
+                    </div>
+                    {view.id === "local-history" ? (
+                      <LocalBackupDetails
+                        port={port}
+                        state={state}
+                        busy={busy !== null}
+                        save={save}
+                        tab={view.tab}
+                        error={error?.key === "local" ? error.message : null}
+                      />
+                    ) : (
+                      selected && (
+                        <BackupDestinationDetails
+                          key={selected.id}
+                          target={selected}
+                          port={port}
+                          status={state.status.destinations[selected.id]}
+                          tab={view.tab}
+                          busy={busy !== null}
+                          save={save}
+                          error={
+                            error?.key === selected.id ? error.message : null
+                          }
+                          onRemoved={() => showList("add")}
+                          onManageConnections={openConnections}
+                        />
+                      )
+                    )}
+                  </>
+                )}
+                {view.kind === "add" && (
+                  <AddBackupDestination
+                    port={port}
+                    busy={busy !== null}
+                    save={save}
+                    error={error}
+                    onCancel={back}
+                    onAdded={added}
+                    onManageConnections={openConnections}
+                    connectionRevision={connectionRevision}
+                  />
+                )}
+              </div>
+              {connections && port.cloud && (
+                <CloudBackupSettings
+                  mode="connections"
+                  cloud={port.cloud}
+                  save={save}
+                  busy={busy !== null}
+                  error={null}
+                  onConnected={() => {
+                    void port.scheduleCloud?.();
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+        <BackupNotices google={!!port.cloud} messages={notices} />
+        <footer className="application-modal-actions">
+          {leave ? (
+            <div className="backup-leave-confirmation" role="alert">
+              <span>未保存の入力を破棄しますか？</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = leave;
+                  setLeave(null);
+                  setDirtyForms(new Set());
+                  action();
+                }}
+              >
+                破棄して戻る
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLeave(null);
+                  root.current?.focus();
+                }}
+              >
+                編集を続ける
+              </button>
+            </div>
+          ) : (
+            <>
+              {busy !== null && (
+                <span role="status">設定を保存しています…</span>
+              )}
+              {busy === "google-new" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void port
+                      .cancel()
+                      .then(() => port.resume())
+                      .catch((cause) => {
+                        if (mounted.current)
+                          setError({
+                            key: "google-new",
+                            message: nativeErrorMessage(cause),
+                          });
+                      });
+                  }}
+                >
+                  登録と進行中のバックアップを中止（作成済みフォルダーは残す）
+                </button>
+              )}
               <button
                 type="button"
                 disabled={busy !== null}
-                onClick={() => {
-                  void port
-                    .chooseAdditional()
-                    .then((value) => {
-                      if (mounted.current && value) setDirectory(value);
-                    })
-                    .catch((cause) => {
-                      if (mounted.current)
-                        setError({
-                          key: "status",
-                          message: nativeErrorMessage(cause),
-                        });
-                    });
-                }}
+                onClick={() => navigate(finishClose)}
               >
-                保存先を追加
+                閉じる
               </button>
-            )
+            </>
           )}
-          {port.cloud && (
-            <CloudBackupSettings
-              allowAdd={destinationKind === "google"}
-              cloud={port.cloud}
-              save={save}
-              busy={busy !== null}
-              error={error?.key === "google-new" ? error.message : null}
-              onConnected={() => {
-                void port.scheduleCloud?.();
-              }}
-            />
-          )}
-        </>
-      ) : (
-        <p role="status">読み込み中…</p>
-      )}
-      <div className="application-modal-actions">
-        {busy !== null && <span role="status">設定を保存しています…</span>}
-        {busy === "google-new" && (
-          <button
-            type="button"
-            onClick={() => {
-              void port
-                .cancel()
-                .then(() => port.resume())
-                .catch((cause) => {
-                  if (mounted.current)
-                    setError({
-                      key: "google-new",
-                      message: nativeErrorMessage(cause),
-                    });
-                });
-            }}
-          >
-            登録と進行中のバックアップを中止（作成済みフォルダーは残す）
-          </button>
-        )}
-        <button type="button" disabled={busy !== null} onClick={close}>
-          閉じる
-        </button>
-      </div>
-    </ModalDialog>
+        </footer>
+      </ModalDialog>
+    </BackupNoticeContext.Provider>
   );
 }
-function LocalSettings({
+
+function GenerationCount({ value }: { value?: BackupGenerationCounts | null }) {
+  return (
+    <span className="backup-generation-count">
+      {value
+        ? value.verified + " / " + value.transferred + " / " + value.target
+        : "—"}
+    </span>
+  );
+}
+function BackupOverview({
   state,
-  busy,
-  save,
-  error,
+  onDetail,
 }: {
   state: BackupState;
-  busy: boolean;
-  save: Save;
-  error: string | null;
+  onDetail: (id: string, tab: Tab) => void;
 }) {
-  const [interval, setIntervalValue] = useState(state.config.interval_minutes);
-  const [retention, setRetention] = useState(state.config.local_retention);
+  const rows = [
+    {
+      id: "local-history",
+      name: "Workspace内",
+      kind: "ローカル履歴",
+      enabled: true,
+      phase: state.status.phase,
+      progress: null,
+      time: state.status.last_local_capture_at,
+      counts: state.status.generation_counts,
+      errors: [
+        state.status.local_error && "保存エラー",
+        state.status.maintenance_error && "保持整理エラー",
+      ],
+    },
+    ...state.config.destinations.map((target) => {
+      const status = state.status.destinations[target.id];
+      return {
+        id: target.id,
+        name: backupDestinationLabel(target),
+        enabled: target.enabled,
+        kind:
+          target.location.kind === "google-drive"
+            ? "Google Drive"
+            : "ローカルディレクトリ",
+        phase: status?.phase || (target.enabled ? "pending" : "disabled"),
+        progress: status?.progress,
+        time: status?.protected_capture_at,
+        counts: status?.generation_counts,
+        errors: [
+          status?.error && "転送エラー",
+          status?.verification_error && "検証エラー",
+          status?.maintenance_error && "保持整理エラー",
+        ],
+      };
+    }),
+  ];
   return (
-    <section className="backup-destination-card" aria-label="ローカル履歴">
-      <h3>ローカル履歴</h3>
-      <dl>
-        <dt>状態</dt>
-        <dd>{phaseLabel(state.status.phase)}</dd>
-        <dt>最終保存</dt>
-        <dd>
-          <BackupTime
-            value={state.status.last_local_capture_at}
-            empty="未作成"
-          />
-        </dd>
-        <dt>既知の添付欠損</dt>
-        <dd>{state.status.known_missing_count}</dd>
-      </dl>
-      {state.status.local_error && (
-        <p role="alert">{state.status.local_error.message}</p>
-      )}
-      {state.status.maintenance_error && (
-        <p role="alert">{state.status.maintenance_error.message}</p>
-      )}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save(
-            { kind: "local", intervalMinutes: interval, retention },
-            "local",
-          );
-        }}
+    <div className="backup-table-scroll" data-modal-scroll>
+      <table
+        className="backup-destination-table"
+        aria-label="バックアップ保存先"
       >
-        <fieldset disabled={busy}>
-          <label>
-            自動保存間隔（分）
-            <input
-              type="number"
-              min={1}
-              max={1440}
-              step={1}
-              required
-              value={interval}
-              onChange={(event) => setIntervalValue(Number(event.target.value))}
-            />
-          </label>
-          <RetentionFields
-            value={retention}
-            onChange={setRetention}
-            previous={state.config.local_retention}
-          />
-          {error && <p role="alert">{error}</p>}
-          <button type="submit">ローカル設定を保存</button>
-        </fieldset>
-      </form>
-    </section>
+        <thead>
+          <tr>
+            <th scope="col">種類・保存先</th>
+            <th scope="col">状態・工程</th>
+            <th scope="col">最終保存（検証済み）</th>
+            <th scope="col">
+              保存世代<small>検証済み／転送済み／対象</small>
+            </th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              aria-label={
+                row.id === "local-history" ? "ローカル履歴" : row.name
+              }
+              data-disabled={!row.enabled}
+            >
+              <th scope="row">
+                <span>{row.kind}</span>
+                <small className="backup-location-label" title={row.name}>
+                  {row.name}
+                </small>
+              </th>
+              <td>
+                <span className="backup-phase">
+                  {!row.enabled && row.phase !== "stopping"
+                    ? "無効"
+                    : phaseLabel(row.phase)}
+                </span>
+                {row.progress?.running && (
+                  <small>{backupStageLabels[row.progress.stage]}</small>
+                )}
+                {row.errors.filter(Boolean).map((error) => (
+                  <small className="backup-row-error" key={String(error)}>
+                    {!row.enabled ? "停止前: " : ""}
+                    {error}
+                  </small>
+                ))}
+              </td>
+              <td>
+                <BackupTime
+                  value={row.time}
+                  empty={row.id === "local-history" ? "未作成" : "未検証"}
+                />
+              </td>
+              <td>
+                <GenerationCount value={row.counts} />
+              </td>
+              <td>
+                <div className="backup-row-actions">
+                  {(["progress", "settings"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      data-backup-focus={row.id + ":" + tab}
+                      onClick={() => onDetail(row.id, tab)}
+                    >
+                      {tab === "progress" ? "進捗" : "設定"}
+                    </button>
+                  ))}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
-function DestinationSettings({
-  target,
+
+function AddBackupDestination({
   port,
-  status,
-  busy,
-  save,
-  error,
-}: {
-  target: BackupDestination;
-  port: BackupPort;
-  status?: BackupDestinationStatus;
-  busy: boolean;
-  save: Save;
-  error: string | null;
-}) {
-  const [retention, setRetention] = useState(target.retention);
-  const [credential, setCredential] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  return (
-    <section
-      className="backup-destination-card"
-      aria-label={backupDestinationLabel(target)}
-    >
-      <h4 className="backup-destination-path">
-        {target.location.kind === "google-drive"
-          ? "Google Drive · "
-          : "ローカル · "}
-        {backupDestinationLabel(target)}
-      </h4>
-      <label>
-        <input
-          type="checkbox"
-          checked={target.enabled}
-          disabled={busy}
-          onChange={(event) => {
-            void save(
-              { kind: "enabled", id: target.id, enabled: event.target.checked },
-              target.id,
-            );
-          }}
-        />
-        有効
-      </label>
-      <dl>
-        <dt>状態</dt>
-        <dd>
-          {phaseLabel(
-            status?.phase ?? (target.enabled ? "pending" : "disabled"),
-          )}
-        </dd>
-        <dt>保護済みの世代</dt>
-        <dd>
-          <BackupTime value={status?.protected_capture_at} empty="未検証" />
-        </dd>
-        <dt>最終転送</dt>
-        <dd>
-          <BackupTime value={status?.last_copy_at} empty="未転送" />
-        </dd>
-        <dt>転送待ち / 転送機会の期限切れ</dt>
-        <dd>
-          {status?.pending_copy_count ?? 0} / {status?.expired_copy_count ?? 0}
-        </dd>
-        <dt>転送済み・検証待ち</dt>
-        <dd>{status?.pending_verification_count ?? 0} 世代</dd>
-      </dl>
-      {status?.progress && <BackupTransferProgress value={status.progress} />}
-      {!!status?.failure_count && <p>連続失敗回数: {status.failure_count}</p>}
-      {status?.next_retry_at && (
-        <p>
-          再試行予定: <EventDateTime value={status.next_retry_at} />
-        </p>
-      )}
-      {target.location.kind === "google-drive" && port.cloud && (
-        <CloudDestinationActions
-          cloud={port.cloud}
-          target={target}
-          onTransfer={() =>
-            port.scheduleCloud?.(target.id) ?? Promise.resolve()
-          }
-        />
-      )}
-      {status?.error && (
-        <p role="alert">
-          {target.enabled ? "" : "停止前のエラー: "}
-          {status.error.message}
-        </p>
-      )}
-      {status?.maintenance_error && (
-        <p role="alert">
-          保持整理のエラー（保護済み世代は維持）:{" "}
-          {status.maintenance_error.message}
-        </p>
-      )}
-      {status?.verification_error && (
-        <p role="alert">
-          転送後の検証エラー（未検証の世代は保護済みに含みません）:{" "}
-          {status.verification_error.message}
-        </p>
-      )}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void save({ kind: "retention", id: target.id, retention }, target.id);
-        }}
-      >
-        <fieldset disabled={busy}>
-          <RetentionFields
-            value={retention}
-            onChange={setRetention}
-            previous={target.retention}
-          />
-          <button type="submit">保持設定を保存</button>
-        </fieldset>
-      </form>
-      {error && <p role="alert">{error}</p>}
-      {credential ? (
-        <PasswordForm
-          busy={busy}
-          onSubmit={(password) =>
-            save({ kind: "credential", id: target.id, password }, target.id)
-          }
-          onDone={() => setCredential(false)}
-          onCancel={() => setCredential(false)}
-        />
-      ) : (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => setCredential(true)}
-        >
-          既存パスワードを再登録
-        </button>
-      )}
-      {removing ? (
-        <div className="backup-remove-confirmation">
-          <p>
-            この保存先の登録を解除します。保存済みバックアップは削除しません。
-          </p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              void save({ kind: "remove", id: target.id }, target.id);
-            }}
-          >
-            登録を解除する
-          </button>{" "}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => setRemoving(false)}
-          >
-            取り消す
-          </button>
-        </div>
-      ) : (
-        <button type="button" disabled={busy} onClick={() => setRemoving(true)}>
-          保存先を解除
-        </button>
-      )}
-    </section>
-  );
-}
-function NewDestination({
-  directory,
   busy,
   save,
   error,
   onCancel,
   onAdded,
+  onManageConnections,
+  connectionRevision,
 }: {
-  directory: string;
+  port: BackupPort;
   busy: boolean;
   save: Save;
-  error: string | null;
+  error: { key: string; message: string } | null;
   onCancel: () => void;
   onAdded: () => void;
+  onManageConnections: () => void;
+  connectionRevision: number;
 }) {
-  const [retention, setRetention] = useState(DEFAULT_BACKUP_RETENTION);
+  const [kind, setKind] = useState("local");
+  const [directory, setDirectory] = useState<string | null>(null);
+  const [choosing, setChoosing] = useState(false),
+    [choiceError, setChoiceError] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   return (
-    <section className="backup-destination-card" aria-label="新しい保存先">
-      <h4>新しい保存先</h4>
-      <p className="backup-destination-path">{directory}</p>
-      <p>このディレクトリ内の専用フォルダーへ保存します。</p>
-      {error && <p role="alert">{error}</p>}
-      <PasswordForm
-        busy={busy}
-        newRepository
-        onSubmit={(password) =>
-          save({ kind: "add", directory, password, retention }, "new")
-        }
-        onDone={onAdded}
-        onCancel={onCancel}
-      >
-        <RetentionFields value={retention} onChange={setRetention} />
-      </PasswordForm>
+    <section aria-label="新しい保存先">
+      <label>
+        追加する保存先の種類
+        <select
+          data-backup-focus="kind"
+          value={kind}
+          disabled={busy || choosing}
+          onChange={(event) => {
+            setKind(event.target.value);
+            setChoiceError(null);
+          }}
+        >
+          <option value="local">ローカルディレクトリ</option>
+          {port.cloud && <option value="google">Google Drive</option>}
+        </select>
+      </label>
+      {kind === "local" ? (
+        <>
+          <button
+            type="button"
+            disabled={busy || choosing}
+            onClick={() => {
+              setChoosing(true);
+              void port
+                .chooseAdditional()
+                .then(
+                  (value) => {
+                    if (alive.current && value) {
+                      setDirectory(value);
+                      setChoiceError(null);
+                    }
+                  },
+                  (cause) => {
+                    if (alive.current)
+                      setChoiceError(nativeErrorMessage(cause));
+                  },
+                )
+                .finally(() => {
+                  if (alive.current) setChoosing(false);
+                });
+            }}
+          >
+            {directory ? "ディレクトリを変更" : "ディレクトリを選択"}
+          </button>
+          {choiceError && <p role="alert">{choiceError}</p>}
+          {directory && (
+            <NewDestination
+              key={directory}
+              directory={directory}
+              busy={busy}
+              save={save}
+              error={error?.key === "new" ? error.message : null}
+              onCancel={onCancel}
+              onAdded={onAdded}
+            />
+          )}
+        </>
+      ) : (
+        port.cloud && (
+          <CloudBackupSettings
+            mode="add"
+            cloud={port.cloud}
+            save={save}
+            busy={busy}
+            error={error?.key === "google-new" ? error.message : null}
+            onConnected={() => {
+              void port.scheduleCloud?.();
+            }}
+            onAdded={onAdded}
+            onManageConnections={onManageConnections}
+            refreshKey={connectionRevision}
+          />
+        )
+      )}
     </section>
-  );
-}
-function BackupTime({
-  value,
-  empty,
-}: {
-  value?: string | null;
-  empty: string;
-}) {
-  return value ? <EventDateTime value={value} /> : <>{empty}</>;
-}
-function phaseLabel(phase: string): string {
-  return (
-    (
-      {
-        uninitialized: "未作成",
-        idle: "待機中",
-        capturing: "取得中",
-        saving: "保存・検証中",
-        copying: "転送中",
-        verifying: "転送後の検証中",
-        "verification-pending": "転送済み・検証待ち",
-        maintaining: "整理中",
-        pending: "転送待ち",
-        disabled: "無効",
-        stopping: "現在の処理が終わり次第停止",
-        cancelled: "転送を中止しました（保存済み世代は維持）",
-        error: "エラー",
-      } as Record<string, string>
-    )[phase] ??
-    (phase || "待機中")
   );
 }

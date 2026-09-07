@@ -29,6 +29,22 @@ const progress = (): Progress => ({
 
 describe("backup transfer diagnostics", () => {
   afterEach(() => vi.useRealTimers());
+  it("shows automatic stale-lock recovery separately from successful transfer or verification", () => {
+    render(
+      <BackupTransferProgress
+        value={{
+          ...progress(),
+          stage: "lock-recovery",
+          operation: "unlock",
+          operation_counts: { unlock: 1 },
+        }}
+      />,
+    );
+    expect(screen.getByText("失効ロックの自動確認・解除")).toBeTruthy();
+    expect(screen.getAllByText("失効ロックの確認・解除")).toHaveLength(2);
+    expect(screen.getByText("3 / 4 世代")).toBeTruthy();
+    expect(screen.queryByText("処理完了")).toBeNull();
+  });
   it("keeps failed maintenance visible without treating a protected generation as a failed transfer", async () => {
     const base = await backupFixture().status();
     const error = {
@@ -89,7 +105,13 @@ describe("backup transfer diagnostics", () => {
         onSaved={vi.fn()}
       />,
     );
-    expect(await screen.findByText("失敗・中断した処理")).toBeTruthy();
+    fireEvent.click(
+      within(await screen.findByRole("row", { name: "Test backup" })).getByRole(
+        "button",
+        { name: "進捗" },
+      ),
+    );
+    expect(screen.getByText("失敗・中断した処理")).toBeTruthy();
     expect(screen.getByText("保持世代の選定・整理")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain(
       "保持整理のエラー（保護済み世代は維持）",
@@ -116,7 +138,7 @@ describe("backup transfer diagnostics", () => {
     expect(region.getByText("1分15秒（現在の工程: 15秒）")).toBeTruthy();
     expect(region.getByText("1.0 MiB · 2.0 KiB/s")).toBeTruthy();
     expect(region.getByText("ファイル通信量（読み書き合計）")).toBeTruthy();
-    expect(region.getByText(/ノート数ではなく履歴の世代数/)).toBeTruthy();
+    expect(region.queryByText(/ノート数ではなく履歴の世代数/)).toBeNull();
     expect(region.getByRole("progressbar").getAttribute("value")).toBe("3");
     expect(region.getAllByText(/2026\/09\/06.*ago/).length).toBeGreaterThan(0);
   });
@@ -188,9 +210,19 @@ describe("backup transfer diagnostics", () => {
         onSaved={vi.fn()}
       />,
     );
-    expect(await screen.findByText("未検証")).toBeTruthy();
+    fireEvent.click(
+      within(await screen.findByRole("row", { name: "Test backup" })).getByRole(
+        "button",
+        { name: "進捗" },
+      ),
+    );
+    expect(
+      within(screen.getByRole("tabpanel")).getByText("未検証"),
+    ).toBeTruthy();
     expect(screen.getByText("2 世代")).toBeTruthy();
-    expect(screen.getAllByText("転送済み・検証待ち")).toHaveLength(2);
+    expect(
+      within(screen.getByRole("tabpanel")).getAllByText("転送済み・検証待ち"),
+    ).toHaveLength(2);
     expect(screen.getByRole("alert").textContent).toContain(
       "未検証の世代は保護済みに含みません",
     );
@@ -247,9 +279,16 @@ describe("backup transfer diagnostics", () => {
       />,
     );
     await act(async () => {});
-    fireEvent.change(screen.getByLabelText("自動保存間隔（分）"), {
+    fireEvent.click(
+      within(screen.getByRole("row", { name: "Test backup" })).getByRole(
+        "button",
+        { name: "設定" },
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("直近（世代）"), {
       target: { value: "23" },
     });
+    fireEvent.click(screen.getByRole("tab", { name: "進捗" }));
     expect(screen.getByText("3 / 4 世代")).toBeTruthy();
     value = {
       ...value,
@@ -266,8 +305,9 @@ describe("backup transfer diagnostics", () => {
     expect(screen.getByText("4 / 4 世代")).toBeTruthy();
     expect(screen.getByText("処理完了")).toBeTruthy();
     expect(screen.getByText("1分40秒")).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "設定" }));
     expect(
-      (screen.getByLabelText("自動保存間隔（分）") as HTMLInputElement).value,
+      (screen.getByLabelText("直近（世代）") as HTMLInputElement).value,
     ).toBe("23");
     expect(close).not.toHaveBeenCalled();
   });

@@ -122,6 +122,16 @@ status取得はSQLiteの運用stateと実行中process内の進捗だけを読�
 処理終了時にsummaryを運用stateへ保存する。失敗・中断では工程を成功に変更しない。世代の完了数は表示中の工程に対する値であり、転送完了と検証完了を同一視しない。
 GUIは約2秒ごとに取得し、世代数のprogressと通信量（読み書き合計）を区別する。未計測値を0や推定ETAで代用しない。
 
+一覧の保存世代は「検証済み／転送済み／保存対象」の3値で表示する。検証済みは保存先に現在残る確認済み世代、
+転送済みは検証済みと転送完了・検証待ちの集合、保存対象はそれに今後転送可能なlocal世代を加えた集合である。
+追加先だけに残る古い世代を含める。追加先の保持整理で削除済みの世代を累積転送台帳から再加算せず、未転送のまま期限切れの世代も除外する。
+ローカル履歴は保存・検証完了数を3値共通で表示する。保存対象数は保持設定の上限や未captureの編集数ではない。
+statusとdestinationsの`generation_counts`は`{verified,transferred,target}`または`null`で、未確定値は`—`と表示する。
+件数は既存の世代catalogと転送台帳のID集合からbackground/configuration書き込み時に集計し、status pollは保存済みの小さな集計だけを読む。
+表示目的でResticや外部通信を起動しない。保持削除は実行前にinventoryを未確定にし、成功したbatchだけcatalogから除去する。
+中断・部分失敗やinventory確認記録のない旧catalogでは確認済み件数と装わず、通常の世代一覧検証で再確定する。追加先無効化は件数を消さない。
+最終保存は検証済み世代の元のcapture時刻で、最終転送時刻と混同しない。保持設定・バックアップ形式の変更はない。
+
 backup設定schema 3は`local_retention`と`destinations`配列を持つ。各保存先は`location`判別unionと`credential_ref`を持ち、ローカルは`{kind:"local-directory",path}`、Googleは`{kind:"google-drive",connection_id,root_folder_id,display_name}`である。
 schema 2の`path`/`credential`、旧単一`additional`、status、転送台帳、初期化途中のintentは1 transactionで移行し、順序、有効状態、保持値、repository ID・資格情報参照・運用履歴を維持する。未知schema/locationは拒否する。
 設定の移行だけでNote、content_epoch、バックアップ形式を変更せず、repositoryを再初期化しない。設定のない新規・復旧Workspaceのstatus/config取得は書き込みを行わない。
@@ -147,6 +157,18 @@ OSブラウザ、loopback callback、state、PKCE S256を用い、
 folder作成応答が不明な場合はnonce照合し、未発見/複数候補では再作成しない。init後の鍵保存失敗は同じパスワードで再試行する。
 既存root消失、権限不足、repository mismatchを自動initで隠さない。同一Workspaceの同一repository二重登録を拒否する。
 
+専用folder名は`MemokaBackup-<Workspace ID>-<destination ID>`で、destination IDは保存先の新規登録ごとに発行するUUIDv7である。
+実folderの`appProperties`にもWorkspace ID・destination IDを記録する。表示名が変わってもfolder IDで同定する。
+Workspace IDはデータのidentityであり端末のidentityではない。復旧はWorkspace/Note/Section IDを維持する一方、追加保存先の設定を引き継がない。
+復旧先からの新規登録は新しいdestination IDとfolderを作り、元PCのbackup folderをwriterとして再利用しない。
+端末同期は未実装であるが、将来もbackup destination設定とOSユーザー単位のGoogle接続・bindingは同期の対象外とする。
+
+通常のbackup/copy/verify/maintainとロック復旧では、Workspace外のGoogle接続registryのbindingに対し、Workspace ID・destination ID・folder ID・repository ID・資格情報参照の一致を確認する。
+さらに既存のroot照合でDriveの`appProperties`を照合する。未登録・不一致は明示エラーにし、同じaccount/folder/passwordだけでは既存rootをwriterへ昇格できない。
+別PCの単独復旧用接続にはbindingを要求しないが、その経路はlist/check/restoreのみであり、copy/maintain/unlockへ流用しない。
+この分離は通常の登録・復旧に対する保証で、OSユーザーの接続registry・資格情報まで複製した端末の識別や、旧版/外部Resticに対する分散writer lockではない。
+設定・資格情報を複製して同じrootへ書き込む運用は非対応とし、Resticのrepository lock自体は引き続き維持する。
+
 通常Google転送は1世代の転送、検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
 新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
 自動転送はuploadを先に完了し、検証・整理は30秒以上キー入力・クリック・スクロールがなく、検索索引更新がidleで、
@@ -166,8 +188,8 @@ source/targetのsnapshot IDが異なることを許容する。copy応答喪失�
 Google転送jobはowner-onlyの一時Restic cacheをcommand・世代間で共有する。ユーザーの既存cacheは使用せず、
 通常終了・中断で子process回収後に破棄する。明示的な`check`はcacheを無効にし、repositoryの実体を検査する。
 接続・repository leaseを持つhandleの生存中だけ、open時に照合したrepository IDを一覧取得・保持計画で再利用する。
-別jobへ持ち越さず、後続の転送後検証と実削除前は最新のIDを再照合する。ID取得の`cat config`だけは`--no-lock`で復号して読み、
-確認のたびにDriveへlock fileを書き込まない。snapshot/fileの読み取り、copy、forget、pruneのRestic lockは維持する。
+別jobへ持ち越さず、後続の転送後検証と実削除前は最新のIDを再照合する。ID取得の`cat config`は`--no-lock`で復号して読み、
+確認のたびにDriveへlock fileを書き込まない。後述のlock metadata診断もlockを取得しないが、snapshot/fileの読み取り、copy、forget、pruneのRestic lockは維持する。
 一時障害は指数backoff（最大1時間に0〜30秒のjitter）を持ち、認証失効・鍵取得不能・権限/容量不足・repository不一致や不明なlayoutは明示操作まで保留する。
 ネットワーク待ち中はCore mutexを持たず、copyのsource-reader leaseはCapture追加・履歴readを許可し、sourceのforget/pruneだけを除外する。
 無効化はGoogle workerへ中断も要求する。再接続、明示転送、中断、既存パスワード再登録、無効化、解除は独立した操作である。
@@ -182,6 +204,41 @@ OAuth client変更で以前のbackupにアクセスできる保証はなく、sc
 client設定・配布条件は[Platform、配布、Security](platform-release-and-security.md#72-oauth-clientの設定と配布)、
 正式提供へ移行するための条件は[検証](validation.md#google-driveの追加検証)に集約する。
 実験的機能としての同梱は、長期利用・別PC復旧の検証完了を意味しない。
+
+### 6.2 残存ロックの確認・復旧
+
+異常終了等で残ったrepository lockは、通常のrepository操作がResticのlock取得失敗（exit 11 / `REPOSITORY_LOCKED`）になった場合に自動復旧する。
+対象はID照合済みのWorkspace local repositoryまたは登録済み追加保存先で、GoogleはこのOSユーザーのwriter bindingも必須とする。
+path/passwordを指定しただけの単独list/check/restore用handle、初期化前や資格情報の再登録検証用handleへ自動解除権限を与えない。
+独立した定期lock scanは行わず、正常な処理・status pollで追加のRestic起動や保存先アクセスを行わない。
+
+失敗した子processとtransportの回収完了後、同じlease・キャンセル・処理期限の下でrepository IDをfresh照合し、通常の`restic unlock`で失効lockだけを解除する。
+解除後のIDもfresh照合してから、元のcommandを一度だけ再試行する。copyはtyped source/targetのうち権限のあるrepositoryだけを対象にし、argvの任意pathから解除先を推測しない。
+一時出力fileを持つdumpは、新規作成した出力を先頭へ戻して再試行し、失敗時のbytesへ追記しない。元のoutput pathを新規作成する契約は維持する。
+対象commandはbackup/snapshots/dump/ls/copy/forget/prune/checkに限定し、unlockやmetadata診断へ再帰的に適用しない。
+exit 11以外の不完全書き込み・通信・認証・キャンセル・期限切れを再実行しない。稼働中lockはResticの失効判定と再試行command自身のlock取得に委ね、forceや無限retryを使わない。
+source-reader leaseによるcapture/readの並行性は維持し、失効lockのみの解除のために全Workspaceを停止しない。
+再試行も失敗した場合は従来のerror/backoffを維持する。unlock成功だけで世代数・台帳・保護日時を進めず、元の処理の検証・永続化成功によってのみ状態を更新する。
+進捗stageは`lock-recovery`（「失効ロックの自動確認・解除」）、commandは`unlock`として記録し、再試行時には元のstageへ戻す。解除回数を転送済み世代数と混同しない。
+保持整理が再開すれば既存の検証済み削除計画に従う。dry-runでは失効lockの解除はあり得るがsnapshot/packの削除はしない。
+
+GUIの保存先詳細「進捗」とCLIには明示的な確認・復旧経路も残す。手動操作はNativeServiceの排他repository leaseを取得できなければ`BACKUP_BUSY`で拒否し、
+capture/copy/history read/maintenanceと同時に実行しない。Googleは接続・repositoryのOS leaseと登録writer照合も行う。
+
+確認はfresh repository ID照合、`restic list locks`と各IDの`cat lock <id> --no-lock`だけを実行する。
+応答は`schema_version:3`、repository ID、`unlock_attempted`、`locks`配列で、lock ID・更新日時・hostname・PID・exclusiveだけをallowlist出力する。
+入力するIDの形式・件数と出力fieldを検査し、生の子process出力やusername等を公開しない。
+GUIは端末/PID、`YYYY/MM/DD HH:mm:ss (ago)`のロック更新日時、共有/排他、短縮IDを表示する。表示だけで解除しない。
+
+手動復旧はGUIの確認操作またはCLIの明示unlock要求を経て、通常の`restic unlock`を実行する。自動・手動とも`--remove-all`や任意optionを渡す経路は提供しない。
+失効判定は固定Resticに委譲し、同一hostnameで終了済みのPID、または30分超heartbeatが更新されないlockだけが解除対象となる。
+通常のheartbeatは約5分ごとのため、処理の全経過時間で失効判定しない。hostname変更やPID再利用で直ちに解除されない場合もあり、残存lockを一覧へ返す。
+手動復旧後は再度fresh IDとlock一覧を確認し、成功でもcopy/verify済みとは扱わず、保存済み世代・転送台帳・保護済み日時を変更しない。
+lockがなくなった場合だけ当該保存先の`REPOSITORY_LOCKED`エラーを解除し、他のエラーがなければbackoffを解除して通常の再試行を可能にする。
+その他のエラー、残存lock、identity不一致を隠さない。ロック解除自体はsnapshot削除・保持整理を実行しない。
+
+失効判定の根拠は[Restic 0.19.1のlock実装](https://github.com/restic/restic/blob/v0.19.1/internal/restic/lock.go)、
+stale-onlyの解除は[unlock実装](https://github.com/restic/restic/blob/v0.19.1/cmd/restic/cmd_unlock.go)による。
 
 ## 7. 保持と容量回収
 
@@ -298,6 +355,8 @@ memoka-cli backup status --workspace <dir> --format json
 memoka-cli backup list --workspace <dir> --format json
 memoka-cli backup copy --workspace <dir>
 memoka-cli backup maintain --workspace <dir> --dry-run
+memoka-cli backup locks --workspace <dir> --destination <destination-id>
+memoka-cli backup unlock --workspace <dir> --destination <destination-id>
 memoka-cli backup check --repository <repo-dir> --insecure-no-password --full
 memoka-cli backup restore --repository <repo-dir> --generation <generation-id> --target <empty-data-area> --insecure-no-password
 ```
@@ -305,6 +364,8 @@ memoka-cli backup restore --repository <repo-dir> --generation <generation-id> -
 GUI所有中の運用commandもownerへ依頼し、同じschedulerとrepository leaseを使う。
 `backup status`・`run`・`copy`・`maintain`のJSON応答はtyped locationに対応する`schema_version: 3`である。
 statusは`config.destinations`配列と`status.destinations`のID別state、run/copy/maintainは保存先ID別の結果を返す。
+`backup locks/unlock`もschema 3でlock情報を返す。`--destination`省略時はlocal履歴、指定時は登録済み追加先のIDであり、任意のrepository/connection/folder指定や強制解除は受け付けない。
+owner GUIがある場合も保存barrier/captureを起動せず、owner内の同じ排他leaseで処理する。
 GUIの`:backup-status`は廃止し、`:backup-settings`へ統合する。CLIの`backup status`は維持する。
 repository単独でlist/check/restoreでき、現在DBが壊れていても復旧できる。
 追加先では`--insecure-no-password`の代わりに`--password-stdin`または対話入力を使う。
@@ -313,7 +374,7 @@ repository単独でlist/check/restoreでき、現在DBが壊れていても復�
 復旧は別の空directoryへのみ行う。source/repository内、非空target、既存Workspaceへの上書きは拒否する。
 allowlistだけをprivate stagingへ取り出し、DB integrity、Yjs replay、Namespace、H6、添付hashを検査し、
 完成してから公開する。IDとdocument revisionは維持する。
-復旧先のlocal repository設定、転送queue、accepted-state、lock、local UI、検索index等の運用派生stateはリセットする。
+復旧先のlocal repository・追加保存先設定、転送queue、accepted-state、lock、local UI、検索index等の運用派生stateはリセットする。
 次回GUI起動時に新しいローカル履歴を作る。GUIに`:restore`や一括export commandは設けない。
 
 ### 11.1 Google接続とrepository単独復旧

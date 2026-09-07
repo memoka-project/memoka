@@ -430,6 +430,10 @@ impl NativeService {
                 )
             }
             BackupAction::Run => self.run_cycle(),
+            BackupAction::RepositoryLocks {
+                destination_id,
+                repair,
+            } => self.repository_locks(destination_id.as_deref(), repair),
             BackupAction::CloudTick { id } => self.schedule_cloud(id),
             BackupAction::WaitTransfers { departure_id } => {
                 self.wait_transfers_for(departure_id.as_deref())
@@ -583,6 +587,86 @@ impl NativeService {
             json!({"schema_version":3,"local_generation":local,"destinations":destinations,"transfer_error":error,"maintenance":maintenance}),
         )
     }
+    fn repository_locks(
+        &self,
+        destination_id: Option<&str>,
+        repair: bool,
+    ) -> Result<Value, ReadError> {
+        let operation = self.operations.begin()?;
+        // Exclude our capture/copy/preview/retention workers for the entire
+        // check/recovery. Cloud's connection/repository OS leases also exclude
+        // another local Workspace/CLI, while Restic protects remote readers.
+        let _lease = self.repositories.try_write().map_err(|_| {
+            ReadError::new(
+                "BACKUP_BUSY",
+                "バックアップ処理が実行中です。完了または中止後にロックを確認してください。",
+            )
+        })?;
+        let restic = Restic::discover(operation.cancel.clone())?;
+        let target = destination_id
+            .map(|id| backup_settings::destination(&self.workspace, id))
+            .transpose()?;
+        let repo = match &target {
+            Some(target) => {
+                backup_management::additional_repository(&self.workspace, target, &restic)?
+            }
+            None => backup::local_repository(&self.workspace, &restic, false)?,
+        };
+        let expected =
+            match &target {
+                Some(target) => target.repository_id.clone(),
+                None => backup_settings::read_local_repository_id(&self.workspace)?.ok_or_else(
+                    || ReadError::new("REPOSITORY_MISSING", "Local history is not initialized"),
+                )?,
+            };
+        let report = if repair {
+            crate::backup_locks::recover(&restic, &repo, &expected)?
+        } else {
+            crate::backup_locks::inspect(&restic, &repo, &expected)?
+        };
+        if repair && report.locks.is_empty() {
+            backup::update_status(&self.workspace, |status| {
+                let clear = |error: &mut Option<ReadError>| {
+                    if error
+                        .as_ref()
+                        .is_some_and(|e| e.code == "REPOSITORY_LOCKED")
+                    {
+                        *error = None;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if let Some(target) = &target {
+                    if let Some(s) = status.destinations.get_mut(&target.id) {
+                        let cleared = clear(&mut s.error)
+                            | clear(&mut s.maintenance_error)
+                            | clear(&mut s.verification_error);
+                        if cleared
+                            && s.error.is_none()
+                            && s.maintenance_error.is_none()
+                            && s.verification_error.is_none()
+                        {
+                            s.failure_count = 0;
+                            s.next_retry_at = None;
+                            s.phase = if target.enabled {
+                                "pending"
+                            } else {
+                                "disabled"
+                            }
+                            .into();
+                        }
+                    }
+                } else {
+                    clear(&mut status.local_error);
+                    clear(&mut status.maintenance_error);
+                }
+                // Protection, transfer queues, history and the previous failed
+                // progress remain unchanged: unlocking is not a successful copy.
+            })?;
+        }
+        Ok(serde_json::to_value(report)?)
+    }
     fn copy(&self, budget: Duration, cancel: restic::Cancellation) -> Result<Value, ReadError> {
         self.invalidate_backup_checkpoint();
         let _copy = self.copy.try_lock().map_err(|_| busy())?;
@@ -681,15 +765,16 @@ impl NativeService {
                     .phase = "maintaining".into();
             })?;
             let outcome =
-                backup_management::additional_repository(&target, restic).and_then(|repo| {
-                    backup_management::maintain_repository(
-                        &self.workspace,
-                        restic,
-                        &repo,
-                        dry_run,
-                        prune,
-                    )
-                });
+                backup_management::additional_repository(&self.workspace, &target, restic)
+                    .and_then(|repo| {
+                        backup_management::maintain_repository(
+                            &self.workspace,
+                            restic,
+                            &repo,
+                            dry_run,
+                            prune,
+                        )
+                    });
             let error = outcome
                 .as_ref()
                 .err()
@@ -1128,6 +1213,53 @@ mod cloud_scheduler_tests {
         assert!(!service.cloud_paused.load(Ordering::Acquire));
         assert!(!service.departing());
         assert_eq!(original_status, status_after);
+    }
+    #[test]
+    fn lock_recovery_excludes_in_process_work_and_does_not_capture_or_claim_protection() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::backup::tests::fixture(temp.path());
+        let restic = Restic::discover(restic::cancellation()).unwrap();
+        crate::backup::run_local(temp.path(), &restic).unwrap();
+        let before = backup::status(temp.path()).unwrap();
+        let epoch = backup::content_epoch(temp.path()).unwrap();
+        let service = NativeService::new(temp.path().into());
+        {
+            let _working = service.repositories.read().unwrap();
+            assert_eq!(
+                service.repository_locks(None, true).unwrap_err().code,
+                "BACKUP_BUSY"
+            );
+        }
+        backup::update_status(temp.path(), |s| {
+            s.maintenance_error = Some(ReadError::new("REPOSITORY_LOCKED", "old lock"))
+        })
+        .unwrap();
+        let observed = service.repository_locks(None, false).unwrap();
+        assert_eq!(observed["locks"], json!([]));
+        assert!(
+            backup::status(temp.path())
+                .unwrap()
+                .maintenance_error
+                .is_some()
+        );
+        service.repository_locks(None, true).unwrap();
+        let after = backup::status(temp.path()).unwrap();
+        assert!(after.maintenance_error.is_none());
+        assert_eq!(before.last_local_capture_at, after.last_local_capture_at);
+        assert_eq!(epoch, backup::content_epoch(temp.path()).unwrap());
+        backup::update_status(temp.path(), |s| {
+            s.maintenance_error = Some(ReadError::new("OTHER_ERROR", "unrelated"))
+        })
+        .unwrap();
+        service.repository_locks(None, true).unwrap();
+        assert_eq!(
+            backup::status(temp.path())
+                .unwrap()
+                .maintenance_error
+                .unwrap()
+                .code,
+            "OTHER_ERROR"
+        );
     }
     #[test]
     fn explicit_cancel_stops_transfer_and_late_ticks_stay_paused() {

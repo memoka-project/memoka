@@ -100,7 +100,7 @@ pub fn local_repository(
                 "Local history repository identity changed",
             ));
         }
-        return Ok(repo);
+        return Ok(repo.with_automatic_lock_recovery(expected));
     }
     if !initialize {
         return Err(ReadError::new(
@@ -133,11 +133,11 @@ pub fn local_repository(
         restic.initialize(&repo, None)?
     };
     update_config(workspace, |config| {
-        config.local_repository_id = Some(id);
+        config.local_repository_id = Some(id.clone());
         Ok(())
     })?;
     save_setting(workspace, "backup.local_init_pending", &false)?;
-    Ok(repo)
+    Ok(repo.with_automatic_lock_recovery(id))
 }
 
 /// Capture the version actually obtained by Online Backup, not a collection of
@@ -607,6 +607,11 @@ fn listed_generations(
     });
     if let Some(workspace) = cache {
         save_setting(workspace, &cache_key, &result)?;
+        save_setting(
+            workspace,
+            &format!("backup.inventory_uncertain.{repository_id}"),
+            &false,
+        )?;
     }
     Ok(result)
 }
@@ -926,6 +931,24 @@ pub(crate) mod tests {
             db.execute("INSERT INTO attachments(attachment_id,sha256,size,original_filename,mime_type,created_at,known_missing) VALUES (?1,?2,?3,'添付.txt','text/plain','2026-09-06T00:00:00Z',?4)",rusqlite::params![attachment,sha,size,missing]).unwrap();
         }
         drop(db);
+        // The captured Workspace can contain a destination registration, but
+        // restoring its data identity must not resume the original writer.
+        crate::backup_settings::update_config(&workspace, |config| {
+            config.destinations.push(AdditionalTarget {
+                id: Uuid::now_v7().to_string(),
+                enabled: false,
+                retention: Retention::default(),
+                repository_id: "a".repeat(64),
+                credential_ref: "test-only-reference".into(),
+                location: crate::backup_settings::DestinationLocation::GoogleDrive {
+                    connection_id: Uuid::now_v7().to_string(),
+                    root_folder_id: "test-recovery-source-folder".into(),
+                    display_name: "Test backup".into(),
+                },
+            });
+            Ok(())
+        })
+        .unwrap();
         let restic = Restic::discover(crate::restic::cancellation()).unwrap();
         let saved = run_local(&workspace, &restic).unwrap().unwrap();
         assert_eq!(saved.descriptor.known_missing, vec![missing_id.clone()]);
@@ -939,6 +962,7 @@ pub(crate) mod tests {
         let restored = temp.path().join("restored");
         crate::history::restore(&restic, &repo, &saved, &restored).unwrap();
         let mut reader = WorkspaceReader::open(&restored).unwrap();
+        assert_eq!(reader.workspace_id, saved.descriptor.workspace_id);
         assert_eq!(
             reader.document_revisions,
             saved.descriptor.document_revisions
@@ -962,6 +986,7 @@ pub(crate) mod tests {
             "ATTACHMENT_MISSING"
         );
         assert!(config(&restored).unwrap().local_repository_id.is_none());
+        assert!(config(&restored).unwrap().destinations.is_empty());
         assert!(!restored.join(".memoka-backups").exists());
         assert_eq!(
             crate::history::restore(&restic, &repo, &saved, &restored)
