@@ -102,6 +102,7 @@ export interface BackupTransferProgress {
   readonly elapsed_ms: number;
   readonly stage_elapsed_ms: number;
   readonly generation_captured_at: string | null;
+  readonly batch_generations?: number;
   readonly completed_generations: number;
   readonly total_generations: number;
   readonly operation: BackupTransferOperation | null;

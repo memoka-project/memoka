@@ -9,7 +9,7 @@ use crate::{
     document_model::ReadError,
     history,
     read_service::{WorkspaceReader, checked_directory},
-    restic::{Password, Repository, Restic, args},
+    restic::{COPY_BATCH_SIZE, Password, Repository, Restic, args},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -294,6 +294,241 @@ mod tests {
                 .len(),
             2
         );
+    }
+    #[test]
+    fn deferred_batch_copy_keeps_failed_members_prioritized_and_verifies_separately() {
+        use crate::backup_progress::Operation;
+        fn capture(workspace: &Path, restic: &Restic) -> Generation {
+            backup::save_setting(
+                workspace,
+                "content_epoch",
+                &(backup::content_epoch(workspace).unwrap() + 1),
+            )
+            .unwrap();
+            backup::run_local(workspace, restic).unwrap().unwrap()
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        backup::tests::fixture(&workspace);
+        let restic = Restic::discover(crate::restic::cancellation()).unwrap();
+        let first = capture(&workspace, &restic);
+        let second = capture(&workspace, &restic);
+        let source = backup::local_repository(&workspace, &restic, false).unwrap();
+        let credentials = TestCredentials::default();
+        let directory = temp.path().join("destination");
+        fs::create_dir(&directory).unwrap();
+        configure_destination(
+            &workspace,
+            &restic,
+            &directory,
+            "test-only-key".into(),
+            Retention::default(),
+            &credentials,
+        )
+        .unwrap();
+        let target = backup::config(&workspace).unwrap().destinations.remove(0);
+        let repo = open_destination(&workspace, &target, &restic, &credentials).unwrap();
+        let key = ledger_key(&target.id);
+
+        // The last source is corrupt: NONE of the otherwise valid sources
+        // may be sent before the complete batch passes its source checks.
+        let mut invalid = first.clone();
+        invalid.descriptor.content_epoch += 1;
+        let error = copy_target(
+            &workspace,
+            &restic,
+            &source,
+            &[second.clone(), invalid],
+            &target,
+            &credentials,
+            COPY_BATCH_SIZE,
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "HISTORY_CORRUPT");
+        let ledger: TransferLedger = backup::setting(&workspace, &key).unwrap();
+        assert_eq!(
+            ledger.active_batch,
+            vec![
+                second.descriptor.generation_id.clone(),
+                first.descriptor.generation_id.clone()
+            ]
+        );
+        assert_eq!(ledger.pending.len(), 2);
+        assert!(ledger.awaiting_verification.is_empty());
+        assert!(ledger.delivered.is_empty());
+        let status = backup::status(&workspace).unwrap().destinations[&target.id].clone();
+        assert!(status.protected_capture_at.is_none());
+        assert!(
+            !status
+                .progress
+                .unwrap()
+                .operation_counts
+                .contains_key(&Operation::Copy)
+        );
+        assert!(
+            backup::generations(&restic, &repo, None, None)
+                .unwrap()
+                .is_empty()
+        );
+
+        // Model a partial/lost acknowledgement: one member already exists at
+        // the destination, but the durable batch is still pending locally.
+        upload_generation(&restic, &source, &repo, &second).unwrap();
+        let third = capture(&workspace, &restic);
+        let local = vec![third.clone(), second.clone(), first.clone()];
+        let restarted = Restic::discover(crate::restic::cancellation()).unwrap();
+        let result = copy_target(
+            &workspace,
+            &restarted,
+            &source,
+            &local,
+            &target,
+            &credentials,
+            2,
+            true,
+        )
+        .unwrap();
+        assert_eq!(result["copied"], 2);
+        let ledger: TransferLedger = backup::setting(&workspace, &key).unwrap();
+        assert!(ledger.active_batch.is_empty());
+        assert_eq!(
+            ledger.pending.keys().collect::<Vec<_>>(),
+            vec![&third.descriptor.generation_id]
+        );
+        assert_eq!(ledger.awaiting_verification.len(), 2);
+        assert!(ledger.delivered.is_empty());
+        let status = backup::status(&workspace).unwrap().destinations[&target.id].clone();
+        assert_eq!(status.pending_copy_count, 1);
+        assert_eq!(status.pending_verification_count, 2);
+        assert!(status.protected_capture_at.is_none());
+        assert_eq!(
+            status.generation_counts,
+            Some(settings::GenerationCounts {
+                verified: 0,
+                transferred: 2,
+                target: 3
+            })
+        );
+        let progress = status.progress.unwrap();
+        assert_eq!(progress.batch_generations, 2);
+        assert!(progress.generation_captured_at.is_none());
+        assert_eq!(progress.completed_generations, 2);
+        assert_eq!(progress.operation_counts[&Operation::Copy], 1);
+        assert_eq!(progress.operation_counts[&Operation::Descriptor], 2);
+        assert_eq!(progress.operation_counts[&Operation::FileList], 2);
+        assert!(
+            !progress
+                .operation_counts
+                .contains_key(&Operation::Snapshots)
+        );
+        assert_eq!(
+            backup::generations(&restic, &repo, None, None)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            maintain_repository(&workspace, &restic, &repo, false, true)
+                .unwrap_err()
+                .code,
+            "VERIFICATION_PENDING"
+        );
+
+        let result = copy_target(
+            &workspace,
+            &restarted,
+            &source,
+            &local,
+            &target,
+            &credentials,
+            COPY_BATCH_SIZE,
+            true,
+        )
+        .unwrap();
+        assert_eq!(result["copied"], 1);
+        assert_eq!(result["pending"], 0);
+        for remaining in (0..3).rev() {
+            verify_target(&workspace, &restarted, &target, &credentials).unwrap();
+            let status = backup::status(&workspace).unwrap().destinations[&target.id].clone();
+            assert_eq!(status.pending_verification_count, remaining);
+            assert_eq!(
+                status.protected_capture_at.as_deref(),
+                Some(third.descriptor.captured_at.as_str())
+            );
+            assert!(
+                !status
+                    .progress
+                    .unwrap()
+                    .operation_counts
+                    .contains_key(&Operation::Copy)
+            );
+        }
+        let ledger: TransferLedger = backup::setting(&workspace, &key).unwrap();
+        assert_eq!(ledger.delivered.len(), 3);
+        assert!(ledger.awaiting_verification.is_empty());
+        assert_eq!(
+            backup::generations(&restic, &repo, None, None)
+                .unwrap()
+                .len(),
+            3
+        );
+
+        // Selection is bounded, skips acknowledged IDs, and resumes every
+        // available interrupted member, even when many new captures arrive.
+        let many = (0..COPY_BATCH_SIZE * 2)
+            .map(|_| {
+                let mut g = first.clone();
+                g.descriptor.generation_id = uuid::Uuid::now_v7().to_string();
+                g
+            })
+            .collect::<Vec<_>>();
+        let mut ledger = TransferLedger::default();
+        for g in &many {
+            ledger.pending.insert(
+                g.descriptor.generation_id.clone(),
+                g.descriptor.captured_at.clone(),
+            );
+        }
+        ledger.active_batch = many
+            .iter()
+            .rev()
+            .take(2)
+            .map(|g| g.descriptor.generation_id.clone())
+            .collect();
+        let selected = pending_uploads(&many, &ledger, None, COPY_BATCH_SIZE);
+        assert_eq!(selected.len(), COPY_BATCH_SIZE);
+        assert_eq!(
+            selected[0].descriptor.generation_id,
+            many[many.len() - 1].descriptor.generation_id
+        );
+        assert_eq!(
+            selected[1].descriptor.generation_id,
+            many[many.len() - 2].descriptor.generation_id
+        );
+        assert_eq!(
+            selected[2].descriptor.generation_id,
+            many[0].descriptor.generation_id
+        );
+        ledger
+            .pending
+            .remove(&many[many.len() - 1].descriptor.generation_id);
+        let selected = pending_uploads(&many, &ledger, None, COPY_BATCH_SIZE);
+        assert_eq!(
+            selected[0].descriptor.generation_id,
+            many[many.len() - 2].descriptor.generation_id
+        );
+        let mut old = serde_json::to_value(&ledger).unwrap();
+        old.as_object_mut().unwrap().remove("active_batch");
+        let old: TransferLedger = serde_json::from_value(old).unwrap();
+        assert!(old.active_batch.is_empty());
+        assert_eq!(
+            pending_uploads(&many, &old, Some(&many[5].descriptor.generation_id), 1)[0]
+                .descriptor
+                .generation_id,
+            many[5].descriptor.generation_id
+        );
+        assert!(pending_uploads(&many, &old, None, 0).is_empty());
     }
     #[test]
     fn planned_cancellation_preserves_protection_and_does_not_add_retry_backoff() {
@@ -1311,6 +1546,9 @@ fn copy_target(
                 .or_insert(item.descriptor.captured_at.clone());
         }
     }
+    ledger
+        .active_batch
+        .retain(|id| ledger.pending.contains_key(id));
     backup::save_setting(workspace, &key, &ledger)?;
     progress.completed(
         local
@@ -1397,22 +1635,16 @@ fn copy_target(
             .destinations
             .get(&target.id)
             .and_then(|s| s.active_generation_id.clone());
-        let mut order: Vec<_> = local.iter().collect();
-        if target.location.is_cloud() {
-            // A failed active generation keeps its turn; new captures cannot
-            // starve it. Once source retention expires it, use remaining data.
-            order.sort_by_key(|g| active.as_deref() != Some(g.descriptor.generation_id.as_str()));
-        }
-        for generation in order {
-            if count >= generation_limit {
-                break;
-            }
-            if !ledger
-                .pending
-                .contains_key(&generation.descriptor.generation_id)
-            {
-                continue;
-            }
+        let order = pending_uploads(local, &ledger, active.as_deref(), generation_limit);
+        // Keep synchronous local/CLI verification unchanged. The cloud worker
+        // sends a bounded batch in ONE copy invocation, then yields to other
+        // destinations before its separate per-generation verification work.
+        let batch_size = if defer_verification {
+            COPY_BATCH_SIZE
+        } else {
+            1
+        };
+        for batch in order.chunks(batch_size) {
             if !settings::destination(workspace, &target.id)?.enabled {
                 break;
             }
@@ -1422,46 +1654,49 @@ fn copy_target(
                     "Transfer budget expired; remaining generations will be retried",
                 ));
             }
-            update_target_status(workspace, &target.id, |state| {
-                state.active_generation_id = Some(generation.descriptor.generation_id.clone())
+            ledger.active_batch = batch
+                .iter()
+                .map(|g| g.descriptor.generation_id.clone())
+                .collect();
+            settings::save_transfer(workspace, &target.id, &ledger, |state| {
+                state.active_generation_id = ledger.active_batch.first().cloned();
             })?;
-            progress.generation(&generation.descriptor.captured_at);
+            if batch.len() == 1 {
+                progress.generation(&batch[0].descriptor.captured_at);
+            } else {
+                progress.batch(batch.len());
+            }
             let was_pending = begin_repository_write(workspace, &target.repository_id)?;
             if defer_verification {
-                upload_generation(restic, source, &repo, generation)?;
-                ledger.awaiting_verification.insert(
-                    generation.descriptor.generation_id.clone(),
-                    generation.clone(),
-                );
+                upload_generations(restic, source, &repo, batch)?;
+                for generation in batch {
+                    ledger.awaiting_verification.insert(
+                        generation.descriptor.generation_id.clone(),
+                        (*generation).clone(),
+                    );
+                }
             } else {
+                let generation = batch[0];
                 let verified = copy_generation_verified(restic, source, &repo, generation)?;
                 backup::remember_generation(workspace, &verified)?;
                 ledger
                     .delivered
                     .insert(generation.descriptor.generation_id.clone());
-            }
-            ledger.pending.remove(&generation.descriptor.generation_id);
-            count += 1;
-            progress.completed(
-                local
-                    .iter()
-                    .filter(|g| {
-                        ledger.delivered.contains(&g.descriptor.generation_id)
-                            || ledger
-                                .awaiting_verification
-                                .contains_key(&g.descriptor.generation_id)
-                    })
-                    .count(),
-            );
-            if !defer_verification
-                && protected.as_ref().is_none_or(|old| {
+                if protected.as_ref().is_none_or(|old| {
                     chrono::DateTime::parse_from_rfc3339(old).ok()
                         < chrono::DateTime::parse_from_rfc3339(&generation.descriptor.captured_at)
                             .ok()
-                })
-            {
-                protected = Some(generation.descriptor.captured_at.clone());
+                }) {
+                    protected = Some(generation.descriptor.captured_at.clone());
+                }
             }
+            for generation in batch {
+                ledger.pending.remove(&generation.descriptor.generation_id);
+            }
+            ledger.active_batch.clear();
+            // One durable transition for the whole acknowledged batch. A
+            // failed/lost response leaves all IDs pending; Restic's idempotent
+            // source-snapshot copy reconciles any already-written snapshots.
             settings::save_transfer(workspace, &target.id, &ledger, |state| {
                 state.last_copy_at = Some(chrono::Utc::now().to_rfc3339());
                 state.protected_capture_at = protected.clone();
@@ -1473,6 +1708,18 @@ fn copy_target(
                 }
                 .into();
             })?;
+            count += batch.len();
+            progress.completed(
+                local
+                    .iter()
+                    .filter(|g| {
+                        ledger.delivered.contains(&g.descriptor.generation_id)
+                            || ledger
+                                .awaiting_verification
+                                .contains_key(&g.descriptor.generation_id)
+                    })
+                    .count(),
+            );
             complete_repository_write(workspace, &target.repository_id, was_pending)?;
         }
         Ok(
@@ -1500,6 +1747,33 @@ fn copy_target(
         }
     })?;
     result
+}
+
+fn pending_uploads<'a>(
+    local: &'a [Generation],
+    ledger: &TransferLedger,
+    legacy_active: Option<&str>,
+    limit: usize,
+) -> Vec<&'a Generation> {
+    let mut order: Vec<_> = local
+        .iter()
+        .filter(|g| ledger.pending.contains_key(&g.descriptor.generation_id))
+        .collect();
+    // Persist the entire interrupted batch, not just its first generation, so
+    // later captures cannot continually displace its other pending members.
+    // Still honor the single-generation marker written by older versions.
+    order.sort_by_key(|g| {
+        ledger
+            .active_batch
+            .iter()
+            .position(|id| id == &g.descriptor.generation_id)
+            .unwrap_or(
+                ledger.active_batch.len()
+                    + usize::from(legacy_active != Some(g.descriptor.generation_id.as_str())),
+            )
+    });
+    order.truncate(limit);
+    order
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1650,7 +1924,7 @@ pub(crate) fn cloud_unit(
                     &local,
                     target,
                     &OsCredentials,
-                    1,
+                    COPY_BATCH_SIZE,
                     true,
                 )
                 .map(|_| ())
@@ -1825,24 +2099,49 @@ fn upload_generation(
     target: &Repository,
     generation: &Generation,
 ) -> Result<(), ReadError> {
+    upload_generations(restic, source, target, &[generation])
+}
+
+fn upload_generations(
+    restic: &Restic,
+    source: &Repository,
+    target: &Repository,
+    generations: &[&Generation],
+) -> Result<(), ReadError> {
+    if generations.is_empty() || generations.len() > COPY_BATCH_SIZE {
+        return Err(ReadError::new(
+            "INVALID_ARGUMENT",
+            "Invalid upload batch size",
+        ));
+    }
     restic.stage(Stage::SourceVerification);
     let source_id = restic.repository_id(source)?;
-    if generation.repository_id != source_id {
-        return Err(ReadError::new(
-            "REPOSITORY_MISMATCH",
-            "Copy source identity changed",
-        ));
-    }
-    let verified = backup::verify_generation(restic, source, &generation.snapshot_id, &source_id)?;
-    if serde_json::to_value(&verified.descriptor)? != serde_json::to_value(&generation.descriptor)?
-    {
-        return Err(ReadError::new(
-            "HISTORY_CORRUPT",
-            "Copy source descriptor changed",
-        ));
+    // Validate EVERY selected source before sending any member of the batch.
+    // Reuse the source identity read, never the source descriptor/file checks.
+    for generation in generations {
+        if generation.repository_id != source_id {
+            return Err(ReadError::new(
+                "REPOSITORY_MISMATCH",
+                "Copy source identity changed",
+            ));
+        }
+        let verified =
+            backup::verify_generation(restic, source, &generation.snapshot_id, &source_id)?;
+        if serde_json::to_value(&verified.descriptor)?
+            != serde_json::to_value(&generation.descriptor)?
+        {
+            return Err(ReadError::new(
+                "HISTORY_CORRUPT",
+                "Copy source descriptor changed",
+            ));
+        }
     }
     restic.stage(Stage::Uploading);
-    restic.copy_snapshot(source, target, &generation.snapshot_id)?;
+    let snapshots = generations
+        .iter()
+        .map(|g| g.snapshot_id.as_str())
+        .collect::<Vec<_>>();
+    restic.copy_snapshots(source, target, &snapshots)?;
     Ok(())
 }
 

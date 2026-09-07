@@ -19,6 +19,8 @@ use std::{
 };
 
 pub const VERSION: &str = "0.19.1";
+/// Bound each invocation for destination fairness and Windows command-line size.
+pub(crate) const COPY_BATCH_SIZE: usize = 16;
 pub type Cancellation = Arc<AtomicBool>;
 pub fn cancellation() -> Cancellation {
     Arc::new(AtomicBool::new(false))
@@ -234,31 +236,42 @@ impl Restic {
     ) -> Result<Vec<u8>, ReadError> {
         self.execute(repo, args, cwd, None, None)
     }
-    pub(crate) fn copy_snapshot(
+    pub(crate) fn copy_snapshots(
         &self,
         source: &Repository,
         target: &Repository,
-        snapshot: &str,
+        snapshots: &[&str],
     ) -> Result<(), ReadError> {
+        // No IDs means "copy the entire repository" to Restic, not a no-op.
+        if snapshots.is_empty()
+            || snapshots.len() > COPY_BATCH_SIZE
+            || snapshots.iter().any(|id| {
+                id.len() != 64
+                    || !id
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+        {
+            return Err(ReadError::new(
+                "INVALID_ARGUMENT",
+                "Copy requires a bounded, nonempty batch of full snapshot IDs",
+            ));
+        }
         if !matches!(source.password, Password::Insecure) {
             return Err(ReadError::new(
                 "INVALID_ARGUMENT",
                 "Copy source must be local history",
             ));
         }
-        self.execute(
-            target,
-            &[
-                "copy".into(),
-                "--from-repo".into(),
-                source.local_path()?.as_os_str().to_owned(),
-                "--from-insecure-no-password".into(),
-                snapshot.into(),
-            ],
-            None,
-            None,
-            Some(source),
-        )?;
+        let mut args = vec![
+            "copy".into(),
+            "--from-repo".into(),
+            source.local_path()?.as_os_str().to_owned(),
+            "--from-insecure-no-password".into(),
+            "--".into(),
+        ];
+        args.extend(snapshots.iter().map(OsString::from));
+        self.execute(target, &args, None, None, Some(source))?;
         Ok(())
     }
     pub fn json(&self, repo: &Repository, args: &[&str]) -> Result<Value, ReadError> {
@@ -555,6 +568,7 @@ while [ "$#" -gt 0 ]; do
     --repo) shift; repo="$1" ;;
     --from-repo) shift; source="$1" ;;
     cat|snapshots|dump|copy|unlock|check) op="$1" ;;
+    --) shift; printf '%s\n' "$@" > "$repo/snapshot-args"; break ;;
     --remove-all) exit 99 ;;
   esac
   shift
@@ -602,6 +616,53 @@ esac
             .lines()
             .filter(|s| *s == operation)
             .count()
+    }
+    #[cfg(unix)]
+    #[test]
+    fn copy_batch_requires_explicit_ids_and_uses_one_cancellable_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let (restic, target) = automatic_fixture(&temp.path().join("target"));
+        let (_, source) = automatic_fixture(&temp.path().join("source"));
+        let ids = (0..COPY_BATCH_SIZE)
+            .map(|n| format!("{n:064x}"))
+            .collect::<Vec<_>>();
+        let ids = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        for invalid in [
+            vec![],
+            vec![ids[0]; COPY_BATCH_SIZE + 1],
+            vec!["latest"],
+            vec!["--all"],
+            vec![""],
+            vec!["ABCD"],
+            vec!["abc"],
+        ] {
+            assert_eq!(
+                restic
+                    .copy_snapshots(&source, &target, &invalid)
+                    .unwrap_err()
+                    .code,
+                "INVALID_ARGUMENT"
+            );
+        }
+        assert_eq!(calls(target.local_path().unwrap(), "copy"), 0);
+        restic.copy_snapshots(&source, &target, &ids).unwrap();
+        assert_eq!(calls(target.local_path().unwrap(), "copy"), 1);
+        assert_eq!(
+            fs::read_to_string(target.local_path().unwrap().join("snapshot-args"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ids
+        );
+        restic.cancel.store(true, Ordering::Release);
+        assert_eq!(
+            restic
+                .copy_snapshots(&source, &target, &ids)
+                .unwrap_err()
+                .code,
+            "CANCELLED"
+        );
+        assert_eq!(calls(target.local_path().unwrap(), "copy"), 1);
     }
     #[cfg(unix)]
     #[test]
@@ -745,14 +806,16 @@ esac
         // Raw source can be read explicitly, but must not be auto-unlocked.
         assert_eq!(
             restic
-                .copy_snapshot(&source, &target, "snapshot")
+                .copy_snapshots(&source, &target, &[&"a".repeat(64), &"b".repeat(64)])
                 .unwrap_err()
                 .code,
             "REPOSITORY_LOCKED"
         );
         assert_eq!(calls(&source_path, "unlock"), 0);
         let source = source.with_automatic_lock_recovery("a".repeat(64));
-        restic.copy_snapshot(&source, &target, "snapshot").unwrap();
+        restic
+            .copy_snapshots(&source, &target, &[&"a".repeat(64), &"b".repeat(64)])
+            .unwrap();
         assert_eq!(calls(&source_path, "unlock"), 1);
         assert_eq!(calls(&target_path, "copy"), 4);
     }

@@ -48,6 +48,7 @@ pub struct Snapshot {
     pub elapsed_ms: u64,
     pub stage_elapsed_ms: u64,
     pub generation_captured_at: Option<String>,
+    pub batch_generations: usize,
     pub completed_generations: usize,
     pub total_generations: usize,
     pub operation: Option<Operation>,
@@ -108,7 +109,16 @@ impl Progress {
         });
     }
     pub fn generation(&self, captured_at: &str) {
-        self.update(|s| s.snapshot.generation_captured_at = Some(captured_at.into()));
+        self.update(|s| {
+            s.snapshot.generation_captured_at = Some(captured_at.into());
+            s.snapshot.batch_generations = 0;
+        });
+    }
+    pub fn batch(&self, count: usize) {
+        self.update(|s| {
+            s.snapshot.generation_captured_at = None;
+            s.snapshot.batch_generations = count;
+        });
     }
     pub fn completed(&self, count: usize) {
         self.update(|s| s.snapshot.completed_generations = count);
@@ -209,6 +219,28 @@ pub(crate) fn live(workspace: &Path, target: &str) -> Option<Snapshot> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn batch_progress_never_claims_one_current_generation_or_early_completion() {
+        let temp = tempfile::tempdir().unwrap();
+        let p = Progress::start(temp.path(), "target", 20);
+        p.completed(2);
+        p.generation("2026-09-07T00:00:00Z");
+        p.batch(16);
+        let snapshot = p.snapshot();
+        assert_eq!(snapshot.batch_generations, 16);
+        assert!(snapshot.generation_captured_at.is_none());
+        assert_eq!(snapshot.completed_generations, 2);
+        p.generation("2026-09-07T00:01:00Z");
+        assert_eq!(p.snapshot().batch_generations, 0);
+        let mut old = serde_json::to_value(p.snapshot()).unwrap();
+        old.as_object_mut().unwrap().remove("batch_generations");
+        assert_eq!(
+            serde_json::from_value::<Snapshot>(old)
+                .unwrap()
+                .batch_generations,
+            0
+        );
+    }
     #[test]
     fn stats_are_numeric_only_cumulative_and_not_a_fake_heartbeat() {
         let temp = tempfile::tempdir().unwrap();

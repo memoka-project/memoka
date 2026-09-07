@@ -181,7 +181,10 @@ Workspace IDはデータのidentityであり端末のidentityではない。復�
 この分離は通常の登録・復旧に対する保証で、OSユーザーの接続registry・資格情報まで複製した端末の識別や、旧版/外部Resticに対する分散writer lockではない。
 設定・資格情報を複製して同じrootへ書き込む運用は非対応とし、Resticのrepository lock自体は引き続き維持する。
 
-通常Google転送は1世代の転送、検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
+通常Google転送は最大16世代を1回のRestic `copy`へ渡す。複数commandの単なる連続実行ではなく、同じ接続・lock・index読み込みを共有したbatch転送である。
+1転送batch、1世代の検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。件数を満たすための待ち時間は設けない。
+Restic境界は1〜16個の完全長snapshot IDだけを受け付ける。空配列を「全世代copy」として渡さず、別Workspaceや未選択snapshotへ対象を広げない。
+同期的なlocal/CLI経路は従来どおり1世代ごとのcopy＋検証を維持する。
 新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
 自動転送はuploadを先に完了し、同じworkerの次の独立した処理単位で検証を開始する。検証には無操作待ち・次の60秒tick待ちを挟まない。
 検証待ち台帳のlocal-only probeをupload済みreceiptと分離し、receiptがcurrentでも検証待ちならworkerを起動できる。台帳は永続化し、再起動直後のschedulerでも再開する。
@@ -189,9 +192,14 @@ Workspace IDはデータのidentityであり端末のidentityではない。復�
 保持整理は30秒以上キー入力・クリック・スクロールがなく、検索索引更新がidleで、先行するcapture等がないtickで開始する。
 明示的な「今すぐ転送」はこの無操作待ちによらず検証・整理も再試行できる。障害時のbackoffは検証にも引き続き適用する。
 複数先に転送できるデータがある場合、後続の検証・整理よりuploadを優先する。
-copy前には接続先identityとローカルsourceを確認するが、毎回のremote全世代一覧・検証は行わない。
+copy前には接続先identity、source repository ID、batch内の全source descriptorとfile集合を確認するが、毎回のremote全世代一覧・検証は行わない。
+全sourceの確認が終わるまでbatchの送信を始めない。batchのgeneration ID列を`TransferLedger.active_batch`へ送信前に永続化し、失敗・中断後は新しいcaptureより先に再試行する。
+旧台帳の`active_batch`未設定は空とし、旧`active_generation_id`も優先する。local保持整理で失われたpendingは期限切れへ移し、残ったsourceで再開する。
 成功したcopyは期待descriptorを`TransferLedger.awaiting_verification`に永続化し、転送待ちから外す。`delivered`・保護済み日時は進めない。
-世代完了時の台帳・件数・保護済み日時は同じSQLite transactionで更新し、途中終了やDB書込み失敗で不整合にしない。
+copy command全体の成功後、batch全体の期待descriptor・台帳・件数を同じSQLite transactionで更新する。未検証なので保護済み日時は維持する。
+失敗・中断・成功応答喪失時はbatch全体をpendingのまま保ち、人間向けstdoutから一部成功を推測しない。再実行ではResticの冪等copyにより部分転送済みsnapshotを重複させない。
+検証完了時も世代ごとの台帳・件数・保護済み日時を同じSQLite transactionで更新し、途中終了やDB書込み失敗で不整合にしない。
+進捗のoptional `batch_generations`はまとめ転送対象数を示す（旧stateは0）。複数世代を単一の「処理中世代」として表示せず、完了数はbatchの成功永続化後にまとめて進める。通信量のlive表示は継続する。
 `pending_verification_count`と`verification_error`はschema 3の追加fieldとし、旧stateでは0/nullとする。
 転送後の検証失敗を転送失敗と混同せず、検証や整理の一時障害のbackoffで新規uploadを遅延させない。identity/認証等の重大な問題は全工程を保留する。
 転送後の照合はWorkspace/generation tagで今回の世代に絞り、descriptorとfile集合を検証する。
@@ -282,7 +290,7 @@ capture/copy/forgetの書き込み前に回収待ちを運用DBへ記録する�
 capture/copy失敗の直後に成功後cleanupとして世代を減らさない。
 prune失敗はaccepted backupを未作成へ戻さず、maintenance errorとして表示する。
 
-Googleは1世代のcopy後に別の整理単位を巡回する。整理前には専用root内の元のDrive metadataで
+Googleはbatch copyと1世代ごとの検証とは別の整理単位を巡回する。整理前には専用root内の元のDrive metadataで
 同名object・shortcut・Google Docs・不明なrepository layoutを検査し、不整合があれば停止する。
 `drive_use_trash=true`を明示し、削除objectはDriveのゴミ箱へ送る。repository整理成功はGoogleの空き容量増加と同義ではない。
 `cleanup`、`emptyTrash`、自動dedupe、未確認の完全削除や強制unlockを実装しない。

@@ -45,6 +45,40 @@ describe("backup transfer diagnostics", () => {
     expect(screen.getByText("3 / 4 世代")).toBeTruthy();
     expect(screen.queryByText("処理完了")).toBeNull();
   });
+  it("shows the upload batch size without implying one generation or early completion", () => {
+    const { rerender } = render(
+      <BackupTransferProgress
+        value={{
+          ...progress(),
+          stage: "uploading",
+          operation: "copy",
+          batch_generations: 16,
+          completed_generations: 2,
+          total_generations: 20,
+        }}
+      />,
+    );
+    expect(screen.getByText("まとめ転送の対象")).toBeTruthy();
+    expect(screen.getByText("16 世代")).toBeTruthy();
+    expect(screen.queryByText("処理中の世代")).toBeNull();
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("2");
+    rerender(
+      <BackupTransferProgress
+        value={{
+          ...progress(),
+          running: false,
+          stage: "complete",
+          operation: null,
+          generation_captured_at: null,
+          batch_generations: 16,
+          completed_generations: 18,
+          total_generations: 20,
+        }}
+      />,
+    );
+    expect(screen.getByText("まとめ転送の対象だった世代")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("18");
+  });
   it("keeps failed maintenance visible without treating a protected generation as a failed transfer", async () => {
     const base = await backupFixture().status();
     const error = {

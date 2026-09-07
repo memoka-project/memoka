@@ -236,6 +236,10 @@ pub struct TransferLedger {
     pub pending: BTreeMap<String, String>,
     pub expired: BTreeMap<String, String>,
     pub delivered: BTreeSet<String>,
+    /// Retry the interrupted batch before new captures. These remain pending
+    /// until the entire copy command succeeds; never infer per-snapshot success
+    /// from human-readable child output. Missing in older ledgers means empty.
+    pub active_batch: Vec<String>,
     /// A successful copy is not yet a verified/protected generation. Keep its
     /// expected descriptor across restarts and local source retention.
     pub awaiting_verification: BTreeMap<String, crate::backup::Generation>,

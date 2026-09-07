@@ -54,13 +54,24 @@ export function BackupTransferProgress({ value }: { value: TransferProgress }) {
             </dd>
           </>
         )}
-        {value.generation_captured_at && (
+        {(value.batch_generations ?? 0) > 1 ? (
           <>
-            <dt>{value.running ? "処理中の世代" : "処理した世代"}</dt>
-            <dd>
-              <EventDateTime value={value.generation_captured_at} />
-            </dd>
+            <dt>
+              {value.running
+                ? "まとめ転送の対象"
+                : "まとめ転送の対象だった世代"}
+            </dt>
+            <dd>{value.batch_generations} 世代</dd>
           </>
+        ) : (
+          value.generation_captured_at && (
+            <>
+              <dt>{value.running ? "処理中の世代" : "処理した世代"}</dt>
+              <dd>
+                <EventDateTime value={value.generation_captured_at} />
+              </dd>
+            </>
+          )
         )}
         <dt>この処理の経過時間</dt>
         <dd>
