@@ -211,10 +211,10 @@ export class MemoryPersistencePort implements PersistencePort {
       if (existing.schemaVersion !== input.schemaVersion) {
         if (
           existing.kind === "note" &&
-          existing.schemaVersion === 2 &&
-          input.schemaVersion === 3
+          [2, 3].includes(existing.schemaVersion) &&
+          input.schemaVersion === 4
         ) {
-          existing.schemaVersion = 3;
+          existing.schemaVersion = 4;
         } else {
           throw new Error(`schema version mismatch for ${key}`);
         }
@@ -539,7 +539,7 @@ function isSupportedDocumentSchema(
 ): boolean {
   return kind === "workspace"
     ? schemaVersion === 3
-    : schemaVersion === 2 || schemaVersion === 3;
+    : schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4;
 }
 
 function documentKey(kind: DocumentKind, documentId: string): string {

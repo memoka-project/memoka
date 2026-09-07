@@ -1795,7 +1795,7 @@ function blockTypeSlashTrigger(options: {
                 $from.parent.content.size !== 0 ||
                 $from.parentOffset !== 0 ||
                 $from.depth < 1 ||
-                ![SECTION_BODY_NODE, BODY_CHUNK_NODE].includes(
+                ![SECTION_BODY_NODE, BODY_CHUNK_NODE, "listItem"].includes(
                   $from.node($from.depth - 1).type.name,
                 )
               ) {
@@ -1810,7 +1810,8 @@ function blockTypeSlashTrigger(options: {
                   if (
                     node.attrs.blockId === blockId &&
                     (parent?.type.name === SECTION_BODY_NODE ||
-                      parent?.type.name === BODY_CHUNK_NODE)
+                      parent?.type.name === BODY_CHUNK_NODE ||
+                      parent?.type.name === "listItem")
                   ) {
                     valid =
                       node.type.name === "paragraph" &&

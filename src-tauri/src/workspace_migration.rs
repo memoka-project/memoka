@@ -305,14 +305,19 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
         transaction.execute_batch("ALTER TABLE attachments ADD COLUMN known_missing INTEGER NOT NULL DEFAULT 0 CHECK(known_missing IN (0,1))")?;
     }
     for (before, snapshot) in &prepared.documents {
+        let target_schema = if before.kind == "note" {
+            4
+        } else {
+            WORKSPACE_SCHEMA
+        };
         crate::persistence::backup_document_before_schema_migration(
             &transaction,
             &before.kind,
             &before.document_id,
             before.schema_version,
-            WORKSPACE_SCHEMA,
+            target_schema,
         )?;
-        let count = transaction.execute("UPDATE documents SET schema_version=?1, revision=revision+1, snapshot_revision=revision+1, snapshot=?2 WHERE kind=?3 AND document_id=?4 AND revision=?5", params![WORKSPACE_SCHEMA, snapshot, before.kind, before.document_id, before.revision])?;
+        let count = transaction.execute("UPDATE documents SET schema_version=?1, revision=revision+1, snapshot_revision=revision+1, snapshot=?2 WHERE kind=?3 AND document_id=?4 AND revision=?5", params![target_schema, snapshot, before.kind, before.document_id, before.revision])?;
         if count != 1 {
             return Err(ReadError::new(
                 "REVISION_CONFLICT",

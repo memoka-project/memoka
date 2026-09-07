@@ -2,7 +2,7 @@ import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { createUuidV7 } from "../core/ids";
-import { BODY_CHUNK_NODE, SECTION_BODY_NODE } from "../core/section-model";
+import { editableBlockById } from "../editor/block-container";
 import type {
   BlockTransformOptions,
   BlockTransformTarget,
@@ -42,16 +42,11 @@ export type BlockTransformResult =
         | "no-op";
     };
 
-interface DirectBodyBlock {
-  readonly node: ProseMirrorNode;
-  readonly position: number;
-}
-
 export function runBlockTransformCommand(
   view: EditorView,
   command: BlockTransformCommand,
 ): BlockTransformResult {
-  const source = directBodyBlockById(view.state.doc, command.payload.blockId);
+  const source = editableBlockById(view.state.doc, command.payload.blockId);
   if (!source) {
     return blockExists(view.state.doc, command.payload.blockId)
       ? { changed: false, reason: "not-direct-body" }
@@ -72,6 +67,15 @@ export function runBlockTransformCommand(
     command.payload.options,
   );
   if ("reason" in replacement) return replacement;
+  if (
+    !source.parent.canReplaceWith(
+      source.index,
+      source.index + 1,
+      replacement.node.type,
+    )
+  ) {
+    return { changed: false, reason: "unsupported" };
+  }
 
   const transaction = view.state.tr.replaceWith(
     source.position,
@@ -206,7 +210,12 @@ function createReplacement(
       ? { node: table, selection: "text" }
       : { changed: false, reason: "unsupported" };
   }
-  if (target === "alert") {
+  if (target === "horizontalRule") {
+    const type = schema.nodes.horizontalRule;
+    if (!type || plainText) return { changed: false, reason: "unsupported" };
+    return { node: type.create({ blockId }), selection: "node" };
+  }
+  if (target === "alert" || target === "blockquote") {
     const blockquote = schema.nodes.blockquote;
     const paragraph = schema.nodes.paragraph;
     const alertType = normalizeMarkdownAlertType(
@@ -223,7 +232,7 @@ function createReplacement(
       node: blockquote.create(
         {
           blockId,
-          alertType,
+          alertType: target === "alert" ? alertType : null,
           alertTitle: normalizeMarkdownAlertTitle(options?.alert?.title),
           alertFold: normalizeMarkdownAlertFold(options?.alert?.fold),
         },
@@ -252,26 +261,6 @@ function createReplacement(
     };
   }
   return { changed: false, reason: "unsupported" };
-}
-
-function directBodyBlockById(
-  doc: ProseMirrorNode,
-  blockId: string,
-): DirectBodyBlock | null {
-  let result: DirectBodyBlock | null = null;
-  doc.descendants((node, position, parent) => {
-    if (
-      result === null &&
-      node.attrs.blockId === blockId &&
-      (parent?.type.name === SECTION_BODY_NODE ||
-        parent?.type.name === BODY_CHUNK_NODE)
-    ) {
-      result = { node, position };
-      return false;
-    }
-    return result === null;
-  });
-  return result;
 }
 
 function blockExists(doc: ProseMirrorNode, blockId: string): boolean {

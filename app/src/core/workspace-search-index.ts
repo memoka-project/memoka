@@ -9,7 +9,7 @@ import {
   type WorkspaceSearchScope,
 } from "./workspace-search";
 
-export const WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION = 9;
+export const WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION = 10;
 
 export interface WorkspaceSearchNamespaceEntry {
   readonly entryId: string;

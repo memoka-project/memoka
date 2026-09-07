@@ -476,7 +476,7 @@ export class VimBlockSemanticsRegistry {
       const behavior = this.behaviorForNodeName(
         $position.node(depth).type.name,
       );
-      if (behavior?.structuralAncestor) return true;
+      if (behavior?.structuralAncestor === "table-row") return true;
     }
     return false;
   }
@@ -879,7 +879,10 @@ export class VimBlockSemanticsRegistry {
         const behavior = this.behaviorForNodeName(
           $position.node(depth).type.name,
         );
-        if (behavior?.structuralAncestor) {
+        if (
+          behavior?.structuralAncestor &&
+          !(splitHardBreakLines && behavior.structuralAncestor === "list-item")
+        ) {
           ancestorDepth = depth;
           structureKind = behavior.structuralAncestor;
           break;

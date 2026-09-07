@@ -373,28 +373,6 @@ function sectionLogicalLinePosition(
       case "attachment":
         accept(node, position, node.textContent);
         return;
-      case "listItem": {
-        const text = node.content.content
-          .filter(
-            (child) =>
-              child.type.name !== "bulletList" &&
-              child.type.name !== "orderedList",
-          )
-          .map((child) => child.textContent)
-          .join(" ")
-          .replace(/\s+/gu, " ")
-          .trim();
-        if (accept(node, position, text)) return;
-        node.forEach((child, offset) => {
-          if (
-            child.type.name === "bulletList" ||
-            child.type.name === "orderedList"
-          ) {
-            visit(child, position + 1 + offset);
-          }
-        });
-        return;
-      }
       case "tableRow":
         accept(
           node,

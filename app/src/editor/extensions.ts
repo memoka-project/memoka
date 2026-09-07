@@ -71,6 +71,7 @@ import {
 } from "./body-chunk-viewport-event";
 import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
+import { RichListItem } from "./list-editing";
 import { sectionDepthLimit } from "./section-depth-limit";
 import {
   deriveEditorSectionFoldEntries,
@@ -2363,7 +2364,9 @@ export function productEditorExtensions(
       link: false,
       undoRedo: false,
       trailingNode: false,
+      listItem: false,
     }),
+    RichListItem,
     MarkdownAlertAttributes,
     ComposableInlineCode,
     MarkdownHighlight,

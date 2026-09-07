@@ -166,7 +166,8 @@ pub fn workspace_json(document: &PersistedDocument) -> Result<Value, ReadError> 
 
 pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Note, ReadError> {
     if document.kind != "note"
-        || !(document.schema_version == 3 || (allow_legacy && document.schema_version == 2))
+        || !(matches!(document.schema_version, 3 | 4)
+            || (allow_legacy && document.schema_version == 2))
     {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
@@ -227,7 +228,7 @@ pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Not
 /// until the enclosing, preflighted SQL migration commits atomically.
 pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, ReadError> {
     read_note(document, true)?;
-    if document.schema_version == 3 {
+    if document.schema_version == 4 {
         return Ok(None);
     }
     let doc = decode_document(document)?;
@@ -235,7 +236,11 @@ pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, Rea
     let body = txn
         .get_xml_fragment("body")
         .ok_or_else(|| invalid("Missing Note body"))?;
-    let mut pending = body.children(&txn).collect::<Vec<_>>();
+    let mut pending = if document.schema_version == 2 {
+        body.children(&txn).collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     while let Some(XmlOut::Element(section)) = pending.pop() {
         let parts = section.children(&txn).collect::<Vec<_>>();
         let (XmlOut::Element(header), XmlOut::Element(body), XmlOut::Element(children)) =
@@ -285,12 +290,12 @@ pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, Rea
     let meta = txn
         .get_map("meta")
         .ok_or_else(|| invalid("Missing Note metadata"))?;
-    meta.insert(&mut txn, "schema_version", 3);
+    meta.insert(&mut txn, "schema_version", 4);
     let bytes = txn.encode_state_as_update_v1(&StateVector::default());
     drop(txn);
     read_note(
         &PersistedDocument {
-            schema_version: 3,
+            schema_version: 4,
             snapshot: bytes.clone(),
             snapshot_revision: document.revision,
             updates: Vec::new(),

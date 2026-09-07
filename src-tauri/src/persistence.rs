@@ -19,7 +19,7 @@ use crate::search_index::{
 const DATABASE_SCHEMA_VERSION: i64 = 5;
 const WORKSPACE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 const LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
-const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
+const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 4;
 #[cfg(test)]
 const DOCUMENT_SCHEMA_VERSION: i64 = LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION;
 
@@ -882,6 +882,7 @@ fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
         "workspace" => schema_version == WORKSPACE_DOCUMENT_SCHEMA_VERSION,
         "note" => {
             schema_version == LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION
+                || schema_version == 3
                 || schema_version == NOTE_DOCUMENT_SCHEMA_VERSION
         }
         _ => false,
@@ -996,7 +997,7 @@ fn commit_documents(
             }
             Some((schema_version, revision)) => {
                 let migrating_note_schema = document.kind == "note"
-                    && schema_version == LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION
+                    && matches!(schema_version, 2 | 3)
                     && document.schema_version == NOTE_DOCUMENT_SCHEMA_VERSION;
                 if schema_version != document.schema_version && !migrating_note_schema {
                     return Err(PersistenceError::InvalidInput(format!(
@@ -1740,7 +1741,7 @@ mod tests {
                 "SELECT revision, snapshot_revision, snapshot
                  FROM document_schema_backups
                  WHERE kind = 'note' AND document_id = 'note-migrate'
-                   AND from_schema_version = 2 AND to_schema_version = 3",
+                   AND from_schema_version = 2 AND to_schema_version = 4",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -1752,7 +1753,7 @@ mod tests {
                 "SELECT revision, operation_id, update_blob
                  FROM document_schema_backup_updates
                  WHERE kind = 'note' AND document_id = 'note-migrate'
-                   AND from_schema_version = 2 AND to_schema_version = 3",
+                   AND from_schema_version = 2 AND to_schema_version = 4",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )

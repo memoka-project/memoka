@@ -1,6 +1,7 @@
 import type { NoteDocument } from "./documents";
 import { inlineMarkdownText } from "./inline-markdown";
 import { markdownAlertMarker } from "./markdown-alert";
+import { listItemMarkdown } from "./list-markdown";
 import {
   BOOTSTRAP_ORIGIN,
   createNoteDocument,
@@ -470,17 +471,14 @@ function renderListItem(
   options: SectionMarkdownRenderOptions,
 ): string {
   const item = snapshotNode(value);
-  const first = item.content[0] ? snapshotNode(item.content[0]) : null;
-  let result = `${indentation}${marker} ${first ? renderInlineChildren(first, options) : ""}\n`;
-  const childIndent = `${indentation}${" ".repeat(marker.length + 1)}`;
-  for (const child of item.content.slice(1)) {
-    result += renderBlock(child, childIndent, options)
-      .split("\n")
-      .filter((line, index, lines) => line || index < lines.length - 1)
-      .map((line) => (line ? `${childIndent}${line}\n` : ""))
-      .join("");
-  }
-  return result;
+  return listItemMarkdown(
+    item.content.map((child) => renderBlock(child, "", options)),
+    marker,
+    indentation,
+    item.content.map((child) =>
+      ["bulletList", "orderedList"].includes(snapshotNode(child).type),
+    ),
+  );
 }
 
 function renderTable(table: SnapshotNode): string {

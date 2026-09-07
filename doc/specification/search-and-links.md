@@ -87,7 +87,9 @@ Note Bufferは`📄`、Image Bufferは`📷`で区別する。結果を確定す
 
 ## 7. FTS index
 
-Workspace検索indexはschema 9の再構築可能なSQLite派生dataである。
+Workspace検索indexはschema 10の再構築可能なSQLite派生dataである。
+ListItemを1行へ集約せず、内部Blockを表示順に走査する。ParagraphのHard Breakは個別行として索引化し、
+内部ParagraphのBlock ID、行index、UTF-16 offsetを検索結果と移動先で共有する。旧indexはbackgroundで再構築する。
 
 - titleと本文を用途別にqueryできる同一index subsystemで管理する。
 - 本文は論理行と表示snippetを検索できる形で保持する。

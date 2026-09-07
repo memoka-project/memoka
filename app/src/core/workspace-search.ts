@@ -95,12 +95,6 @@ interface RankedSearchResult {
   result: WorkspaceSearchResult;
 }
 
-const LIST_NAMES = new Set([
-  "bulletList",
-  "bullet_list",
-  "orderedList",
-  "ordered_list",
-]);
 const CODE_NAMES = new Set([
   "codeBlock",
   "code_block",
@@ -189,26 +183,6 @@ function* workspaceSearchLines(
           lineIndex: 0,
           sourceOffset: 0,
         };
-        continue;
-      }
-      if (element.nodeName === "listItem" || element.nodeName === "list_item") {
-        const children = childElements(element);
-        yield {
-          element,
-          text: children
-            .filter((child) => !LIST_NAMES.has(child.nodeName))
-            .map((child) => xmlTextContent(child))
-            .join(" ")
-            .replace(/\s+/gu, " ")
-            .trim(),
-          section,
-          lineIndex: 0,
-          sourceOffset: 0,
-        };
-        for (let index = children.length - 1; index >= 0; index -= 1) {
-          const child = children[index]!;
-          if (LIST_NAMES.has(child.nodeName)) pending.push(child);
-        }
         continue;
       }
       if (element.nodeName === "tableRow" || element.nodeName === "table_row") {

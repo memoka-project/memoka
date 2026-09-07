@@ -75,6 +75,12 @@ WorkspaceMetadataDoc
 
 1 Noteにつき1 NoteDocを持つ。NoteDocは再帰的なSection treeである。
 
+NoteDocの`schema_version`は4。ListItemは非空の`Block+`を持ち、先頭をParagraphに限定しない。
+v3からはmetadataだけを更新し、本文、Block/Section/BodyChunk ID、Yjs内の本文要素を作り直さない。
+v2からは既存のBodyChunk化も行う。移行updateを永続化し、旧履歴の読み取りを維持する。
+v4非対応の旧アプリでの再編集は非対応とし、未知schemaを拒否して暗黙の内容欠落を防ぐ。
+WorkspaceMetadataDocのschemaは3のままである。
+
 ```text
 NoteDoc
 └── Root Section

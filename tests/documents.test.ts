@@ -42,7 +42,7 @@ function xmlElement(value: unknown, expectedNodeName: string): Y.XmlElement {
   return value;
 }
 
-describe("Memoka CRDT document schema v3", () => {
+describe("Memoka CRDT document schema v4", () => {
   it("keeps WorkspaceMetadataDoc free of note body content", () => {
     const workspace = createWorkspaceDocument(WORKSPACE_ID);
     const note = createNoteDocument(
@@ -150,7 +150,37 @@ describe("Memoka CRDT document schema v3", () => {
     expect(readNotePlainText(loadedFull as typeof note)).toBe("after");
   });
 
-  it("migrates a v2 direct body into durable v3 chunks without changing block IDs", () => {
+  it("upgrades v3 metadata without replacing body elements and persists the migration once", () => {
+    const legacy = createNoteDocument(NOTE_ID, [
+      {
+        type: "paragraph",
+        blockId: BLOCK_ID,
+        content: [{ type: "text", text: "unchanged" }],
+      },
+    ]);
+    legacy.meta.set("schema_version", 3);
+    const snapshot = encodeProductDocument(legacy);
+    const beforeBody = legacy.rootSection.toString();
+    const loaded = loadNoteDocumentWithSectionIdentityRecovery(
+      NOTE_ID,
+      snapshot,
+    );
+    expect(loaded.document.schemaVersion).toBe(4);
+    expect(loaded.document.rootSection.toString()).toBe(beforeBody);
+    expect(loaded.repair?.migratedFromSchemaVersion).toBe(3);
+    const durable = loadNoteDocumentWithSectionIdentityRecovery(
+      NOTE_ID,
+      snapshot,
+      [loaded.repair!.update],
+    );
+    expect(durable.repair).toBeNull();
+    expect(durable.document.rootSection.toString()).toBe(beforeBody);
+    durable.document.doc.destroy();
+    loaded.document.doc.destroy();
+    legacy.doc.destroy();
+  });
+
+  it("migrates a v2 direct body into durable v4 chunks without changing block IDs", () => {
     const secondBlockId = "01900000-0000-7000-8000-000000000005";
     const legacy = createNoteDocument(NOTE_ID, [
       {
@@ -179,7 +209,7 @@ describe("Memoka CRDT document schema v3", () => {
       NOTE_ID,
       v2Snapshot,
     );
-    expect(migrated.document.schemaVersion).toBe(3);
+    expect(migrated.document.schemaVersion).toBe(4);
     expect(migrated.repair?.migratedFromSchemaVersion).toBe(2);
     expect(sectionBodyChunks(migrated.document.rootSection)).toHaveLength(1);
     expect(
@@ -194,7 +224,7 @@ describe("Memoka CRDT document schema v3", () => {
       [migrated.repair!.update],
     );
     expect(durable.repair).toBeNull();
-    expect(durable.document.schemaVersion).toBe(3);
+    expect(durable.document.schemaVersion).toBe(4);
     durable.document.doc.destroy();
     migrated.document.doc.destroy();
     legacy.doc.destroy();
@@ -390,7 +420,7 @@ describe("Memoka CRDT document schema v3", () => {
       [replacementUpdate],
     );
     expect(loaded.repair).toBeNull();
-    expect(loaded.document.schemaVersion).toBe(3);
+    expect(loaded.document.schemaVersion).toBe(4);
     expect(
       childSections(loaded.document.rootSection).map((section) =>
         sectionId(section),

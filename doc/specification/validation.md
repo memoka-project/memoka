@@ -31,7 +31,7 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - missing IDの限定repairとinvalid/duplicate IDの拒否
 - Namespaceのcycle、self-parent、orphan、deleted-parent/live-child、一意配置の検査
 - jitter付きFractional Indexingの順序、衝突tie-break、局所再採番
-- NoteDoc v2からBodyChunkを持つv3へのmigration
+- NoteDoc v2のBodyChunk化とv4へのmigration、v3からv4のmetadata-only migration（block ID/content保持）
 - SQLite v2/v3/v4からv5への全件preflightとrollback copy
 - snapshot/update log replay、revision conflict、compaction failure recovery
 - 2 Windowで同じNoteDocを開いた場合のcontent共有とWindow-local state分離
@@ -51,6 +51,8 @@ unit/integration試験で次を網羅する。
 - 日本語境界の`J`とrawな`gJ`
 - Section focus/fold/depth変更とList depth変更
 - 未選択List子孫を`dd`/Visual delete/yankへ含めないこと
+- 複数block ListItemでHard Breakを論理行として数え、未選択の行・blockをdelete/yankへ含めないこと
+- 同じItemの複数行を選択したdepth変更が1回だけ適用され、後続blockを含む表示順を保つこと
 - Table Cell移動、空Cell、Visual Block、Clipboard、行列action、repeat
 - Horizontal Rule、Image、Attachmentのatomic操作
 
@@ -85,6 +87,20 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - 混在yankで曖昧な画像dataを公開しない。
 - Image resizeを1 Undoにし、cancel、Command、Markdown width往復を確認する。
 - Image Buffer、`gf`/`Ctrl-w gf`/`Ctrl-o`、再起動復元、missing placeholderを確認する。
+
+### 複数blockリストのnative手動確認
+
+1. 空ListItemで`/`を入力し、Code、Quote/Alert、Table、Image、Attachmentをそれぞれ先頭blockとして作る。
+   不要な空Paragraphを前置せず、picker取消時は`/`が残ることを確認する。
+2. 直接Paragraphの途中で`Alt-Enter`は同じItem内のParagraph、`Enter`は兄弟Item、
+   `Shift-Enter`はHard Breakを作る。HBの前後が行番号・`j/k`・`V`・`dd/yy`で別論理行になることを確認する。
+3. Code/Table/Quote内では`Enter`はそのblockの操作、`Alt-Enter`はItem内のそのblockの直後へParagraph追加、
+   `Ctrl-Enter`は最外List全体の直後へ新規Paragraph追加となることを確認する。
+4. 直接Paragraphに複数行のplain textをInsert paste/Normal `p/P`し、改行ごとの兄弟Itemになることを確認する。
+   CRLF、途中の空行、末尾改行1個の除去、caret後方のtext・後続block・子Listが最後のItemへ残ることも確認する。
+5. Markdown/HTML/内部Clipboardでは複数blockの構造を保ち、Code/Table内部へのplain pasteは既存の挙動を保つ。
+   export→import、Undo/Redo、再起動後のblock構造・IDと`,g`/`/`の一致位置も確認する。
+6. 空の先頭・後続Paragraphに日本語を入力し、IME確定Enterで兄弟Item作成や入力重複が起こらないことを確認する。
 
 ## 7. 検索とlink
 

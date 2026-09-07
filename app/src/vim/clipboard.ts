@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listItemMarkdown } from "../core/list-markdown";
 import {
   DOMParser as ProseMirrorDOMParser,
   DOMSerializer,
@@ -383,33 +384,16 @@ function nodeMarkdown(
       Number.isSafeInteger(rawStart) && rawStart >= 0 ? rawStart : 1;
     node.forEach((item, _offset, itemIndex) => {
       const marker = ordered ? `${start + itemIndex}.` : "-";
-      const continuationIndentation = `${indentation}${" ".repeat(
-        marker.length + 1,
-      )}`;
-      const first = item.firstChild;
-      result += `${indentation}${marker} ${
-        first?.type.name === "paragraph"
-          ? inlineMarkdown(first, resolveInternalLinkTitle)
-          : ""
-      }\n`;
-      for (let index = 1; index < item.childCount; index += 1) {
-        const child = item.child(index);
-        if (
-          child.type.name === "bulletList" ||
-          child.type.name === "orderedList"
-        ) {
-          result += nodeMarkdown(
-            child,
-            continuationIndentation,
-            resolveInternalLinkTitle,
-          );
-          continue;
-        }
-        const continuation = nodeMarkdown(child, "", resolveInternalLinkTitle);
-        for (const line of continuation.replace(/\n$/u, "").split("\n")) {
-          result += `${continuationIndentation}${line}\n`;
-        }
-      }
+      result += listItemMarkdown(
+        item.content.content.map((child) =>
+          nodeMarkdown(child, "", resolveInternalLinkTitle),
+        ),
+        marker,
+        indentation,
+        item.content.content.map((child) =>
+          ["bulletList", "orderedList"].includes(child.type.name),
+        ),
+      );
     });
     return result;
   }
@@ -927,6 +911,26 @@ export function registerFromMarkdown(
         slice: parsed.slice,
       }
     : null;
+}
+
+export function registerFromHtml(
+  html: string,
+  schema: Schema,
+): VimRegister | null {
+  if (typeof document === "undefined") return null;
+  const safe = sanitizeExternalHtml(html);
+  if (!safe) return null;
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = safe;
+  const slice = ProseMirrorDOMParser.fromSchema(schema).parseSlice(wrapper);
+  if (slice.size === 0) return null;
+  return {
+    kind: "structure",
+    text: slice.content.textBetween(0, slice.content.size, "\n"),
+    structureKind: "block",
+    nodeNames: slice.content.content.map((node) => node.type.name),
+    slice,
+  };
 }
 
 function tableCellsRegisterFromRows(

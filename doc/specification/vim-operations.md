@@ -126,7 +126,11 @@ word境界は小文字motionとInsert `Ctrl-w`で共通である。Internal Link
 `j/k`で選択する論理行を拡張・縮小する。
 
 Paragraph、Section Header、ListItem、Code line、Table Cell、atomic blockはそれぞれの論理行境界を使う。
-ListItemの選択は選択したItemまでで、未選択の子孫を暗黙に含めない。
+ListItem内ではParagraphのHard Breakも論理行境界となる。選択していない同一Item内のBlockや子孫を暗黙に含めない。
+
+InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同じItem内の次Paragraphを作る。
+`Shift-Enter`はHard Break。内部Code/Table/引用などは固有のEnter操作を維持し、`Alt-Enter`で同じItem内の次Paragraphへ抜ける。
+`Ctrl-Enter`は最外List全体の直後に新規Paragraphを作る。
 
 `>/<`は選択されたSection/ListItemの階層を、表示順を維持したまま1段変更する。
 

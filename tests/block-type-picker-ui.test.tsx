@@ -27,7 +27,7 @@ describe("Memoka Block Type picker", () => {
       name: "ブロックタイプを検索",
     });
     expect(document.activeElement).toBe(input);
-    expect(screen.getAllByRole("option")).toHaveLength(9);
+    expect(screen.getAllByRole("option")).toHaveLength(11);
     expect(screen.getAllByRole("option").at(-1)?.textContent).toContain(
       "Paragraph",
     );

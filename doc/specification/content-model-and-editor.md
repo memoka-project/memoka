@@ -60,7 +60,7 @@ Internal Section Linkはtarget Section IDを持つatomic inline nodeである。
 Window幅による自動折り返しは論理行を増やさない。
 
 - Root/Section titleとParagraphは、block先頭、`Shift-Enter`で挿入したHard Break、block末尾を境界にする。
-- ListItemはそのItemの直接textを論理行として扱い、選択されていない子孫Itemを含めない。
+- ListItemは複数Blockを順序付きで保持する。内部ParagraphはHard Breakごとに論理行を分け、別Paragraph、別Block、未選択の子孫Itemを含めない。
 - Code/Source Blockは保存text内の改行を境界にする。
 - TableではCellのcontentを論理行として扱い、Cell境界を明示的な停止位置にする。
 - atomic blockはblock全体で1論理行相当として扱う。
@@ -74,7 +74,10 @@ Memokaがblock種別に応じて処理する。
 
 - ParagraphのEnterはParagraphを分割する。
 - `Shift-Enter`は同じParagraph/Cell内へHard Breakを挿入する。
-- ListItemのEnterはItemを分割し、空Itemなどの終了条件ではList構造を抜ける。
+- ListItem直下のParagraphのEnterはcaret位置でItemを分割する。後続Blockと子Listは新しい兄弟Itemへ移る。単独の空ParagraphのItemではList構造を抜ける。
+- ListItem内のCode/Source、Table、引用ではEnterは内部Block本来の編集操作を行う。
+- `Alt-Enter`はListItem直下のParagraphをcaret位置で分割し、同じItem内に次のParagraphを作る。内部Block内では、そのBlockを包含するListItem直下のBlockの後ろに空Paragraphを作る。
+- List内の`Ctrl-Enter`は内部Blockの種類によらず最外List全体の直後に新しいParagraphを作る。既存Paragraphは再利用しない。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。
 - List、Table、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ
@@ -117,9 +120,16 @@ Normalの`>>/<<`はこの往復を行わず、`u`で戻す。
 
 Visual Lineは選択した論理行または構造nodeだけを対象にする。
 
+ListItemの先頭や唯一のBlockに引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Ruleも置ける。
+schemaを満たすためだけの空Paragraphは挿入しない。ListItem直下の空Paragraphで`/`を入力すると共通Block pickerを開く。
+Block変換と添付挿入は現在のItem内に適用し、未選択のBlockのIDや順序を変更しない。
+picker確定時だけ`/`を消し、cancel時は残す。ListItem内にSectionは作らない。
+
 - 親ListItemの`dd`またはVisual Lineの`d`では、未選択の子Itemを削除しない。
   子Itemは表示位置を保つ範囲で昇格させる。
 - 親ListItemを単独でyankした場合も、選択されていない子孫をClipboardへ含めない。
+- `dd/yy`とVisual Lineの`d/y`は、同じItemに属する未選択のParagraphやBlockも対象にしない。残るBlockがあればItemを維持する。
+- indent/outdentは所有Item単位。同じItem内の複数論理行を選択しても深さを重複変更しない。
 - ListItemをVisual Lineでyank/putした場合、選択項目どうしの相対的なnest深さを維持する。
 - Sectionを含むVisual Line yankでは、選択範囲に含まれるSection subtreeだけを構造として保持する。
 - Section S上で`P`した構造SectionはSの子ではなく、Sの前の同じ階層へ置く。

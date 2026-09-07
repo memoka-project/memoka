@@ -6,7 +6,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-const SEARCH_INDEX_SCHEMA_VERSION: i64 = 9;
+const SEARCH_INDEX_SCHEMA_VERSION: i64 = 10;
 const RECENT_SEARCH_PREFIX_ROWS: i64 = 4_096;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1910,7 +1910,7 @@ mod tests {
 
     #[test]
     fn treats_the_previous_visible_text_projection_as_stale() {
-        assert_eq!(SEARCH_INDEX_SCHEMA_VERSION, 9);
+        assert_eq!(SEARCH_INDEX_SCHEMA_VERSION, 10);
         let mut connection = connection_with_sources(1);
         rebuild(
             &mut connection,

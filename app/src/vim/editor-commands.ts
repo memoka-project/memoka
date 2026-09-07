@@ -35,6 +35,11 @@ import {
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
 import { createUuidV7 } from "../core/ids";
+import {
+  owningListItemDepth,
+  pastePlainListText,
+} from "../editor/list-editing";
+import { projectListSelection } from "./list-selection";
 import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
 import { sectionFoldCollapsedSectionIds } from "../editor/section-folding";
 import {
@@ -45,9 +50,7 @@ import {
   type VimTableCellsRegister,
 } from "./table-editing";
 import {
-  deleteSelectedListItems,
   listContainsSelectedItems,
-  selectedListItemsHaveUnselectedDescendants,
   shiftSelectedListItemDepth,
   type ListDepthDirection,
 } from "./list-structure";
@@ -67,6 +70,8 @@ export type VimRegister =
   | {
       kind: "text";
       text: string;
+      /** Session-only provenance: internal yank must keep its own line semantics. */
+      externalPlain?: boolean;
       /** Rich characterwise content; absent for legacy/plain registers. */
       slice?: Slice;
     }
@@ -229,19 +234,6 @@ export function runEditorTab(
     return { handled, detail };
   }
 
-  const listItem = blockSemantics.nearestAncestorType(view, "list-item");
-  if (listItem) {
-    const handled = (outdent ? liftListItem : sinkListItem)(listItem)(
-      view.state,
-      view.dispatch,
-    );
-    view.focus();
-    return {
-      handled,
-      detail: outdent ? "list:outdent" : "list:indent",
-    };
-  }
-
   const behavior = blockSemantics.behaviorForNodeName(
     view.state.selection.$from.parent.type.name,
   );
@@ -252,6 +244,15 @@ export function runEditorTab(
       detail: outdent ? `${prefix}:outdent` : `${prefix}:indent`,
     };
   }
+
+  const listResult = runEditorListDepthShift(
+    view,
+    outdent ? "shallower" : "deeper",
+    "insert",
+    1,
+    null,
+  );
+  if (listResult) return listResult;
 
   view.focus();
   return {
@@ -290,7 +291,7 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
       outermostList = { depth, detailPrefix: "list" };
     }
   }
-  return blockquote ?? code ?? outermostList ?? table;
+  return outermostList ?? blockquote ?? code ?? table;
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
@@ -1203,6 +1204,25 @@ export function visualLineNodeRanges(
       return [];
     }
 
+    if (kind === "block" && nodeName === "paragraph") {
+      const $position = view.state.doc.resolve(unit.cursorFrom);
+      const depth = owningListItemDepth($position);
+      if (depth !== null && $position.depth === depth + 1) {
+        const item = $position.node(depth);
+        ranges.push(
+          item.childCount === 1
+            ? {
+                from: $position.before(depth),
+                to: $position.after(depth),
+                kind: "list-item",
+                nodeName: item.type.name,
+              }
+            : { from, to, kind: "list-item", nodeName },
+        );
+        continue;
+      }
+    }
+
     // A parent ListItem's structural range includes its nested list. V still
     // operates on ListItem structure, but its selection decoration represents
     // logical rows. Decorating the outer <li> would paint every descendant row
@@ -1619,6 +1639,46 @@ function registerForUnits(
           : undefined,
     };
   }
+  if (
+    logicalListItemSelection &&
+    selectedUnits.every((unit) => listItemIdAtUnit(view, unit))
+  ) {
+    // Use the common list, not the enclosing item's entire subtree. A Slice
+    // open at the list boundary fits its original kind at the target depth.
+    const $first = view.state.doc.resolve(selectedUnits[0]!.cursorFrom);
+    const $last = view.state.doc.resolve(selectedUnits.at(-1)!.cursorFrom);
+    for (let depth = Math.min($first.depth, $last.depth); depth > 0; depth--) {
+      const list = $first.node(depth);
+      if (
+        (list.type.name !== "bulletList" && list.type.name !== "orderedList") ||
+        list !== $last.node(depth)
+      )
+        continue;
+      const copy = projectListSelection(
+        list,
+        $first.before(depth),
+        selectedUnits,
+        true,
+      );
+      if (copy)
+        return {
+          kind: "structure",
+          structureKind: "list-item",
+          text: selectedUnits
+            .map((unit) =>
+              view.state.doc.textBetween(
+                unit.textFrom,
+                unit.textTo,
+                "",
+                "\uFFFC",
+              ),
+            )
+            .join("\n"),
+          nodeNames: [list.type.name, "listItem"],
+          slice: new Slice(Fragment.from(copy), 1, 1),
+        };
+    }
+  }
   return {
     kind: "structure",
     text: view.state.doc.textBetween(from, to, "\n", "\uFFFC"),
@@ -1822,8 +1882,10 @@ function listItemIdAtUnit(
   view: Pick<VimEditorView, "state">,
   unit: VimStructuralUnit | undefined,
 ): string | null {
-  if (!unit || unit.kind !== "list-item") return null;
-  const item = view.state.doc.nodeAt(unit.from);
+  if (!unit) return null;
+  const position = view.state.doc.resolve(unit.cursorFrom);
+  const depth = owningListItemDepth(position);
+  const item = depth === null ? null : position.node(depth);
   if (!item || !blockSemantics.hasBehavior(item.type.name, "list-item")) {
     return null;
   }
@@ -1945,7 +2007,19 @@ export function runEditorListDepthShift(
   // touch only the affected siblings instead of replacing a potentially
   // large outer List. Multi-row selections use the deterministic planner
   // below so boundary rows can be skipped independently.
-  if (target.itemIds.size === 1) {
+  const $caret = view.state.doc.resolve(target.caretPosition);
+  const simpleAncestors = Array.from({ length: $caret.depth }, (_, index) =>
+    $caret.node(index + 1),
+  )
+    .filter((node) => node.type.name === "listItem")
+    .every(
+      (item) =>
+        item.firstChild?.type.name === "paragraph" &&
+        item.childCount <= 2 &&
+        (item.childCount === 1 ||
+          ["bulletList", "orderedList"].includes(item.child(1).type.name)),
+    );
+  if (target.itemIds.size === 1 && simpleAncestors) {
     const units = blockSemantics.visualLineUnits(view);
     const currentIndex = blockSemantics.currentStructuralUnitIndex(
       units,
@@ -2808,13 +2882,6 @@ function deleteSelectedListRowsPreservingDescendants(
   }
   if (selectedItemIds.size === 0) return null;
   const roots = selectedListRoots(view.state.doc, selectedItemIds);
-  if (
-    !roots.some(({ node }) =>
-      selectedListItemsHaveUnselectedDescendants(node, selectedItemIds),
-    )
-  ) {
-    return null;
-  }
 
   const transaction = view.state.tr;
   let changed = false;
@@ -2857,13 +2924,17 @@ function deleteSelectedListRowsPreservingDescendants(
         continue;
       }
       const { root } = operation;
-      const transformed = deleteSelectedListItems(root.node, selectedItemIds);
-      if (!transformed.changed) continue;
-      if (transformed.node) {
+      const remaining = projectListSelection(
+        root.node,
+        root.position,
+        selectedUnits,
+        false,
+      );
+      if (remaining) {
         transaction.replaceWith(
           root.position,
           root.position + root.node.nodeSize,
-          transformed.node,
+          remaining,
         );
       } else {
         transaction.deleteRange(
@@ -5271,6 +5342,23 @@ export function pasteVimRegisterAtSelection(
 
 type PutDirection = "after" | "before";
 
+function listChildBoundary(
+  view: VimEditorView,
+  cursor: number,
+  direction: PutDirection,
+): number | null {
+  const $cursor = view.state.doc.resolve(cursor);
+  const depth = owningListItemDepth($cursor);
+  if (depth === null) return null;
+  if ($cursor.depth === depth)
+    return direction === "after"
+      ? cursor + ($cursor.nodeAfter?.nodeSize ?? 0)
+      : cursor;
+  return direction === "after"
+    ? $cursor.after(depth + 1)
+    : $cursor.before(depth + 1);
+}
+
 function textPutPosition(
   view: VimEditorView,
   cursor: number,
@@ -5366,6 +5454,7 @@ function putOnce(
       units[blockSemantics.currentStructuralUnitIndex(units, cursor)];
     if (!target) return false;
     const insertionPosition =
+      listChildBoundary(view, cursor, direction) ??
       sectionBodyStartAfterHeader(view, target) ??
       (direction === "after" ? target.to : target.from);
     try {
@@ -5386,6 +5475,28 @@ function putOnce(
     return putSection(view, register, direction);
   }
   if (register.kind === "text") {
+    if (register.externalPlain) {
+      const position = textPutPosition(view, cursor, direction);
+      const transaction = pastePlainListText(
+        view.state.tr.setSelection(
+          TextSelection.create(view.state.doc, position),
+        ),
+        register.text,
+      );
+      if (transaction) {
+        const end = transaction.selection.from;
+        const $end = transaction.doc.resolve(end);
+        const last = Array.from($end.nodeBefore?.text ?? "").at(-1);
+        transaction.setSelection(
+          TextSelection.create(
+            transaction.doc,
+            Math.max($end.start(), end - (last?.length ?? 0)),
+          ),
+        );
+        view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+        return true;
+      }
+    }
     if (register.slice) {
       return pasteTextSlice(
         view,
@@ -5472,6 +5583,7 @@ function putOnce(
       Math.max(0, Math.min(cursor, view.state.doc.content.size)),
     );
     const insertionPosition =
+      listChildBoundary(view, cursor, direction) ??
       sectionBodyStartAfterHeader(view, target) ??
       ($cursor.depth > 0
         ? direction === "after"
@@ -5499,6 +5611,9 @@ function putOnce(
     }
   }
   const insertionPosition =
+    (register.structureKind === "block"
+      ? listChildBoundary(view, cursor, direction)
+      : null) ??
     sectionBodyStartAfterHeader(view, target) ??
     (direction === "after" ? target.to : target.from);
   return pasteStructure(view, register, insertionPosition, insertionPosition);
@@ -5513,6 +5628,12 @@ function put(
   if (!register) return false;
   const repetitions = normalizedCount(count);
   if (register.kind === "text") {
+    if (register.externalPlain)
+      return putOnce(
+        view,
+        { ...register, text: register.text.repeat(repetitions) },
+        direction,
+      );
     if (register.slice) {
       let handled = false;
       for (let index = 0; index < repetitions; index += 1) {

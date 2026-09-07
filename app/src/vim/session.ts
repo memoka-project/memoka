@@ -1,5 +1,10 @@
 import { Extension } from "@tiptap/core";
 import {
+  insertListParagraph,
+  isDirectListParagraph,
+  pastePlainListText,
+} from "../editor/list-editing";
+import {
   Fragment,
   Slice,
   type Node as ProseMirrorNode,
@@ -88,6 +93,7 @@ import {
   readInternalClipboard,
   readMarkdownClipboard,
   registerFromMarkdown,
+  registerFromHtml,
   registerFromTabularClipboard,
   type PreferredClipboardFormats,
   type VimClipboardWriteResult,
@@ -828,7 +834,9 @@ export class ProductVimSession {
         html: fallback.html,
         tsv: event.clipboardData.getData(TSV_CLIPBOARD_MIME) || null,
         markdown: markdown || null,
-        plain: fallback.plain,
+        plain: isDirectListParagraph(view.state.selection.$from)
+          ? null
+          : fallback.plain,
       },
       view.state.schema,
     );
@@ -873,6 +881,14 @@ export class ProductVimSession {
       if (fallback.plain && isLargePlainTextPaste(fallback.plain)) {
         event.preventDefault();
         return this.beginLargePlainTextPaste(view, fallback.plain);
+      }
+      if (
+        !fallback.html &&
+        fallback.plain &&
+        this.pasteListPlainFallback(view, fallback.plain)
+      ) {
+        event.preventDefault();
+        return true;
       }
       return false;
     }
@@ -1000,7 +1016,12 @@ export class ProductVimSession {
     }
     const tabularRegister = formats
       ? registerFromTabularClipboard(
-          { ...formats, plain: resolvedFallback.plain },
+          {
+            ...formats,
+            plain: isDirectListParagraph(view.state.selection.$from)
+              ? null
+              : resolvedFallback.plain,
+          },
           view.state.schema,
         )
       : null;
@@ -1175,6 +1196,11 @@ export class ProductVimSession {
     blocks: readonly string[],
   ): boolean {
     const started = performance.now();
+    const listTransaction = pastePlainListText(view.state.tr, text);
+    if (listTransaction) {
+      view.dispatch(listTransaction.scrollIntoView());
+      return true;
+    }
     if (view.state.selection.$from.parent.type.spec.code) {
       const normalized = text.replace(/\r\n?/gu, "\n");
       if (normalized.length === 0) return false;
@@ -1230,6 +1256,8 @@ export class ProductVimSession {
     if (type === "plain" && isLargePlainTextPaste(fallback.plain)) {
       return this.beginLargePlainTextPaste(view, fallback.plain);
     }
+    if (type === "plain" && this.pasteListPlainFallback(view, fallback.plain))
+      return true;
     const undoManager = findUndoManager(view);
     const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
     if (standaloneUndo) undoManager?.stopCapturing();
@@ -1241,6 +1269,20 @@ export class ProductVimSession {
     if (standaloneUndo) undoManager?.stopCapturing();
     if (!handled) return false;
     this.action = `clipboard:paste:${type}:changed`;
+    this.emit();
+    this.scheduleCaretRefresh(view);
+    return true;
+  }
+
+  private pasteListPlainFallback(view: EditorView, text: string): boolean {
+    const tr = pastePlainListText(view.state.tr, text);
+    if (!tr) return false;
+    const undoManager = findUndoManager(view);
+    const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
+    if (standaloneUndo) undoManager?.stopCapturing();
+    view.dispatch(tr.scrollIntoView());
+    if (standaloneUndo) undoManager?.stopCapturing();
+    this.action = "clipboard:paste:list-lines:changed";
     this.emit();
     this.scheduleCaretRefresh(view);
     return true;
@@ -1309,6 +1351,22 @@ export class ProductVimSession {
       return true;
     }
     const isComposing = event.isComposing || this.composing;
+    if (
+      !isComposing &&
+      this.mode === "insert" &&
+      event.key === "Enter" &&
+      event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
+      if (insertListParagraph(view.state, view.dispatch)) {
+        event.preventDefault();
+        this.action = "list:insert-paragraph:changed";
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
+    }
     if (
       !isComposing &&
       this.mode === "insert" &&
@@ -2012,9 +2070,7 @@ export class ProductVimSession {
     }
     if (
       this.normalPutClipboardReadInFlight ||
-      (this.normalPutClipboardDirty &&
-        this.options.onPasteRead &&
-        this.options.onPasteNativePaths)
+      (this.normalPutClipboardDirty && this.options.onPasteRead)
     ) {
       if (!this.normalPutClipboardReadInFlight) {
         this.readClipboardForNormalPut(view, command, count, countExplicit);
@@ -2135,12 +2191,41 @@ export class ProductVimSession {
       return;
     }
     const tabularRegister = formats
-      ? registerFromTabularClipboard(formats, view.state.schema)
+      ? registerFromTabularClipboard(
+          {
+            ...formats,
+            plain: isDirectListParagraph(view.state.selection.$from)
+              ? null
+              : formats.plain,
+          },
+          view.state.schema,
+        )
       : null;
     if (tabularRegister) {
       this.registerStore.set(tabularRegister);
       this.putWorkspaceRegister(view, command, count, countExplicit);
       return;
+    }
+    if (formats?.html || formats?.markdown) {
+      const register =
+        (formats.html
+          ? registerFromHtml(formats.html, view.state.schema)
+          : null) ??
+        (formats.markdown
+          ? registerFromMarkdown(formats.markdown, view.state.schema)
+          : null);
+      if (register) {
+        this.registerStore.set(register);
+        this.putWorkspaceRegister(view, command, count, countExplicit);
+        return;
+      }
+    }
+    if (formats?.plain && !formats.html) {
+      this.registerStore.set({
+        kind: "text",
+        text: formats.plain,
+        externalPlain: true,
+      });
     }
     this.externalFileClipboardPaths = null;
     this.putWorkspaceRegister(view, command, count, countExplicit);

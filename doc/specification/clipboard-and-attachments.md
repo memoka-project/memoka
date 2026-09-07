@@ -42,13 +42,26 @@ Insert modeのnative pasteは、次の優先順位で処理する。
 6. sanitized HTML
 7. plain text
 
-単一GFM Tableとして厳格にparseできるplain textだけはTable交換形式として扱う。それ以外のplain textから
+ListItem直下Paragraph以外では、単一GFM Tableとして厳格にparseできるplain textだけをTable交換形式として扱う。それ以外のplain textから
 Markdownらしさを一般的に推測しない。
 
 Normalの`p/P`は通常はWorkspace内registerを使う。OS focusが戻った後にnative Clipboardを取り込む対象は、
-内部MIME、外部file、raster画像data、HTML/GFM/TSV Tableである。
+内部MIME、外部file、raster画像data、HTML/GFM/TSV Table、Markdown、HTML、plain textである。
 text registerの`p`はcaretの後、`P`は前へ貼り、貼り付け後caretは挿入した最後の文字または構造対象へ移る。
 Table内では`p/P`を同じ操作として現在Cellを左上にする。
+
+### ListItemへのpaste
+
+ListItem直下Paragraphへの通常の複数行plain textは、Insert paste・Normalの`p/P`ともに改行ごとに兄弟Itemへ分割する。
+CRLF/CRをLFに揃え、末尾の改行を1つだけ除く。中間空行と、それ以外の末尾空行は空Itemとして保持する。
+前半textは最初のItem、後半textと後続Block・子Listは最後のItemへ引き継ぎ、表示順を保つ。
+例えば`ab|cd`への`X\nY`は`abX`と`Ycd`になる。
+
+内部yankのHard Break、明示的Markdown、HTML、明示的Table交換形式は構造を保持し、上記の文字列分割には通さない。
+ListItem直下Paragraphではplain textのGFM Table推測を行わない。
+Code/Table/引用など内部Blockのtext pasteも既存のBlock固有規則を維持する。
+Markdown入出力はItem内のBlock列を保持し、複数Paragraphの区切り、引用、Alert、code、表、画像、添付を再帰的に扱う。
+Markdownのlazy continuationは同じParagraphに属し、通常の改行はsoft break、2空白またはbackslashによる改行はHard Breakとなる。
 
 外部file/imageの非同期読込中にcaret、対象block、Note revisionが変わった場合は、古い位置へ挿入せずcancelする。
 

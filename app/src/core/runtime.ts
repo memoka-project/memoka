@@ -22,6 +22,7 @@ import {
   BOOTSTRAP_ORIGIN,
   CORE_TRANSACTION_ORIGIN,
   NOTE_TIMESTAMP_ORIGIN,
+  NOTE_DOC_SCHEMA_VERSION,
   PERSISTENCE_LOAD_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
@@ -3176,7 +3177,7 @@ export class CoreRuntime {
         pending.repair.update !== envelope.payload.update ||
         pending.repair.migratedFromSchemaVersion !==
           envelope.payload.fromVersion ||
-        envelope.payload.toVersion !== 3
+        envelope.payload.toVersion !== NOTE_DOC_SCHEMA_VERSION
       ) {
         throw new Error("Note schema migration was not prepared by Core");
       }
@@ -3973,7 +3974,7 @@ export class CoreRuntime {
               noteId: persisted.documentId,
               update: loaded.repair.update,
               fromVersion: loaded.repair.migratedFromSchemaVersion,
-              toVersion: 3,
+              toVersion: NOTE_DOC_SCHEMA_VERSION,
             },
           });
         } else {

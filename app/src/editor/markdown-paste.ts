@@ -46,17 +46,6 @@ export interface ParsedMarkdownNote {
 
 type ListKind = "bullet" | "ordered";
 
-interface ListDraft {
-  kind: ListKind;
-  start: number;
-  items: ListItemDraft[];
-}
-
-interface ListItemDraft {
-  paragraphLines: string[];
-  children: ListDraft[];
-}
-
 interface ParsedListLine {
   indent: number;
   kind: ListKind;
@@ -104,10 +93,17 @@ interface MarkdownAstNode {
   readonly url?: string;
   readonly alt?: string;
   readonly depth?: number;
+  readonly ordered?: boolean;
+  readonly start?: number;
+  readonly checked?: boolean | null;
   readonly children?: readonly MarkdownAstNode[];
   readonly position?: {
-    readonly start: { readonly offset?: number };
-    readonly end: { readonly offset?: number };
+    readonly start: {
+      readonly offset?: number;
+      readonly line?: number;
+      readonly column?: number;
+    };
+    readonly end: { readonly offset?: number; readonly line?: number };
   };
 }
 
@@ -127,6 +123,16 @@ export function parseMarkdownPaste(
   const lines = normalized.split("\n");
   if (lines.at(-1) === "") lines.pop();
   const nodes: ProseMirrorNode[] = [];
+  // Parse list boundaries once: blank lines and arbitrary child blocks belong
+  // to the item according to CommonMark, not according to a line regex.
+  const listRanges = new Map<number, MarkdownAstNode>();
+  if (/^ {0,3}(?:[-+*]|\d+[.)])(?:[ \t]|$)/mu.test(normalized)) {
+    const tree = inlineMarkdownParser.parse(normalized) as MarkdownAstNode;
+    for (const child of tree.children ?? []) {
+      if (child.type === "list")
+        listRanges.set((child.position?.start.line ?? 1) - 1, child);
+    }
+  }
   let sourceBlockCount = 0;
   let index = 0;
 
@@ -211,11 +217,16 @@ export function parseMarkdownPaste(
       continue;
     }
 
-    if (parseListLine(lines[index] ?? "") !== null) {
-      const end = nextListBlockEnd(lines, index);
-      const list = listBlock(schema, lines.slice(index, end));
-      if (list) nodes.push(list);
-      else if (!appendSource(index, end)) return null;
+    if (listRanges.has(index)) {
+      const ast = listRanges.get(index)!;
+      const end = ast.position?.end.line ?? index + 1;
+      const list = listBlock(schema, ast, normalized);
+      if (list) {
+        nodes.push(list);
+        list.descendants((node) => {
+          if (node.type.name === "sourceBlock") sourceBlockCount++;
+        });
+      } else if (!appendSource(index, end)) return null;
       index = end;
       continue;
     }
@@ -538,22 +549,6 @@ function markdownHeadingText(
 function nextBlankLine(lines: string[], start: number): number {
   let index = start;
   while (index < lines.length && lines[index]?.trim() !== "") index += 1;
-  return index;
-}
-
-function nextListBlockEnd(lines: string[], start: number): number {
-  let index = start;
-  while (index < lines.length && lines[index]?.trim() !== "") {
-    const line = lines[index] ?? "";
-    if (
-      index > start &&
-      parseListLine(line) === null &&
-      !/^[ \t]+/u.test(line)
-    ) {
-      break;
-    }
-    index += 1;
-  }
   return index;
 }
 
@@ -1299,126 +1294,60 @@ function stripContinuationIndent(line: string, columns: number): string | null {
   return column === columns ? line.slice(index) : null;
 }
 
-function listBlock(schema: Schema, lines: string[]): ProseMirrorNode | null {
-  const rootLine = parseListLine(lines[0] ?? "");
-  if (!rootLine || rootLine.indent !== 0) return null;
-  const root: ListDraft = {
-    kind: rootLine.kind,
-    start: rootLine.start,
-    items: [],
-  };
-  const lists: ListDraft[] = [root];
-  const items: ListItemDraft[] = [];
-  const indents = [0];
-  const contentIndents: number[] = [];
-
-  for (const line of lines) {
-    const parsed = parseListLine(line);
-    if (!parsed) {
-      let continuationDepth = -1;
-      for (let depth = contentIndents.length - 1; depth >= 0; depth -= 1) {
-        if (
-          stripContinuationIndent(line, contentIndents[depth] ?? 0) !== null
-        ) {
-          continuationDepth = depth;
-          break;
-        }
-      }
-      const item = items[continuationDepth];
-      const continuation =
-        continuationDepth >= 0
-          ? stripContinuationIndent(
-              line,
-              contentIndents[continuationDepth] ?? 0,
-            )
-          : null;
-      if (!item || continuation === null) return null;
-      item.paragraphLines.push(continuation);
-      items.length = continuationDepth + 1;
-      contentIndents.length = continuationDepth + 1;
-      continue;
-    }
-
-    let depth = indents.lastIndexOf(parsed.indent);
-    if (depth < 0) {
-      const parentDepth = indents.length - 1;
-      const indentIncrease = parsed.indent - (indents[parentDepth] ?? 0);
-      const parentItem = items[parentDepth];
-      if (
-        parsed.indent <= (indents[parentDepth] ?? 0) ||
-        indentIncrease < 2 ||
-        indentIncrease > 12 ||
-        !parentItem
-      ) {
-        return null;
-      }
-      depth = indents.length;
-      const nested: ListDraft = {
-        kind: parsed.kind,
-        start: parsed.start,
-        items: [],
-      };
-      parentItem.children.push(nested);
-      indents.push(parsed.indent);
-      lists.push(nested);
-    } else {
-      indents.length = depth + 1;
-      lists.length = depth + 1;
-      items.length = depth + 1;
-      contentIndents.length = depth + 1;
-    }
-
-    const list = lists[depth];
-    if (!list || list.kind !== parsed.kind) return null;
-    const item: ListItemDraft = {
-      paragraphLines: [parsed.inline],
-      children: [],
-    };
-    list.items.push(item);
-    items[depth] = item;
-    contentIndents[depth] = parsed.contentIndent;
-  }
-
-  return createListNode(schema, root);
-}
-
-function createListNode(
+function listBlock(
   schema: Schema,
-  draft: ListDraft,
+  list: MarkdownAstNode,
+  source: string,
+  depth = 0,
 ): ProseMirrorNode | null {
-  const listType =
-    draft.kind === "ordered"
-      ? schema.nodes.orderedList
-      : schema.nodes.bulletList;
+  if (depth > 128) return null;
+  const type = schema.nodes[list.ordered ? "orderedList" : "bulletList"];
   const itemType = schema.nodes.listItem;
-  const paragraphType = schema.nodes.paragraph;
-  if (!listType || !itemType || !paragraphType) return null;
-  const itemNodes: ProseMirrorNode[] = [];
-  for (const item of draft.items) {
-    const inline = paragraphInline(item.paragraphLines, schema);
-    if (!inline) return null;
-    const content: ProseMirrorNode[] = [
-      paragraphType.create(
-        { blockId: createUuidV7() },
-        inline.length > 0 ? Fragment.fromArray(inline) : null,
-      ),
-    ];
-    for (const child of item.children) {
-      const nested = createListNode(schema, child);
-      if (!nested) return null;
-      content.push(nested);
+  if (!type || !itemType) return null;
+  const items: ProseMirrorNode[] = [];
+  for (const item of list.children ?? []) {
+    if (item.checked != null) return null; // Keep unsupported task syntax in SourceBlock.
+    const blocks: ProseMirrorNode[] = [];
+    for (const child of item.children ?? []) {
+      if (child.type === "list") {
+        const nested = listBlock(schema, child, source, depth + 1);
+        if (!nested) return null;
+        blocks.push(nested);
+      } else {
+        const position = child.position;
+        if (
+          position?.start.offset === undefined ||
+          position.end.offset === undefined
+        )
+          return null;
+        const indent = (position.start.column ?? 1) - 1;
+        const markdown = source
+          .slice(position.start.offset, position.end.offset)
+          .split("\n")
+          .map((line, index) =>
+            index === 0
+              ? line
+              : (stripContinuationIndent(line, indent) ?? line),
+          )
+          .join("\n");
+        const parsed = parseMarkdownPaste(markdown, schema);
+        if (!parsed) return null;
+        parsed.slice.content.forEach((block) => blocks.push(block));
+      }
     }
-    itemNodes.push(
-      itemType.create({ blockId: createUuidV7() }, Fragment.fromArray(content)),
-    );
+    if (blocks.length === 0)
+      blocks.push(schema.nodes.paragraph!.create({ blockId: createUuidV7() }));
+    items.push(itemType.createChecked({ blockId: createUuidV7() }, blocks));
   }
-  return listType.create(
-    {
-      blockId: createUuidV7(),
-      ...(draft.kind === "ordered" ? { start: draft.start } : {}),
-    },
-    Fragment.fromArray(itemNodes),
-  );
+  return items.length
+    ? type.createChecked(
+        {
+          blockId: createUuidV7(),
+          ...(list.ordered ? { start: list.start ?? 1 } : {}),
+        },
+        items,
+      )
+    : null;
 }
 
 export function markdownTextWithMarks(

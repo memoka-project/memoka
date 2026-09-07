@@ -95,7 +95,7 @@ fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
         drop(ProductStore::open(fixture.path()).unwrap());
         let migrated = Connection::open(&path).unwrap();
         let note = load_document(&migrated, "note", NOTE).unwrap();
-        assert_eq!(note.schema_version, 3);
+        assert_eq!(note.schema_version, 4);
         assert_eq!(note.revision, 8);
         assert_eq!(read_note(&note, false).unwrap().root, expected.root);
         let workspace = load_document(

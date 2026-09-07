@@ -808,19 +808,10 @@ describe("Memoka explicit Markdown paste parser", () => {
         editor.schema,
       );
 
-      expect(parsed?.sourceBlockCount).toBe(1);
-      expect(parsed?.slice.content.toJSON()).toMatchObject([
-        {
-          type: "sourceBlock",
-          attrs: { sourceFormat: "markdown" },
-          content: [
-            {
-              type: "text",
-              text: "1. ordered\n- separate bullet without a blank",
-            },
-          ],
-        },
-      ]);
+      expect(parsed?.sourceBlockCount).toBe(0);
+      expect(
+        parsed?.slice.content.content.map((node) => node.type.name),
+      ).toEqual(["orderedList", "bulletList"]);
     });
   });
 
@@ -934,7 +925,7 @@ describe("Memoka explicit Markdown paste parser", () => {
     });
   });
 
-  it("ends a list before an unindented paragraph without a blank line", () => {
+  it("keeps CommonMark lazy continuation inside a list until a blank line", () => {
     withEditor((editor) => {
       const parsed = parseMarkdownPaste(
         "- list item\n  continued text\nparagraph after list",
@@ -951,15 +942,16 @@ describe("Memoka explicit Markdown paste parser", () => {
               content: [
                 {
                   type: "paragraph",
-                  content: [{ type: "text", text: "list item continued text" }],
+                  content: [
+                    {
+                      type: "text",
+                      text: "list item continued text paragraph after list",
+                    },
+                  ],
                 },
               ],
             },
           ],
-        },
-        {
-          type: "paragraph",
-          content: [{ type: "text", text: "paragraph after list" }],
         },
       ]);
     });

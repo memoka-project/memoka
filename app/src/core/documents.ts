@@ -49,7 +49,7 @@ import {
   type SectionSnapshot,
 } from "./section-model";
 
-export const NOTE_DOC_SCHEMA_VERSION = 3;
+export const NOTE_DOC_SCHEMA_VERSION = 4;
 export const WORKSPACE_DOC_SCHEMA_VERSION = 3;
 export const NOTE_BODY_FRAGMENT = "body";
 export const NOTE_SCHEMA_MIGRATION_ORIGIN = "memoka:note-schema-migration";
@@ -504,7 +504,9 @@ export function loadNoteDocumentWithSectionIdentityRecovery(
 
     const rawSchemaVersion = doc.getMap("meta").get("schema_version");
     const migratedFromSchemaVersion =
-      rawSchemaVersion === 2 ? rawSchemaVersion : null;
+      rawSchemaVersion === 2 || rawSchemaVersion === 3
+        ? rawSchemaVersion
+        : null;
     const maintenanceStateVector = Y.encodeStateVector(doc);
     if (repairs.length > 0) {
       doc.transact(() => {
@@ -1362,6 +1364,12 @@ function noteDocumentFromYDoc(noteId: string, doc: Y.Doc): NoteDocument {
   const schemaVersion = meta.get("schema_version");
   if (schemaVersion === 2) {
     migrateNoteDocumentV2ToV3(noteId, doc, meta);
+  } else if (schemaVersion === 3) {
+    doc.transact(() => {
+      meta.set("schema_version", NOTE_DOC_SCHEMA_VERSION);
+      meta.set("migrated_from_schema_version", 3);
+      meta.set("migrated_note_id", noteId);
+    }, NOTE_SCHEMA_MIGRATION_ORIGIN);
   } else if (schemaVersion !== NOTE_DOC_SCHEMA_VERSION) {
     throw new Error("Unsupported NoteDoc schema_version");
   }

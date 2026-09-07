@@ -3,7 +3,7 @@ import { NodeSelection, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import type { AttachmentMetadata } from "../core/attachments";
 import { createUuidV7 } from "../core/ids";
-import { BODY_CHUNK_NODE, SECTION_BODY_NODE } from "../core/section-model";
+import { isBlockContainer } from "./block-container";
 
 export interface AttachmentInsertTarget {
   readonly blockId?: string;
@@ -181,11 +181,9 @@ function directBodyBlockById(
     if (
       result === null &&
       node.attrs.blockId === blockId &&
-      (parent?.type.name === SECTION_BODY_NODE ||
-        parent?.type.name === BODY_CHUNK_NODE ||
-        parent?.type.name === "doc")
+      (isBlockContainer(parent?.type.name) || parent?.type.name === "doc")
     ) {
-      result = { node, position, parent, index };
+      result = { node, position, parent: parent!, index };
       return false;
     }
     return result === null;
@@ -201,11 +199,7 @@ function directBodyBlockAtPosition(
   const $position = doc.resolve(position);
   for (let depth = $position.depth; depth >= 0; depth -= 1) {
     const parent = $position.node(depth);
-    if (
-      parent.type.name !== SECTION_BODY_NODE &&
-      parent.type.name !== BODY_CHUNK_NODE &&
-      parent.type.name !== "doc"
-    ) {
+    if (!isBlockContainer(parent.type.name) && parent.type.name !== "doc") {
       continue;
     }
     const index = Math.min(
@@ -223,11 +217,7 @@ function directBodyBlockAtPosition(
   let nearest: DirectBodyBlock | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
   doc.descendants((node, nodePosition, parent, index) => {
-    if (
-      parent?.type.name !== SECTION_BODY_NODE &&
-      parent?.type.name !== BODY_CHUNK_NODE &&
-      parent?.type.name !== "doc"
-    ) {
+    if (!isBlockContainer(parent?.type.name) && parent?.type.name !== "doc") {
       return true;
     }
     const distance =
@@ -238,7 +228,7 @@ function directBodyBlockAtPosition(
           : 0;
     if (distance < nearestDistance) {
       nearestDistance = distance;
-      nearest = { node, position: nodePosition, parent, index };
+      nearest = { node, position: nodePosition, parent: parent!, index };
     }
     return distance !== 0;
   });

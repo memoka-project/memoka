@@ -2765,6 +2765,32 @@ textarea {
   overflow-x: auto;
 }
 
+/* An item's text origin is already indented. Do not indent its blocks twice. */
+.memoka-editor
+  li
+  > :is(
+    pre,
+    .tableWrapper,
+    .memoka-image-node,
+    .memoka-attachment-card,
+    blockquote
+  ) {
+  margin-inline-start: 0;
+  max-width: 100%;
+}
+
+.memoka-editor li > :first-child {
+  margin-top: 0;
+}
+
+.memoka-editor li > :last-child {
+  margin-bottom: 0;
+}
+
+.memoka-editor li > :not(ul, ol) + :not(ul, ol) {
+  margin-top: 0.8em;
+}
+
 .memoka-editor .memoka-table {
   width: 100%;
   min-width: 420px;

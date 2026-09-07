@@ -273,7 +273,7 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
             memoka_version: env!("CARGO_PKG_VERSION").into(),
             database_schema: crate::workspace_migration::DATABASE_SCHEMA,
             workspace_schema: 3,
-            note_schema: 3,
+            note_schema: 4,
             content_epoch: reader.content_epoch,
             workspace_revision: reader.workspace_revision,
             document_revisions: reader.document_revisions.clone(),
@@ -315,7 +315,7 @@ pub fn validate_descriptor(descriptor: &Descriptor) -> Result<(), ReadError> {
     if descriptor.backup_format_version != FORMAT_VERSION
         || descriptor.database_schema != crate::workspace_migration::DATABASE_SCHEMA
         || descriptor.workspace_schema != 3
-        || descriptor.note_schema != 3
+        || !matches!(descriptor.note_schema, 3 | 4)
     {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
@@ -795,6 +795,16 @@ pub(crate) mod tests {
         let first = run_local(&workspace, &restic)
             .unwrap()
             .expect("initial capture");
+        let mut descriptor = first.descriptor.clone();
+        assert_eq!(descriptor.note_schema, 4);
+        validate_descriptor(&descriptor).unwrap();
+        descriptor.note_schema = 3;
+        validate_descriptor(&descriptor).unwrap();
+        descriptor.note_schema = 5;
+        assert_eq!(
+            validate_descriptor(&descriptor).unwrap_err().code,
+            "UNSUPPORTED_SCHEMA"
+        );
         assert_eq!(first.descriptor.document_revisions.len(), 1);
         assert!(run_local(&workspace, &restic).unwrap().is_none());
         let repo = local_repository(&workspace, &restic, false).unwrap();

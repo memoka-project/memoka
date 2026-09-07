@@ -35,7 +35,7 @@ pub fn plain_text(node: &Value) -> String {
 }
 
 /// The same body-only logical rows as workspaceSearchLines in the frontend.
-/// Lists count each Item (not their containers); Tables count rows, not cells.
+/// Lists visit every child block/HB row; Tables count rows, not cells.
 #[derive(Debug, PartialEq)]
 pub struct SearchLine {
     pub block_id: String,
@@ -46,12 +46,6 @@ pub struct SearchLine {
 pub fn search_lines(body: &[Value]) -> Vec<SearchLine> {
     fn compact(text: &str) -> String {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-    fn is_list(node: &Value) -> bool {
-        matches!(
-            node["type"].as_str(),
-            Some("bulletList" | "orderedList" | "bullet_list" | "ordered_list")
-        )
     }
     let mut rows = Vec::new();
     let mut pending = body.iter().rev().collect::<Vec<_>>();
@@ -77,21 +71,6 @@ pub fn search_lines(body: &[Value]) -> Vec<SearchLine> {
                 }
             }
             "image" | "attachment" => append(plain_text(node), 0, 0),
-            "listItem" | "list_item" => {
-                append(
-                    compact(
-                        &content(node)
-                            .iter()
-                            .filter(|child| !is_list(child))
-                            .map(plain_text)
-                            .collect::<Vec<_>>()
-                            .join(" "),
-                    ),
-                    0,
-                    0,
-                );
-                pending.extend(content(node).iter().rev().filter(|child| is_list(child)));
-            }
             "tableRow" | "table_row" => append(
                 content(node)
                     .iter()
@@ -286,7 +265,23 @@ pub fn block_markdown(node: &Value, workspace: &str) -> String {
                 let padding = " ".repeat(marker.len());
                 let body = content(item)
                     .iter()
-                    .map(|child| block_markdown(child, workspace))
+                    .enumerate()
+                    .map(|(index, child)| {
+                        let separator = if index == 0 {
+                            ""
+                        } else if matches!(
+                            child["type"].as_str(),
+                            Some("bulletList" | "orderedList")
+                        ) {
+                            "\n"
+                        } else {
+                            "\n\n"
+                        };
+                        format!(
+                            "{separator}{}",
+                            block_markdown(child, workspace).trim_end_matches('\n')
+                        )
+                    })
                     .collect::<String>();
                 let mut lines = body.trim_end_matches('\n').split('\n');
                 text.push_str(&format!("{marker}{}\n", lines.next().unwrap_or("")));
@@ -371,5 +366,55 @@ pub fn block_markdown(node: &Value, workspace: &str) -> String {
             .iter()
             .map(|child| block_markdown(child, workspace))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rich_list_markdown_keeps_blocks_and_nested_items_in_order() {
+        let list = json!({"type": "orderedList", "attrs": {"start": 99}, "content": [
+            {"type": "listItem", "content": [
+                {"type": "codeBlock", "attrs": {"language": "js"}, "content": [{"type": "text", "text": "code"}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "one"}, {"type": "hardBreak"}, {"type": "text", "text": "two"}]},
+                {"type": "bulletList", "content": [{"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "child"}]}]}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "tail"}]}
+            ]},
+            {"type": "listItem", "content": [{"type": "blockquote", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "quote"}]}]}]}
+        ]});
+        assert_eq!(
+            block_markdown(&list, "workspace"),
+            "99. ```js\n    code\n    ```\n    \n    one  \n    two\n    - child\n    \n    tail\n100. > quote\n\n"
+        );
+    }
+
+    #[test]
+    fn rich_list_search_uses_inner_block_ids_and_utf16_hard_break_offsets() {
+        let list = json!({"type": "bulletList", "content": [{"type": "listItem", "attrs": {"blockId": "item"}, "content": [
+            {"type": "paragraph", "attrs": {"blockId": "p"}, "content": [{"type": "text", "text": "あ😀"}, {"type": "hardBreak"}, {"type": "text", "text": "next"}]},
+            {"type": "blockquote", "content": [{"type": "codeBlock", "attrs": {"blockId": "code"}, "content": [{"type": "text", "text": "one\ntwo"}]}]},
+            {"type": "attachment", "attrs": {"blockId": "file", "label": "a.pdf"}}
+        ]}]});
+        let rows = search_lines(&[list]);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (
+                    row.block_id.as_str(),
+                    row.text.as_str(),
+                    row.line_index,
+                    row.source_offset
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("p", "あ😀", 0, 0),
+                ("p", "next", 1, 4),
+                ("code", "one", 0, 0),
+                ("code", "two", 1, 4),
+                ("file", "a.pdf", 0, 0)
+            ]
+        );
     }
 }

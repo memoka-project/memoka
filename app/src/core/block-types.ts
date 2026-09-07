@@ -10,6 +10,8 @@ export const BLOCK_TRANSFORM_TARGETS = [
   "sourceBlock",
   "image",
   "alert",
+  "blockquote",
+  "horizontalRule",
 ] as const;
 
 export type BlockTransformTarget = (typeof BLOCK_TRANSFORM_TARGETS)[number];
@@ -101,6 +103,20 @@ export const BLOCK_TYPE_CATALOG: readonly BlockTypeCatalogEntry[] = [
     aliases: ["attachment", "file", "添付", "ファイル"],
     description: "ファイルを選択し、画像または添付ブロックとして挿入します。",
     example: "📎 document.pdf",
+  },
+  {
+    id: "blockquote",
+    name: "Blockquote",
+    aliases: ["quote", "引用"],
+    description: "文章を引用ブロックに変更します。",
+    example: "> 引用する文章",
+  },
+  {
+    id: "horizontalRule",
+    name: "Horizontal Rule",
+    aliases: ["hr", "divider", "水平線", "区切り"],
+    description: "空段落を水平線に変更します。",
+    example: "---",
   },
 ];
 

@@ -238,6 +238,8 @@ describe("Memoka Workspace search", () => {
     const paragraphId = ids();
     const listItemId = ids();
     const nestedItemId = ids();
+    const listParagraphId = ids();
+    const nestedParagraphId = ids();
     const tableRowId = ids();
     const codeId = ids();
     const imageId = ids();
@@ -257,7 +259,7 @@ describe("Memoka Workspace search", () => {
             children: [
               {
                 type: "paragraph",
-                blockId: ids(),
+                blockId: listParagraphId,
                 content: [{ type: "text", text: "parent item" }],
               },
               {
@@ -270,7 +272,7 @@ describe("Memoka Workspace search", () => {
                     children: [
                       {
                         type: "paragraph",
-                        blockId: ids(),
+                        blockId: nestedParagraphId,
                         content: [{ type: "text", text: "nested item" }],
                       },
                     ],
@@ -358,13 +360,13 @@ describe("Memoka Workspace search", () => {
         sourceOffset: 6,
       },
       {
-        blockId: listItemId,
+        blockId: listParagraphId,
         text: "parent item",
         logicalLineNumber: 3,
         sourceOffset: 0,
       },
       {
-        blockId: nestedItemId,
+        blockId: nestedParagraphId,
         text: "nested item",
         logicalLineNumber: 4,
         sourceOffset: 0,

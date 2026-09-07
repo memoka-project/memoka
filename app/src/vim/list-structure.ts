@@ -94,8 +94,7 @@ function indentItemDescendants(
 ): { node: ProseMirrorNode; changed: boolean } {
   let changed = false;
   const content = children(item).map((child) => {
-    if (!isList(child)) return child;
-    const transformed = indentList(child, selectedItemIds);
+    const transformed = shiftListsInsideBlock(child, selectedItemIds, "deeper");
     changed ||= transformed.changed;
     return transformed.node;
   });
@@ -103,6 +102,26 @@ function indentItemDescendants(
     node: changed ? copyWithChildren(item, content) : item,
     changed,
   };
+}
+
+// Quotes and other block containers can themselves contain lists. Their lists
+// are independent roots: an outdent never pulls content across the wrapper.
+function shiftListsInsideBlock(
+  node: ProseMirrorNode,
+  selectedItemIds: ReadonlySet<string>,
+  direction: ListDepthDirection,
+): { node: ProseMirrorNode; changed: boolean } {
+  if (isList(node))
+    return direction === "deeper"
+      ? indentList(node, selectedItemIds)
+      : outdentList(node, selectedItemIds);
+  let changed = false;
+  const content = children(node).map((child) => {
+    const result = shiftListsInsideBlock(child, selectedItemIds, direction);
+    changed ||= result.changed;
+    return result.node;
+  });
+  return { node: changed ? copyWithChildren(node, content) : node, changed };
 }
 
 function indentList(
@@ -151,18 +170,36 @@ function outdentItem(
   const content: ProseMirrorNode[] = [];
   const lifted: ProseMirrorNode[] = [];
   let changed = false;
+  const appendContent = (child: ProseMirrorNode): void => {
+    if (lifted.length === 0) content.push(child);
+    else {
+      const last = lifted.at(-1)!;
+      lifted[lifted.length - 1] = last.copy(
+        last.content.append(Fragment.from(child)),
+      );
+    }
+  };
   for (const child of children(item)) {
     if (!isList(child)) {
-      content.push(child);
+      const transformed = shiftListsInsideBlock(
+        child,
+        selectedItemIds,
+        "shallower",
+      );
+      appendContent(transformed.node);
+      changed ||= transformed.changed;
       continue;
     }
     const transformed = outdentNestedList(child, selectedItemIds);
-    if (transformed.remaining) content.push(transformed.remaining);
+    if (transformed.remaining) appendContent(transformed.remaining);
     lifted.push(...transformed.lifted);
     changed ||= transformed.changed;
   }
   const owner = changed ? copyWithChildren(item, content) : item;
-  return { items: [owner, ...lifted], changed };
+  return {
+    items: [...(content.length > 0 ? [owner] : []), ...lifted],
+    changed,
+  };
 }
 
 function outdentNestedList(
