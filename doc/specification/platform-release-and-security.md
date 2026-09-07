@@ -86,6 +86,8 @@ repositoryやartifactへ含めない。
 Namespace対応前のWorkspaceはDB schema 5 / NoteDoc・WorkspaceMetadataDoc schema 3へ移行する。
 更新前にMemokaを閉じ、Workspace全体を外部へコピーする。移行後のWorkspaceを旧版で開かない。
 H6超過・破損のpreflight拒否とrollback copyは外部バックアップの代わりではない。
+v0.2.2ではrich ListItem・Details対応によりNoteDocをschema 5へ移行する。既存のblock IDと内容を維持し、
+旧schema 3/4の読み込み時にmetadataを更新する。この移行後もWorkspaceを旧版で開かない。
 常時Markdown mirrorは生成せず、既存mirrorは削除しない。旧mirrorから別の空Workspaceへの復旧CLIは維持する。
 
 ## 6. Updater

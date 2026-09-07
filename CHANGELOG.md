@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-08
+
+- **互換性の変更:** 複数ブロックのListItemとDetailsに対応するためNoteDocをschema 5へ更新。更新前にアプリを閉じてWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。
+- 折り畳みblockのDetailsを追加。`/`のblock選択、見出し編集、`Enter`・`zo/zO/zc/zC/za/zA`による開閉、入れ子、閉じた本文の検索、Markdown/HTML入出力、yank、履歴・バックアップに対応。本文の`o`はリスト内に置いたDetailsでも本文内に入力行を追加。
+- ListItemに引用・Alert・Code・Table・Image・Attachment等と複数のblockを配置可能にし、項目内の`/`選択と`Alt-Enter`によるParagraph追加に対応。ParagraphのHard Breakも論理行として扱う。
+- リストへの複数行plain text貼り付けを兄弟Itemに分割。`Ctrl-Enter`・`o`・`p`では子を持つItemの先頭に新しい子を作り、表示順を保持。Paragraph・List以外の内部blockに前後余白を追加。
+- `Ctrl-Shift-v`によるplain text専用貼り付けを追加。LinuxではUTF-8のClipboard形式を優先し、Firefoxから日本語を貼り付けた際にUnicodeエスケープが表示される問題を修正。
+- `Ctrl-w`によるWindowの巡回・前回Window・先頭/末尾移動、Count付きサイズ変更、均等化、四辺への移動を追加。Window・Sidebar境界のmouse resizeと控えめなhover表示に対応。
+- TreeのクリックによるNote表示と、矢印keyによる上下移動・展開/折り畳みを追加。Tree/Outline下部の種別表示を削除。
+- ユーザー向け`:help`とカテゴリ別仕様書を更新。
+
 ## [0.2.1] - 2026-09-07
 
 - Google Driveへのバックアップを最大16世代ずつのまとめ転送に変更。失敗・中断したまとまりを優先して再試行し、転送後の検証と保護済み判定は世代ごとに維持。
@@ -99,7 +110,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/memoka-project/memoka/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/memoka-project/memoka/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/memoka-project/memoka/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/memoka-project/memoka/compare/v0.1.7...v0.1.8
