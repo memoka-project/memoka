@@ -18,6 +18,7 @@ import {
   type Selection,
 } from "@tiptap/pm/state";
 import { CellSelection } from "@tiptap/pm/tables";
+import { windowShortcutKey } from "../core/window-shortcuts";
 import type { EditorView } from "@tiptap/pm/view";
 import type { UndoManager } from "yjs";
 import { sanitizeExternalHtml } from "../editor/html-paste";
@@ -294,7 +295,7 @@ export interface ProductVimSessionOptions {
   onCommandLine?: () => void;
   onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
-  onWindowCommand?: (command: VimWindowCommand) => void;
+  onWindowCommand?: (command: VimWindowCommand, count: number) => void;
   onSectionFocus?: (
     direction: "current" | "parent",
     currentSectionId: string,
@@ -1539,7 +1540,12 @@ export class ProductVimSession {
     const resolution = advanceVimInput(
       this.input,
       this.mode,
-      eventSequence(event),
+      this.input.pending?.kind === "prefix" &&
+        this.input.pending.key === "Ctrl+w" &&
+        !event.altKey &&
+        !event.metaKey
+        ? windowShortcutKey(event)
+        : eventSequence(event),
       {
         isComposing,
         targetKind: "note-body",
@@ -1657,7 +1663,7 @@ export class ProductVimSession {
 
     if (command && isVimWindowCommand(command)) {
       event.preventDefault();
-      this.options.onWindowCommand?.(command);
+      this.options.onWindowCommand?.(command, resolution.count);
       this.action = this.options.onWindowCommand
         ? `${command}:requested`
         : `${command}:unavailable`;

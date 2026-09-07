@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { WINDOW_SHORTCUTS } from "../app/src/core/window-shortcuts";
 import {
   advanceVimInput,
   createVimInputState,
@@ -380,6 +381,45 @@ describe("Memoka Vim input grammar", () => {
         isComposing: true,
       }),
     ).toBeNull();
+  });
+
+  it("shares every Window command and preserves resize counts and shifted keys", () => {
+    for (const [key, command] of Object.entries(WINDOW_SHORTCUTS)) {
+      let state = createVimInputState();
+      for (const input of ["1", "2", "Ctrl+w"])
+        state = advanceVimInput(state, "normal", input, noteContext).state;
+      const resolution = advanceVimInput(state, "normal", key, noteContext);
+      expect(resolution).toMatchObject({
+        resolvedCommand: command,
+        count: 12,
+        state: createVimInputState(),
+      });
+      expect(
+        advanceVimInput(state, "normal", `Ctrl+${key}`, noteContext)
+          .resolvedCommand,
+      ).toBe(command);
+    }
+  });
+
+  it("shrinks width with Ctrl-w < and grows it with Ctrl-w >", () => {
+    const pending = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      "Ctrl+w",
+      noteContext,
+    ).state;
+    for (const [key, command] of [
+      ["<", "window.width-decrease"],
+      [">", "window.width-increase"],
+    ] as const) {
+      expect(
+        advanceVimInput(pending, "normal", key, noteContext).resolvedCommand,
+      ).toBe(command);
+      expect(
+        advanceVimInput(pending, "normal", `Ctrl+${key}`, noteContext)
+          .resolvedCommand,
+      ).toBe(command);
+    }
   });
 
   it("maps Ctrl-w Window commands plus g TabPage commands from Normal mode", () => {

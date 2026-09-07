@@ -65,6 +65,36 @@ Application上端にcustom Tab lineを置き、OS標準title barは使用しな�
 TabPage内のWindowは上下または左右へ分割できる。同じ方向に既存Windowがある場合は、
 新Windowだけを50%にせず同方向の全Windowを均等化する。
 
+### 5.1. 移動・配置とサイズ
+
+`Ctrl-w t/b`はTabの先頭/末尾、`Ctrl-w w/W`は次/前Windowへ循環移動する。
+順序はsplit treeのfirst→second（上→下、左→右）で、Sidebarは含めない。
+`Ctrl-w p`はTab内で直前にactiveだったWindowへ戻る。移動先がない場合は現在Windowを維持する。
+`Ctrl-w H/L/K/J`は現在Windowをsplit treeから取り出し、残り全体の左/右/上/下の外縁へ配置する。
+Window ID、Buffer、selection、scroll、Focused Section/foldを維持し、Windowを複製・削除しない。
+分割・配置変更の直前には表示中Editorのlive selection/scrollをlocal viewへ取り込み、次frameへの遅延反映が
+再mountで破棄されてもcaretを古い位置へ戻さない。
+
+`[N]Ctrl-w +/-`は本文1行高を単位に現在Windowの高さを拡大/縮小する。
+`[N]Ctrl-w </>`は本文fontの半角文字幅を単位に横幅を縮小/拡大する。
+`N`の既定値は1。`<`は幅縮小、`>`は幅拡大とする。
+サイズ変更は対象軸の最も近い祖先split境界を調整する。その軸のsplitがなければno-op。
+`Ctrl-w =`は分割構造に沿って全Windowを均等化する。Sidebarの幅は変更しない。
+
+Window間および左右Sidebarとの境界はpointer dragでresizeできる。通常は1px境界、操作領域は7pxとする。
+hoverのhighlightは操作領域中央の半分（3.5px幅）に、focus-mutedを50%のopacityで表示する。
+縦境界・横境界ともに操作領域は7pxを維持し、見た目の線だけを細くする。
+操作中はfocus/caretを維持し、layoutのCSSだけをpreviewし、pointer release時に1回だけlocal stateを保存する。
+Esc、pointer cancel、capture喪失、application blur、layoutのunmountではpreviewを取り消す。
+保存に失敗した場合も元の表示へ戻し、errorを表示する。NoteDoc/WorkspaceMetadataDocのrevisionやUndoを変更しない。
+
+Windowの最小サイズは幅96px/高さ64px、Sidebarの操作上の最小幅は120pxを目安にする。
+viewportがそれより小さい場合は利用できる範囲へ縮め、隣のWindowを消失させない。
+Sidebarは中央のEditor領域を残せる幅までに制限する。保存した希望幅はviewport縮小だけでは書き換えない。
+split ratio、Sidebar幅、直前Window IDはTab固有のlocal UI stateとして再起動後も復元する。
+
+### 5.2. Buffer
+
 Bufferは次のいずれかである。
 
 - Note Buffer

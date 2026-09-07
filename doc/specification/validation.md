@@ -137,6 +137,12 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - Empty Buffer、最後のNote Trash、最後のBuffer/Tab close
 - Tab loop、直接番号移動、縮小layout、custom title bar drag/control
 - 同方向splitの均等化
+- `Ctrl-w t/b/w/W/p`の順序、循環、tab-local previous参照、Sidebarからの移動、閉じたWindow参照の除去
+- `[N]Ctrl-w +/-/</>`のcount伝達とresize軸/符号、最小サイズ、`Ctrl-w =`の混在方向split均等化
+- `Ctrl-w H/L/K/J`の外縁配置、大小文字の区別、Ctrlを保持したkey入力、Empty/Note/Image Bufferの共通操作
+- 次frameへのselection反映前に配置を変更しても、移動元と他Windowのcaret/scrollが戻らないこと
+- 境界drag中にEditorが再mountせず、pointer release時だけ保存すること、Esc/cancel/unmount/保存失敗でrollbackすること
+- native buildでWindow/Tree/Outlineのresize、Zoom時の移動量、狭いApplication幅、focus/caret/scroll維持を確認すること
 - TabPageごとのTree/Outline表示、幅、選択、fold復元
 - Outlineの内部scroll、caret追従、fold/focus反映
 - 相対行番号と現在absolute番号、大Note/static chunk、狭いWindowでの省略

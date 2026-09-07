@@ -125,6 +125,29 @@ describe("custom application window chrome", () => {
     );
   });
 
+  it("halves the resize hover stripe without shrinking the pointer target", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.pane-resize-handle--vertical\s*\{[^}]*width:\s*7px;/su,
+    );
+    expect(css).toMatch(
+      /\.pane-resize-handle--horizontal\s*\{[^}]*height:\s*7px;/su,
+    );
+    expect(css).toMatch(
+      /\.pane-resize-handle--vertical::after\s*\{\s*inset:\s*0 25%;/u,
+    );
+    expect(css).toMatch(
+      /\.pane-resize-handle--horizontal::after\s*\{\s*inset:\s*25% 0;/u,
+    );
+    expect(css).toMatch(
+      /\.pane-resize-handle:hover::after\s*\{[^}]*opacity:\s*0\.5;/su,
+    );
+    expect(css).not.toMatch(/\.pane-resize-handle:hover\s*\{/u);
+  });
+
   it("tracks maximize changes reported by the native window", async () => {
     const fixture = createDesktopWindowFixture();
     render(

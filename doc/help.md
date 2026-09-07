@@ -335,15 +335,37 @@ Normalの`gx`は安全なabsolute URLだけをOSへ渡します。相対URLは�
 
 ### Window
 
-| Key                     | 動作                                             |
-| ----------------------- | ------------------------------------------------ |
-| `Ctrl-w h/j/k/l`        | 指定方向のWindowまたはSidebarへfocusを移します。 |
-| `Ctrl-w s` / `Ctrl-w v` | 現在Windowを上下、左右に分割します。             |
-| `Ctrl-w c`              | 現在WindowまたはSidebarを閉じます。              |
-| `Ctrl-w o`              | 現在Windowだけを残し、左右Sidebarも閉じます。    |
+| Key                           | 動作                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `Ctrl-w h/j/k/l`              | 指定方向のWindowまたはSidebarへfocusを移します。                             |
+| `Ctrl-w s` / `Ctrl-w v`       | 現在Windowを上下、左右に分割します。                                         |
+| `Ctrl-w c`                    | 現在WindowまたはSidebarを閉じます。                                          |
+| `Ctrl-w o`                    | 現在Windowだけを残し、左右Sidebarも閉じます。                                |
+| `Ctrl-w t` / `Ctrl-w b`       | 同じTabの先頭／末尾のWindowへ移動します。                                    |
+| `Ctrl-w w` / `Ctrl-w W`       | 次／前のWindowへ循環移動します。                                             |
+| `Ctrl-w p`                    | 同じTabで直前に操作したWindowへ戻ります。繰り返すと2つのWindowを往復します。 |
+| `[N]Ctrl-w +` / `[N]Ctrl-w -` | 現在Windowの高さを本文`N`行分広げる／狭める操作です。                        |
+| `[N]Ctrl-w <` / `[N]Ctrl-w >` | 現在Windowの横幅を半角`N`文字分狭める／広げる操作です。                      |
+| `Ctrl-w =`                    | 同じTabのすべてのWindowを、分割構造に沿って縦横に均等化します。              |
+| `Ctrl-w H` / `Ctrl-w L`       | 現在WindowをTab内の一番左／右へ移し、全体の高さを使って表示します。          |
+| `Ctrl-w K` / `Ctrl-w J`       | 現在WindowをTab内の一番上／下へ移し、全体の横幅を使って表示します。          |
 
 同じ方向へWindowを追加すると、その方向に並ぶWindowを均等に分割します。最後のBufferを閉じてもWindowや
 Tabは閉じず、空Bufferを表示します。
+
+先頭／末尾・次／前は分割構造を上から下、左から右へたどる順序です。Sidebarはこの順序に含めません。
+Sidebar上でも`Ctrl-w t/b/w/W/p`を使えます。Sidebarからの`w`は先頭、`W`は末尾のWindowへ移動します。
+直前のWindowがまだない場合やすでに閉じられた場合、`Ctrl-w p`は現在Windowに留まります。
+
+`N`を省略すると`1`です。例えば`5`、`Ctrl-w`、`+`の順に押すと高さを本文5行分広げます。
+横幅の`<`は**縮小**、`>`は**拡大**です。
+大文字の`H/J/K/L/W`と小文字を区別します。Insert中の`Ctrl-w`は引き続き直前のword削除なので、
+Window操作はNormalへ戻ってから行ってください。空Buffer、Image BufferでもWindow操作ができます。
+
+Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウスでドラッグしてサイズを調整できます。
+ドラッグ中の`Esc`で変更を取り消せます。狭くしすぎて隣のWindowが消えないようにサイズを制限します。
+その方向に分割がない場合、キーによるサイズ変更は行いません。`Ctrl-w =`はSidebarの幅を変更しません。
+サイズや配置、直前のWindowの記録はTabごとに保存され、再起動後も復元されます。
 
 ### SidebarとOutline
 

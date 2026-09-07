@@ -213,18 +213,33 @@ Internal Linkのclickはopenしない。画像を現在Windowで開いた直後�
 
 ## 11. WindowとTab
 
-| Key              | 動作                                      |
-| ---------------- | ----------------------------------------- |
-| `Ctrl-w h/j/k/l` | 方向にあるWindowまたはSidebarへfocus移動  |
-| `Ctrl-w s/v`     | 現在Windowを上下/左右分割                 |
-| `Ctrl-w c`       | 現在WindowまたはSidebarを閉じる           |
-| `Ctrl-w o`       | 現在Windowだけを残し、左右Sidebarも閉じる |
-| `gt/gT`、`tn/tp` | 次/前のTabPageへ循環移動                  |
-| `tc/td`          | 空TabPageを作る/現在TabPageを閉じる       |
-| `t1`〜`t9`、`t0` | 1〜10番目のTabPageへ直接移動              |
+| Key              | 動作                                              |
+| ---------------- | ------------------------------------------------- |
+| `Ctrl-w h/j/k/l` | 方向にあるWindowまたはSidebarへfocus移動          |
+| `Ctrl-w s/v`     | 現在Windowを上下/左右分割                         |
+| `Ctrl-w c`       | 現在WindowまたはSidebarを閉じる                   |
+| `Ctrl-w o`       | 現在Windowだけを残し、左右Sidebarも閉じる         |
+| `Ctrl-w t/b`     | 現在Tab内の先頭/末尾Windowへ移動                  |
+| `Ctrl-w w/W`     | 現在Tab内の次/前Windowへ循環移動                  |
+| `Ctrl-w p`       | 同じTab内で直前に操作したWindowへ移動             |
+| `[N]Ctrl-w +/-`  | 現在Windowの高さを本文N行分拡大/縮小（省略時1）   |
+| `[N]Ctrl-w </>`  | 現在Windowの横幅を半角N文字分縮小/拡大（省略時1） |
+| `Ctrl-w =`       | Tab内のWindowを縦横とも分割構造に沿って均等化     |
+| `Ctrl-w H/L`     | 現在WindowをTabの左端/右端へ移し全体の高さを使う  |
+| `Ctrl-w K/J`     | 現在WindowをTabの上端/下端へ移し全体の幅を使う    |
+| `gt/gT`、`tn/tp` | 次/前のTabPageへ循環移動                          |
+| `tc/td`          | 空TabPageを作る/現在TabPageを閉じる               |
+| `t1`〜`t9`、`t0` | 1〜10番目のTabPageへ直接移動                      |
 
 最後のBufferを閉じてもTabPageを閉じず、空Bufferを表示する。最後のTabPage自体は閉じず空状態にできる。
 Window分割は同じ方向に既存のsplitがあれば、それらを含めて均等化する。
+
+Windowの巡回順はsplit treeのfirst→second（上→下、左→右）。Sidebarを含めず、Empty/Image Bufferを含める。
+Sidebar上でも`Ctrl-w t/b/w/W/p`を受け付ける。Sidebarからの`w/W`は先頭/末尾Windowへ移る。
+`p`は同一Tabで最後にactive Windowが変わった時の移動元を記録し、同じWindowへの再focusや
+Sidebar/Command-line/pickerへの一時focusでは上書きしない。移動先がなくなればno-opとする。
+サイズ変更・配置変更・均等化はWindow上でのみ行う。Insert中の`Ctrl-w`のword削除は変更しない。
+Ctrlを押したままの後続keyも受け付け、大文字と小文字を区別する。
 
 ## 12. Tree
 

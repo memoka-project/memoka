@@ -1,4 +1,5 @@
 import { DeclarativeKeymap } from "./keymap";
+import { WINDOW_SHORTCUTS, windowShortcutKey } from "./window-shortcuts";
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   validateApplicationKeyConfig,
@@ -23,6 +24,11 @@ export type SidebarCommandId =
   | "window.focus-down"
   | "window.focus-up"
   | "window.focus-right"
+  | "window.focus-first"
+  | "window.focus-last"
+  | "window.focus-next"
+  | "window.focus-previous"
+  | "window.focus-recent"
   | "tab.create"
   | "tab.close"
   | "tab.next"
@@ -44,6 +50,11 @@ export const SIDEBAR_COMMAND_IDS: readonly SidebarCommandId[] = [
   "window.focus-down",
   "window.focus-up",
   "window.focus-right",
+  "window.focus-first",
+  "window.focus-last",
+  "window.focus-next",
+  "window.focus-previous",
+  "window.focus-recent",
   "tab.create",
   "tab.close",
   "tab.next",
@@ -56,6 +67,14 @@ export const sidebarKeymap = new DeclarativeKeymap<
   SidebarCommandId
 >(
   [
+    ...Object.entries(WINDOW_SHORTCUTS)
+      .filter(([, command]) => command.startsWith("window.focus-"))
+      .filter(([key]) => !["h", "j", "k", "l"].includes(key))
+      .map(([key, command]) => ({
+        context: "sidebar.normal" as const,
+        sequence: `Ctrl+w ${key}`,
+        command: command as SidebarCommandId,
+      })),
     {
       context: "sidebar.normal",
       sequence: ":",
@@ -156,6 +175,7 @@ export interface SidebarKeyInput {
   readonly code?: string;
   readonly altKey: boolean;
   readonly ctrlKey: boolean;
+  readonly shiftKey?: boolean;
   readonly metaKey: boolean;
   readonly isComposing?: boolean;
 }
@@ -176,9 +196,8 @@ export function createSidebarInputState(): SidebarInputState {
 export function sidebarKeySequence(event: SidebarKeyInput): string | null {
   if (event.isComposing || event.altKey || event.metaKey) return null;
   if (event.ctrlKey) {
-    const codeKey = event.code?.match(/^Key([CHJKLOW])$/u)?.[1];
-    const key = (codeKey ?? event.key).toLocaleLowerCase();
-    return ["c", "h", "j", "k", "l", "o", "w"].includes(key)
+    const key = windowShortcutKey(event);
+    return ["c", "h", "j", "k", "l", "o", "w", "W", "t", "b", "p"].includes(key)
       ? `Ctrl+${key}`
       : null;
   }

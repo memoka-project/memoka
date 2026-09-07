@@ -1,5 +1,11 @@
 import { assertUuidV7 } from "./ids";
 import {
+  equalizeWindowLayout,
+  resizeWindowLayout,
+  updateSplitRatio,
+  type WindowLayoutEdit,
+} from "./window-layout";
+import {
   createWindowLocalViewState,
   validateWindowLocalViewState,
   type WindowLocalViewState,
@@ -97,6 +103,8 @@ export interface TabPageState {
   id: string;
   root: SplitNode;
   activeWindowId: string;
+  /** Optional for compatibility with already persisted tab layouts. */
+  previousWindowId?: string;
   leftSidebar: LeftSidebarState;
   rightSidebar: RightSidebarState;
 }
@@ -267,7 +275,7 @@ export function openBufferInWindow(
   window.view = createWindowLocalViewState(options.mode ?? "normal");
   if (options.activate !== false) {
     next.activeTabId = tab.id;
-    tab.activeWindowId = windowId;
+    activateTabWindow(tab, windowId);
     next.focusOwner = { area: "window", windowId };
   }
   validateApplicationWindowState(next);
@@ -323,7 +331,7 @@ export function splitWindow(
     input.splitId,
     input.direction,
   );
-  tab.activeWindowId = input.newWindowId;
+  activateTabWindow(tab, input.newWindowId);
   next.windows[input.newWindowId] = {
     id: input.newWindowId,
     bufferId,
@@ -343,8 +351,110 @@ export function focusWindow(
   const tab = tabContainingWindow(next, windowId);
   if (!tab) throw new Error(`Unknown window: ${windowId}`);
   next.activeTabId = tab.id;
-  tab.activeWindowId = windowId;
+  activateTabWindow(tab, windowId);
   next.focusOwner = { area: "window", windowId };
+  validateApplicationWindowState(next);
+  return next;
+}
+
+function activateTabWindow(tab: TabPageState, windowId: string): void {
+  if (tab.activeWindowId !== windowId)
+    tab.previousWindowId = tab.activeWindowId;
+  tab.activeWindowId = windowId;
+}
+
+export type WindowFocusOrder =
+  "first" | "last" | "next" | "previous" | "recent";
+
+export function windowInOrder(
+  state: ApplicationWindowState,
+  windowId: string,
+  order: WindowFocusOrder,
+): string {
+  validateApplicationWindowState(state);
+  const tab = tabContainingWindow(state, windowId);
+  if (!tab) throw new Error(`Unknown window: ${windowId}`);
+  const ids = collectWindowIds(tab.root);
+  const index = ids.indexOf(windowId);
+  switch (order) {
+    case "first":
+      return ids[0];
+    case "last":
+      return ids[ids.length - 1];
+    case "next":
+      return ids[(index + 1) % ids.length];
+    case "previous":
+      return ids[(index + ids.length - 1) % ids.length];
+    case "recent":
+      return tab.previousWindowId ?? windowId;
+    default:
+      throw new Error(`Unknown Window focus order: ${String(order)}`);
+  }
+}
+
+export function editWindowLayout(
+  state: ApplicationWindowState,
+  tabId: string,
+  edit: WindowLayoutEdit,
+): ApplicationWindowState {
+  const tab = state.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) throw new Error(`Unknown tab page: ${tabId}`);
+  let root: SplitNode;
+  switch (edit.kind) {
+    case "ratio": {
+      const contains = (node: SplitNode): boolean =>
+        node.type === "split" &&
+        (node.id === edit.splitId ||
+          contains(node.first) ||
+          contains(node.second));
+      if (!contains(tab.root))
+        throw new Error(`Unknown split: ${edit.splitId}`);
+      root = updateSplitRatio(tab.root, edit.splitId, edit.ratio);
+      break;
+    }
+    case "resize":
+      root = resizeWindowLayout(
+        tab.root,
+        edit.windowId,
+        edit.direction,
+        edit.deltaPx,
+        edit.extent,
+      );
+      break;
+    case "equalize":
+      root = equalizeWindowLayout(tab.root);
+      break;
+    case "move": {
+      if (!collectWindowIds(tab.root).includes(edit.windowId))
+        throw new Error(`Unknown window: ${edit.windowId}`);
+      if (!isWindowFocusDirection(edit.edge))
+        throw new Error(`Unknown Window edge: ${String(edit.edge)}`);
+      if (tab.root.type === "leaf") return state;
+      assertNonEmptyId(edit.splitId, "splitId");
+      if (findSplit(state, edit.splitId))
+        throw new Error(`Split already exists: ${edit.splitId}`);
+      const remainder = removeWindowLeaf(tab.root, edit.windowId).node;
+      const leaf: SplitNode = { type: "leaf", windowId: edit.windowId };
+      const before = edit.edge === "left" || edit.edge === "up";
+      root = equalizeWindowLayout({
+        type: "split",
+        id: edit.splitId,
+        direction:
+          edit.edge === "left" || edit.edge === "right"
+            ? "vertical"
+            : "horizontal",
+        ratio: 0.5,
+        first: before ? leaf : remainder,
+        second: before ? remainder : leaf,
+      });
+      break;
+    }
+    default:
+      throw new Error("Unknown Window layout edit");
+  }
+  if (root === tab.root) return state;
+  const next = cloneValidState(state);
+  next.tabs.find((candidate) => candidate.id === tabId)!.root = root;
   validateApplicationWindowState(next);
   return next;
 }
@@ -417,6 +527,11 @@ export function closeWindow(
     tab.activeWindowId = closed.preferredWindowId ?? remainingWindowIds[0];
   }
   if (
+    tab.previousWindowId === windowId ||
+    tab.previousWindowId === tab.activeWindowId
+  )
+    delete tab.previousWindowId;
+  if (
     next.focusOwner.area === "window" &&
     next.focusOwner.windowId === windowId
   ) {
@@ -454,6 +569,7 @@ export function keepOnlyWindow(
   }
   tab.root = { type: "leaf", windowId };
   tab.activeWindowId = windowId;
+  delete tab.previousWindowId;
   tab.leftSidebar.visible = false;
   tab.rightSidebar.visible = false;
   next.activeTabId = tab.id;
@@ -800,7 +916,7 @@ export function migrateLegacyWindowStates(input: {
   const preferredActive = state.windows["window-1"]
     ? "window-1"
     : first.windowId;
-  state.tabs[0].activeWindowId = preferredActive;
+  activateTabWindow(state.tabs[0], preferredActive);
   state.focusOwner = { area: "window", windowId: preferredActive };
   validateApplicationWindowState(state);
   return state;
@@ -847,6 +963,13 @@ export function validateApplicationWindowState(
       throw new Error(
         `Active window ${tab.activeWindowId} is not in tab page ${tab.id}`,
       );
+    }
+    if (
+      tab.previousWindowId !== undefined &&
+      (!tabWindowIds.has(tab.previousWindowId) ||
+        tab.previousWindowId === tab.activeWindowId)
+    ) {
+      throw new Error(`Invalid previous window in tab page ${tab.id}`);
     }
     validateSidebarState(tab.leftSidebar, "left");
     validateTreeSidebarViewState(tab.leftSidebar?.tree);

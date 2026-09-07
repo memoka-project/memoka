@@ -1,5 +1,11 @@
 import { DeclarativeKeymap, type KeyBinding } from "../core/keymap";
 import {
+  WINDOW_SHORTCUTS,
+  WINDOW_SHORTCUT_COMMANDS,
+  windowShortcutCommand,
+  type WindowShortcutCommand,
+} from "../core/window-shortcuts";
+import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   INLINE_FORMAT_COMMAND_IDS,
   SHARED_NAVIGATION_COMMAND_IDS,
@@ -78,14 +84,7 @@ export const VIM_COMMANDS = [
   "application.command_picker",
   "utility.toggle-tree",
   "utility.toggle-outline",
-  "window.split-horizontal",
-  "window.split-vertical",
-  "window.focus-left",
-  "window.focus-down",
-  "window.focus-up",
-  "window.focus-right",
-  "window.close",
-  "window.only",
+  ...WINDOW_SHORTCUT_COMMANDS,
   "tab.create",
   "tab.close",
   "tab.next",
@@ -284,14 +283,12 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     "Ctrl+f": "cursor.page-down",
     "Ctrl+u": "cursor.half-page-up",
     "Ctrl+d": "cursor.half-page-down",
-    "Ctrl+ws": "window.split-horizontal",
-    "Ctrl+wv": "window.split-vertical",
-    "Ctrl+wh": "window.focus-left",
-    "Ctrl+wj": "window.focus-down",
-    "Ctrl+wk": "window.focus-up",
-    "Ctrl+wl": "window.focus-right",
-    "Ctrl+wc": "window.close",
-    "Ctrl+wo": "window.only",
+    ...Object.fromEntries(
+      Object.entries(WINDOW_SHORTCUTS).map(([key, command]) => [
+        `Ctrl+w${key}`,
+        command,
+      ]),
+    ),
     "0": "motion.line-start",
     $: "motion.line-end",
     w: "motion.word-forward",
@@ -569,7 +566,8 @@ export function advanceVimInput(
   const semanticKey =
     state.pending?.kind === "prefix" &&
     state.pending.key === "Ctrl+w" &&
-    /^Ctrl\+[chjklosv]$/u.test(key)
+    key.startsWith("Ctrl+") &&
+    windowShortcutCommand(key) !== null
       ? key.slice("Ctrl+".length)
       : key;
   const sequence = inputSequence(state, semanticKey, keyConfig);
@@ -1088,14 +1086,7 @@ function isKeyPrefix(
 }
 
 const vimWindowCommands = new Set<VimCommand>([
-  "window.split-horizontal",
-  "window.split-vertical",
-  "window.focus-left",
-  "window.focus-down",
-  "window.focus-up",
-  "window.focus-right",
-  "window.close",
-  "window.only",
+  ...WINDOW_SHORTCUT_COMMANDS,
   "tab.create",
   "tab.close",
   "tab.next",
@@ -1104,14 +1095,7 @@ const vimWindowCommands = new Set<VimCommand>([
 ]);
 
 export type VimWindowCommand =
-  | "window.split-horizontal"
-  | "window.split-vertical"
-  | "window.focus-left"
-  | "window.focus-down"
-  | "window.focus-up"
-  | "window.focus-right"
-  | "window.close"
-  | "window.only"
+  | WindowShortcutCommand
   | "tab.create"
   | "tab.close"
   | "tab.next"

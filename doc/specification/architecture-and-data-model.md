@@ -175,6 +175,9 @@ FTS indexは再構築可能なSQLite派生dataである。Note本文indexへ祖�
 Application Window、TabPage、split tree、Window、Buffer参照、Sidebar、focus ownerは端末固有の
 Application Window stateとして保存する。NoteDocやWorkspaceMetadataDocには保存しない。
 Treeの選択/foldはEntry ID、BufferとJump Listの参照はNote/Section IDを使う。
+split ratio、左右Sidebarの幅、Tab内のprevious Window IDもこのlocal stateに属する。
+previous Window IDは旧保存dataでは省略可能であり、未設定なら直前Windowへの移動はno-opとする。
+Windowを閉じる際は残ったTabから無効なprevious参照を除く。
 
 Section foldとFocused SectionもWindow-localである。同じNoteを別Windowで開いても表示範囲は独立する。
 Visual selection、IME composition、検索query、Command-line入力、picker選択は一時stateであり、

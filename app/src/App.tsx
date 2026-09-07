@@ -4,7 +4,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -61,6 +60,13 @@ import {
   type WorkspaceSearchSession,
 } from "./components/WorkspaceSearchPalette";
 import { WorkspaceTree } from "./components/WorkspaceTree";
+import { EditorSplitLayout } from "./components/EditorSplitLayout";
+import { WorkspacePaneLayout } from "./components/WorkspacePaneLayout";
+import {
+  windowShortcutCommand,
+  windowShortcutKey,
+} from "./core/window-shortcuts";
+import { createUuidV7 } from "./core/ids";
 import {
   GroupNameDialog,
   type GroupNameSession,
@@ -124,7 +130,7 @@ import {
   activeTab as applicationActiveTab,
   listTabWindowIds,
   type LeftSidebarUtility,
-  type SplitNode,
+  type WindowFocusOrder,
 } from "./core/application-state";
 import {
   isTabDirectCommand,
@@ -942,12 +948,97 @@ export function App({
     async (
       windowId: string,
       command: VimWindowCommand,
+      count = 1,
       origin: VimCommandOrigin = "window",
     ): Promise<void> => {
       if (!runtime) return;
       try {
+        if (
+          command.startsWith("window.move-") ||
+          command.startsWith("window.split-")
+        ) {
+          for (const adapter of editorAdapters.current.values())
+            adapter.captureWindowViewBeforeLayoutChange();
+        }
         let targetWindowId = windowId;
         switch (command) {
+          case "window.focus-first":
+          case "window.focus-last":
+          case "window.focus-next":
+          case "window.focus-previous":
+          case "window.focus-recent": {
+            let order = command.slice(
+              "window.focus-".length,
+            ) as WindowFocusOrder;
+            if (origin !== "window") {
+              if (order === "next") order = "first";
+              if (order === "previous") order = "last";
+            }
+            targetWindowId = (
+              await runtime.focusEditorWindowInOrder(windowId, order)
+            ).windowId;
+            break;
+          }
+          case "window.height-increase":
+          case "window.height-decrease":
+          case "window.width-increase":
+          case "window.width-decrease": {
+            const workspace =
+              appRoot.current?.querySelector<HTMLElement>(".workspace");
+            const pane = [
+              ...(appRoot.current?.querySelectorAll<HTMLElement>(
+                "[data-window-id]",
+              ) ?? []),
+            ].find((element) => element.dataset.windowId === windowId);
+            if (
+              !workspace ||
+              !pane ||
+              workspace.clientWidth <= 0 ||
+              workspace.clientHeight <= 0
+            )
+              break;
+            const metrics = windowResizeMetrics(pane);
+            const width = command.startsWith("window.width-");
+            const deltaPx =
+              (command.endsWith("increase") ? 1 : -1) *
+              Math.max(1, Math.min(9999, count)) *
+              (width ? metrics.character : metrics.line);
+            await runtime.editEditorLayout(
+              runtime.snapshot().applicationWindow.activeTabId,
+              {
+                kind: "resize",
+                windowId,
+                direction: width ? "vertical" : "horizontal",
+                deltaPx,
+                extent: {
+                  width: workspace.clientWidth,
+                  height: workspace.clientHeight,
+                },
+              },
+            );
+            break;
+          }
+          case "window.equalize":
+            await runtime.editEditorLayout(
+              runtime.snapshot().applicationWindow.activeTabId,
+              { kind: "equalize" },
+            );
+            break;
+          case "window.move-left":
+          case "window.move-right":
+          case "window.move-down":
+          case "window.move-up":
+            await runtime.editEditorLayout(
+              runtime.snapshot().applicationWindow.activeTabId,
+              {
+                kind: "move",
+                windowId,
+                edge: command.slice("window.move-".length) as
+                  "left" | "right" | "up" | "down",
+                splitId: `split:${createUuidV7()}`,
+              },
+            );
+            break;
           case "window.split-horizontal":
             targetWindowId = (
               await runtime.splitEditorWindow(windowId, "horizontal")
@@ -1818,13 +1909,6 @@ export function App({
     ? (targetWindow?.focusedSectionId ?? outlineNoteId)
     : null;
   const { leftSidebar, rightSidebar } = activeTabPage;
-  const workspaceColumns = [
-    leftSidebar.visible ? `${leftSidebar.widthPx}px` : null,
-    "minmax(0, 1fr)",
-    rightSidebar.visible ? `${rightSidebar.widthPx}px` : null,
-  ]
-    .filter((column): column is string => column !== null)
-    .join(" ");
   const transientFocus =
     modalFocusSurface ??
     (historySession
@@ -2088,6 +2172,7 @@ export function App({
       void executeVimWindowCommand(
         effectiveTargetWindowId,
         command,
+        1,
         `${sidebarSide}-sidebar`,
       );
     }
@@ -2118,6 +2203,7 @@ export function App({
           event.getModifierState("Control") ||
           controlKeyPressed.current,
         metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
         // Sidebar roots are not editable composition targets. WebKitGTK can
         // retain a stale composition flag after Editor focus leaves, so it
         // must not disable application-level Sidebar navigation.
@@ -2873,9 +2959,16 @@ export function App({
         onWindowControlError={handleWindowControlError}
       />
 
-      <div
-        className="application-workspace"
-        style={{ gridTemplateColumns: workspaceColumns }}
+      <WorkspacePaneLayout
+        key={activeTabPage.id}
+        left={leftSidebar}
+        right={rightSidebar}
+        onResize={(side, widthPx) => runtime.updateSidebar({ side, widthPx })}
+        onError={(error) =>
+          setCommandMessage(
+            error instanceof Error ? error.message : String(error),
+          )
+        }
       >
         {leftSidebar.visible &&
           (leftSidebar.utility === "tree" ? (
@@ -2922,6 +3015,18 @@ export function App({
           <EditorSplitLayout
             node={activeTabPage.root}
             renderWindow={renderEditorWindow}
+            onResize={(splitId, ratio) =>
+              runtime.editEditorLayout(activeTabPage.id, {
+                kind: "ratio",
+                splitId,
+                ratio,
+              })
+            }
+            onError={(error) =>
+              setCommandMessage(
+                error instanceof Error ? error.message : String(error),
+              )
+            }
           />
         </section>
         {rightSidebar.visible && outlineDocument && outlineNoteId ? (
@@ -3013,7 +3118,7 @@ export function App({
             focused={rightSidebarFocused}
           />
         ) : null}
-      </div>
+      </WorkspacePaneLayout>
 
       {shutdownProgress ? (
         <ApplicationShutdownProgress
@@ -3204,33 +3309,37 @@ export function App({
   );
 }
 
-function EditorSplitLayout({
-  node,
-  renderWindow,
-}: {
-  node: SplitNode;
-  renderWindow: (windowId: string) => ReactNode;
-}): ReactNode {
-  if (node.type === "leaf") return renderWindow(node.windowId);
-  const style: CSSProperties =
-    node.direction === "vertical"
-      ? {
-          gridTemplateColumns: `minmax(0, ${node.ratio}fr) minmax(0, ${1 - node.ratio}fr)`,
-        }
-      : {
-          gridTemplateRows: `minmax(0, ${node.ratio}fr) minmax(0, ${1 - node.ratio}fr)`,
-        };
-  return (
-    <div
-      className={`editor-split editor-split--${node.direction}`}
-      data-split-id={node.id}
-      data-split-direction={node.direction}
-      style={style}
-    >
-      <EditorSplitLayout node={node.first} renderWindow={renderWindow} />
-      <EditorSplitLayout node={node.second} renderWindow={renderWindow} />
-    </div>
-  );
+function windowResizeMetrics(pane: HTMLElement): {
+  line: number;
+  character: number;
+} {
+  const text =
+    pane.querySelector(".memoka-editor p") ??
+    pane.querySelector(".memoka-editor") ??
+    pane;
+  const style = getComputedStyle(text);
+  const fontSize = Number.parseFloat(style.fontSize) || 17;
+  const sample = document.createElement("span");
+  sample.textContent = "0000000000";
+  Object.assign(sample.style, {
+    position: "absolute",
+    visibility: "hidden",
+    fontFamily: style.fontFamily,
+    fontSize: `${fontSize}px`,
+    fontWeight: "normal",
+    whiteSpace: "pre",
+  });
+  pane.append(sample);
+  const scale =
+    pane.clientWidth > 0
+      ? pane.getBoundingClientRect().width / pane.clientWidth
+      : 1;
+  const measured = sample.getBoundingClientRect().width / (scale || 1) / 10;
+  sample.remove();
+  return {
+    line: Number.parseFloat(style.lineHeight) || fontSize * 1.65,
+    character: measured || fontSize * 0.5,
+  };
 }
 
 function nextBrowserPaint(): Promise<void> {
@@ -3357,11 +3466,13 @@ function ImageViewerWindow({
   onWindowCommand: (
     windowId: string,
     command: VimWindowCommand,
+    count?: number,
   ) => Promise<void>;
   onMessage: (message: string) => void;
   keyConfig: ApplicationKeyConfig;
 }) {
   const root = useRef<HTMLElement>(null);
+  const windowCount = useRef("");
   const [prefix, setPrefix] = useState<"" | "g" | "tab" | "leader" | "ctrl-w">(
     "",
   );
@@ -3407,6 +3518,7 @@ function ImageViewerWindow({
     const codeKey = event.code.match(/^Key([A-Z])$/u)?.[1]?.toLowerCase();
     const shortcutKey = codeKey ?? event.key.toLowerCase();
     if (event.key === "Escape") {
+      windowCount.current = "";
       setPrefix("");
       return;
     }
@@ -3416,6 +3528,28 @@ function ImageViewerWindow({
     ) {
       return;
     }
+    if (
+      (prefix === "" || prefix === "ctrl-w") &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      /^\d$/u.test(event.key)
+    ) {
+      event.preventDefault();
+      windowCount.current = `${Math.min(9999, Number(`${windowCount.current}${event.key}`))}`;
+      return;
+    }
+    if (prefix === "ctrl-w") {
+      const command = windowShortcutCommand(windowShortcutKey(event));
+      const count = Number(windowCount.current) || 1;
+      windowCount.current = "";
+      setPrefix("");
+      event.preventDefault();
+      if (command && !event.altKey && !event.metaKey)
+        void onWindowCommand(windowId, command, count);
+      return;
+    }
+    if (!(event.ctrlKey && shortcutKey === "w")) windowCount.current = "";
     if (
       prefix === "" &&
       event.key === keyConfig.leaderKey &&
@@ -3447,14 +3581,6 @@ function ImageViewerWindow({
     if (event.ctrlKey && shortcutKey === "w") {
       event.preventDefault();
       setPrefix("ctrl-w");
-      return;
-    }
-    if (prefix === "ctrl-w") {
-      const command = EMPTY_WINDOW_CTRL_W_COMMANDS[shortcutKey];
-      setPrefix("");
-      if (!command) return;
-      event.preventDefault();
-      void onWindowCommand(windowId, command);
       return;
     }
     if (prefix === "g") {
@@ -3576,10 +3702,12 @@ function EmptyEditorWindow({
   onWindowCommand: (
     windowId: string,
     command: VimWindowCommand,
+    count?: number,
   ) => Promise<void>;
   keyConfig: ApplicationKeyConfig;
 }) {
   const root = useRef<HTMLElement>(null);
+  const windowCount = useRef("");
   const [prefix, setPrefix] = useState<"" | "g" | "tab" | "leader" | "ctrl-w">(
     "",
   );
@@ -3595,6 +3723,7 @@ function EmptyEditorWindow({
     const codeKey = event.code.match(/^Key([A-Z])$/u)?.[1]?.toLowerCase();
     const shortcutKey = codeKey ?? event.key.toLowerCase();
     if (event.key === "Escape") {
+      windowCount.current = "";
       setPrefix("");
       return;
     }
@@ -3604,6 +3733,28 @@ function EmptyEditorWindow({
     ) {
       return;
     }
+    if (
+      (prefix === "" || prefix === "ctrl-w") &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      /^\d$/u.test(event.key)
+    ) {
+      event.preventDefault();
+      windowCount.current = `${Math.min(9999, Number(`${windowCount.current}${event.key}`))}`;
+      return;
+    }
+    if (prefix === "ctrl-w") {
+      const command = windowShortcutCommand(windowShortcutKey(event));
+      const count = Number(windowCount.current) || 1;
+      windowCount.current = "";
+      setPrefix("");
+      event.preventDefault();
+      if (command && !event.altKey && !event.metaKey)
+        void onWindowCommand(windowId, command, count);
+      return;
+    }
+    if (!(event.ctrlKey && shortcutKey === "w")) windowCount.current = "";
     if (
       prefix === "" &&
       event.key === keyConfig.leaderKey &&
@@ -3624,14 +3775,6 @@ function EmptyEditorWindow({
     if (event.ctrlKey && shortcutKey === "w") {
       event.preventDefault();
       setPrefix("ctrl-w");
-      return;
-    }
-    if (prefix === "ctrl-w") {
-      const command = EMPTY_WINDOW_CTRL_W_COMMANDS[shortcutKey];
-      setPrefix("");
-      if (!command) return;
-      event.preventDefault();
-      void onWindowCommand(windowId, command);
       return;
     }
     if (prefix === "g") {
@@ -3703,18 +3846,6 @@ function EmptyEditorWindow({
     </article>
   );
 }
-
-const EMPTY_WINDOW_CTRL_W_COMMANDS: Readonly<Record<string, VimWindowCommand>> =
-  {
-    s: "window.split-horizontal",
-    v: "window.split-vertical",
-    h: "window.focus-left",
-    j: "window.focus-down",
-    k: "window.focus-up",
-    l: "window.focus-right",
-    c: "window.close",
-    o: "window.only",
-  };
 
 const EMPTY_WINDOW_TAB_COMMANDS: Readonly<Record<string, VimWindowCommand>> = {
   c: "tab.create",
@@ -3788,6 +3919,7 @@ function EditorWindow({
   onWindowCommand: (
     windowId: string,
     command: VimWindowCommand,
+    count?: number,
   ) => Promise<void>;
   keyConfig: ApplicationKeyConfig;
   lineNumberMinWidthPx: number;
@@ -3924,8 +4056,8 @@ function EditorWindow({
           ? runtime.openImageInNewTab(attachmentId, origin)
           : runtime.openImage(windowId, attachmentId, origin),
       onApplicationCommand,
-      onWindowCommand: (command) => {
-        void onWindowCommand(windowId, command);
+      onWindowCommand: (command, count) => {
+        void onWindowCommand(windowId, command, count);
       },
       keyConfig,
       scrollElement: editorScroll.current,

@@ -90,6 +90,7 @@ import {
   createImageBuffer,
   createNoteBuffer,
   createTabPage,
+  editWindowLayout,
   focusWindow,
   focusWindowInDirection,
   keepOnlyWindow,
@@ -103,13 +104,16 @@ import {
   updateWindowView,
   validateApplicationWindowState,
   windowInDirection,
+  windowInOrder,
   type ApplicationFocusOwner,
   type ApplicationWindowState,
   type BufferState,
   type SidebarUpdateInput,
   type SplitDirection,
   type WindowFocusDirection,
+  type WindowFocusOrder,
 } from "./application-state";
+import type { WindowLayoutEdit } from "./window-layout";
 import {
   TiptapEditorAdapter,
   type TiptapEditorAdapterOptions,
@@ -1009,6 +1013,30 @@ export class CoreRuntime {
       operationId: this.idFactory(),
       source: "ui",
       payload: { windowId, direction },
+    });
+  }
+
+  focusEditorWindowInOrder(
+    windowId: string,
+    order: WindowFocusOrder,
+  ): Promise<CoreCommandResults["window.focus_order"]> {
+    return this.executeCommand({
+      name: "window.focus_order",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: { windowId, order },
+    });
+  }
+
+  editEditorLayout(
+    tabId: string,
+    edit: WindowLayoutEdit,
+  ): Promise<CoreCommandResults["window.layout"]> {
+    return this.executeCommand({
+      name: "window.layout",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: { tabId, edit },
     });
   }
 
@@ -3282,6 +3310,47 @@ export class CoreRuntime {
               windowId: targetWindowId ?? envelope.payload.windowId,
               changed,
             },
+          };
+        },
+      ),
+    );
+
+    this.commands.register("window.focus_order", (envelope) =>
+      this.commitApplicationWindowMutation(
+        envelope.operationId,
+        envelope.payload.fault,
+        (current) => {
+          const windowId = windowInOrder(
+            current,
+            envelope.payload.windowId,
+            envelope.payload.order,
+          );
+          const changed =
+            current.focusOwner.area !== "window" ||
+            current.focusOwner.windowId !== windowId;
+          return {
+            state: changed ? focusWindow(current, windowId) : current,
+            changed,
+            result: { windowId, changed },
+          };
+        },
+      ),
+    );
+
+    this.commands.register("window.layout", (envelope) =>
+      this.commitApplicationWindowMutation(
+        envelope.operationId,
+        envelope.payload.fault,
+        (current) => {
+          const state = editWindowLayout(
+            current,
+            envelope.payload.tabId,
+            envelope.payload.edit,
+          );
+          return {
+            state,
+            changed: state !== current,
+            result: { changed: state !== current },
           };
         },
       ),

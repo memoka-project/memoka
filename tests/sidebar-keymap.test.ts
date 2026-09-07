@@ -24,6 +24,34 @@ function key(
 }
 
 describe("Memoka Sidebar application keymap", () => {
+  it("supports first/last/cyclic/previously focused Window navigation including held Control", () => {
+    const pending = advanceSidebarInput(
+      createSidebarInputState(),
+      key("w", { ctrlKey: true }),
+    );
+    for (const [value, command] of [
+      ["t", "window.focus-first"],
+      ["b", "window.focus-last"],
+      ["w", "window.focus-next"],
+      ["W", "window.focus-previous"],
+      ["p", "window.focus-recent"],
+    ] as const) {
+      expect(advanceSidebarInput(pending.state, key(value)).action).toEqual({
+        kind: "execute",
+        command,
+      });
+      expect(
+        advanceSidebarInput(
+          pending.state,
+          key(value, {
+            ctrlKey: true,
+            shiftKey: value === "W",
+            code: `Key${value.toUpperCase()}`,
+          }),
+        ).action,
+      ).toEqual({ kind: "execute", command });
+    }
+  });
   it("resolves Vim Ctrl-w Window commands independently of each utility keymap", () => {
     expect(sidebarKeymap.resolve("sidebar.normal", ":")).toBe(
       "application.command_line",

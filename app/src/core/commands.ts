@@ -1,4 +1,5 @@
 import type { CommitFault } from "./persistence";
+import type { WindowLayoutEdit } from "./window-layout";
 import type {
   SectionDepthShiftDirection,
   SectionProperties,
@@ -11,6 +12,7 @@ import type {
   SplitDirection,
   UtilityBufferKind,
   WindowFocusDirection,
+  WindowFocusOrder,
 } from "./application-state";
 
 export type CoreCommandSource = "ui" | "editor" | "internal";
@@ -180,6 +182,16 @@ export interface CoreCommandPayloads {
     windowId: string;
     fault?: CommitFault;
   };
+  "window.focus_order": {
+    windowId: string;
+    order: WindowFocusOrder;
+    fault?: CommitFault;
+  };
+  "window.layout": {
+    tabId: string;
+    edit: WindowLayoutEdit;
+    fault?: CommitFault;
+  };
   "window.only": {
     windowId: string;
     fault?: CommitFault;
@@ -280,6 +292,8 @@ export interface CoreCommandResults {
     windowId: string;
     activeWindowId: string;
   };
+  "window.focus_order": { windowId: string; changed: boolean };
+  "window.layout": { changed: boolean };
   "window.only": {
     windowId: string;
     closedWindowIds: string[];

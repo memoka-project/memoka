@@ -192,7 +192,7 @@ export interface TiptapEditorAdapterOptions {
   onCommandLine?: () => void;
   onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
-  onWindowCommand?: (command: VimWindowCommand) => void;
+  onWindowCommand?: (command: VimWindowCommand, count: number) => void;
   onSectionFocus?: (
     direction: "current" | "parent",
     currentSectionId: string,
@@ -990,6 +990,20 @@ export class TiptapEditorAdapter {
     this.currentEditor.view.focus();
     this.revealNavigationSelection();
     return true;
+  }
+
+  /** Capture the live view before React reparents/remounts a split subtree.
+   * Selection projection normally waits for the next frame, which may never
+   * run on an Editor that is about to be destroyed by a layout change. */
+  captureWindowViewBeforeLayoutChange(): void {
+    const editor = this.currentEditor;
+    if (editor.isDestroyed) return;
+    this.cancelSelectionUpdate();
+    this.options.onSelectionUpdate?.(
+      editor,
+      sectionIdAtEditorSelection(editor.state),
+    );
+    this.options.onScrollUpdate?.(this.scrollElement.scrollTop);
   }
 
   destroy(): void {
