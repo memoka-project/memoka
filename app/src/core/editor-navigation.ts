@@ -359,6 +359,7 @@ function sectionLogicalLinePosition(
     if (result !== null) return;
     switch (node.type.name) {
       case "paragraph":
+      case "detailsSummary":
       case "codeBlock":
       case "sourceBlock": {
         const text = searchableText(node);

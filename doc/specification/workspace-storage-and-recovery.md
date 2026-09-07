@@ -44,8 +44,8 @@ CLI実行時にNode、DOM、GTK、WebKit、WebViewを起動しない。
 ## 3. 移行前検査
 
 database schema 2〜4から5への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
-WorkspaceMetadataDoc 2をNamespace付きschema 3へ、NoteDoc 2をBodyChunkと複数block ListItemに対応するschema 4へ変換する。
-NoteDoc 3は本文・IDを再構築せずmetadataだけschema 4へ移行する。
+WorkspaceMetadataDoc 2をNamespace付きschema 3へ、NoteDoc 2をBodyChunk、複数block ListItem、Detailsに対応するschema 5へ変換する。
+NoteDoc 3/4は本文・IDを再構築せずmetadataだけschema 5へ移行する。旧世代のNoteDoc 3/4も引き続き読み取れる。
 
 - 元DBに書き込む前にID、Namespace、Root identity、H6上限、添付catalogを検証する。
 - WALが残る場合はDBとWALのprivate copyを検査し、WALにある確定更新を無視しない。
@@ -86,7 +86,7 @@ migrationで記録したknown missingはdescriptorへ明示する。新たな欠
 generation IDはMemokaのUUIDv7で、Restic snapshot IDとは分離する。
 descriptorはcapture時刻とtimezone、Workspace ID、epoch、document revisions、Section所有者、
 DB/添付hash・size・schemaを持つ。Restic exit 0だけでなくsnapshotのfile集合・型・sizeも検証して受理する。
-新規descriptorの`note_schema`は4とし、読取・復旧は旧世代の3も受け入れる。未対応schemaは拒否する。
+新規descriptorの`note_schema`は5とし、読取・復旧は旧世代の3/4も受け入れる。未対応schemaは拒否する。
 exit 3、不明file、未知schema、path traversal、symlinkは正常世代にしない。
 
 正本保存用に1 GiBとDB copy等の必要量をreserveする。容量不足や途中失敗でも最後の正常世代を保持する。

@@ -73,7 +73,8 @@ block間やSection間を移動しても、画面上にcaretが見えるようEdi
 
 `i/a`はcaret位置の前/後、`I/A`は論理行の先頭/末尾からInsertへ入る。
 `o/O`は現在論理行またはblockの下/上に入力先を作る。
-List内の`o`は内部Blockの種類によらず、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。
+Details本文からはDetailsの外へ出ず、内部blockの行を追加する。Detailsを所有する外側ListItemより本文内の操作を優先する。
+List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。
 
 ## 6. Operatorと編集command
 
@@ -197,17 +198,17 @@ Table外で矩形をputすると、headerを含むdataはそのままTableにし
 
 ## 10. Section、Link、Image
 
-| Key             | 動作                                                |
-| --------------- | --------------------------------------------------- |
-| `zf/zF`         | Focused Sectionを1階層深く/浅くする                 |
-| `zo/zO`         | Sectionを1段/再帰的に展開                           |
-| `zc/zC`         | Sectionを1段/再帰的に折り畳む                       |
-| `za/zA`         | Section foldを1段/再帰的にtoggle                    |
-| `>>/<<`         | Section/ListItemを1段深く/浅くする                  |
-| `gf`            | Internal Link先へ移動、または画像を現在Windowで開く |
-| `Ctrl-w gf`     | 画像を新しいTabPageで開く                           |
-| `gx`            | 安全な外部link/AttachmentをOS既定handlerで開く      |
-| `Ctrl-o/Ctrl-i` | Window-local Jump Listを戻る/進む                   |
+| Key             | 動作                                                  |
+| --------------- | ----------------------------------------------------- |
+| `zf/zF`         | Focused Sectionを1階層深く/浅くする                   |
+| `zo/zO`         | Section（Details内ではDetails）を1段/再帰的に展開     |
+| `zc/zC`         | Section（Details内ではDetails）を1段/再帰的に折り畳む |
+| `za/zA`         | Section（Details内ではDetails）を1段/再帰的にtoggle   |
+| `>>/<<`         | Section/ListItemを1段深く/浅くする                    |
+| `gf`            | Internal Link先へ移動、または画像を現在Windowで開く   |
+| `Ctrl-w gf`     | 画像を新しいTabPageで開く                             |
+| `gx`            | 安全な外部link/AttachmentをOS既定handlerで開く        |
+| `Ctrl-o/Ctrl-i` | Window-local Jump Listを戻る/進む                     |
 
 Internal Linkのclickはopenしない。画像を現在Windowで開いた直後の`Ctrl-o`は同じsession内の元Note/caretへ戻る。
 

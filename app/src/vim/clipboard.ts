@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listItemMarkdown } from "../core/list-markdown";
+import { detailsMarkdown, detailsSummaryHtml } from "../core/details-markdown";
 import {
   DOMParser as ProseMirrorDOMParser,
   DOMSerializer,
@@ -333,6 +334,28 @@ function nodeMarkdown(
   }
   if (node.type.name === "paragraph") {
     return `${protectParagraphBlockStart(inlineMarkdown(node, resolveInternalLinkTitle))}\n`;
+  }
+  if (node.type.name === "details") {
+    const summary = detailsSummaryHtml(
+      node.firstChild?.toJSON().content ?? [],
+      resolveInternalLinkTitle,
+    );
+    const blocks: string[] = [];
+    node
+      .child(1)
+      .forEach((child) =>
+        blocks.push(
+          nodeMarkdown(child, "", resolveInternalLinkTitle).replace(
+            /\n+$/u,
+            "",
+          ),
+        ),
+      );
+    return detailsMarkdown(
+      summary,
+      blocks.join("\n\n"),
+      node.attrs.open === true,
+    );
   }
   if (node.type.name === "horizontalRule") {
     return `${indentation}---\n`;

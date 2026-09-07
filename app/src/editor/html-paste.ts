@@ -39,6 +39,7 @@ const SAFE_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
     "data-memoka-alert-fold",
   ]),
   code: new Set(["class"]),
+  details: new Set(["open"]),
   ol: new Set(["start"]),
   td: new Set(["colspan", "rowspan"]),
   th: new Set(["colspan", "rowspan"]),

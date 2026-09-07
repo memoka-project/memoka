@@ -11,6 +11,7 @@ export const BLOCK_TRANSFORM_TARGETS = [
   "image",
   "alert",
   "blockquote",
+  "details",
   "horizontalRule",
 ] as const;
 
@@ -110,6 +111,13 @@ export const BLOCK_TYPE_CATALOG: readonly BlockTypeCatalogEntry[] = [
     aliases: ["quote", "引用"],
     description: "文章を引用ブロックに変更します。",
     example: "> 引用する文章",
+  },
+  {
+    id: "details",
+    name: "Details",
+    aliases: ["details", "summary", "折り畳み", "折畳み", "詳細"],
+    description: "見出しと、折り畳める本文を持つブロックに変更します。",
+    example: "▾ 詳細\n  本文・リスト・画像・テーブルなどを配置できます。",
   },
   {
     id: "horizontalRule",

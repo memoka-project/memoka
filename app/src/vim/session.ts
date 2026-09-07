@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { runDetailsFoldCommand } from "../editor/details";
 import {
   insertListParagraph,
   isDirectListParagraph,
@@ -1450,6 +1451,26 @@ export class ProductVimSession {
     }
     if (
       !isComposing &&
+      this.mode === "normal" &&
+      !this.input.pending &&
+      event.key === "Enter" &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.shiftKey
+    ) {
+      const result = runDetailsFoldCommand(view, "toggle");
+      if (result) {
+        event.preventDefault();
+        this.input = createVimInputState();
+        this.action = `${result.detail}:${result.changed ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
+    }
+    if (
+      !isComposing &&
       this.mode === "insert" &&
       event.key === "Enter" &&
       event.altKey &&
@@ -1723,6 +1744,13 @@ export class ProductVimSession {
                 : command === "section.fold-toggle"
                   ? "toggle"
                   : "toggle-recursive";
+      const detailsResult = runDetailsFoldCommand(view, action);
+      if (detailsResult) {
+        this.action = `${detailsResult.detail}:${detailsResult.changed ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
       const result = runSectionFoldCommand(view, action);
       if (result.changed) {
         this.options.onSectionFoldsChange?.(

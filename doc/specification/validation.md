@@ -31,7 +31,8 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - missing IDの限定repairとinvalid/duplicate IDの拒否
 - Namespaceのcycle、self-parent、orphan、deleted-parent/live-child、一意配置の検査
 - jitter付きFractional Indexingの順序、衝突tie-break、局所再採番
-- NoteDoc v2のBodyChunk化とv4へのmigration、v3からv4のmetadata-only migration（block ID/content保持）
+- NoteDoc v2のBodyChunk化とv5へのmigration、v3/v4からv5のmetadata-only migration（block ID/content保持）
+- Detailsの作成、Summary/本文編集、開閉、再帰的開閉、折畳み本文の検索・移動、yy/dd、List内・入れ子のMarkdown/HTML round-trip
 - SQLite v2/v3/v4からv5への全件preflightとrollback copy
 - snapshot/update log replay、revision conflict、compaction failure recovery
 - 2 Windowで同じNoteDocを開いた場合のcontent共有とWindow-local state分離

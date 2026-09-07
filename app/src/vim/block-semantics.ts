@@ -6,6 +6,10 @@ import type {
 } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
 import {
+  detailsFoldHiddenEntries,
+  detailsFoldStateSignature,
+} from "../editor/details";
+import {
   sectionFoldHiddenEntries,
   sectionFoldStateSignature,
 } from "../editor/section-folding";
@@ -495,11 +499,16 @@ export class VimBlockSemanticsRegistry {
 
   logicalLines(view: VimSemanticsView): VimLogicalLine[] {
     const allLines = this.#allLogicalLines(view);
-    const signature = sectionFoldStateSignature(view.state);
+    const signature =
+      sectionFoldStateSignature(view.state) +
+      detailsFoldStateSignature(view.state);
     if (!signature) return allLines;
     const cached = this.#visibleLogicalLinesByDocument.get(view.state.doc);
     if (cached?.signature === signature) return cached.lines;
-    const hidden = [...sectionFoldHiddenEntries(view.state)].sort(
+    const hidden = [
+      ...sectionFoldHiddenEntries(view.state),
+      ...detailsFoldHiddenEntries(view.state),
+    ].sort(
       (left, right) =>
         left.hiddenFrom - right.hiddenFrom || right.hiddenTo - left.hiddenTo,
     );
@@ -783,7 +792,9 @@ export class VimBlockSemanticsRegistry {
     const cache = splitHardBreakLines
       ? this.#visualLineUnitsByDocument
       : this.#structuralUnitsByDocument;
-    const signature = sectionFoldStateSignature(view.state);
+    const signature =
+      sectionFoldStateSignature(view.state) +
+      detailsFoldStateSignature(view.state);
     const cached = cache.get(view.state.doc);
     if (cached?.signature === signature) return cached.units;
     const units: VimStructuralUnit[] = [];
@@ -875,7 +886,12 @@ export class VimBlockSemanticsRegistry {
       const $position = view.state.doc.resolve(line.from);
       let ancestorDepth: number | null = null;
       let structureKind: VimStructureKind = "block";
+      // A summary owns its complete Details container; its required body must
+      // never be discarded by yanking/deleting just the schema's summary node.
+      if (line.blockNodeName === "detailsSummary")
+        ancestorDepth = $position.depth - 1;
       for (let depth = $position.depth; depth > 0; depth -= 1) {
+        if (ancestorDepth !== null) break;
         const behavior = this.behaviorForNodeName(
           $position.node(depth).type.name,
         );

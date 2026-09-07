@@ -2,6 +2,7 @@ import { Editor, Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, TextSelection } from "@tiptap/pm/state";
 import * as Y from "yjs";
+import { isBlockContainer } from "./block-container";
 import {
   SECTION_DEPTH_SHIFT_ORIGIN,
   noteSectionCatalog,
@@ -9,9 +10,7 @@ import {
   type ProductDocument,
 } from "../core/documents";
 import {
-  BODY_CHUNK_NODE,
   findSectionWithDepth,
-  SECTION_BODY_NODE,
   SECTION_CHILDREN_NODE,
 } from "../core/section-model";
 import {
@@ -1813,9 +1812,7 @@ function blockTypeSlashTrigger(options: {
                 $from.parent.content.size !== 0 ||
                 $from.parentOffset !== 0 ||
                 $from.depth < 1 ||
-                ![SECTION_BODY_NODE, BODY_CHUNK_NODE, "listItem"].includes(
-                  $from.node($from.depth - 1).type.name,
-                )
+                !isBlockContainer($from.node($from.depth - 1).type.name)
               ) {
                 return false;
               }
@@ -1827,9 +1824,7 @@ function blockTypeSlashTrigger(options: {
                 view.state.doc.descendants((node, _position, parent) => {
                   if (
                     node.attrs.blockId === blockId &&
-                    (parent?.type.name === SECTION_BODY_NODE ||
-                      parent?.type.name === BODY_CHUNK_NODE ||
-                      parent?.type.name === "listItem")
+                    isBlockContainer(parent?.type.name)
                   ) {
                     valid =
                       node.type.name === "paragraph" &&

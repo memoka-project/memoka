@@ -306,7 +306,7 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
     }
     for (before, snapshot) in &prepared.documents {
         let target_schema = if before.kind == "note" {
-            4
+            5
         } else {
             WORKSPACE_SCHEMA
         };

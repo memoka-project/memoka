@@ -166,7 +166,7 @@ pub fn workspace_json(document: &PersistedDocument) -> Result<Value, ReadError> 
 
 pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Note, ReadError> {
     if document.kind != "note"
-        || !(matches!(document.schema_version, 3 | 4)
+        || !(matches!(document.schema_version, 3 | 4 | 5)
             || (allow_legacy && document.schema_version == 2))
     {
         return Err(ReadError::new(
@@ -228,7 +228,7 @@ pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Not
 /// until the enclosing, preflighted SQL migration commits atomically.
 pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, ReadError> {
     read_note(document, true)?;
-    if document.schema_version == 4 {
+    if document.schema_version == 5 {
         return Ok(None);
     }
     let doc = decode_document(document)?;
@@ -290,12 +290,12 @@ pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, Rea
     let meta = txn
         .get_map("meta")
         .ok_or_else(|| invalid("Missing Note metadata"))?;
-    meta.insert(&mut txn, "schema_version", 4);
+    meta.insert(&mut txn, "schema_version", 5);
     let bytes = txn.encode_state_as_update_v1(&StateVector::default());
     drop(txn);
     read_note(
         &PersistedDocument {
-            schema_version: 4,
+            schema_version: 5,
             snapshot: bytes.clone(),
             snapshot_revision: document.revision,
             updates: Vec::new(),
@@ -494,6 +494,9 @@ fn xml_json<T: ReadTxn>(
                 name,
                 "paragraph"
                     | "blockquote"
+                    | "details"
+                    | "detailsSummary"
+                    | "detailsBody"
                     | "horizontalRule"
                     | "bulletList"
                     | "orderedList"

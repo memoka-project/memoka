@@ -215,6 +215,25 @@ function createReplacement(
     if (!type || plainText) return { changed: false, reason: "unsupported" };
     return { node: type.create({ blockId }), selection: "node" };
   }
+  if (target === "details") {
+    const { details, detailsSummary, detailsBody, paragraph } = schema.nodes;
+    if (!details || !detailsSummary || !detailsBody || !paragraph)
+      return { changed: false, reason: "unsupported" };
+    const content =
+      sourceType === "paragraph" && !consumeSlash
+        ? source.content
+        : paragraphInlineContent(schema, plainText);
+    return {
+      node: details.createChecked({ blockId, open: true }, [
+        detailsSummary.createChecked({ blockId: createUuidV7() }, content),
+        detailsBody.createChecked(
+          { blockId: createUuidV7() },
+          paragraph.create({ blockId: createUuidV7() }),
+        ),
+      ]),
+      selection: "text",
+    };
+  }
   if (target === "alert" || target === "blockquote") {
     const blockquote = schema.nodes.blockquote;
     const paragraph = schema.nodes.paragraph;

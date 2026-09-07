@@ -155,6 +155,7 @@ function* workspaceSearchLines(
       const element = pending.pop()!;
       if (
         element.nodeName === "paragraph" ||
+        element.nodeName === "detailsSummary" ||
         CODE_NAMES.has(element.nodeName)
       ) {
         const text = xmlTextContent(element);

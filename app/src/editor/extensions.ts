@@ -1,4 +1,10 @@
 import {
+  Details,
+  DetailsBody,
+  DetailsSummary,
+  DetailsFolding,
+} from "./details";
+import {
   Extension,
   getSchema,
   Mark,
@@ -2368,6 +2374,10 @@ export function productEditorExtensions(
     }),
     RichListItem,
     MarkdownAlertAttributes,
+    Details,
+    DetailsSummary,
+    DetailsBody,
+    DetailsFolding.configure({ expandAll: options.readOnly ?? false }),
     ComposableInlineCode,
     MarkdownHighlight,
     MemokaExternalLink.configure({

@@ -2,6 +2,7 @@ import type { NoteDocument } from "./documents";
 import { inlineMarkdownText } from "./inline-markdown";
 import { markdownAlertMarker } from "./markdown-alert";
 import { listItemMarkdown } from "./list-markdown";
+import { detailsMarkdown, detailsSummaryHtml } from "./details-markdown";
 import {
   BOOTSTRAP_ORIGIN,
   createNoteDocument,
@@ -390,6 +391,17 @@ function renderBlock(
   options: SectionMarkdownRenderOptions = {},
 ): string {
   const node = snapshotNode(value);
+  if (node.type === "details") {
+    const summary = snapshotNode(node.content[0]);
+    const body = snapshotNode(node.content[1]);
+    return detailsMarkdown(
+      detailsSummaryHtml(
+        summary.content as Parameters<typeof detailsSummaryHtml>[0],
+      ),
+      body.content.map((child) => renderBlock(child, "", options)).join(""),
+      node.attrs.open === true,
+    );
+  }
   if (node.type === "paragraph")
     return `${renderInlineChildren(node, options)}\n\n`;
   if (node.type === "horizontalRule") return `${indentation}---\n\n`;

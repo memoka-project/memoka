@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as Y from "yjs";
 import type { DocumentKind } from "./documents";
+import { NOTE_DOC_SCHEMA_VERSION } from "./documents";
 import {
   toWireWorkspaceSearchIndexRebuildRequest,
   toWireWorkspaceSearchIndexReplaceRequest,
@@ -211,10 +212,10 @@ export class MemoryPersistencePort implements PersistencePort {
       if (existing.schemaVersion !== input.schemaVersion) {
         if (
           existing.kind === "note" &&
-          [2, 3].includes(existing.schemaVersion) &&
-          input.schemaVersion === 4
+          [2, 3, 4].includes(existing.schemaVersion) &&
+          input.schemaVersion === NOTE_DOC_SCHEMA_VERSION
         ) {
-          existing.schemaVersion = 4;
+          existing.schemaVersion = NOTE_DOC_SCHEMA_VERSION;
         } else {
           throw new Error(`schema version mismatch for ${key}`);
         }
@@ -539,7 +540,7 @@ function isSupportedDocumentSchema(
 ): boolean {
   return kind === "workspace"
     ? schemaVersion === 3
-    : schemaVersion === 2 || schemaVersion === 3 || schemaVersion === 4;
+    : [2, 3, 4, NOTE_DOC_SCHEMA_VERSION].includes(schemaVersion);
 }
 
 function documentKey(kind: DocumentKind, documentId: string): string {

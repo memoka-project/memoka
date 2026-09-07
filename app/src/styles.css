@@ -1260,6 +1260,66 @@ textarea {
   margin-bottom: 0;
 }
 
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-details {
+  margin: 0.6em 0 0.8em;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 4px;
+  padding: 0.5em 0.75em;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-summary {
+  position: relative;
+  display: block;
+  padding-inline-start: 1.3em;
+  min-height: 1.65em;
+  font-weight: 600;
+  list-style: none;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-summary[data-empty="true"]::after {
+  content: attr(data-placeholder);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-details-toggle {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+  width: 1.1em;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--memoka-color-text-muted, currentColor);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-toggle:hover {
+  color: var(--memoka-color-text);
+}
+
+.memoka-details-body {
+  padding-top: 0.65em;
+}
+
+.memoka-details-body > :last-child {
+  margin-bottom: 0;
+}
+
+.memoka-details[data-details-expanded="false"] > .memoka-details-body {
+  display: none;
+}
+
 :is(.memoka-editor, .workspace-search-preview-document)
   blockquote[data-memoka-alert-type] {
   --memoka-alert-color: var(--memoka-color-info);

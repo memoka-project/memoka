@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { createUuidV7, isUuidV7 } from "../core/ids";
+import { markdownDetailsRange } from "../core/details-markdown";
 import {
   BODY_CHUNK_TARGET_BLOCKS,
   MAX_SECTION_DEPTH,
@@ -117,7 +118,9 @@ interface MarkdownSectionDraft {
 export function parseMarkdownPaste(
   markdown: string,
   schema: Schema,
+  nestingDepth = 0,
 ): ParsedMarkdownPaste | null {
+  if (nestingDepth > 128) return null;
   const normalized = normalizeMarkdown(markdown);
   if (!normalized.trim()) return null;
   const lines = normalized.split("\n");
@@ -173,11 +176,44 @@ export function parseMarkdownPaste(
       continue;
     }
 
+    const details = markdownDetailsRange(lines, index);
+    if (details) {
+      const summary = parseInlineMarkdown(
+        details.summary.replace(/\r?\n/gu, " "),
+        schema,
+        true,
+      );
+      const body = details.body
+        ? parseMarkdownPaste(details.body, schema, nestingDepth + 1)
+        : null;
+      if (schema.nodes.details && summary && (!details.body || body)) {
+        nodes.push(
+          schema.nodes.details.createChecked(
+            { blockId: createUuidV7(), open: details.open },
+            [
+              schema.nodes.detailsSummary!.createChecked(
+                { blockId: createUuidV7() },
+                summary,
+              ),
+              schema.nodes.detailsBody!.createChecked(
+                { blockId: createUuidV7() },
+                body?.slice.content ??
+                  schema.nodes.paragraph!.create({ blockId: createUuidV7() }),
+              ),
+            ],
+          ),
+        );
+        sourceBlockCount += body?.sourceBlockCount ?? 0;
+      } else if (!appendSource(index, details.end)) return null;
+      index = details.end;
+      continue;
+    }
+
     const blockquote = parsedBlockquoteRange(lines, index);
     if (blockquote) {
       const quoteMarkdown = blockquote.lines.join("\n");
       const parsed = quoteMarkdown.trim()
-        ? parseMarkdownPaste(quoteMarkdown, schema)
+        ? parseMarkdownPaste(quoteMarkdown, schema, nestingDepth + 1)
         : null;
       const emptyAlertParagraph =
         blockquote.alert && !parsed
@@ -220,7 +256,7 @@ export function parseMarkdownPaste(
     if (listRanges.has(index)) {
       const ast = listRanges.get(index)!;
       const end = ast.position?.end.line ?? index + 1;
-      const list = listBlock(schema, ast, normalized);
+      const list = listBlock(schema, ast, normalized, nestingDepth);
       if (list) {
         nodes.push(list);
         list.descendants((node) => {
@@ -383,9 +419,31 @@ export function parseMarkdownNote(
   ) {
     return null;
   }
+  const detailsRanges: Array<{ from: number; to: number }> = [];
+  const noteLines = normalized.split("\n");
+  let lineOffset = 0;
+  for (let line = 0; line < noteLines.length;) {
+    const fence = fenceOpening(noteLines[line] ?? "");
+    if (fence) {
+      const fenced = fencedBlockRange(noteLines, line)!;
+      for (; line < fenced.end; line++)
+        lineOffset += noteLines[line]!.length + 1;
+      continue;
+    }
+    const range = markdownDetailsRange(noteLines, line);
+    const end = range?.end ?? line + 1;
+    const from = lineOffset;
+    for (; line < end; line++) lineOffset += noteLines[line]!.length + 1;
+    if (range) detailsRanges.push({ from, to: lineOffset });
+  }
   const headings = topLevel.filter(
     (node) =>
       node.type === "heading" &&
+      !detailsRanges.some(
+        (range) =>
+          (node.position?.start.offset ?? -1) >= range.from &&
+          (node.position?.start.offset ?? -1) < range.to,
+      ) &&
       typeof node.depth === "number" &&
       node.depth >= 1 &&
       node.depth <= 6,
@@ -865,6 +923,7 @@ function paragraphInline(
 function parseInlineMarkdown(
   value: string,
   schema: Schema,
+  allowSummaryHtml = false,
 ): ProseMirrorNode[] | null {
   const highlighted = markdownWithHighlightSentinels(value);
   const tree = inlineMarkdownParser.parse(
@@ -880,18 +939,61 @@ function parseInlineMarkdown(
   }
   let prefixPending = true;
   let highlightActive = false;
+  const htmlMarks: Array<{ tag: string; mark: Mark }> = [];
   const highlight = schema.marks.highlight;
   if (highlighted !== value && !highlight) return null;
-  const activeMarks = (marks: readonly Mark[]): readonly Mark[] =>
-    highlightActive && highlight
+  const activeMarks = (input: readonly Mark[]): readonly Mark[] => {
+    const marks = [...input, ...htmlMarks.map(({ mark }) => mark)];
+    return highlightActive && highlight
       ? marks.some(({ type }) => type === highlight)
         ? marks
         : [...marks, highlight.create()]
       : marks;
+  };
   const translate = (
     node: MarkdownAstNode,
     marks: readonly Mark[],
   ): ProseMirrorNode[] | null => {
+    if (node.type === "html" && allowSummaryHtml) {
+      const html = node.value ?? "";
+      if (/^<br\s*\/?\s*>$/iu.test(html))
+        return [schema.nodes.hardBreak!.create()];
+      const tag = /^<(\/?)([a-z]+)([^<>]*)>$/iu.exec(html);
+      if (!tag) return null;
+      const name = tag[2]!.toLowerCase();
+      if (tag[1]) {
+        if (htmlMarks.at(-1)?.tag !== name) return null;
+        htmlMarks.pop();
+        return [];
+      }
+      const markName: string | undefined = {
+        b: "bold",
+        strong: "bold",
+        i: "italic",
+        em: "italic",
+        s: "strike",
+        del: "strike",
+        strike: "strike",
+        code: "code",
+        mark: "highlight",
+        a: "link",
+      }[name];
+      const type = markName && schema.marks[markName];
+      if (!type) return null;
+      const href = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/iu.exec(tag[3] ?? "");
+      const link =
+        name === "a"
+          ? normalizeExternalLink(
+              decodeHtmlAttribute(href?.[1] ?? href?.[2] ?? ""),
+            )
+          : null;
+      if (link && !link.valid) return null;
+      htmlMarks.push({
+        tag: name,
+        mark: type.create(link?.valid ? { href: link.href } : undefined),
+      });
+      return [];
+    }
     if (node.type === "text") {
       let text = node.value ?? "";
       if (prefixPending) {
@@ -977,7 +1079,9 @@ function parseInlineMarkdown(
     if (!translated) return null;
     result.push(...translated);
   }
-  return prefixPending || highlightActive ? null : result;
+  return prefixPending || highlightActive || htmlMarks.length > 0
+    ? null
+    : result;
 }
 
 function markdownWithHighlightSentinels(value: string): string {
@@ -1221,6 +1325,14 @@ function parseHtmlImageLine(
 
 function decodeHtmlAttribute(value: string): string {
   return value
+    .replace(/&#(x[0-9a-f]+|[0-9]+);/giu, (entity, code: string) => {
+      const number = code.toLowerCase().startsWith("x")
+        ? parseInt(code.slice(1), 16)
+        : Number(code);
+      return number > 0 && number <= 0x10ffff
+        ? String.fromCodePoint(number)
+        : entity;
+    })
     .replaceAll(/&quot;/giu, '"')
     .replaceAll(/&#39;|&apos;/giu, "'")
     .replaceAll(/&lt;/giu, "<")
@@ -1308,7 +1420,9 @@ function listBlock(
   for (const item of list.children ?? []) {
     if (item.checked != null) return null; // Keep unsupported task syntax in SourceBlock.
     const blocks: ProseMirrorNode[] = [];
-    for (const child of item.children ?? []) {
+    const itemChildren = item.children ?? [];
+    for (let childIndex = 0; childIndex < itemChildren.length; childIndex++) {
+      const child = itemChildren[childIndex]!;
       if (child.type === "list") {
         const nested = listBlock(schema, child, source, depth + 1);
         if (!nested) return null;
@@ -1321,7 +1435,7 @@ function listBlock(
         )
           return null;
         const indent = (position.start.column ?? 1) - 1;
-        const markdown = source
+        let markdown = source
           .slice(position.start.offset, position.end.offset)
           .split("\n")
           .map((line, index) =>
@@ -1330,7 +1444,29 @@ function listBlock(
               : (stripContinuationIndent(line, indent) ?? line),
           )
           .join("\n");
-        const parsed = parseMarkdownPaste(markdown, schema);
+        if (/^<details\b/iu.test(markdown)) {
+          // Remark splits HTML blocks at blank lines, so a rich Details body
+          // may span several AST siblings in the same ListItem.
+          const remaining = source
+            .slice(position.start.offset, item.position?.end.offset)
+            .split("\n")
+            .map((line, index) =>
+              index === 0
+                ? line
+                : (stripContinuationIndent(line, indent) ?? line),
+            );
+          const range = markdownDetailsRange(remaining, 0);
+          if (range) {
+            markdown = remaining.slice(0, range.end).join("\n");
+            const endLine = (position.start.line ?? 1) + range.end - 1;
+            while (
+              (itemChildren[childIndex + 1]?.position?.start.line ??
+                Infinity) <= endLine
+            )
+              childIndex++;
+          }
+        }
+        const parsed = parseMarkdownPaste(markdown, schema, depth + 1);
         if (!parsed) return null;
         parsed.slice.content.forEach((block) => blocks.push(block));
       }

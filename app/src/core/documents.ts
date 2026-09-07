@@ -49,7 +49,7 @@ import {
   type SectionSnapshot,
 } from "./section-model";
 
-export const NOTE_DOC_SCHEMA_VERSION = 4;
+export const NOTE_DOC_SCHEMA_VERSION = 5;
 export const WORKSPACE_DOC_SCHEMA_VERSION = 3;
 export const NOTE_BODY_FRAGMENT = "body";
 export const NOTE_SCHEMA_MIGRATION_ORIGIN = "memoka:note-schema-migration";
@@ -65,6 +65,9 @@ export const DOCUMENT_IDENTITY_REPAIR_ORIGIN =
 export const NOTE_BLOCK_NODE_NAMES: ReadonlySet<string> = new Set([
   "paragraph",
   "blockquote",
+  "details",
+  "detailsSummary",
+  "detailsBody",
   "horizontalRule",
   "bulletList",
   "orderedList",
@@ -183,6 +186,14 @@ export interface TableCellBlock {
 }
 
 export type NoteBlock =
+  | {
+      type: "details";
+      blockId: string;
+      open?: boolean;
+      children: NoteBlock[];
+    }
+  | { type: "detailsSummary"; blockId: string; content: InlineContent[] }
+  | { type: "detailsBody"; blockId: string; children: NoteBlock[] }
   | {
       type: "paragraph";
       blockId: string;
@@ -504,7 +515,7 @@ export function loadNoteDocumentWithSectionIdentityRecovery(
 
     const rawSchemaVersion = doc.getMap("meta").get("schema_version");
     const migratedFromSchemaVersion =
-      rawSchemaVersion === 2 || rawSchemaVersion === 3
+      rawSchemaVersion === 2 || rawSchemaVersion === 3 || rawSchemaVersion === 4
         ? rawSchemaVersion
         : null;
     const maintenanceStateVector = Y.encodeStateVector(doc);
@@ -1300,6 +1311,7 @@ export function blockToYXml(block: NoteBlock): Y.XmlElement {
   element.setAttribute("blockId", block.blockId);
   switch (block.type) {
     case "paragraph":
+    case "detailsSummary":
       insertInlineContent(element, block.content);
       break;
     case "orderedList":
@@ -1310,6 +1322,11 @@ export function blockToYXml(block: NoteBlock): Y.XmlElement {
     case "listItem":
     case "table":
     case "tableRow":
+    case "detailsBody":
+      element.insert(0, block.children.map(blockToYXml));
+      break;
+    case "details":
+      element.setAttribute("open", (block.open ?? true) as unknown as string);
       element.insert(0, block.children.map(blockToYXml));
       break;
     case "blockquote":
@@ -1364,10 +1381,10 @@ function noteDocumentFromYDoc(noteId: string, doc: Y.Doc): NoteDocument {
   const schemaVersion = meta.get("schema_version");
   if (schemaVersion === 2) {
     migrateNoteDocumentV2ToV3(noteId, doc, meta);
-  } else if (schemaVersion === 3) {
+  } else if (schemaVersion === 3 || schemaVersion === 4) {
     doc.transact(() => {
       meta.set("schema_version", NOTE_DOC_SCHEMA_VERSION);
-      meta.set("migrated_from_schema_version", 3);
+      meta.set("migrated_from_schema_version", schemaVersion);
       meta.set("migrated_note_id", noteId);
     }, NOTE_SCHEMA_MIGRATION_ORIGIN);
   } else if (schemaVersion !== NOTE_DOC_SCHEMA_VERSION) {
@@ -1660,7 +1677,11 @@ function appendPlainText(
       appendPlainText(child, parts);
     }
   }
-  if (["paragraph", "codeBlock", "sourceBlock"].includes(value.nodeName)) {
+  if (
+    ["paragraph", "detailsSummary", "codeBlock", "sourceBlock"].includes(
+      value.nodeName,
+    )
+  ) {
     parts.push("\n");
   } else if (["listItem", "tableRow"].includes(value.nodeName)) {
     const tail = parts.at(-1);

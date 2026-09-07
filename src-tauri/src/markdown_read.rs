@@ -62,7 +62,8 @@ pub fn search_lines(body: &[Value]) -> Vec<SearchLine> {
             }
         };
         match node["type"].as_str().unwrap_or("") {
-            "paragraph" | "codeBlock" | "sourceBlock" | "code_block" | "source_block" => {
+            "paragraph" | "detailsSummary" | "codeBlock" | "sourceBlock" | "code_block"
+            | "source_block" => {
                 let mut offset = 0;
                 for (index, text) in plain_text(node).split('\n').enumerate() {
                     append(text.into(), index, offset);
@@ -198,10 +199,78 @@ fn inline(node: &Value, workspace: &str) -> String {
             .collect(),
     }
 }
+fn summary_html(node: &Value, workspace: &str) -> String {
+    if node["type"] == "hardBreak" {
+        return "<br>".into();
+    }
+    if node["type"] == "internalSectionLink" {
+        return format!(
+            "<a href=\"{}\">{}</a>",
+            html(&uri(workspace, "section", attr(node, "targetSectionId"))),
+            html(&plain_text(node))
+        );
+    }
+    if node["type"] != "text" {
+        return content(node)
+            .iter()
+            .map(|child| summary_html(child, workspace))
+            .collect();
+    }
+    let mut text = String::new();
+    for ch in node["text"].as_str().unwrap_or("").chars() {
+        if "&<>\"'\\`*_[]~=!\r\n".contains(ch) {
+            text.push_str(&format!("&#{};", ch as u32));
+        } else {
+            text.push(ch);
+        }
+    }
+    for mark in node["marks"].as_array().map_or(&[][..], Vec::as_slice) {
+        let tag = match mark["type"].as_str().unwrap_or("") {
+            "bold" => "strong",
+            "italic" => "em",
+            "strike" => "s",
+            "code" => "code",
+            "highlight" => "mark",
+            _ => "",
+        };
+        if !tag.is_empty() {
+            text = format!("<{tag}>{text}</{tag}>");
+        } else if mark["type"] == "link" {
+            text = format!("<a href=\"{}\">{text}</a>", html(attr(mark, "href")));
+        }
+    }
+    text
+}
+
 pub fn block_markdown(node: &Value, workspace: &str) -> String {
     match node["type"].as_str().unwrap_or("") {
         "paragraph" => format!("{}\n\n", inline(node, workspace)),
         "horizontalRule" => "---\n\n".into(),
+        "details" => {
+            let parts = content(node);
+            let summary = parts
+                .first()
+                .map(|summary| summary_html(summary, workspace))
+                .unwrap_or_default();
+            let body = parts
+                .get(1)
+                .map(|body| {
+                    content(body)
+                        .iter()
+                        .map(|child| block_markdown(child, workspace))
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            let open = if node["attrs"]["open"].as_bool() == Some(true) {
+                " open"
+            } else {
+                ""
+            };
+            format!(
+                "<details{open}>\n<summary>{summary}</summary>\n\n{}\n\n</details>\n\n",
+                body.trim_end_matches('\n')
+            )
+        }
         "codeBlock" | "sourceBlock" => {
             let text = plain_text(node);
             let ticks = fence(&text, 3);
@@ -373,6 +442,29 @@ pub fn block_markdown(node: &Value, workspace: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn details_markdown_and_search_keep_summary_and_hidden_body() {
+        let details = json!({"type": "details", "attrs": {"open": false}, "content": [
+            {"type": "detailsSummary", "attrs": {"blockId": "summary"}, "content": [
+                {"type": "text", "text": "詳細 *", "marks": [{"type": "bold"}]}
+            ]},
+            {"type": "detailsBody", "content": [
+                {"type": "paragraph", "attrs": {"blockId": "body"}, "content": [{"type": "text", "text": "本文"}]}
+            ]}
+        ]});
+        assert_eq!(
+            block_markdown(&details, "workspace"),
+            "<details>\n<summary><strong>詳細 &#42;</strong></summary>\n\n本文\n\n</details>\n\n"
+        );
+        let rows = search_lines(&[details]);
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.block_id.as_str(), row.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("summary", "詳細 *"), ("body", "本文")]
+        );
+    }
 
     #[test]
     fn rich_list_markdown_keeps_blocks_and_nested_items_in_order() {

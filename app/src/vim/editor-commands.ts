@@ -44,6 +44,7 @@ import {
 import { projectListSelection } from "./list-selection";
 import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
 import { sectionFoldCollapsedSectionIds } from "../editor/section-folding";
+import { enterDetailsBody } from "../editor/details";
 import {
   moveNormalTableCell,
   moveNormalTableRow,
@@ -265,7 +266,7 @@ export function runEditorTab(
 
 interface InsertExitBlock {
   depth: number;
-  detailPrefix: "blockquote" | "code" | "table";
+  detailPrefix: "blockquote" | "code" | "table" | "details";
 }
 
 function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
@@ -273,9 +274,12 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
   let blockquote: InsertExitBlock | null = null;
   let code: InsertExitBlock | null = null;
   let table: InsertExitBlock | null = null;
+  let details: InsertExitBlock | null = null;
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     const node = $from.node(depth);
     if ($to.depth < depth || $to.node(depth) !== node) continue;
+    if (node.type.name === "details" && !details)
+      details = { depth, detailPrefix: "details" };
     if (blockSemantics.hasBehavior(node.type.name, "code-block") && !code) {
       code = { depth, detailPrefix: "code" };
     }
@@ -287,7 +291,8 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
       table = { depth, detailPrefix: "table" };
     }
   }
-  return blockquote ?? code ?? table;
+  const inner = blockquote ?? code ?? table;
+  return details && (!inner || details.depth > inner.depth) ? details : inner;
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
@@ -345,6 +350,12 @@ export function runEditorInsertEnter(
   shiftKey: boolean,
 ): EditorVimResult {
   const { $from, $to } = view.state.selection;
+  if (
+    $from.parent.type.name === "detailsSummary" &&
+    $from.parent === $to.parent
+  ) {
+    return { handled: enterDetailsBody(view), detail: "details:enter-body" };
+  }
   if (shiftKey || $from.parent !== $to.parent) {
     return {
       handled: false,
@@ -4012,7 +4023,7 @@ function changeWordRange(
 
 function emptyStructureReplacement(
   view: VimEditorView,
-  unit: VimStructuralUnit,
+  unit: Pick<VimStructuralUnit, "from" | "kind">,
 ): ProseMirrorNode | null {
   if (unit.kind === "code-line") return null;
   const source = view.state.doc.nodeAt(unit.from);
@@ -5765,10 +5776,43 @@ function openCodeLogicalLine(
 
 function emptyOpenLineNode(
   view: VimEditorView,
-  unit: VimStructuralUnit,
+  unit: Pick<VimStructuralUnit, "from" | "kind">,
 ): ProseMirrorNode | null {
   const empty = emptyStructureReplacement(view, unit);
   return empty ? copyNodeWithFreshBlockIds(empty) : null;
+}
+
+function openLineTarget(
+  view: VimEditorView,
+  line: VimLogicalLine,
+): Pick<VimStructuralUnit, "from" | "to" | "kind"> | null {
+  const block = view.state.doc.nodeAt(line.blockPosition);
+  if (!block) return null;
+  // Open relative to this line, not a containing ListItem's combined range.
+  // A Details body owns its lines even when the Details itself is in a list.
+  if (line.kind !== "block-atom") {
+    const $line = view.state.doc.resolve(line.from);
+    for (let depth = $line.depth; depth > 0; depth--) {
+      const name = $line.node(depth).type.name;
+      if (name === "detailsBody") break;
+      const kind =
+        name === "details"
+          ? "block"
+          : blockSemantics.behaviorForNodeName(name)?.structuralAncestor;
+      if (kind) {
+        return {
+          from: $line.before(depth),
+          to: $line.after(depth),
+          kind,
+        };
+      }
+    }
+  }
+  return {
+    from: line.blockPosition,
+    to: line.blockPosition + block.nodeSize,
+    kind: "block",
+  };
 }
 
 function openFromSectionTitle(
@@ -5853,17 +5897,20 @@ function openLogicalLine(
 ): EditorVimResult {
   const sectionResult = openFromSectionTitle(view, direction);
   if (sectionResult) return sectionResult;
-  if (
-    direction === "below" &&
-    owningListItemDepth(view.state.selection.$from) !== null
-  ) {
-    const handled = insertListItemAfter(view.state, view.dispatch);
-    if (handled) view.focus();
-    return {
-      handled,
-      detail: "list:created-item-after",
-      nextMode: handled ? "insert" : undefined,
-    };
+  if (direction === "below") {
+    const { $from } = view.state.selection;
+    for (let depth = $from.depth; depth > 0; depth--) {
+      const name = $from.node(depth).type.name;
+      if (name === "detailsBody") break;
+      if (name !== "listItem") continue;
+      const handled = insertListItemAfter(view.state, view.dispatch);
+      if (handled) view.focus();
+      return {
+        handled,
+        detail: "list:created-item-after",
+        nextMode: handled ? "insert" : undefined,
+      };
+    }
   }
   const line = currentLogicalLine(view);
   if (!line) {
@@ -5876,11 +5923,7 @@ function openLogicalLine(
     return openCodeLogicalLine(view, line, direction);
   }
 
-  const units = blockSemantics.structuralUnits(view);
-  const unit =
-    units[
-      blockSemantics.currentStructuralUnitIndex(units, selectionCursor(view))
-    ];
+  const unit = openLineTarget(view, line);
   if (!unit) {
     return {
       handled: false,

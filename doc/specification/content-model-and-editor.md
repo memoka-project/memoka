@@ -23,6 +23,7 @@ placeholder文字列は文書へ保存しない。caretを置いて入力する�
 - Table、Table Row、Table Header、Table Cell
 - Blockquote
 - Alert / Callout
+- Details（折り畳みblock、Summaryと本文）
 - Horizontal Rule
 - Image
 - Attachment
@@ -64,6 +65,7 @@ Window幅による自動折り返しは論理行を増やさない。
 - Code/Source Blockは保存text内の改行を境界にする。
 - TableではCellのcontentを論理行として扱い、Cell境界を明示的な停止位置にする。
 - atomic blockはblock全体で1論理行相当として扱う。
+- DetailsはSummaryを1論理行、本文を内部blockごとの論理行として扱う。閉じた本文は通常motionの移動先から除く。
 
 表示行motionの`gj/gk`だけは、論理行内の画面上の折り返し位置を使用する。
 
@@ -177,9 +179,9 @@ Horizontal Ruleは選択中も線を残し、block状のselection表示を重ね
 
 ## 10. Slash block picker
 
-Section直接Bodyの空ParagraphでInsert modeから`/`を入力すると共通検索paneを開く。
+Section直接Body、ListItem、Details本文の空ParagraphでInsert modeから`/`を入力すると共通検索paneを開く。
 候補はParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Alert、
-Image Block stub、Attachment Fileである。
+Blockquote、Horizontal Rule、Details、Image Block stub、Attachment Fileである。
 
 - Enterで選択した型へ変更し、入力済みの`/`を削除する。
 - Esc/Ctrl-cで取り消した場合は`/`を本文に残す。
@@ -187,6 +189,30 @@ Image Block stub、Attachment Fileである。
 - 確定後の最初のUndoは`/`へ戻し、次のUndoで`/`入力自体を戻す。
 - Tableは続く10×10 gridで行列数を選ぶ。初期選択は3×3である。
 - Alertは続く共通検索paneでtypeを選ぶ。
+
+## 11. Details（折り畳みblock）
+
+HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactive-elements.html#the-details-element)を
+本文blockとして扱う。Sectionではないため、Note tree・Section深さ・Outlineの項目を増やさない。
+
+- `details`は`detailsSummary`と`detailsBody`を1つずつ持つ。いずれにもstable block IDを割り当てる。
+- Summaryはinline textと文字装飾を保持する。空なら編集不能の薄い「詳細」を表示し、placeholderは保存しない。
+- 本文は非空の`Block+`。Paragraph、List、引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Rule、入れ子Detailsを許す。
+- `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。
+- 開閉マークのclick、Normalの`Enter` / `za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
+  Details内ではSection foldよりDetailsを優先する。閉じるとき本文にあるcaretはSummary先頭へ戻す。
+- InsertのSummary上の`Enter`（`Ctrl-j/Ctrl-m`を含む）または`Shift-Enter`は本文を開いて先頭へ移る。本文のEnterは通常のblock動作を使う。
+- 本文でNormalの`o`はDetails内に次の入力行を追加する。通常Paragraphでは直後に新規Paragraphを作り、本文末尾でも外へ出ない。
+  Details自体がListItem内にあっても外側ListにItemを作らない。本文内のList/Code/TableではそれぞれItem/コード行/Table行を追加する。
+- Details本文の通常Paragraphで`Ctrl-Enter`すると、そのDetails直後に新しいParagraphを作る。
+  内部Code/Table/引用では内部blockを抜ける。ListItem内では既存List操作を優先し、先頭の子または次の兄弟Itemを作る。
+- Summary上の`yy/dd`、Visual Lineの`y/d`は本文を含むDetails全体を対象にする。本文側では通常の論理行操作を使う。
+- 開閉はEditor instance / Window内の表示状態であり、Yjs本文・Undo・Markdownを変更しない。Editorを再生成するとimport時の状態に戻る。
+- 閉じた本文も`/`と`,g`の検索対象とし、移動先を隠しているDetailsを自動展開する。検索previewはDetails本文を展開して表示する。
+- Markdown import/exportは`<details>`、`<summary>...</summary>`、空行を挟んだ本文Markdown、`</details>`で表す。
+  importした`open`属性を初期状態として保持する。`name`による排他的accordionなど任意のHTML属性は取り込まない。
+  Details内部のMarkdown見出しはSectionに分離せず、literalなParagraphとして保持する。
+- 内部Clipboard、HTML、Markdown、Native CLI read、履歴、バックアップでも構造を保持する。
 
 ## 11. 日本語入力
 

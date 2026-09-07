@@ -59,6 +59,7 @@ export interface SelectedNoteSearchMatch {
 
 const SEARCHABLE_TEXT_BLOCKS = new Set([
   "paragraph",
+  "detailsSummary",
   "codeBlock",
   "code_block",
   "sourceBlock",

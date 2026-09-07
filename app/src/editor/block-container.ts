@@ -6,7 +6,8 @@ export function isBlockContainer(name: string | undefined): boolean {
   return (
     name === SECTION_BODY_NODE ||
     name === BODY_CHUNK_NODE ||
-    name === "listItem"
+    name === "listItem" ||
+    name === "detailsBody"
   );
 }
 

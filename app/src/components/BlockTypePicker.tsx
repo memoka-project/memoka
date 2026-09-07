@@ -427,7 +427,7 @@ function blockTransformFailureMessage(
     case "missing":
       return "block.transform · 対象ブロックが変更されました";
     case "not-direct-body":
-      return "block.transform · Section本文またはListItem直下のブロックのみ変更できます";
+      return "block.transform · Section本文、ListItem、Details本文の直下のブロックのみ変更できます";
     case "unsafe-inline-content":
       return "block.transform · 書式または内部リンクを含む本文は変換できません";
     case "unsupported":
