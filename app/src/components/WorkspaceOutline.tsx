@@ -191,7 +191,6 @@ export function WorkspaceOutline({
           {error}
         </p>
       )}
-      <div className="utility-statusline">OUTLINE</div>
     </aside>
   );
 }

@@ -66,7 +66,7 @@ CRDTであることは無条件のmergeを意味しない。永続化revisionの
 - persisted virtual root
 - Note境界をまたぐmotion、selection、operator、Undo
 - Markdown directoryを正本として通常起動時に双方向同期する仕組み、旧mirrorの新規自動出力
-- Treeのdrag-and-drop、click open、inline rename
+- Treeのdrag-and-drop、inline rename
 - realtime外部同期serviceとuser account
 - plugin実行基盤
 - Vimscript、Ex、register、macro、mapping全般の完全互換

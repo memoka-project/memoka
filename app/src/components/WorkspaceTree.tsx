@@ -160,11 +160,15 @@ export function WorkspaceTree({
       .catch(showError);
   };
 
-  const setCollapsed = (noteId: string, shouldCollapse: boolean): void => {
+  const setCollapsed = (
+    noteId: string,
+    shouldCollapse: boolean,
+    selected = selectedEntryId,
+  ): void => {
     const next = new Set(localCollapsedNoteIds);
     if (shouldCollapse) next.add(noteId);
     else next.delete(noteId);
-    persistTree(selectedEntryId, [...next].sort());
+    persistTree(selected, [...next].sort());
   };
 
   const selectIndex = (index: number): void => {
@@ -172,17 +176,23 @@ export function WorkspaceTree({
     persistTree(entries[bounded]?.note.noteId ?? null);
   };
 
-  const openSelected = async (): Promise<void> => {
-    if (!selectedEntryId) return;
+  const openEntry = async (entryId: string | null): Promise<void> => {
+    if (!entryId || busy) return;
     const entry = snapshot.namespaceEntries.find(
-      (entry) => entry.entryId === selectedEntryId,
+      (entry) => entry.entryId === entryId,
     );
-    if (!entry?.targetNoteId) {
-      setCollapsed(selectedEntryId, !collapsed.has(selectedEntryId));
+    if (!entry) return;
+    inputState.current = createTreeInputState();
+    const noteId = entry.targetNoteId;
+    if (!noteId) {
+      setCollapsed(entryId, !collapsed.has(entryId), entryId);
       return;
     }
-    await run(() => onOpenNote(targetWindowId, entry.targetNoteId!));
-    onRequestEditorFocus(targetWindowId);
+    if (entryId !== selectedEntryId) persistTree(entryId);
+    await run(async () => {
+      await onOpenNote(targetWindowId, noteId);
+      onRequestEditorFocus(targetWindowId);
+    });
   };
 
   const create = async (kind: "root" | "child" | "sibling"): Promise<void> => {
@@ -305,7 +315,7 @@ export function WorkspaceTree({
         }
         return;
       case "note.open":
-        void openSelected();
+        void openEntry(selectedEntryId);
         return;
       case "note.create_root":
         void create("root");
@@ -407,6 +417,7 @@ export function WorkspaceTree({
                 aria-level={entry.depth + 1}
                 aria-selected={selected}
                 aria-expanded={entry.hasChildren ? entry.expanded : undefined}
+                onClick={() => void openEntry(entry.note.noteId)}
                 style={
                   {
                     "--tree-depth": entry.depth,
@@ -431,7 +442,6 @@ export function WorkspaceTree({
           {error}
         </p>
       )}
-      <div className="utility-statusline">TREE</div>
     </aside>
   );
 }

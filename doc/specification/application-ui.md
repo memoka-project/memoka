@@ -83,7 +83,8 @@ TreeとOutlineはWindowではなくSidebarであるが、focus移動、Command-l
 application keyをWindowと共通に利用できる。
 
 - close buttonや常設help textを表示しない。
-- Sidebar名は下端のstatusline相当領域へ表示する。
+- Tree/Outline下端にはSidebar名やstatusline相当の表示帯を置かない。空Outlineでも表示しない。
+  focusは上端のaccent lineで示し、支援技術向けのTree/Outline識別名は保持する。
 - `Ctrl-w c`でfocused Sidebarを閉じられる。
 - `Ctrl-w o`はactive Window以外のWindowと左右Sidebarを閉じる。
 - Tree/Outlineの表示状態、幅、選択状態はTabPageごとに保持する。
@@ -97,9 +98,15 @@ TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折
 選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
-mouse hoverだけでは選択を変更せず、Tree固有のmouse操作UIは提供しない。
+Noteの行をsingle clickすると、そのEntryを選択して現在WindowへNoteを開き、EditorへDOM focusを移す。
+すでに選択中のNoteのclickでもEditorへfocusを戻す。mouse hoverだけでは選択を変更しない。
+mouseによる並べ替え、作成、inline renameは提供しない。
 
-Noteなしgroupはfolderとして表示し、EnterではEditorを開かず折り畳みをtoggleする。
+`↑/↓`は`k/j`と同じく表示Treeの前/次Entryを選択する。`←`は展開Entryを閉じ、それ以外では親へ移動する。
+`→`は閉じた親を展開し、展開済みなら最初の子へ移動する。折り畳まれた子孫は移動先から除外する。
+先頭/末尾では移動を止め、矢印操作中はTreeにfocusを保持してbrowserの既定scrollを防ぐ。
+
+Noteなしgroupはfolderとして表示し、EnterまたはclickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
 `:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
 削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
 

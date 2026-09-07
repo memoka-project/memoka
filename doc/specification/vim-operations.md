@@ -221,22 +221,25 @@ Window分割は同じ方向に既存のsplitがあれば、それらを含めて
 TreeはMain NamespaceのEntryを表示する。EntryはNoteを指すか、Noteを持たないグループである。
 EditorのVim modeではないが、共通cursor motionとCountを使用する。
 
-| Key          | 動作                                             |
-| ------------ | ------------------------------------------------ |
-| `[count]j/k` | 表示Treeの次/前Entry                             |
-| `gg/G`       | 表示Treeの先頭/末尾                              |
-| `h`          | 展開Entryを閉じる。閉じていれば親へ移動          |
-| `l`          | 閉じた親を展開。展開済みなら最初の子へ移動       |
-| `Enter`      | Noteを現在Windowで開く。グループは展開/折り畳み  |
-| `a`          | 選択Entryの次に空titleの兄弟Noteを作る           |
-| `c`          | 選択Entryの子として空titleのNoteを作る           |
-| `A`          | top-levelへ空titleのNoteを作る                   |
-| `[count]J/K` | sibling内で下/上へ並べ替える                     |
-| `[count]H/L` | 表示順を保って1段浅く/深くする                   |
-| `D`          | 選択Entryとlive子孫、そこに含むNoteをTrashへ移す |
-| `T`          | Trash検索を開く                                  |
+| Key                        | 動作                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `[count]j/k`、`[count]↓/↑` | 表示Treeの次/前Entry                                                                |
+| `gg/G`                     | 表示Treeの先頭/末尾                                                                 |
+| `h` / `←`                  | 展開Entryを閉じる。閉じていれば親へ移動                                             |
+| `l` / `→`                  | 閉じた親を展開。展開済みなら最初の子へ移動                                          |
+| `Enter` / クリック         | Noteを現在Windowで開きEditorへfocusする。グループはTreeにfocusを保って展開/折り畳み |
+| `a`                        | 選択Entryの次に空titleの兄弟Noteを作る                                              |
+| `c`                        | 選択Entryの子として空titleのNoteを作る                                              |
+| `A`                        | top-levelへ空titleのNoteを作る                                                      |
+| `[count]J/K`               | sibling内で下/上へ並べ替える                                                        |
+| `[count]H/L`               | 表示順を保って1段浅く/深くする                                                      |
+| `D`                        | 選択Entryとlive子孫、そこに含むNoteをTrashへ移す                                    |
+| `T`                        | Trash検索を開く                                                                     |
 
-Treeではmouseによるopen、並べ替え、作成、inline renameを提供しない。Note titleはBuffer内のRoot Headerで編集する。
+矢印keyはTree固有の補助操作として固定し、設定可能な共通cursor bindingを併用する。Editor内の矢印keyの挙動は変更しない。
+clickは対象Entryを選択してからEnter相当の操作を実行し、未完のTree key sequenceやCountは破棄する。
+mouse hoverだけでは選択を変更しない。mouseによる並べ替え、作成、inline renameは提供しない。
+Note titleはBuffer内のRoot Headerで編集する。
 `:group`で名前入力画面から選択Entryの子にグループを作り、`:rename-group`で選択グループを改名する。
 Entry未選択時はtop-levelへ作る。作成後は`H/L/J/K`でNoteと同じように配置を変更できる。
 グループ自体をBufferへ開かず、空グループのためにNote IDや仮Noteを作らない。

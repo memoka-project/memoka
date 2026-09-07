@@ -2885,10 +2885,9 @@ async function runSidebarFocusNavigation(sessionId) {
        const outline = document.querySelector('.workspace-outline');
        const list = document.querySelector('[aria-label="Sectionアウトライン"]');
        const row = list?.querySelector('[role="treeitem"]');
-       const statusline = outline?.querySelector('.utility-statusline');
        const commandline = document.querySelector('.application-commandline');
        if (!app || !tabBar || !workspace || !outline || !list || !row ||
-           !statusline || !commandline) return null;
+           !commandline) return null;
        const clones = [];
        for (let index = 0; index < 96; index += 1) {
          const clone = row.cloneNode(true);
@@ -2917,7 +2916,6 @@ async function runSidebarFocusNavigation(sessionId) {
          workspace: rect(workspace),
          outline: rect(outline),
          list: rect(list),
-         statusline: rect(statusline),
          commandline: rect(commandline),
          listClientHeight: list.clientHeight,
          listScrollHeight: list.scrollHeight
@@ -2938,8 +2936,8 @@ async function runSidebarFocusNavigation(sessionId) {
     outlineOverflow.app.bottom > outlineOverflow.viewportHeight + 1 ||
     outlineOverflow.tabBar.top < -1 ||
     outlineOverflow.tabBar.bottom > outlineOverflow.viewportHeight + 1 ||
-    outlineOverflow.list.bottom > outlineOverflow.statusline.top + 1 ||
-    outlineOverflow.statusline.bottom > outlineOverflow.workspace.bottom + 1 ||
+    outlineOverflow.list.bottom > outlineOverflow.outline.bottom + 1 ||
+    outlineOverflow.outline.bottom > outlineOverflow.workspace.bottom + 1 ||
     outlineOverflow.commandline.bottom > outlineOverflow.viewportHeight + 1
   ) {
     throw new Error(

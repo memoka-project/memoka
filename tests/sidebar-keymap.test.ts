@@ -249,6 +249,50 @@ describe("Memoka Sidebar application keymap", () => {
     });
   });
 
+  it.each([
+    ["ArrowUp", "cursor.logical-up"],
+    ["ArrowDown", "cursor.logical-down"],
+    ["ArrowLeft", "cursor.left"],
+    ["ArrowRight", "cursor.right"],
+  ])(
+    "passes %s to Tree navigation with counts and IME guards",
+    (arrow, command) => {
+      expect(
+        advanceSidebarInput(createSidebarInputState(), key(arrow)).consume,
+      ).toBe(false);
+      expect(
+        advanceTreeInput(createTreeInputState(), key(arrow)),
+      ).toMatchObject({
+        kind: "execute",
+        command,
+        count: 1,
+        countExplicit: false,
+        consume: true,
+      });
+      const count = advanceTreeInput(createTreeInputState(), key("3"));
+      expect(advanceTreeInput(count.state, key(arrow))).toMatchObject({
+        kind: "execute",
+        command,
+        count: 3,
+        countExplicit: true,
+        consume: true,
+      });
+      for (const modifiers of [
+        { isComposing: true },
+        { ctrlKey: true },
+        { altKey: true },
+        { metaKey: true },
+      ]) {
+        expect(
+          advanceTreeInput(createTreeInputState(), key(arrow, modifiers)),
+        ).toMatchObject({
+          kind: "unmapped",
+          consume: false,
+        });
+      }
+    },
+  );
+
   it("keeps a Tree count across the physical Shift keydown for uppercase commands", () => {
     const count = advanceTreeInput(createTreeInputState(), key("2"));
     const shift = advanceTreeInput(

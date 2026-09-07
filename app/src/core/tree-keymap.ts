@@ -171,7 +171,14 @@ function isModifierOnlyInput(event: TreeKeyInput): boolean {
 function effectiveTreeBindings(
   config: ApplicationKeyConfig,
 ): Array<{ command: TreeCommandId; keys: string[] }> {
-  const result: Array<{ command: TreeCommandId; keys: string[] }> = [];
+  // Native Tree navigation supplements the configurable Vim bindings without
+  // changing how arrow keys move the caret in Editor buffers.
+  const result: Array<{ command: TreeCommandId; keys: string[] }> = [
+    { command: "cursor.left", keys: ["ArrowLeft"] },
+    { command: "cursor.right", keys: ["ArrowRight"] },
+    { command: "cursor.logical-up", keys: ["ArrowUp"] },
+    { command: "cursor.logical-down", keys: ["ArrowDown"] },
+  ];
   const treeBindings =
     config.treeBindings ?? DEFAULT_APPLICATION_KEY_CONFIG.treeBindings!;
   const navigationBindings =

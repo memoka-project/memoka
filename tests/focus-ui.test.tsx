@@ -157,7 +157,8 @@ describe("application focus surfaces", () => {
     fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
     fireEvent.keyDown(emptyWindow, { key: "o", code: "KeyO" });
     const emptyOutline = await screen.findByLabelText("Outline");
-    expect(emptyOutline.textContent).toBe("OUTLINE");
+    expect(emptyOutline.textContent).toBe("");
+    expect(emptyOutline.querySelector(".utility-statusline")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(emptyOutline));
     expect(
       screen.queryByText("このWindowにはBufferが開かれていません。"),

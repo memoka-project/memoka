@@ -1678,6 +1678,9 @@ describe("Memoka Application utilities", () => {
       name: "Sectionアウトライン",
     });
     expect(document.activeElement).toBe(outline);
+    expect(
+      outline.closest("aside")?.querySelector(".utility-statusline"),
+    ).toBeNull();
     const rows = outline.querySelectorAll<HTMLElement>('[role="treeitem"]');
     expect(rows).toHaveLength(3);
     expect(rows[0]?.textContent).toContain("Root");

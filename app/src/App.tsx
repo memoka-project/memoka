@@ -931,6 +931,9 @@ export function App({
         noteId,
       );
       if (!navigation.handled) throw new Error(navigation.detail);
+      // Reopening the current Note is a navigation no-op, but leaving the Tree
+      // must still commit the Window focus owner before applying DOM focus.
+      await runtime.focusEditorWindow(windowId);
     },
     [runtime],
   );
@@ -3311,7 +3314,6 @@ function EmptyOutlineNotice({
       }}
     >
       <div className="utility-empty" />
-      <div className="utility-statusline">OUTLINE</div>
     </aside>
   );
 }
