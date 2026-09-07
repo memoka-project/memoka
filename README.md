@@ -13,7 +13,7 @@ Memokaは、Vimが手に馴染んでしまいメモ帳では満足できず、Ma
 
 ## 対応環境とインストール
 
-v0.2.0の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
+v0.2.1の対応範囲はWindows 11 x64とUbuntu 24.04 / 26.04 x86_64です。deb、macOS、ARM、
 Microsoft Store、apt repositoryは提供しません。
 
 ### Linux x86_64

@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-07
+
+- Google Driveへのバックアップを最大16世代ずつのまとめ転送に変更。失敗・中断したまとまりを優先して再試行し、転送後の検証と保護済み判定は世代ごとに維持。
+- 転送後の検証を新しい転送より低い優先度で続けて開始し、無操作待ちや次の定期実行待ちを解消。保持世代の整理は引き続き無操作時に実行。
+- バックアップ設定を保存先一覧と進捗・設定の詳細画面へ整理。注意事項を一箇所にまとめ、詳細画面では右下のボタンで一覧へ戻れるよう変更。まとめ転送の対象世代数も表示。
+- 中断等で残った失効済みのバックアップロックを自動検出・解除して一度再試行。使用中のロックや保存先の不一致は解除せず、手動の復旧経路も追加。
+- 新規Drive保存先を`Memoka/Backup-…`配下へ作成し、Google Pickerによる既存親フォルダーの選択と接続ごとの記憶に対応。既存保存先は移動しない。親フォルダーの選択にはGoogle Picker APIの有効化が必要。
+- GitHub Pages向けの紹介・プライバシーポリシー・利用規約を追加し、Google認証時の参照先を整備。
+- リリース時の依存ライセンス検査前に固定版sidecarを準備するよう修正。
+
 ## [0.2.0] - 2026-09-07
 
 - **互換性の変更:** WorkspaceをNamespace付きのデータモデルへ移行。更新前にアプリを閉じてデータ領域全体の外部バックアップを取り、移行後の領域を旧版で開かないでください。深さH6を超える既存Section等は移行前検査で停止します。
@@ -89,7 +99,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/memoka-project/memoka/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/memoka-project/memoka/compare/v0.1.8...v0.2.0
 [0.1.8]: https://github.com/memoka-project/memoka/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/memoka-project/memoka/compare/v0.1.6...v0.1.7
