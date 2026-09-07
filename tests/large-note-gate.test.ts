@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { NOTE_DOC_SCHEMA_VERSION } from "../app/src/core/documents";
 import { noteSearchLocationAtPosition } from "../app/src/core/note-search";
 import { saveStableEditorPosition } from "../app/src/core/stable-position";
 import {
@@ -195,7 +196,7 @@ describe("Memoka opt-in 10 MiB / 100k-line gate", () => {
       runtime.destroy();
       root.remove();
       const reopened = await CoreRuntime.open(persistence);
-      expect(reopened.noteDocument.schemaVersion).toBe(3);
+      expect(reopened.noteDocument.schemaVersion).toBe(NOTE_DOC_SCHEMA_VERSION);
       reopened.destroy();
     },
     120_000,
