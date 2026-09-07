@@ -257,11 +257,6 @@ export function BackupDialog({
               保存先を追加
             </button>
           )}
-          {(view.kind !== "list" || connections) && (
-            <button type="button" disabled={busy !== null} onClick={back}>
-              戻る
-            </button>
-          )}
         </header>
         {error?.key === "status" && <p role="alert">{error.message}</p>}
         {notice && (
@@ -458,12 +453,8 @@ export function BackupDialog({
                   登録と進行中のバックアップを中止（作成済みフォルダーは残す）
                 </button>
               )}
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => navigate(finishClose)}
-              >
-                閉じる
+              <button type="button" disabled={busy !== null} onClick={back}>
+                {view.kind === "list" && !connections ? "閉じる" : "戻る"}
               </button>
             </>
           )}

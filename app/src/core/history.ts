@@ -231,12 +231,18 @@ export interface BackupPort {
     filename: string,
   ): Promise<void>;
 }
+export interface CloudBackupParent {
+  readonly folder_id: string;
+  readonly name: string;
+  readonly automatic: boolean;
+}
 export interface CloudConnection {
   readonly id: string;
   readonly account_display_label: string;
   readonly oauth_client_id: string;
   readonly last_verified_at: string | null;
   readonly auth_state: string;
+  readonly backup_parent?: CloudBackupParent | null;
   readonly bindings: readonly {
     workspace_id: string;
     destination_id: string;
@@ -261,11 +267,14 @@ export interface CloudInitIntent {
   phase: string;
   root_folder_id: string | null;
   display_name: string | null;
+  placement?: { parent: CloudBackupParent; folder_id: string } | null;
 }
 export interface CloudPort {
   list(): Promise<CloudState>;
   connect(name: string): Promise<CloudAuthStatus>;
   reconnect(connectionId: string): Promise<CloudAuthStatus>;
+  pickBackupParent(connectionId: string): Promise<CloudAuthStatus>;
+  useDefaultBackupParent(connectionId: string): Promise<unknown>;
   authStatus(operationId: string): Promise<CloudAuthStatus>;
   cancelAuth(operationId: string): Promise<unknown>;
   disconnect(
@@ -322,6 +331,10 @@ export function createDefaultBackupPort(): BackupPort | null {
       list: () => cloud({ kind: "list" }),
       connect: (name) => cloud({ kind: "connect", name }),
       reconnect: (connectionId) => cloud({ kind: "reconnect", connectionId }),
+      pickBackupParent: (connectionId) =>
+        cloud({ kind: "pick-backup-parent", connectionId }),
+      useDefaultBackupParent: (connectionId) =>
+        cloud({ kind: "use-default-backup-parent", connectionId }),
       authStatus: (operationId) => cloud({ kind: "auth-status", operationId }),
       cancelAuth: (operationId) => cloud({ kind: "cancel-auth", operationId }),
       disconnect: (connectionId, stopDestinations = false) =>

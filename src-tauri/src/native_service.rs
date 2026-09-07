@@ -39,7 +39,7 @@ struct CloudJob {
     cancel: restic::Cancellation,
     target: Arc<Mutex<Option<String>>>,
     forced: Arc<Mutex<std::collections::VecDeque<String>>>,
-    allow_deferred: Arc<AtomicBool>,
+    allow_maintenance: Arc<AtomicBool>,
 }
 struct CloudCompletion {
     jobs: Arc<Mutex<Option<CloudJob>>>,
@@ -125,7 +125,7 @@ impl NativeService {
         self.schedule_cloud_work(force, false)
     }
     fn schedule_cloud_work(&self, force: Option<String>, idle: bool) -> Result<Value, ReadError> {
-        let allow_deferred = idle || force.is_some();
+        let allow_maintenance = idle || force.is_some();
         let mut job = self.cloud_job.lock().map_err(|_| busy())?;
         if self.cloud_paused.load(Ordering::Acquire) {
             return Err(ReadError::new(
@@ -143,8 +143,8 @@ impl NativeService {
             }
         }
         if let Some(job) = job.as_ref() {
-            if allow_deferred {
-                job.allow_deferred.store(true, Ordering::Release);
+            if allow_maintenance {
+                job.allow_maintenance.store(true, Ordering::Release);
             }
             if let Some(id) = force {
                 let mut queue = job.forced.lock().map_err(|_| busy())?;
@@ -161,11 +161,11 @@ impl NativeService {
         {
             return Ok(json!({"schema_version":3,"queued":false}));
         }
-        if !allow_deferred && self.backup_is_current() {
+        if !allow_maintenance && self.cloud_work_is_current()? {
             return Ok(json!({"schema_version":3,"queued":false,"reason":"already-uploaded"}));
         }
         let cancel = restic::cancellation();
-        let allow_deferred = Arc::new(AtomicBool::new(allow_deferred));
+        let allow_maintenance = Arc::new(AtomicBool::new(allow_maintenance));
         let target = Arc::new(Mutex::new(None));
         let forced = Arc::new(Mutex::new(
             force.into_iter().collect::<std::collections::VecDeque<_>>(),
@@ -174,7 +174,7 @@ impl NativeService {
             cancel: cancel.clone(),
             target: target.clone(),
             forced: forced.clone(),
-            allow_deferred: allow_deferred.clone(),
+            allow_maintenance: allow_maintenance.clone(),
         });
         let service = self.clone();
         std::thread::spawn(move || {
@@ -187,12 +187,21 @@ impl NativeService {
                 if cancel.load(Ordering::Acquire) {
                     break;
                 }
-                let deferred_at_start = allow_deferred.load(Ordering::Acquire);
+                let maintenance_at_start = allow_maintenance.load(Ordering::Acquire);
                 let result = (|| {
                     let force = forced.lock().map_err(|_| busy())?.pop_front();
                     let _source_lease = service.repositories.try_read().map_err(|_| busy())?;
-                    let transfers_only = service.departing() || !deferred_at_start;
-                    if force.is_none() && transfers_only && service.backup_is_current() {
+                    let policy = if service.departing() {
+                        backup_management::CloudWorkPolicy::UploadOnly
+                    } else if maintenance_at_start {
+                        backup_management::CloudWorkPolicy::All
+                    } else {
+                        backup_management::CloudWorkPolicy::UploadAndVerify
+                    };
+                    if force.is_none()
+                        && policy != backup_management::CloudWorkPolicy::All
+                        && service.cloud_work_is_current()?
+                    {
                         return Ok(false);
                     }
                     let restic = base
@@ -203,7 +212,7 @@ impl NativeService {
                         &service.workspace,
                         &restic,
                         force.as_deref(),
-                        transfers_only,
+                        policy,
                         |id| {
                             if let Ok(mut value) = target.lock() {
                                 *value = Some(id.into());
@@ -258,9 +267,9 @@ impl NativeService {
                                 continue;
                             }
                             // Do not lose an idle request arriving just as an
-                            // upload-only worker discovers an empty queue.
-                            if !deferred_at_start
-                                && allow_deferred.load(Ordering::Acquire)
+                            // upload/verification worker discovers an empty queue.
+                            if !maintenance_at_start
+                                && allow_maintenance.load(Ordering::Acquire)
                                 && !service.departing()
                             {
                                 continue;
@@ -510,6 +519,10 @@ impl NativeService {
                 .as_ref()
                 .is_some_and(|checkpoint| checkpoint.is_current(&self.workspace).unwrap_or(false))
         })
+    }
+    fn cloud_work_is_current(&self) -> Result<bool, ReadError> {
+        Ok(self.backup_is_current()
+            && (self.departing() || !backup_management::verification_due(&self.workspace)?))
     }
     fn invalidate_backup_checkpoint(&self) {
         if let Ok(mut checkpoint) = self.backup_checkpoint.lock() {
@@ -1011,7 +1024,10 @@ mod cloud_scheduler_tests {
         *service.backup_checkpoint.lock().unwrap() =
             crate::backup_checkpoint::BackupCheckpoint::record(&workspace).unwrap();
         assert!(service.backup_is_current());
-        assert_eq!(service.schedule_cloud(None).unwrap()["queued"], false);
+        // Uploaded data may skip capture/copy, but must still wake verification
+        // without waiting for an idle request. This check performs no I/O to Drive.
+        assert!(backup_management::verification_due(&workspace).unwrap());
+        assert!(!service.cloud_work_is_current().unwrap());
         service
             .backup(BackupAction::Departure {
                 active: true,
@@ -1019,6 +1035,8 @@ mod cloud_scheduler_tests {
             })
             .unwrap();
         let before: Value = backup::setting(&workspace, "backup.status").unwrap();
+        assert!(service.cloud_work_is_current().unwrap());
+        assert_eq!(service.schedule_cloud(None).unwrap()["queued"], false);
         assert_eq!(service.run_cycle().unwrap()["skipped"], true);
         assert!(!service.cloud_running());
         let cancel = restic::cancellation();
@@ -1026,7 +1044,7 @@ mod cloud_scheduler_tests {
             cancel: cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
-            allow_deferred: Default::default(),
+            allow_maintenance: Default::default(),
         });
         assert_eq!(service.run_cycle().unwrap()["skipped"], true);
         assert!(service.cloud_running());
@@ -1049,7 +1067,7 @@ mod cloud_scheduler_tests {
             cancel: new_cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
-            allow_deferred: Default::default(),
+            allow_maintenance: Default::default(),
         });
         drop(old);
         assert!(jobs.lock().unwrap().is_some());
@@ -1060,20 +1078,20 @@ mod cloud_scheduler_tests {
         assert!(jobs.lock().unwrap().is_none());
     }
     #[test]
-    fn idle_requests_enable_deferred_work_but_departure_does_not_cancel_active_work() {
+    fn idle_requests_enable_maintenance_but_departure_does_not_cancel_active_work() {
         let service = NativeService::new(PathBuf::from("unused"));
-        let allow_deferred = Arc::new(AtomicBool::new(false));
+        let allow_maintenance = Arc::new(AtomicBool::new(false));
         let cancel = restic::cancellation();
         *service.cloud_job.lock().unwrap() = Some(CloudJob {
             cancel: cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
-            allow_deferred: allow_deferred.clone(),
+            allow_maintenance: allow_maintenance.clone(),
         });
         service.schedule_cloud(None).unwrap();
-        assert!(!allow_deferred.load(Ordering::Acquire));
+        assert!(!allow_maintenance.load(Ordering::Acquire));
         service.schedule_cloud_work(None, true).unwrap();
-        assert!(allow_deferred.load(Ordering::Acquire));
+        assert!(allow_maintenance.load(Ordering::Acquire));
         service
             .backup(BackupAction::Departure {
                 active: true,
@@ -1107,7 +1125,7 @@ mod cloud_scheduler_tests {
             cancel: cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
-            allow_deferred: Default::default(),
+            allow_maintenance: Default::default(),
         });
         let waiting = service.clone();
         let (send, receive) = std::sync::mpsc::channel();
@@ -1139,7 +1157,7 @@ mod cloud_scheduler_tests {
             cancel: cancel.clone(),
             target: Default::default(),
             forced: Default::default(),
-            allow_deferred: Default::default(),
+            allow_maintenance: Default::default(),
         });
         let departure = |active, id: &str| {
             service
@@ -1270,7 +1288,7 @@ mod cloud_scheduler_tests {
             cancel: cancel.clone(),
             target: Arc::new(Mutex::new(Some("target".into()))),
             forced: Default::default(),
-            allow_deferred: Default::default(),
+            allow_maintenance: Default::default(),
         });
         assert!(!cancel.load(Ordering::Acquire));
         assert!(service.cloud_running());
@@ -1406,6 +1424,12 @@ pub enum CloudRequest {
     Reconnect {
         connection_id: String,
     },
+    PickBackupParent {
+        connection_id: String,
+    },
+    UseDefaultBackupParent {
+        connection_id: String,
+    },
     AuthStatus {
         operation_id: String,
     },
@@ -1443,6 +1467,13 @@ pub(crate) async fn workspace_cloud(
             CloudRequest::Reconnect { connection_id } => Ok(serde_json::to_value(
                 service.start_auth(String::new(), Some(connection_id), true)?,
             )?),
+            CloudRequest::PickBackupParent { connection_id } => Ok(serde_json::to_value(
+                service.start_parent_selection(connection_id, true)?,
+            )?),
+            CloudRequest::UseDefaultBackupParent { connection_id } => {
+                service.use_default_parent(&connection_id)?;
+                Ok(json!({"updated":true}))
+            }
             CloudRequest::AuthStatus { operation_id } => Ok(serde_json::to_value(
                 crate::cloud::auth_status(&operation_id)?,
             )?),

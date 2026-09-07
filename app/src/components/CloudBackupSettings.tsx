@@ -15,7 +15,11 @@ import { useBackupNotice } from "./backup-notice-context";
 
 const terminal = (status: CloudAuthStatus): boolean =>
   ["success", "denied", "expired", "cancelled", "error"].includes(status.phase);
-function useAuthorization(cloud: CloudPort, onConnected: () => void) {
+function useAuthorization(
+  cloud: CloudPort,
+  onConnected: () => void,
+  purpose: "connection" | "parent" = "connection",
+) {
   const [status, setStatus] = useState<CloudAuthStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -98,16 +102,29 @@ function useAuthorization(cloud: CloudPort, onConnected: () => void) {
               {
                 starting: "接続を準備中…",
                 "waiting-browser":
-                  "ブラウザでGoogle認可を待っています（5分以内）",
+                  purpose === "parent"
+                    ? "ブラウザで親フォルダーを1つ選択してください（5分以内）"
+                    : "ブラウザでGoogle認可を待っています（5分以内）",
                 exchanging: "認可結果を確認中…",
                 saving: "暗号化した接続情報を保存中…",
-                verifying: "既存の保存先と認証情報を検証中…",
+                verifying:
+                  purpose === "parent"
+                    ? "同じGoogleアカウント・親フォルダーの書き込み権限を確認中…"
+                    : "既存の保存先と認証情報を検証中…",
                 success:
-                  "Google接続を保存しました（バックアップの転送完了ではありません）",
+                  purpose === "parent"
+                    ? "親フォルダーを記憶しました。次の新規登録から使用します。"
+                    : "Google接続を保存しました（バックアップの転送完了ではありません）",
                 denied: "Google認可が拒否されました",
                 expired: "認証の有効時間が切れました",
-                cancelled: "接続を中止しました",
-                error: "接続できませんでした",
+                cancelled:
+                  purpose === "parent"
+                    ? "選択を中止しました。親フォルダーは変更していません。"
+                    : "接続を中止しました",
+                error:
+                  purpose === "parent"
+                    ? "親フォルダーを変更できませんでした"
+                    : "接続できませんでした",
               } as Record<string, string>
             )[status.phase] ?? status.phase}
           </p>
@@ -122,7 +139,7 @@ function useAuthorization(cloud: CloudPort, onConnected: () => void) {
                   .catch((cause) => setError(nativeErrorMessage(cause)));
             }}
           >
-            認証を中止
+            {purpose === "parent" ? "フォルダー選択を中止" : "認証を中止"}
           </button>
         )}
         {error && <p role="alert">{error}</p>}
@@ -163,6 +180,10 @@ export function CloudBackupSettings({
   const [intents, setIntents] = useState<readonly CloudInitIntent[]>([]);
   const [retry, setRetry] = useState("");
   const [revision, setRevision] = useState(0);
+  const [resettingParent, setResettingParent] = useState(false);
+  const [intentsLoadedFor, setIntentsLoadedFor] = useState("");
+  const intentsRequest = JSON.stringify([connectionId, revision, error]);
+  const intentsLoading = !!connectionId && intentsLoadedFor !== intentsRequest;
   const [disconnectWarnings, setDisconnectWarnings] = useState<
     ReadonlySet<string>
   >(new Set());
@@ -182,12 +203,35 @@ export function CloudBackupSettings({
     setRevision((r) => r + 1);
     onConnected();
   });
+  const parentAuth = useAuthorization(
+    cloud,
+    () => {
+      setRevision((r) => r + 1);
+    },
+    "parent",
+  );
+  const connectionBusy =
+    busy || auth.busy || parentAuth.busy || resettingParent;
+  const selectedConnection = state?.connections.find(
+    (c) => c.id === connectionId,
+  );
+  const retryIntent = intents.find((intent) => intent.id === retry);
+  const parent = retryIntent
+    ? retryIntent.placement?.parent
+    : selectedConnection?.backup_parent;
+  useBackupNotice(
+    "cloud-parent",
+    adding
+      ? "親フォルダーの選択はGoogle接続ごとに記憶し、次に新しく作る保存先にだけ適用します。既存の保存先や初期化を再開する保存先は移動しません。フォルダー選択にはGoogle Picker APIの有効化が必要です。"
+      : null,
+  );
   useEffect(() => {
     let alive = true;
     void cloud.list().then(
       (value) => {
         if (alive) {
           setState(value);
+          setLoadError(null);
           setConnectionId((id) =>
             value.connections.some(
               (connection) =>
@@ -214,19 +258,23 @@ export function CloudBackupSettings({
       (values) => {
         if (alive) {
           setIntents(values);
+          setIntentsLoadedFor(intentsRequest);
           setRetry((id) =>
             values.some((v) => v.id === id) ? id : (values[0]?.id ?? ""),
           );
         }
       },
       (cause) => {
-        if (alive) setLoadError(nativeErrorMessage(cause));
+        if (alive) {
+          setLoadError(nativeErrorMessage(cause));
+          setIntentsLoadedFor(intentsRequest);
+        }
       },
     );
     return () => {
       alive = false;
     };
-  }, [cloud, connectionId, error, revision]);
+  }, [cloud, connectionId, intentsRequest]);
   return (
     <section className="backup-destination-card" aria-label="Google Drive接続">
       <h3 tabIndex={-1} data-backup-focus="connections-title">
@@ -261,7 +309,7 @@ export function CloudBackupSettings({
             </label>
             <button
               type="submit"
-              disabled={busy || auth.busy || !state?.configured}
+              disabled={connectionBusy || !state?.configured}
             >
               Googleへ新規接続
             </button>
@@ -299,7 +347,7 @@ export function CloudBackupSettings({
               )}
               <button
                 type="button"
-                disabled={auth.busy || busy || !state.configured}
+                disabled={connectionBusy || !state.configured}
                 onClick={() =>
                   void auth.start(() => cloud.reconnect(connection.id))
                 }
@@ -308,7 +356,7 @@ export function CloudBackupSettings({
               </button>{" "}
               <button
                 type="button"
-                disabled={auth.busy || busy}
+                disabled={connectionBusy}
                 onClick={() => {
                   void cloud.disconnect(connection.id).then(
                     () => setRevision((r) => r + 1),
@@ -334,7 +382,7 @@ export function CloudBackupSettings({
                     <summary>利用中の保存先も停止して接続を解除する</summary>
                     <button
                       type="button"
-                      disabled={auth.busy || busy}
+                      disabled={connectionBusy}
                       onClick={() => {
                         void cloud.disconnect(connection.id, true).then(
                           () => setRevision((r) => r + 1),
@@ -353,7 +401,7 @@ export function CloudBackupSettings({
       {mode === "add" && (
         <button
           type="button"
-          disabled={busy}
+          disabled={connectionBusy}
           data-backup-focus="connections"
           onClick={onManageConnections}
         >
@@ -366,7 +414,7 @@ export function CloudBackupSettings({
             type="button"
             disabled={
               !allowAdd ||
-              busy ||
+              connectionBusy ||
               !state?.connections.some((c) => c.auth_state === "connected")
             }
             onClick={() => setAdding(true)}
@@ -379,7 +427,12 @@ export function CloudBackupSettings({
               Google接続
               <select
                 value={connectionId}
-                onChange={(event) => setConnectionId(event.target.value)}
+                disabled={connectionBusy}
+                onChange={(event) => {
+                  setRetry("");
+                  setIntents([]);
+                  setConnectionId(event.target.value);
+                }}
               >
                 {state?.connections
                   .filter((c) => c.auth_state === "connected")
@@ -395,6 +448,7 @@ export function CloudBackupSettings({
                 初期化の再開
                 <select
                   value={retry}
+                  disabled={connectionBusy || intentsLoading}
                   onChange={(event) => setRetry(event.target.value)}
                 >
                   <option value="">別の新しい保存先を作る</option>
@@ -406,10 +460,54 @@ export function CloudBackupSettings({
                 </select>
               </label>
             )}
+            <fieldset
+              disabled={
+                connectionBusy || intentsLoading || !!retry || !connectionId
+              }
+            >
+              <legend>新しい保存先の親フォルダー</legend>
+              <p>
+                {retryIntent && !retryIntent.placement
+                  ? "マイドライブ直下（旧方式での登録を再開）"
+                  : parent
+                    ? parent.name +
+                      (parent.automatic ? "（自動）" : "（選択済み）")
+                    : "Memoka（自動）"}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  void parentAuth.start(() =>
+                    cloud.pickBackupParent(connectionId),
+                  )
+                }
+              >
+                既存フォルダーを選択
+              </button>{" "}
+              <button
+                type="button"
+                disabled={!selectedConnection?.backup_parent}
+                onClick={() => {
+                  setResettingParent(true);
+                  setLoadError(null);
+                  void cloud
+                    .useDefaultBackupParent(connectionId)
+                    .then(
+                      () => setRevision((r) => r + 1),
+                      (cause) => setLoadError(nativeErrorMessage(cause)),
+                    )
+                    .finally(() => setResettingParent(false));
+                }}
+              >
+                Memoka（自動）に戻す
+              </button>
+            </fieldset>
+            {parentAuth.content}
             {error && <p role="alert">{error}</p>}
             <PasswordForm
               busy={
-                busy ||
+                connectionBusy ||
+                intentsLoading ||
                 !state?.connections.some(
                   (connection) =>
                     connection.id === connectionId &&

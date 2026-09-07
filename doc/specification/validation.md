@@ -151,6 +151,17 @@ CLIのlocks/unlockは登録対象だけに限定し、--remove-all/--force/任�
 復旧のWorkspace ID維持と追加保存先の除外、別OS-user接続のbinding未登録・不一致でwriter拒否、単独read/restoreとの分離を検証する。
 実Driveでの残存lock復旧と異なるPCからのwriter拒否は別途手動確認し、local Restic/registry単体テストを実Driveの検証済みと扱わない。
 
+Drive upload完了後、キー入力を継続していてもidle/tick待ちなしでverifyへ進み、他先のuploadを優先することを確認する。
+upload済みreceiptで検証をskipしないこと、disabled/backoff/異なるrepositoryでは起動しないこと、完了後のno-op、終了・再起動での台帳引き継ぎを検証する。
+保持整理は従来どおりidle/明示要求に限定し、転送済みと検証済みの件数・保護日時を混同しない。
+新規Drive親・子の予約ID永続化、作成応答喪失後の同じID再開、409照合、重複したmarked親の拒否、名称だけの既存folderを流用しないことをfake control planeで検査する。
+旧root/binding/repository IDと旧intentのroot配置、親選択の接続単位の保存とreset、未許可祖先でscopeを広げないこと、既存repository/shortcut/Shared Drive等の拒否を検証する。
+Desktop Pickerのパラメータ、PKCE/state、選択なし/複数ID/重複queryの拒否、取消・期限切れ・鍵取得失敗で旧親/資格情報の保持を検査する。
+UIの右下「戻る」が詳細/追加から一覧、接続管理から元画面へ1段ずつ戻り、一覧のみ「閉じる」となること、draft破棄確認・focus復帰・poll維持を確認する。
+親選択中の登録/接続変更禁止、既存intentの固定親表示、離脱cancel、成功時のみ表示更新、選択操作だけでは転送を開始しないことを検証する。
+実GoogleではPicker API有効化後、利用者作成folder選択・同一account確認・取消、複数新規先が`Memoka/Backup-…`または選択親配下へ作られること、旧root継続を手動確認する。
+このnative Pickerと実Drive配置変更の手動確認は未実施であり、mock/loopback試験の合格で代替しない。
+
 実Googleアカウントの認証、token更新、認可取消後の既存root参照、元config/keyringを使わない別OSユーザー/別PC復旧が正式提供のgateである。
 Linux/WindowsでGUI転送中の編集・local Capture・履歴read、終了/切替/Updater、中断後の子孫回収もnative確認する。
 未知object、shortcut、同名衝突では整理を止める。ゴミ箱移動と空き容量の区別を実確認する。

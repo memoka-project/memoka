@@ -42,11 +42,15 @@ Workspaceごとの設定であり、`:backup-settings`から変更する。パ�
 設定は保持数・無効化・解除・既存パスワード再登録（ローカル履歴は自動保存間隔も）を扱う。
 「保存先を追加」は種類・ディレクトリ/Google接続・保持数・パスワードを入力する別画面で、成功後は一覧へ戻る。
 Google接続管理は追加画面とDrive詳細の設定から開く共通subviewとする。
-Esc/Ctrl-cはsubviewから元画面、詳細/追加から一覧、一覧からmodalを閉じる順に戻る。
+右下のfooterボタンは一覧のみ「閉じる」、詳細・追加・Google接続管理は「戻る」とする。右上の戻るボタンは置かない。
+このボタンとEsc/Ctrl-cはsubviewから元画面、詳細/追加から一覧、一覧からmodalを閉じる順に戻る。
 未保存入力を破棄する離脱は確認し、pollや詳細タブ切替ではdraftを維持する。入力パスワードは送信・取消・離脱時に破棄する。
 注意書きは共通「注意事項」欄へ集約し、保持数削減・解除等の直前の注意は同じ欄で明示する。入力/処理エラーは対象箇所へ表示する。
 Google接続はWorkspace設定と別のOSユーザー単位で共有し、
 認証operationの進捗だけをpollする。接続の再認証/取消/ローカル解除と転送の開始/中断は別の操作である。
+Google追加画面には新規保存先の親folderを表示する。既定は自動`Memoka`で、Google Desktop Pickerによる通常folderの明示選択・自動設定へのresetを提供する。
+選択済み親は接続ごとに記憶し、次回の新規登録に使う。再開intentには固定済みの親（旧intentはroot直下）を表示し、その親変更を無効にする。
+親選択中は接続変更・保存先登録との同時操作を防ぎ、画面から離脱すると未完了の認可を取り消す。選択だけで転送を予約しない。
 Googleは実験的で、公式AppImageとstandalone CLIへMemoka用Desktop OAuth clientを組み込む。
 CLIの`--client-file`、`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`で指定した絶対path、application config directoryの
 `google-desktop-client.json`、組み込み設定の順に解決する。明示設定が不正なら組み込み設定へfallbackしない。

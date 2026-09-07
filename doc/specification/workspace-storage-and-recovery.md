@@ -144,7 +144,7 @@ schema 2の`path`/`credential`、旧単一`additional`、status、転送台帳�
 
 同梱rclone 1.75.1の`serve restic --stdio`をResticの転送路として使う。ローカルの正常世代を
 独立した鍵のrepositoryへ`restic copy`する。repositoryのfile copy、sync、mount、常駐daemonは使わない。
-初版はマイドライブのMemoka専用新規folderに限定し、Shared Drive、service account、任意backendは受け付けない。
+repositoryはマイドライブのMemoka専用新規folderに限定し、Shared Drive、service account、任意backendは受け付けない。
 表示名で場所を特定せず、作成応答で得たfolder IDと検証済みrepository IDを保持する。
 
 Google接続はOSユーザー単位でWorkspace外へ保存し、複数保存先から共有できる。OAuth tokenとResticパスワードは別の秘密である。
@@ -154,10 +154,22 @@ OSブラウザ、loopback callback、state、PKCE S256を用い、
 再認証は別の暗号化configで行い、同じclient/account、scope、登録root・repository IDの検証後に切り替える。
 
 登録はWorkspace ID・destination ID・nonce・実folder ID・repository ID・phaseを持つintentで再開する。
-folder作成応答が不明な場合はnonce照合し、未発見/複数候補では再作成しない。init後の鍵保存失敗は同じパスワードで再試行する。
+新規intentは`placement`へ親folder ID・表示名・自動選択フラグと、Drive `files.generateIds`で予約した子folder IDを保持する。
+親と子の作成予定ID・nonceはそれぞれPOST前にWorkspace外のowner-only状態へ永続化する。応答喪失時は同じIDで照合・再試行し、409ならGETでID・親・appPropertiesを再照合する。別IDで重複作成しない。
+`placement`のない旧intentは従来のマイドライブ直下を維持し、nonce照合で再開する。旧方式の応答喪失で未発見/複数候補なら再作成しない。
+init後の鍵保存失敗は同じパスワードで再試行する。
 既存root消失、権限不足、repository mismatchを自動initで隠さない。同一Workspaceの同一repository二重登録を拒否する。
 
-専用folder名は`MemokaBackup-<Workspace ID>-<destination ID>`で、destination IDは保存先の新規登録ごとに発行するUUIDv7である。
+新規保存先の既定配置は`Memoka/Backup-<Workspace ID>-<destination ID>`で、destination IDは保存先の新規登録ごとに発行するUUIDv7である。
+旧`MemokaBackup-<Workspace ID>-<destination ID>`を含む登録済みroot・binding・repository IDは変更せず、移動も行わない。
+親`Memoka`は`appProperties.memoka_container=1`で同定する通常folderで、repository用markerは付けない。同名だけのfolderを流用しない。
+同じaccount/clientの自動親作成はOSユーザー内のleaseで直列化し、marked folderが複数なら明示選択を要求する。親の削除・移動・統合は行わない。
+Google接続metadataのoptional `backup_parent`へ親ID・表示名・automaticを記憶する。旧metadataの未設定は自動`Memoka`と解釈する。
+追加画面のGoogle Desktop Pickerで利用者作成の既存folderも選択できる。同じDesktop client・drive.file・state・PKCE・loopbackを使い、OAuth codeと選択IDはnative内で処理する。
+同じaccount、書き込み可能な通常folderを確認後だけ親設定と暗号化tokenを更新し、拒否・取消・期限切れ・通信失敗は従前の設定と資格情報を維持する。
+My Drive root、Shared Drive、shortcut、trash、既存repositoryと識別可能な子孫を拒否する。drive.fileで未許可の祖先は取得できないため、全祖先走査を保証せず、scopeを拡大しない。
+選択機能には同じCloud projectでGoogle Picker APIを有効にする。選択・自動へのresetは今後の新規登録だけに適用し、途中intentの親は固定する。
+記憶した親が消失・権限喪失した場合は自動で別の親を作らず、再選択を求める。親は取消・保存先解除・保持整理の削除対象にしない。
 実folderの`appProperties`にもWorkspace ID・destination IDを記録する。表示名が変わってもfolder IDで同定する。
 Workspace IDはデータのidentityであり端末のidentityではない。復旧はWorkspace/Note/Section IDを維持する一方、追加保存先の設定を引き継がない。
 復旧先からの新規登録は新しいdestination IDとfolderを作り、元PCのbackup folderをwriterとして再利用しない。
@@ -171,9 +183,11 @@ Workspace IDはデータのidentityであり端末のidentityではない。復�
 
 通常Google転送は1世代の転送、検証、または整理単位に最長1時間を割り当て、1単位ごとに保存先を巡回する。
 新規編集がなくても約1分ごとのscheduler tickでpendingを再評価する。新しい世代の作成は実行中のcopyを中断しない。
-自動転送はuploadを先に完了し、検証・整理は30秒以上キー入力・クリック・スクロールがなく、検索索引更新がidleで、
-先行するcapture等がないtickで開始する。tick完了から次の確認まで60秒待つため、転送完了から検証開始までの固定期限はない。
-明示的な「今すぐ転送」はこの無操作待ちによらず検証・整理も再試行できる。
+自動転送はuploadを先に完了し、同じworkerの次の独立した処理単位で検証を開始する。検証には無操作待ち・次の60秒tick待ちを挟まない。
+検証待ち台帳のlocal-only probeをupload済みreceiptと分離し、receiptがcurrentでも検証待ちならworkerを起動できる。台帳は永続化し、再起動直後のschedulerでも再開する。
+通常workerはuploadとverifyを許可し、departure中は未開始のverifyを開始しない。idleまたは明示要求だけがmaintainを許可する。
+保持整理は30秒以上キー入力・クリック・スクロールがなく、検索索引更新がidleで、先行するcapture等がないtickで開始する。
+明示的な「今すぐ転送」はこの無操作待ちによらず検証・整理も再試行できる。障害時のbackoffは検証にも引き続き適用する。
 複数先に転送できるデータがある場合、後続の検証・整理よりuploadを優先する。
 copy前には接続先identityとローカルsourceを確認するが、毎回のremote全世代一覧・検証は行わない。
 成功したcopyは期待descriptorを`TransferLedger.awaiting_verification`に永続化し、転送待ちから外す。`delivered`・保護済み日時は進めない。
@@ -290,7 +304,8 @@ Core保存barrier自体は省かず、SQLite read transactionで現在のcontent
 receiptが成立する場合は全Noteのvalidate、Restic起動・世代一覧取得、copyの再起動を省く。保存状態や保護済み日時を書き換えない。
 receiptは永続化せず、再起動時は通常確認する。編集、保存先の追加/変更、転送失敗や台帳不一致、明示check/maintain等は通常経路へ戻す。
 snapshotを変更しない正常なidle保持確認はreceiptを捨てない。これは完全性検査ではなく、明示checkや変更時の検証を代替しない。
-通常のcloud tickもreceiptにより未転送がなければ新しいworkerを起動しない。idle/manualの検証・整理は独立して実行する。
+通常のcloud tickはreceiptが成立し、かつ今実行できる検証待ちもなければ新しいworkerを起動しない。
+転送済み・検証待ちはreceiptだけでskipせず、通常workerで検証を続ける。idle/manualの保持整理は独立して実行する。
 通常のbackup no-op判定だけでは開始済みworkerを中断しない。quitはこの判定とは別に中断し、切替・更新は完了待ちを継続する。
 
 終了・Workspace切替・Updaterは同じ進捗overlayで、保存中、履歴作成・転送中、編集復帰中、中断待ち、実行中、失敗を区別する。

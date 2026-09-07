@@ -2,6 +2,7 @@
 //! session or original connection ID is needed by standalone recovery.
 mod drive;
 mod oauth;
+mod parent;
 use crate::{
     credentials::{Credentials, OsCredentials},
     document_model::ReadError,
@@ -11,6 +12,7 @@ use crate::{
     restic::{self, Cancellation, Password, Repository, Restic},
 };
 pub(crate) use drive::validate_repository_layout;
+pub use parent::BackupParent;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -83,6 +85,8 @@ pub struct CloudConnection {
     pub last_verified_at: Option<String>,
     #[serde(default)]
     pub bindings: Vec<Binding>,
+    #[serde(default)]
+    pub backup_parent: Option<BackupParent>,
 }
 #[derive(Clone)]
 pub struct CloudService {
@@ -164,6 +168,9 @@ impl CloudService {
                     ReadError::new("UNSAFE_PATH", "Invalid encrypted config reference")
                 })?,
         )?;
+        if let Some(parent) = &meta.backup_parent {
+            validate_folder_id(&parent.folder_id)?;
+        }
         if !meta.config_key_ref.starts_with(&format!("cloud:{id}:")) {
             return Err(ReadError::new(
                 "UNSAFE_PATH",
@@ -276,6 +283,10 @@ impl CloudService {
             if let Some(folder) = &intent.root_folder_id {
                 validate_folder_id(folder)?;
             }
+            if let Some(placement) = &intent.placement {
+                validate_folder_id(&placement.parent.folder_id)?;
+                validate_folder_id(&placement.folder_id)?;
+            }
         }
         Ok(intents)
     }
@@ -297,10 +308,12 @@ impl CloudService {
             ));
         }
         let lease = self.lease(connection_id)?;
-        let meta = self.connection(connection_id)?;
+        let mut meta = self.connection(connection_id)?;
         let workspace_id = crate::read_service::WorkspaceReader::open(workspace)?.workspace_id;
         let source = crate::backup::local_repository(workspace, restic, false)?;
         let mut intents = self.initialization_intents(connection_id)?;
+        let mut context = self.context(&meta, lease, "")?;
+        let token = drive::access_token(&context, &restic.cancel)?;
         let index = if let Some(id) = retry_intent {
             intents
                 .iter()
@@ -312,6 +325,18 @@ impl CloudService {
                     )
                 })?
         } else {
+            let parent = parent::resolve(self, &meta, &token, &restic.cancel)?;
+            let placement = parent::Placement {
+                parent: parent.clone(),
+                folder_id: parent::generate_id(&token, &restic.cancel)?,
+            };
+            // Remember the default only for future registrations. Each intent
+            // fixes its own parent and reserved child ID before any create.
+            meta.backup_parent = Some(parent);
+            private_files::atomic_json(
+                &self.directory(connection_id)?.join("metadata.json"),
+                &meta,
+            )?;
             intents.push(DriveInitIntent {
                 id: uuid::Uuid::now_v7().to_string(),
                 workspace_id: workspace_id.clone(),
@@ -321,27 +346,39 @@ impl CloudService {
                 root_folder_id: None,
                 display_name: None,
                 repository_id: None,
+                placement: Some(placement),
             });
             intents.len() - 1
         };
         let path = self.directory(connection_id)?.join("operation-state.json");
         private_files::atomic_json(&path, &intents)?;
-        let mut context = self.context(&meta, lease, "")?;
-        let token = drive::access_token(&context, &restic.cancel)?;
         if intents[index].root_folder_id.is_none() {
             let may_create = intents[index].phase == "planned";
-            // Persist before sending. An ambiguous/lost response never causes
-            // a second folder; the nonce is used to reconcile the first.
+            // Persist before sending. New intents reconcile the reserved ID
+            // and properties; legacy intents still use their original nonce.
             intents[index].phase = "folder-requested".into();
             private_files::atomic_json(&path, &intents)?;
-            let folder = drive::create_or_find_root(
-                &token,
-                &workspace_id,
-                &intents[index].id,
-                &intents[index].nonce,
-                may_create,
-                &restic.cancel,
-            )?;
+            let folder = if let Some(placement) = &intents[index].placement {
+                parent::provision_backup(
+                    &token,
+                    placement,
+                    &workspace_id,
+                    &intents[index].id,
+                    &intents[index].nonce,
+                    &restic.cancel,
+                )?
+            } else {
+                // Old unfinished registrations retain their original root
+                // placement and nonce reconciliation (including lost responses).
+                drive::create_or_find_root(
+                    &token,
+                    &workspace_id,
+                    &intents[index].id,
+                    &intents[index].nonce,
+                    may_create,
+                    &restic.cancel,
+                )?
+            };
             intents[index].root_folder_id = folder["id"].as_str().map(str::to_string);
             intents[index].display_name = folder["name"].as_str().map(str::to_string);
             intents[index].phase = "folder-created".into();
@@ -599,6 +636,29 @@ impl CloudService {
         reconnect: Option<String>,
         open_browser: bool,
     ) -> Result<AuthStatus, ReadError> {
+        self.start_authorization(name, reconnect, open_browser, false)
+    }
+    pub fn start_parent_selection(
+        &self,
+        connection_id: String,
+        open_browser: bool,
+    ) -> Result<AuthStatus, ReadError> {
+        self.connection(&connection_id)?;
+        self.start_authorization(String::new(), Some(connection_id), open_browser, true)
+    }
+    pub fn use_default_parent(&self, connection_id: &str) -> Result<(), ReadError> {
+        let _lease = self.lease(connection_id)?;
+        let mut meta = self.connection(connection_id)?;
+        meta.backup_parent = None;
+        private_files::atomic_json(&self.directory(connection_id)?.join("metadata.json"), &meta)
+    }
+    fn start_authorization(
+        &self,
+        name: String,
+        reconnect: Option<String>,
+        open_browser: bool,
+        pick_folder: bool,
+    ) -> Result<AuthStatus, ReadError> {
         let profile = oauth::Profile::load(self.profile_file.as_deref())?;
         let id = reconnect
             .clone()
@@ -643,6 +703,7 @@ impl CloudService {
                 profile,
                 &operation,
                 open_browser,
+                pick_folder,
             );
             if let Ok(mut state) = operation.status.lock() {
                 state.authorization_url = None;
@@ -671,6 +732,7 @@ impl CloudService {
         profile: oauth::Profile,
         operation: &AuthOperation,
         open_browser: bool,
+        pick_folder: bool,
     ) -> Result<(), ReadError> {
         let lease = self.lease(id)?;
         let old = if reconnect {
@@ -699,7 +761,12 @@ impl CloudService {
         // protected. A failed reconnect never changes the previous key.
         self.credentials.set(&key_ref, &key)?;
         let result = (|| {
-            let token = oauth::authorize(&profile, operation, open_browser)?;
+            let (token, picked_folder) = if pick_folder {
+                let (token, folder) = oauth::authorize_folder(&profile, operation, open_browser)?;
+                (token, Some(folder))
+            } else {
+                (oauth::authorize(&profile, operation, open_browser)?, None)
+            };
             operation.phase("saving")?;
             rclone.create_config(
                 &config,
@@ -730,7 +797,19 @@ impl CloudService {
                     "Reconnect selected a different Google account; the previous connection was not changed",
                 ));
             }
-            if let Some(old) = &old {
+            let backup_parent = if let Some(folder) = picked_folder {
+                Some(parent::validate(
+                    &access,
+                    &folder,
+                    false,
+                    &operation.cancel,
+                )?)
+            } else {
+                old.as_ref().and_then(|meta| meta.backup_parent.clone())
+            };
+            // Picking a parent grants access for future destinations only.
+            // It must not enumerate/initialize/move existing repositories.
+            if let Some(old) = old.as_ref().filter(|_| !pick_folder) {
                 for binding in &old.bindings {
                     operation.check()?;
                     drive::validate_root(&access, &binding.root_folder_id, &operation.cancel)?;
@@ -770,6 +849,7 @@ impl CloudService {
                 auth_state: "connected".into(),
                 last_verified_at: Some(chrono::Utc::now().to_rfc3339()),
                 bindings: old.as_ref().map_or_else(Vec::new, |m| m.bindings.clone()),
+                backup_parent,
             };
             // Cancellation and commit share a lock; a late callback cannot
             // commit after cancel was acknowledged to the user.
@@ -834,6 +914,8 @@ pub struct DriveInitIntent {
     pub root_folder_id: Option<String>,
     pub display_name: Option<String>,
     pub repository_id: Option<String>,
+    #[serde(default)]
+    pub placement: Option<parent::Placement>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct AuthStatus {
@@ -948,7 +1030,7 @@ mod tests {
             self.values.lock().unwrap().remove(id);
         }
     }
-    fn metadata(id: &str) -> CloudConnection {
+    pub(super) fn metadata(id: &str) -> CloudConnection {
         CloudConnection {
             schema_version: 1,
             id: id.into(),
@@ -964,6 +1046,7 @@ mod tests {
             auth_state: "connected".into(),
             last_verified_at: None,
             bindings: Vec::new(),
+            backup_parent: None,
         }
     }
     #[test]
@@ -1021,7 +1104,12 @@ mod tests {
             credentials: credentials.clone(),
         };
         let id = uuid::Uuid::now_v7().to_string();
-        let meta = metadata(&id);
+        let mut meta = metadata(&id);
+        meta.backup_parent = Some(BackupParent {
+            folder_id: "original-parent".into(),
+            name: "Original".into(),
+            automatic: false,
+        });
         let directory = service.directory(&id).unwrap();
         private_files::atomic_json(&directory.join("metadata.json"), &meta).unwrap();
         let key = random_key();
@@ -1047,38 +1135,90 @@ mod tests {
                 "CANCELLED",
             ),
         ] {
-            credentials.locked.store(locked, Ordering::Relaxed);
-            let operation = AuthOperation {
-                status: Mutex::new(AuthStatus {
-                    operation_id: "test".into(),
-                    connection_id: id.clone(),
-                    phase: "starting".into(),
-                    authorization_url: None,
-                    error: None,
-                }),
-                cancel: restic::cancellation(),
-                started: Instant::now(),
-            };
-            operation.cancel.store(cancelled, Ordering::Release);
-            let profile = oauth::Profile {
-                id: "test".into(),
-                client_id: client.into(),
-                client_secret: zeroize::Zeroizing::new("dummy-client-secret".into()),
-            };
-            assert_eq!(
-                service
-                    .authenticate(&id, "", true, profile, &operation, false)
-                    .unwrap_err()
-                    .code,
-                expected
-            );
-            assert_eq!(fs::read(directory.join("metadata.json")).unwrap(), original);
-            assert_eq!(
-                credentials.values.lock().unwrap().get(&meta.config_key_ref),
-                Some(&key)
-            );
-            assert!(operation.status.lock().unwrap().authorization_url.is_none());
+            for pick_folder in [false, true] {
+                credentials.locked.store(locked, Ordering::Relaxed);
+                let operation = AuthOperation {
+                    status: Mutex::new(AuthStatus {
+                        operation_id: "test".into(),
+                        connection_id: id.clone(),
+                        phase: "starting".into(),
+                        authorization_url: None,
+                        error: None,
+                    }),
+                    cancel: restic::cancellation(),
+                    started: Instant::now(),
+                };
+                operation.cancel.store(cancelled, Ordering::Release);
+                let profile = oauth::Profile {
+                    id: "test".into(),
+                    client_id: client.into(),
+                    client_secret: zeroize::Zeroizing::new("dummy-client-secret".into()),
+                };
+                assert_eq!(
+                    service
+                        .authenticate(&id, "", true, profile, &operation, false, pick_folder)
+                        .unwrap_err()
+                        .code,
+                    expected
+                );
+                assert_eq!(fs::read(directory.join("metadata.json")).unwrap(), original);
+                assert_eq!(
+                    credentials.values.lock().unwrap().get(&meta.config_key_ref),
+                    Some(&key)
+                );
+                assert!(operation.status.lock().unwrap().authorization_url.is_none());
+            }
         }
+    }
+    #[test]
+    fn legacy_locations_load_unchanged_and_default_parent_reset_does_not_touch_bindings_or_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Arc::new(TestCredentials::default());
+        let service = CloudService {
+            root: dir.path().join("cloud"),
+            profile_file: None,
+            credentials: credentials.clone(),
+        };
+        let id = uuid::Uuid::now_v7().to_string();
+        let mut meta = metadata(&id);
+        meta.bindings.push(Binding {
+            workspace_id: uuid::Uuid::now_v7().to_string(),
+            destination_id: uuid::Uuid::now_v7().to_string(),
+            root_folder_id: "legacy-root".into(),
+            repository_id: "a".repeat(64),
+            credential_ref: "repo:key".into(),
+            enabled: true,
+        });
+        let mut legacy = serde_json::to_value(&meta).unwrap();
+        legacy.as_object_mut().unwrap().remove("backup_parent");
+        let path = service.directory(&id).unwrap().join("metadata.json");
+        private_files::atomic_json(&path, &legacy).unwrap();
+        assert!(service.connection(&id).unwrap().backup_parent.is_none());
+        let old_intent = json!({"id":uuid::Uuid::now_v7().to_string(),"workspace_id":meta.bindings[0].workspace_id,"connection_id":id,"nonce":uuid::Uuid::now_v7().to_string(),"phase":"folder-requested","root_folder_id":null,"display_name":null,"repository_id":null});
+        let intent: DriveInitIntent = serde_json::from_value(old_intent).unwrap();
+        assert!(intent.placement.is_none());
+        assert_eq!(intent.phase, "folder-requested");
+        meta.backup_parent = Some(BackupParent {
+            folder_id: "chosen123".into(),
+            name: "User folder".into(),
+            automatic: false,
+        });
+        private_files::atomic_json(&path, &meta).unwrap();
+        credentials
+            .set(&meta.config_key_ref, "unchanged-key")
+            .unwrap();
+        credentials.locked.store(true, Ordering::Relaxed);
+        service.use_default_parent(&id).unwrap(); // local metadata only
+        meta.backup_parent = None;
+        assert_eq!(
+            serde_json::to_value(service.connection(&id).unwrap()).unwrap(),
+            serde_json::to_value(&meta).unwrap()
+        );
+        credentials.locked.store(false, Ordering::Relaxed);
+        assert_eq!(
+            credentials.get(&meta.config_key_ref).unwrap(),
+            "unchanged-key"
+        );
     }
     #[test]
     fn removing_one_binding_keeps_shared_credentials_and_disconnect_requires_explicit_stop() {

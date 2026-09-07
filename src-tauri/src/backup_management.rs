@@ -11,9 +11,15 @@ use crate::{
     read_service::{WorkspaceReader, checked_directory},
     restic::{Password, Repository, Restic, args},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, ffi::OsString, fs, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
+    fs,
+    path::Path,
+    time::Duration,
+};
 
 #[cfg(test)]
 use crate::credentials::credentials_error;
@@ -22,6 +28,71 @@ use crate::credentials::{Credentials, OsCredentials};
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn normal_cloud_work_verifies_without_idle_but_does_not_run_retention() {
+        for (policy, expected) in [
+            (CloudWorkPolicy::UploadOnly, [true, false, false]),
+            (CloudWorkPolicy::UploadAndVerify, [true, true, false]),
+            (CloudWorkPolicy::All, [true, true, true]),
+        ] {
+            assert_eq!(
+                [CloudWork::Upload, CloudWork::Verify, CloudWork::Maintain]
+                    .map(|kind| policy.allows(kind)),
+                expected
+            );
+        }
+    }
+    #[test]
+    fn verification_wakeup_is_durable_and_obeys_enablement_backoff_and_repository_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path();
+        backup::tests::fixture(workspace);
+        let id = uuid::Uuid::now_v7().to_string();
+        let repository = "b".repeat(64);
+        let mut config = backup::config(workspace).unwrap();
+        config.destinations.push(AdditionalTarget {
+            id: id.clone(),
+            enabled: true,
+            repository_id: repository.clone(),
+            credential_ref: "unused".into(),
+            retention: Retention::default(),
+            location: DestinationLocation::GoogleDrive {
+                connection_id: uuid::Uuid::now_v7().to_string(),
+                root_folder_id: "test-only-folder".into(),
+                display_name: "test".into(),
+            },
+        });
+        backup::save_setting(workspace, "backup.config", &config).unwrap();
+        let key = ledger_key(&id);
+        // The wakeup reads keys only; descriptors need not be deserialized.
+        let queue = json!({"repository_id":repository,"awaiting_verification":{"generation":{}},"delivered":[]});
+        backup::save_setting(workspace, &key, &queue).unwrap();
+        assert!(verification_due(workspace).unwrap());
+        let mut status = backup::status(workspace).unwrap();
+        let state = status.destinations.entry(id.clone()).or_default();
+        state.verification_error = Some(ReadError::new("CLOUD_IO", "retry later"));
+        state.next_retry_at = Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339());
+        backup::save_setting(workspace, "backup.status", &status).unwrap();
+        assert!(!verification_due(workspace).unwrap());
+        status.destinations.get_mut(&id).unwrap().next_retry_at =
+            Some((chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339());
+        backup::save_setting(workspace, "backup.status", &status).unwrap();
+        assert!(verification_due(workspace).unwrap());
+        config.destinations[0].enabled = false;
+        backup::save_setting(workspace, "backup.config", &config).unwrap();
+        assert!(!verification_due(workspace).unwrap());
+        config.destinations[0].enabled = true;
+        config.destinations[0].repository_id = "c".repeat(64);
+        backup::save_setting(workspace, "backup.config", &config).unwrap();
+        assert!(!verification_due(workspace).unwrap());
+        config.destinations[0].repository_id = repository;
+        backup::save_setting(workspace, "backup.config", &config).unwrap();
+        let mut verified = queue;
+        verified["awaiting_verification"] = json!({});
+        verified["delivered"] = json!(["generation"]);
+        backup::save_setting(workspace, &key, &verified).unwrap();
+        assert!(!verification_due(workspace).unwrap());
+    }
     #[test]
     fn deferred_copy_survives_restart_lost_response_and_source_retention() {
         use crate::backup_progress::Operation;
@@ -122,9 +193,13 @@ mod tests {
         };
         backup::save_setting(&workspace, "backup.config", &config).unwrap();
         assert!(
-            !cloud_unit(&workspace, &restic, None, true, |_| panic!(
-                "must defer verification"
-            ))
+            !cloud_unit(
+                &workspace,
+                &restic,
+                None,
+                CloudWorkPolicy::UploadOnly,
+                |_| panic!("must defer verification")
+            )
             .unwrap()
         );
         config.destinations[0] = target.clone();
@@ -1434,6 +1509,55 @@ enum CloudWork {
     Maintain,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloudWorkPolicy {
+    UploadOnly,
+    UploadAndVerify,
+    All,
+}
+impl CloudWorkPolicy {
+    fn allows(self, work: CloudWork) -> bool {
+        work == CloudWork::Upload
+            || (work == CloudWork::Verify && self != Self::UploadOnly)
+            || self == Self::All
+    }
+}
+
+/// A cheap, local-only wakeup check. Do not deserialize large generation
+/// descriptors or contact a repository merely to decide whether to spawn.
+pub(crate) fn verification_due(workspace: &Path) -> Result<bool, ReadError> {
+    #[derive(Default, Deserialize)]
+    #[serde(default)]
+    struct Queue {
+        repository_id: Option<String>,
+        awaiting_verification: BTreeMap<String, serde::de::IgnoredAny>,
+    }
+    let mut db = settings::connection(workspace)?;
+    let tx = db.transaction()?;
+    let config: settings::BackupConfig = settings::read(&tx, "backup.config")?;
+    let status: settings::BackupStatus = settings::read(&tx, "backup.status")?;
+    for target in config
+        .destinations
+        .iter()
+        .filter(|t| t.enabled && t.location.is_cloud())
+    {
+        if !cloud_retry_due(
+            status.destinations.get(&target.id),
+            chrono::Utc::now(),
+            CloudWork::Verify,
+        ) {
+            continue;
+        }
+        let queue: Queue = settings::read(&tx, &ledger_key(&target.id))?;
+        if queue.repository_id.as_deref() == Some(&target.repository_id)
+            && !queue.awaiting_verification.is_empty()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn upload_pending(ledger: &TransferLedger, local: &[Generation], repository_id: &str) -> bool {
     ledger.repository_id.as_deref() != Some(repository_id)
         || local.iter().any(|g| {
@@ -1455,7 +1579,7 @@ pub(crate) fn cloud_unit(
     workspace: &Path,
     restic: &Restic,
     force: Option<&str>,
-    transfers_only: bool,
+    policy: CloudWorkPolicy,
     selected: impl FnOnce(&str),
 ) -> Result<bool, ReadError> {
     let mut targets: Vec<_> = backup::config(workspace)?
@@ -1480,7 +1604,7 @@ pub(crate) fn cloud_unit(
     // Send new generations to every available destination before starting
     // remote verification or maintenance. Departure stops at this boundary.
     for kind in [CloudWork::Upload, CloudWork::Verify, CloudWork::Maintain] {
-        if transfers_only && kind != CloudWork::Upload {
+        if !policy.allows(kind) {
             break;
         }
         for (index, target) in targets.iter().enumerate() {

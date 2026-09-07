@@ -153,11 +153,17 @@ export async function runNamespaceHistory({
         assert.equal(cloudUi.tokenFields, 0);
         await clickElement(
           sessionId,
-          await waitForElement(sessionId, ".backup-dialog-header button"),
+          await waitForElement(
+            sessionId,
+            ".backup-dialog > .application-modal-actions > button:last-child",
+          ),
         );
         await clickElement(
           sessionId,
-          await waitForElement(sessionId, ".backup-dialog-header button"),
+          await waitForElement(
+            sessionId,
+            ".backup-dialog > .application-modal-actions > button:last-child",
+          ),
         );
         await clickElement(
           sessionId,

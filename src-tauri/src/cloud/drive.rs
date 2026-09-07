@@ -5,7 +5,7 @@ use crate::{document_model::ReadError, rclone::DriveRepository, restic::Cancella
 use serde_json::{Value, json};
 use std::{io::Read, sync::atomic::Ordering};
 const API: &str = "https://www.googleapis.com/drive/v3/files";
-const FOLDER: &str = "application/vnd.google-apps.folder";
+pub(super) const FOLDER: &str = "application/vnd.google-apps.folder";
 pub(super) fn access_token(
     context: &DriveRepository,
     cancel: &Cancellation,
@@ -36,7 +36,7 @@ pub(super) fn access_token(
 fn protocol() -> ReadError {
     ReadError::new("CLOUD_PROTOCOL", "Invalid Google Drive response")
 }
-fn request(
+pub(super) fn request(
     method: reqwest::Method,
     path: &str,
     query: &[(&str, &str)],
@@ -80,6 +80,12 @@ fn request(
         ));
     }
     if !status.is_success() {
+        if status.as_u16() == 409 {
+            return Err(ReadError::new(
+                "CLOUD_ALREADY_EXISTS",
+                "The reserved Drive file ID already exists",
+            ));
+        }
         if status.as_u16() == 404 {
             return Err(ReadError::new(
                 "CLOUD_ROOT_UNAVAILABLE",
@@ -154,7 +160,7 @@ pub(super) fn account_id(token: &str, cancel: &Cancellation) -> Result<String, R
         .map(str::to_string)
         .ok_or_else(protocol)
 }
-fn validate_root_object(value: &Value, id: &str) -> Result<(), ReadError> {
+pub(super) fn validate_root_object(value: &Value, id: &str) -> Result<(), ReadError> {
     if value["id"] != id
         || value["mimeType"] != FOLDER
         || value.get("driveId").is_some()

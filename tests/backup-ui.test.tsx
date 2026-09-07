@@ -380,7 +380,7 @@ describe("backup settings and read-only history", () => {
     await addLocal();
     const password = screen.getByLabelText("パスワード") as HTMLInputElement;
     fireEvent.change(password, { target: { value: "sensitive-draft" } });
-    fireEvent.keyDown(password, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
     expect(close).not.toHaveBeenCalled();
     expect(screen.getByText("未保存の入力を破棄しますか？")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "編集を続ける" }));
@@ -505,11 +505,13 @@ describe("backup settings and read-only history", () => {
       expect(getComputedStyle(dialog).maxHeight).toBe("100%");
       await details();
       fireEvent.click(screen.getByRole("tab", { name: "進捗" }));
-      const first = screen.getByRole("button", { name: "戻る" });
+      expect(screen.queryByRole("button", { name: "閉じる" })).toBeNull();
+      expect(dialog.querySelector(".backup-dialog-header button")).toBeNull();
+      const first = screen.getByRole("tab", { name: "進捗" });
       first.focus();
       fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
       expect(document.activeElement).toBe(
-        screen.getByRole("button", { name: "閉じる" }),
+        screen.getByRole("button", { name: "戻る" }),
       );
       fireEvent.keyDown(document.activeElement!, { key: "Tab" });
       expect(document.activeElement).toBe(first);

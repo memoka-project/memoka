@@ -166,6 +166,11 @@ memoka-cli cloud connect google-drive --name recovery --client-file /absolute/go
 ```
 
 sourceから配布物を作る際も`MEMOKA_GOOGLE_DESKTOP_CLIENT_JSON`をcompile環境へ設定すれば組み込める。
+既存の親folderを選択する機能には、OAuth clientと同じCloud projectで**Google Picker API**を追加で有効にする。
+Google公式の[Desktop Picker](https://developers.google.com/workspace/drive/picker/guides/desktop-mobile-picker)をOSブラウザで使い、
+既存Desktop clientの認可URLへ`trigger_onepick=true`、`allow_folder_selection=true`、`allow_multiple=false`、folder MIME filterを付ける。
+Web client、API key、埋め込みWebView、認可用の自前公開ページは追加しない。scopeは引き続きdrive.fileだけとし、選択結果・code/tokenはnative内で検証する。
+Picker APIが未有効の場合も、自動`Memoka`配下への新規作成・既存rootの転送はPickerを使わない。
 再認証でclientを変更すると旧folderへのアクセスを保証できないため、既存接続は同じclientを要求する。
 Googleの認可取消後の再アクセス・別PC復旧は実験的機能の未検証条件として[検証仕様](validation.md#google-driveの追加検証)に残す。
 

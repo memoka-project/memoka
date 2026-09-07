@@ -95,6 +95,22 @@ pub(super) fn authorize(
     operation: &AuthOperation,
     open_browser: bool,
 ) -> Result<Value, ReadError> {
+    authorize_request(profile, operation, open_browser, false).map(|(token, _)| token)
+}
+pub(super) fn authorize_folder(
+    profile: &Profile,
+    operation: &AuthOperation,
+    open_browser: bool,
+) -> Result<(Value, String), ReadError> {
+    let (token, folder) = authorize_request(profile, operation, open_browser, true)?;
+    Ok((token, folder.ok_or_else(no_folder)?))
+}
+fn authorize_request(
+    profile: &Profile,
+    operation: &AuthOperation,
+    open_browser: bool,
+    pick_folder: bool,
+) -> Result<(Value, Option<String>), ReadError> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| {
         ReadError::new(
             "CLOUD_CALLBACK_UNAVAILABLE",
@@ -113,14 +129,25 @@ pub(super) fn authorize(
                 .map_err(|_| invalid_profile())?,
         );
     let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let (url, state) = client
+    let request = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new(SCOPE.into()))
         .set_pkce_challenge(challenge)
         .add_extra_param("access_type", "offline")
         .add_extra_param("prompt", "consent")
-        .add_extra_param("include_granted_scopes", "false")
-        .url();
+        .add_extra_param("include_granted_scopes", "false");
+    // Google Desktop Picker runs in the system browser, using the same
+    // Desktop client, drive.file scope, loopback callback and PKCE exchange.
+    let request = if pick_folder {
+        request
+            .add_extra_param("trigger_onepick", "true")
+            .add_extra_param("allow_folder_selection", "true")
+            .add_extra_param("allow_multiple", "false")
+            .add_extra_param("mimetypes", super::drive::FOLDER)
+    } else {
+        request
+    };
+    let (url, state) = request.url();
     operation.phase("waiting-browser")?;
     operation
         .status
@@ -131,7 +158,7 @@ pub(super) fn authorize(
         open_authorization_url(&url)?;
     }
     let began = Instant::now();
-    let code = loop {
+    let (code, picked_folder) = loop {
         operation.check()?;
         if began.elapsed() >= Duration::from_secs(300) {
             return Err(ReadError::new(
@@ -155,7 +182,7 @@ pub(super) fn authorize(
                     }
                 }
                 let response = if bytes.len() <= 8192 {
-                    parse_callback(&bytes, state.secret(), port)
+                    parse_authorization_callback(&bytes, state.secret(), port, pick_folder)
                 } else {
                     Err(ReadError::new("CLOUD_CALLBACK_INVALID", "Invalid callback"))
                 };
@@ -174,7 +201,14 @@ pub(super) fn authorize(
                 );
                 match response {
                     Ok(code) => break code,
-                    Err(error) if error.code == "CLOUD_AUTH_DENIED" => return Err(error),
+                    Err(error)
+                        if matches!(
+                            error.code.as_str(),
+                            "CLOUD_AUTH_DENIED" | "CLOUD_FOLDER_NOT_SELECTED"
+                        ) =>
+                    {
+                        return Err(error);
+                    }
                     _ => continue,
                 }
             }
@@ -240,9 +274,10 @@ pub(super) fn authorize(
     let expires = chrono::Utc::now()
         + chrono::Duration::from_std(token.expires_in().unwrap_or(Duration::from_secs(3600)))
             .map_err(|_| invalid_profile())?;
-    Ok(
+    Ok((
         json!({"access_token":token.access_token().secret(),"refresh_token":refresh.secret(),"token_type":"Bearer","expiry":expires.to_rfc3339()}),
-    )
+        picked_folder,
+    ))
 }
 fn validate_scopes(scopes: &[&str]) -> Result<(), ReadError> {
     if scopes == [SCOPE] {
@@ -254,7 +289,22 @@ fn validate_scopes(scopes: &[&str]) -> Result<(), ReadError> {
         ))
     }
 }
+#[cfg(test)]
 fn parse_callback(bytes: &[u8], expected: &str, port: u16) -> Result<String, ReadError> {
+    parse_authorization_callback(bytes, expected, port, false).map(|(code, _)| code)
+}
+fn no_folder() -> ReadError {
+    ReadError::new(
+        "CLOUD_FOLDER_NOT_SELECTED",
+        "フォルダーが選択されませんでした。保存先は変更していません。Google Picker APIが有効か確認し、通常フォルダーを1つ選択してください。",
+    )
+}
+fn parse_authorization_callback(
+    bytes: &[u8],
+    expected: &str,
+    port: u16,
+    pick_folder: bool,
+) -> Result<(String, Option<String>), ReadError> {
     let bad = || ReadError::new("CLOUD_CALLBACK_INVALID", "Invalid OAuth callback");
     let text = std::str::from_utf8(bytes).map_err(|_| bad())?;
     let line = text.lines().next().ok_or_else(bad)?;
@@ -283,10 +333,20 @@ fn parse_callback(bytes: &[u8], expected: &str, port: u16) -> Result<String, Rea
             "Google authorization was denied",
         ));
     }
-    query
+    let code = query
         .remove("code")
         .filter(|s| !s.is_empty() && s.len() < 4096)
-        .ok_or_else(bad)
+        .ok_or_else(bad)?;
+    // Inspect selection only after checking state and duplicate keys. A
+    // forged callback must not cancel the legitimate pending selection.
+    let folder = if pick_folder {
+        let id = query.remove("picked_file_ids").ok_or_else(no_folder)?;
+        super::validate_folder_id(&id).map_err(|_| no_folder())?;
+        Some(id)
+    } else {
+        None
+    };
+    Ok((code, folder))
 }
 fn open_authorization_url(url: &url::Url) -> Result<(), ReadError> {
     if url.scheme() != "https"
@@ -332,7 +392,7 @@ mod tests {
             net::TcpStream,
             sync::{Arc, Mutex, atomic::Ordering},
         };
-        for deny in [true, false] {
+        for (deny, pick_folder) in [(true, false), (false, false), (true, true), (false, true)] {
             let op = Arc::new(AuthOperation {
                 status: Mutex::new(super::super::AuthStatus {
                     operation_id: "test".into(),
@@ -346,7 +406,7 @@ mod tests {
             });
             let worker = op.clone();
             let thread = std::thread::spawn(move || {
-                authorize(
+                authorize_request(
                     &Profile {
                         id: "test".into(),
                         client_id: "offline.apps.googleusercontent.com".into(),
@@ -354,6 +414,7 @@ mod tests {
                     },
                     &worker,
                     false,
+                    pick_folder,
                 )
             });
             let url = loop {
@@ -367,6 +428,16 @@ mod tests {
             assert_eq!(parameters["scope"], SCOPE);
             assert_eq!(parameters["code_challenge_method"], "S256");
             assert!(!parameters.contains_key("code_verifier"));
+            if pick_folder {
+                assert_eq!(parameters["trigger_onepick"], "true");
+                assert_eq!(parameters["allow_folder_selection"], "true");
+                assert_eq!(parameters["allow_multiple"], "false");
+                assert_eq!(parameters["mimetypes"], super::super::drive::FOLDER);
+                assert_eq!(parameters["prompt"], "consent");
+                assert_eq!(parameters["include_granted_scopes"], "false");
+            } else {
+                assert!(!parameters.contains_key("trigger_onepick"));
+            }
             let redirect = url::Url::parse(&parameters["redirect_uri"]).unwrap();
             assert_eq!(redirect.host_str(), Some("127.0.0.1"));
             let port = redirect.port().unwrap();
@@ -433,6 +504,53 @@ mod tests {
             .unwrap_err()
             .code,
             "CLOUD_AUTH_DENIED"
+        );
+    }
+    #[test]
+    fn picker_requires_exactly_one_folder_id_after_a_valid_state_and_code() {
+        let callback = |query: &str| {
+            format!("GET /callback?state=expected&code=c{query} HTTP/1.1\r\n\r\n").into_bytes()
+        };
+        assert_eq!(
+            parse_authorization_callback(
+                &callback("&picked_file_ids=folder123"),
+                "expected",
+                5,
+                true
+            )
+            .unwrap(),
+            ("c".into(), Some("folder123".into()))
+        );
+        for query in [
+            "",
+            "&picked_file_ids=",
+            "&picked_file_ids=folder123,folder456",
+            "&picked_file_ids=folder123%2Fpath",
+            "&picked_file_ids=root",
+        ] {
+            assert_eq!(
+                parse_authorization_callback(&callback(query), "expected", 5, true)
+                    .unwrap_err()
+                    .code,
+                "CLOUD_FOLDER_NOT_SELECTED"
+            );
+            assert_eq!(
+                parse_authorization_callback(&callback(query), "forged", 5, true)
+                    .unwrap_err()
+                    .code,
+                "CLOUD_CALLBACK_INVALID"
+            );
+        }
+        assert_eq!(
+            parse_authorization_callback(
+                &callback("&picked_file_ids=folder123&picked_file_ids=folder123"),
+                "expected",
+                5,
+                true
+            )
+            .unwrap_err()
+            .code,
+            "CLOUD_CALLBACK_INVALID"
         );
     }
     #[test]
