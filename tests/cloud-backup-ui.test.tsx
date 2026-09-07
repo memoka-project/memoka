@@ -283,22 +283,32 @@ describe("Google backup settings boundary", () => {
     expect(focus).toHaveBeenCalledOnce();
   });
   it("does not connect or poll OAuth on opening settings and disables connect without a client", async () => {
+    let finishLoading!: () => void;
     const cloud = cloudFixture({
-      list: vi.fn(async () => ({
-        configured: false,
-        experimental: true,
-        connections: [],
-      })),
+      list: vi.fn(
+        () =>
+          new Promise<Awaited<ReturnType<CloudPort["list"]>>>((resolve) => {
+            finishLoading = () =>
+              resolve({
+                configured: false,
+                experimental: true,
+                connections: [],
+              });
+          }),
+      ),
     });
     panel(cloud);
-    await waitFor(() =>
-      expect(
-        screen
-          .getByRole("button", { name: "Googleへ新規接続" })
-          .hasAttribute("disabled"),
-      ).toBe(true),
-    );
-    expect(screen.getByText(/Google接続は未設定です/)).toBeTruthy();
+    const connect = screen.getByRole("button", { name: "Googleへ新規接続" });
+    // The button is disabled during loading too, so it cannot be used as a
+    // signal that the asynchronous client configuration has been rendered.
+    expect(connect.hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByText(/Google接続は未設定です/)).toBeNull();
+    expect(cloud.connect).not.toHaveBeenCalled();
+    expect(cloud.authStatus).not.toHaveBeenCalled();
+    expect(cloud.reconnect).not.toHaveBeenCalled();
+    await act(async () => finishLoading());
+    expect(await screen.findByText(/Google接続は未設定です/)).toBeTruthy();
+    expect(connect.hasAttribute("disabled")).toBe(true);
     expect(cloud.connect).not.toHaveBeenCalled();
     expect(cloud.authStatus).not.toHaveBeenCalled();
     expect(cloud.reconnect).not.toHaveBeenCalled();
