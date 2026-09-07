@@ -509,6 +509,81 @@ describe("Details blocks", () => {
     }
   });
 
+  it.each(["note-search-match", "search-match"] as const)(
+    "reveals nested Details before clamping a Normal %s destination",
+    async (kind) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const element = document.createElement("div");
+      document.body.append(element);
+      const { editor, adapter } = runtime.editorForTesting(
+        "window-1",
+        element,
+        {
+          directBodyOnly: false,
+        },
+      );
+      try {
+        editor.commands.setContent(
+          parseMarkdownNote(
+            `# Note\n\n${markdown}\n\n<details>\n<summary>別の詳細</summary>\n\n別の本文\n\n</details>`,
+            editor.schema,
+            runtime.noteId,
+          )!.root.toJSON(),
+        );
+        let summary = 0;
+        let unrelatedSummary = 0;
+        let target = 0;
+        let blockId = "";
+        editor.state.doc.descendants((node, pos) => {
+          if (!summary && node.type.name === "detailsSummary")
+            summary = pos + 1;
+          if (
+            node.type.name === "detailsSummary" &&
+            node.textContent === "別の詳細"
+          )
+            unrelatedSummary = pos + 1;
+          if (node.isTextblock && node.textContent === "内側の本文") {
+            target = pos + 1;
+            blockId = node.attrs.blockId;
+          }
+        });
+        editor.commands.setTextSelection(unrelatedSummary);
+        runDetailsFoldCommand(editor.view, "close");
+        editor.commands.setTextSelection(summary);
+        runDetailsFoldCommand(editor.view, "close-recursive");
+        expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(3);
+        const before = editor.state.doc;
+        const undoDepth = runtime.noteDocument.undoManager.undoStack.length;
+        const destination = {
+          kind,
+          noteId: runtime.noteId,
+          sectionId: runtime.noteId,
+          blockId,
+          offset: 1,
+          query: "側の本文",
+          sectionLineNumber: 1,
+        };
+        expect(
+          adapter.applyNavigationDestination(destination, "search:details", {
+            focus: false,
+            reveal: false,
+          }),
+        ).toBe("search:details");
+        expect(editor.state.selection.head).toBe(target + 1);
+        expect(adapter.vimSnapshot.mode).toBe("normal");
+        expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(1);
+        expect(editor.state.doc.eq(before)).toBe(true);
+        expect(runtime.noteDocument.undoManager.undoStack).toHaveLength(
+          undoDepth,
+        );
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        element.remove();
+      }
+    },
+  );
+
   it("supports summary Enter, body Ctrl-Enter, and whole-block yy/dd", () => {
     const { editor, select, destroy } = harness();
     try {

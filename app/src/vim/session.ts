@@ -1,5 +1,8 @@
 import { Extension } from "@tiptap/core";
-import { runDetailsFoldCommand } from "../editor/details";
+import {
+  revealDetailsFoldsAtPosition,
+  runDetailsFoldCommand,
+} from "../editor/details";
 import {
   insertListParagraph,
   isDirectListParagraph,
@@ -2614,6 +2617,9 @@ export class ProductVimSession {
     this.input = createVimInputState();
     this.visualLine = null;
     applyNativeCaretMode(view.dom, "normal");
+    // Hidden body lines are absent from Normal cursor candidates. Reveal an
+    // explicit destination before clamping, rather than snapping to summary.
+    revealDetailsFoldsAtPosition(view, position);
     applyModeSelection(view, "normal", position, focus);
     this.updateNormalModeImeGuard();
     this.refreshVisualLineDecorations(view);

@@ -209,6 +209,7 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - Summary上の`yy/dd`、Visual Lineの`y/d`は本文を含むDetails全体を対象にする。本文側では通常の論理行操作を使う。
 - 開閉はEditor instance / Window内の表示状態であり、Yjs本文・Undo・Markdownを変更しない。Editorを再生成するとimport時の状態に戻る。
 - 閉じた本文も`/`と`,g`の検索対象とし、移動先を隠しているDetailsを自動展開する。検索previewはDetails本文を展開して表示する。
+  通常motion用の可視論理行へcaretを補正する前に、移動先を含む閉じた祖先Detailsを展開する。無関係なDetailsの開閉状態と編集履歴は変更しない。
 - Markdown import/exportは`<details>`、`<summary>...</summary>`、空行を挟んだ本文Markdown、`</details>`で表す。
   importした`open`属性を初期状態として保持する。`name`による排他的accordionなど任意のHTML属性は取り込まない。
   Details内部のMarkdown見出しはSectionに分離せず、literalなParagraphとして保持する。

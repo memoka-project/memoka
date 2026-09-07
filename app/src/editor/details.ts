@@ -9,6 +9,7 @@ import {
   PluginKey,
   TextSelection,
   type EditorState,
+  type Transaction,
 } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { SectionFoldAction } from "./section-folding";
@@ -270,26 +271,39 @@ export const DetailsFolding = Extension.create({
         },
         props: { decorations: (state) => foldKey.getState(state)?.decorations },
         appendTransaction: (_transactions, _old, state) => {
-          const folds = foldKey.getState(state);
-          if (!folds) return null;
-          const ancestors = folds.hidden.filter(
-            (entry) =>
-              state.selection.head >= entry.hiddenFrom &&
-              state.selection.head < entry.hiddenTo,
-          );
-          if (!ancestors.length) return null;
           // Search, Undo and explicit navigation may address hidden content.
           // Reveal it without moving the caret or changing document history.
-          const overrides = new Map(folds.overrides);
-          for (const entry of ancestors) overrides.set(entry.id, true);
-          return state.tr
-            .setMeta(foldKey, overrides)
-            .setMeta("addToHistory", false);
+          return revealDetailsTransaction(state, state.selection.head);
         },
       }),
     ];
   },
 });
+
+function revealDetailsTransaction(
+  state: EditorState,
+  position: number,
+): Transaction | null {
+  const folds = foldKey.getState(state);
+  if (!folds) return null;
+  const ancestors = folds.hidden.filter(
+    (entry) => position >= entry.hiddenFrom && position < entry.hiddenTo,
+  );
+  if (!ancestors.length) return null;
+  const overrides = new Map(folds.overrides);
+  for (const entry of ancestors) overrides.set(entry.id, true);
+  return state.tr.setMeta(foldKey, overrides).setMeta("addToHistory", false);
+}
+
+export function revealDetailsFoldsAtPosition(
+  view: EditorView,
+  position: number,
+): boolean {
+  const transaction = revealDetailsTransaction(view.state, position);
+  if (!transaction) return false;
+  view.dispatch(transaction);
+  return true;
+}
 
 export function detailsFoldHiddenEntries(
   state: EditorState,
