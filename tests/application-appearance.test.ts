@@ -92,6 +92,31 @@ describe("Memoka application appearance", () => {
     }
   });
 
+  it("keeps spacing around rich blocks at both edges of a ListItem", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.memoka-editor li > :is\(p, ul, ol\):first-child\s*\{\s*margin-top: 0;/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-editor li > :is\(p, ul, ol\):last-child\s*\{\s*margin-bottom: 0;/su,
+    );
+    expect(css).not.toMatch(/\.memoka-editor li > :(first|last)-child\s*\{/su);
+
+    // Only Paragraph/List edges should match the compact spacing rules,
+    // including items whose first/only block is an image, table, or code.
+    const item = document.createElement("li");
+    for (const tag of ["p", "ul", "ol", "pre", "blockquote", "div", "hr"]) {
+      const child = document.createElement(tag);
+      item.replaceChildren(child);
+      const compact = ["p", "ul", "ol"].includes(tag);
+      expect(child.matches("li > :is(p, ul, ol):first-child")).toBe(compact);
+      expect(child.matches("li > :is(p, ul, ol):last-child")).toBe(compact);
+    }
+  });
+
   it("caps and centers the complete editor canvas without changing block overflow", () => {
     const css = readFileSync(
       resolve(process.cwd(), "app/src/styles.css"),

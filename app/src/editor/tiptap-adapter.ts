@@ -370,6 +370,10 @@ export class TiptapEditorAdapter {
         this.normalModeImeGuard?.setActive.bind(this.normalModeImeGuard),
       onYank: (register) => this.writeYankToClipboard(register),
       onPasteRead: readPreferredClipboard,
+      onPastePlainRead: () =>
+        Promise.resolve(this.readExplicitClipboard("plain")).then(
+          (clipboard) => clipboard?.content ?? null,
+        ),
       onPasteFiles: async (files) => {
         await this.importAttachmentFiles(files);
       },

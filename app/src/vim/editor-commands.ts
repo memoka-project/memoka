@@ -36,6 +36,8 @@ import {
 } from "../core/application-key-config";
 import { createUuidV7 } from "../core/ids";
 import {
+  insertListItemAfter,
+  listItemAfterPosition,
   owningListItemDepth,
   pastePlainListText,
 } from "../editor/list-editing";
@@ -263,14 +265,13 @@ export function runEditorTab(
 
 interface InsertExitBlock {
   depth: number;
-  detailPrefix: "blockquote" | "code" | "list" | "table";
+  detailPrefix: "blockquote" | "code" | "table";
 }
 
 function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
   const { $from, $to } = view.state.selection;
   let blockquote: InsertExitBlock | null = null;
   let code: InsertExitBlock | null = null;
-  let outermostList: InsertExitBlock | null = null;
   let table: InsertExitBlock | null = null;
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     const node = $from.node(depth);
@@ -279,22 +280,24 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
       code = { depth, detailPrefix: "code" };
     }
     if (node.type.name === "blockquote") {
-      // Like a nested List, Ctrl+Enter leaves the complete outer quote.
+      // Outside lists, Ctrl+Enter leaves the complete outer quote.
       blockquote = { depth, detailPrefix: "blockquote" };
     }
     if (node.type.name === "table") {
       table = { depth, detailPrefix: "table" };
     }
-    if (node.type.name === "bulletList" || node.type.name === "orderedList") {
-      // Keep walking towards the document root. A nested ListItem exits the
-      // complete outer list, never just its innermost nested list.
-      outermostList = { depth, detailPrefix: "list" };
-    }
   }
-  return outermostList ?? blockquote ?? code ?? table;
+  return blockquote ?? code ?? table;
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
+  // The nearest ListItem owns Ctrl+Enter even from a nested code/quote/table
+  // or an atomic block. Insert before existing children, otherwise a sibling.
+  if (owningListItemDepth(view.state.selection.$from) !== null) {
+    const handled = insertListItemAfter(view.state, view.dispatch);
+    if (handled) view.focus();
+    return { handled, detail: "list:created-item-after" };
+  }
   const target = insertExitBlock(view);
   if (!target) {
     return {
@@ -5598,6 +5601,11 @@ function putOnce(
   if (units.length === 0) return false;
   const index = blockSemantics.currentStructuralUnitIndex(units, cursor);
   const target = units[index];
+  if (register.structureKind === "list-item" && direction === "after") {
+    const position = listItemAfterPosition(view.state.doc.resolve(cursor));
+    if (position !== null)
+      return pasteStructure(view, register, position, position);
+  }
   if (target.kind === "code-line") {
     const lines = blockSemantics.logicalLines(view);
     const line = lines[blockSemantics.currentLineIndex(lines, cursor)];
@@ -5845,6 +5853,18 @@ function openLogicalLine(
 ): EditorVimResult {
   const sectionResult = openFromSectionTitle(view, direction);
   if (sectionResult) return sectionResult;
+  if (
+    direction === "below" &&
+    owningListItemDepth(view.state.selection.$from) !== null
+  ) {
+    const handled = insertListItemAfter(view.state, view.dispatch);
+    if (handled) view.focus();
+    return {
+      handled,
+      detail: "list:created-item-after",
+      nextMode: handled ? "insert" : undefined,
+    };
+  }
   const line = currentLogicalLine(view);
   if (!line) {
     return {

@@ -3986,7 +3986,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       },
     },
   ])(
-    "moves Ctrl+Enter from a $name block to one following paragraph",
+    "creates a fresh sibling destination on Ctrl+Enter in $name",
     async ({ block, detail, sourceText }) => {
       const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
         idFactory: deterministicIds(),
@@ -4008,13 +4008,23 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       });
       await runtime.flush();
       expect(created.defaultPrevented).toBe(true);
-      expect(editor.state.doc.childCount).toBe(2);
-      expect(editor.state.doc.lastChild?.type.name).toBe("paragraph");
-      expect(editor.state.selection.$from.parent).toBe(
-        editor.state.doc.lastChild,
-      );
+      const inList = detail === "list";
+      expect(editor.state.doc.childCount).toBe(inList ? 1 : 2);
+      const createdParagraph = inList
+        ? editor.state.doc.firstChild!.lastChild!.firstChild
+        : editor.state.doc.lastChild;
+      expect(createdParagraph?.type.name).toBe("paragraph");
+      expect(editor.state.selection.$from.parent).toBe(createdParagraph);
+      if (inList) {
+        expect(editor.state.doc.firstChild!.childCount).toBe(2);
+        expect(editor.state.doc.firstChild!.attrs).toMatchObject(
+          block.attrs ?? {},
+        );
+      }
       expect(adapter.vimSnapshot.action).toBe(
-        `${detail}:exit-created-paragraph:changed`,
+        inList
+          ? "list:created-item-after:changed"
+          : `${detail}:exit-created-paragraph:changed`,
       );
       expect(undoManager.undoStack).toHaveLength(1);
 
@@ -4044,15 +4054,20 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       });
       await runtime.flush();
       expect(insertedBeforeExisting.defaultPrevented).toBe(true);
-      expect(editor.state.doc.childCount).toBe(3);
-      expect(editor.state.doc.child(1).type.name).toBe("paragraph");
-      expect(editor.state.doc.child(1).textContent).toBe("");
-      expect(editor.state.doc.child(2).textContent).toBe("existing paragraph");
-      expect(editor.state.selection.$from.parent).toBe(
-        editor.state.doc.child(1),
+      expect(editor.state.doc.childCount).toBe(inList ? 2 : 3);
+      const nextParagraph = inList
+        ? editor.state.doc.firstChild!.lastChild!.firstChild
+        : editor.state.doc.child(1);
+      expect(nextParagraph?.type.name).toBe("paragraph");
+      expect(nextParagraph?.textContent).toBe("");
+      expect(editor.state.doc.lastChild!.textContent).toBe(
+        "existing paragraph",
       );
+      expect(editor.state.selection.$from.parent).toBe(nextParagraph);
       expect(adapter.vimSnapshot.action).toBe(
-        `${detail}:exit-created-paragraph:changed`,
+        inList
+          ? "list:created-item-after:changed"
+          : `${detail}:exit-created-paragraph:changed`,
       );
       expect(undoManager.undoStack).toHaveLength(1);
 
@@ -4062,7 +4077,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     },
   );
 
-  it("exits a nested ListItem after the complete outer list", async () => {
+  it("creates a sibling for a nested ListItem at its own depth", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       clock: () => "2026-08-01T00:00:00.000Z",
@@ -4127,18 +4142,21 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     await runtime.flush();
 
     expect(event.defaultPrevented).toBe(true);
-    expect(editor.state.doc.childCount).toBe(3);
+    expect(editor.state.doc.childCount).toBe(2);
     const outerList = editor.state.doc.child(0);
     expect(outerList.type.name).toBe("bulletList");
     expect(outerList.childCount).toBe(2);
     expect(outerList.textContent).toBe("parent itemnested itemsibling item");
-    expect(editor.state.doc.child(1).type.name).toBe("paragraph");
-    expect(editor.state.doc.child(1).textContent).toBe("");
-    expect(editor.state.doc.child(2).textContent).toBe("existing paragraph");
-    expect(editor.state.selection.$from.parent).toBe(editor.state.doc.child(1));
-    expect(adapter.vimSnapshot.action).toBe(
-      "list:exit-created-paragraph:changed",
+    const nested = outerList.firstChild!.lastChild!;
+    expect(nested.type.name).toBe("orderedList");
+    expect(nested.childCount).toBe(2);
+    expect(nested.lastChild!.firstChild!.type.name).toBe("paragraph");
+    expect(nested.lastChild!.textContent).toBe("");
+    expect(editor.state.doc.child(1).textContent).toBe("existing paragraph");
+    expect(editor.state.selection.$from.parent).toBe(
+      nested.lastChild!.firstChild,
     );
+    expect(adapter.vimSnapshot.action).toBe("list:created-item-after:changed");
 
     adapter.destroy();
     runtime.destroy();
@@ -4568,17 +4586,23 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
 
     press(editor, "y");
     expect(adapter.vimSnapshot.register).toBe("ListItem: parent item");
+    const beforePut = editor.state.doc;
     press(editor, "p");
     await runtime.flush();
 
     const list = editor.state.doc.firstChild;
     expect(list?.type.name).toBe("bulletList");
-    expect(list?.childCount).toBe(2);
+    expect(list?.childCount).toBe(1);
     expect(list?.child(0).textContent).toBe(
-      "parent itemchild itemsecond child",
+      "parent itemparent itemchild itemsecond child",
     );
-    expect(list?.child(1).textContent).toBe("parent item");
-    expect(list?.child(1).childCount).toBe(1);
+    expect(list?.firstChild?.lastChild?.firstChild?.textContent).toBe(
+      "parent item",
+    );
+    expect(list?.firstChild?.lastChild?.firstChild?.childCount).toBe(1);
+    press(editor, "u");
+    await runtime.flush();
+    expect(editor.state.doc.eq(beforePut)).toBe(true);
 
     editor.commands.setTextSelection(textPosition(editor, "parent item"));
     press(editor, "V");
@@ -4592,11 +4616,14 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     );
     press(editor, "p");
     await runtime.flush();
-    expect(editor.state.doc.firstChild?.childCount).toBe(3);
-    expect(editor.state.doc.firstChild?.child(1).textContent).toBe(
-      "parent itemchild item",
-    );
-    expect(editor.state.doc.firstChild?.child(1).childCount).toBe(2);
+    expect(editor.state.doc.firstChild?.childCount).toBe(1);
+    const insertedParent =
+      editor.state.doc.firstChild?.firstChild?.lastChild?.firstChild;
+    expect(insertedParent?.textContent).toBe("parent itemchild item");
+    expect(insertedParent?.childCount).toBe(2);
+    press(editor, "u");
+    await runtime.flush();
+    expect(editor.state.doc.eq(beforePut)).toBe(true);
 
     editor.commands.setTextSelection(textPosition(editor, "parent item"));
     press(editor, "y");
@@ -4613,7 +4640,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     const outerListAfterNestedPut = editor.state.doc.firstChild;
     const originalParent = outerListAfterNestedPut?.child(0);
     const nestedList = originalParent?.child(1);
-    expect(outerListAfterNestedPut?.childCount).toBe(3);
+    expect(outerListAfterNestedPut?.childCount).toBe(1);
     expect(nestedList?.type.name).toBe("bulletList");
     expect(nestedList?.childCount).toBe(3);
     expect(

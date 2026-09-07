@@ -23,6 +23,53 @@ export function isDirectListParagraph(position: ResolvedPos): boolean {
   );
 }
 
+/** First child when present, otherwise the next sibling in display order. */
+export function listItemAfterPosition(position: ResolvedPos): number | null {
+  const depth = owningListItemDepth(position);
+  if (depth === null) return null;
+  let childListOffset: number | null = null;
+  position.node(depth).forEach((child, offset) => {
+    if (
+      childListOffset === null &&
+      (child.type.name === "bulletList" || child.type.name === "orderedList")
+    )
+      childListOffset = offset;
+  });
+  return childListOffset === null
+    ? position.after(depth)
+    : position.start(depth) + childListOffset + 1;
+}
+
+export const insertListItemAfter: Command = (state, dispatch) => {
+  const { $from, $to } = state.selection;
+  const depth = owningListItemDepth($from);
+  const paragraph = state.schema.nodes.paragraph;
+  if (
+    depth === null ||
+    !paragraph ||
+    $to.depth < depth ||
+    $from.node(depth) !== $to.node(depth)
+  )
+    return false;
+  const item = $from.node(depth);
+  const position = listItemAfterPosition($from);
+  if (position === null) return false;
+  const $target = state.doc.resolve(position);
+  const index = $target.index();
+  if (!$target.parent.canReplaceWith(index, index, item.type)) return false;
+  if (!dispatch) return true;
+
+  const [itemId, paragraphId] = createUuidV7Batch(2);
+  const inserted = item.type.create(
+    { blockId: itemId },
+    paragraph.create({ blockId: paragraphId }),
+  );
+  const tr = state.tr.insert(position, inserted);
+  tr.setSelection(TextSelection.create(tr.doc, position + 2));
+  dispatch(tr.scrollIntoView());
+  return true;
+};
+
 export const insertListParagraph: Command = (state, dispatch) => {
   const { $from, $to } = state.selection;
   const depth = owningListItemDepth($from);

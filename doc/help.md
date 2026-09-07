@@ -56,18 +56,21 @@ InsertからNormalへ戻ると、Insert caretの直前にある文字へNormal c
 
 `i`と`a`はcaretの前後、`I`と`A`は論理行の先頭と末尾からInsertへ入ります。
 `o`と`O`は現在の論理行またはblockの下と上に入力先を作ります。
+リスト内の`o`は項目内のblockの種類にかかわらず、現在項目の表示順で直後に空の項目を作ります。
+子項目があれば先頭の子として、なければ次の兄弟として追加します。
 
-| Key                 | 動作                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| `Esc` / `Ctrl-c`    | Insertを終了してNormalへ戻ります。                                                   |
-| `Ctrl-h`            | Backspaceと同じように直前を削除します。                                              |
-| `Ctrl-j` / `Ctrl-m` | Enterと同じ改行を行います。                                                          |
-| `Ctrl-u`            | 論理行の先頭からcaret直前までを削除します。                                          |
-| `Ctrl-w`            | 空白を読み飛ばし、直前のwordを削除します。                                           |
-| `Ctrl-t`            | SectionまたはListItemを1段深くします。直接本文Paragraphでは子Sectionを作ります。     |
-| `Ctrl-d`            | SectionまたはListItemを1段浅くします。直接本文Paragraphでは兄弟Sectionを作ります。   |
-| `Ctrl-Enter`        | List、Table、Code Block、Source Block、Blockquoteの直後に新しいParagraphを作ります。 |
-| `Tab` / `Shift-Tab` | Listの階層変更やTable Cell移動など、現在の構造に応じた操作を行います。               |
+| Key                 | 動作                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `Esc` / `Ctrl-c`    | Insertを終了してNormalへ戻ります。                                                                                    |
+| `Ctrl-h`            | Backspaceと同じように直前を削除します。                                                                               |
+| `Ctrl-j` / `Ctrl-m` | Enterと同じ改行を行います。                                                                                           |
+| `Ctrl-u`            | 論理行の先頭からcaret直前までを削除します。                                                                           |
+| `Ctrl-w`            | 空白を読み飛ばし、直前のwordを削除します。                                                                            |
+| `Ctrl-t`            | SectionまたはListItemを1段深くします。直接本文Paragraphでは子Sectionを作ります。                                      |
+| `Ctrl-d`            | SectionまたはListItemを1段浅くします。直接本文Paragraphでは兄弟Sectionを作ります。                                    |
+| `Ctrl-Enter`        | List内では先頭の子または次の兄弟項目を作ります。それ以外のTable/Code/Source/Blockquoteでは直後にParagraphを作ります。 |
+| `Ctrl-Shift-v`      | Clipboardのテキストだけを貼り付けます。HTMLやMarkdownの装飾・構造は取り込みません。                                   |
+| `Tab` / `Shift-Tab` | Listの階層変更やTable Cell移動など、現在の構造に応じた操作を行います。                                                |
 
 ### `/`によるblock作成
 
@@ -206,8 +209,10 @@ Undo履歴へは保存しません。折り畳んだ本文も`/`検索の対象�
 
 ### 構造blockから本文へ戻る
 
-List、Table、Code Block、Source Block、Blockquote内で`Ctrl-Enter`を押すと、その最外構造の直後へ
+リスト外のTable、Code Block、Source Block、Blockquote内で`Ctrl-Enter`を押すと、その最外構造の直後へ
 新しいParagraphを作って移動します。直後に既存Paragraphがあっても再利用しません。
+リスト内ではblockの種類にかかわらず、現在の項目の表示順で直後に空の項目を作って移動します。
+子項目がある場合はその先頭に新しい子を追加し、ない場合は次の兄弟項目を作ります。
 
 Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先頭へ入ります。移動先がない側には
 新しいParagraphを作ります。
@@ -223,10 +228,19 @@ Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先�
 | `Enter`       | 項目直下の段落を分割して、次の兄弟項目を作ります。後続ブロック・子リストも次の項目へ移ります。 |
 | `Shift-Enter` | 同じ段落の中に明示的な改行（Hard Break）を入れます。                                           |
 | `Alt-Enter`   | 段落を分割して、同じ項目内に次の段落を作ります。                                               |
-| `Ctrl-Enter`  | 子リストを含む最も外側のリスト全体の後ろに、新しい段落を作って移動します。                     |
+| `Ctrl-Enter`  | 現在の項目に子があれば先頭の子として、なければ次の兄弟として空段落を持つ項目を作ります。       |
 
 コードや表、引用の内部では、`Enter`はそのブロック本来の改行です。`Alt-Enter`なら項目内の次の段落へ抜けられます。
 段落途中での`Alt-Enter`は後半の文章を次の段落へ移します。段落だけの空項目で`Enter`を押すとリストを抜けます。
+`Ctrl-Enter`とNormalの`o`は段落・コード・表・引用・画像・添付などで共通です。
+子項目があれば、最初の子リストの先頭へ新しい子を追加します。子がなければ現在と同じ深さの兄弟項目を作ります。
+追加先のリスト種別を保ち、作った項目の空段落へ移動します。既存の空項目は再利用しません。
+元の項目の本文はcaret位置では分割しません。既存の子項目や後続ブロックも移動せず、親子関係と表示順を保ちます。
+例えば、子が「子A、子B」なら「新しい子、子A、子B」の順になります。
+
+`yy`や`V`→`y`でコピーしたリスト項目を`p`で貼る場合も同じです。現在項目に子があればその先頭へ、
+なければ次の兄弟として貼ります。コピーした項目に子孫がある場合は、その相対的な階層を保ちます。
+`P`は従来どおり現在項目の前に貼ります。文字単位の`p`や表セル内の貼り付けには、この項目追加の規則を適用しません。
 
 Hard Breakで分けた行も論理行です。`V`、`dd`、`yy`で、同じ項目の別段落や未選択の子項目まで扱うことはありません。
 `>`、`<`による階層変更だけは、その行を含む項目全体に適用します。
@@ -248,7 +262,7 @@ Memoka内でコピーした内容や、明示的なMarkdown・HTML、表デー�
 - 左上Cellの`Shift-Tab`でEditor外やTreeへfocusを移しません。
 
 Insertの`Enter`はCell内に新しいParagraphを作り、`Shift-Enter`は同じParagraph内へHard Breakを入れます。
-`Ctrl-Enter`はTable全体の直後へ新しいParagraphを作ります。
+`Ctrl-Enter`はTable全体の直後へ新しいParagraphを作ります。ただしリスト内のTableでは、現在項目に子があれば先頭の子として、なければ次の兄弟として空の項目を作ります。
 
 Table内の`p`と`P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼り付けます。
 Visual Blockの`d`はCell内容だけをclearし、rowとcolumnは残します。`c`はclear後に左上CellのInsertへ入ります。
@@ -444,6 +458,12 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 
 `y`や`yy`は、可能な場合にMemoka内部構造、HTML、Markdown、plain textを同時にOS Clipboardへ公開します。
 `p`はcaretの後、`P`は前へ貼り付けます。Table内では`p`と`P`が同じ動作になり、現在Cellから貼り付けます。
+
+Insertで`Ctrl-Shift-v`を押すと、OS Clipboardのテキストだけを貼り付けます。
+HTML、Memoka内部形式、Markdown、画像、file形式が同時にあっても取り込みません。
+`**太字**`や`# 見出し`も文字のままになり、空のNote titleでもMarkdown文書のimportは行いません。
+リストの段落へ複数行を貼る場合は行ごとに兄弟項目を作り、コード内の改行はコード内に残します。
+テキストがない場合や、読込中にcaret・文書・mode・focusが変わった場合は貼り付けません。
 
 外部fileはfile picker、drop、Insertのpaste、Normalの`p/P`で取り込めます。安全なraster画像はImage、
 その他はAttachment blockになります。画像dataだけをClipboardへcopyした場合もPNG Imageとして取り込めます。

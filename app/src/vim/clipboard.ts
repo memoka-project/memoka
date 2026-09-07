@@ -22,8 +22,19 @@ import type { VimRegister } from "./editor-commands";
 export const MEMOKA_CLIPBOARD_MIME =
   "application/x-memoka-structured-blocks+json";
 export const MARKDOWN_CLIPBOARD_MIME = "text/markdown";
+export const UTF8_PLAIN_CLIPBOARD_MIME = "text/plain;charset=utf-8";
 export const TSV_CLIPBOARD_MIME = "text/tab-separated-values";
 export const MEMOKA_CLIPBOARD_SCHEMA_VERSION = 7;
+
+/** Prefer Firefox's original UTF-8 text over its unqualified ASCII target. */
+export function preferredPlainClipboardMime(
+  availableTypes: readonly string[],
+): string | undefined {
+  if (availableTypes.includes(UTF8_PLAIN_CLIPBOARD_MIME))
+    return UTF8_PLAIN_CLIPBOARD_MIME;
+  if (availableTypes.includes("text/plain")) return "text/plain";
+  return availableTypes.find((type) => type.startsWith("text/plain;"));
+}
 
 interface TextClipboardPayload {
   schemaVersion: 7;
@@ -121,7 +132,7 @@ export interface PreferredClipboardFormats {
   imageAvailable?: boolean;
 }
 
-export type ExplicitClipboardFormat = "markdown" | "html";
+export type ExplicitClipboardFormat = "markdown" | "html" | "plain";
 
 export interface ExplicitClipboardContent {
   availableTypes: string[];
@@ -1183,19 +1194,27 @@ export class BrowserVimClipboard {
     const clipboard = navigator.clipboard;
     if (!clipboard) return null;
     const requestedMime =
-      format === "markdown" ? MARKDOWN_CLIPBOARD_MIME : "text/html";
+      format === "markdown"
+        ? MARKDOWN_CLIPBOARD_MIME
+        : format === "plain"
+          ? "text/plain"
+          : "text/html";
     if (typeof clipboard.read === "function") {
       try {
         const items = await clipboard.read();
         const availableTypes = Array.from(
           new Set(items.flatMap((item) => Array.from(item.types))),
         ).sort();
+        const sourceMime =
+          format !== "plain" && availableTypes.includes(requestedMime)
+            ? requestedMime
+            : preferredPlainClipboardMime(availableTypes);
         for (const item of items) {
-          if (!item.types.includes(requestedMime)) continue;
-          const blob = await item.getType(requestedMime);
+          if (!sourceMime || !item.types.includes(sourceMime)) continue;
+          const blob = await item.getType(sourceMime);
           return {
             availableTypes,
-            sourceMime: requestedMime,
+            sourceMime,
             content: await blob.text(),
           };
         }

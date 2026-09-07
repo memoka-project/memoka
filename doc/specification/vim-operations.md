@@ -58,20 +58,22 @@ block間やSection間を移動しても、画面上にcaretが見えるようEdi
 
 通常の文字入力と矢印keyはEditorへ渡す。IME composition中は以下のCtrl commandよりIMEを優先する。
 
-| Key               | 動作                                                                 |
-| ----------------- | -------------------------------------------------------------------- |
-| `Esc / Ctrl-c`    | Normalへ戻る                                                         |
-| `Ctrl-h`          | Backspace                                                            |
-| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                |
-| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                      |
-| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                           |
-| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化            |
-| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化          |
-| `Ctrl-Enter`      | List/Table/Code/Source/Blockquoteの最外構造直後に新規Paragraphを作る |
-| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                       |
+| Key               | 動作                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Esc / Ctrl-c`    | Normalへ戻る                                                                                                  |
+| `Ctrl-h`          | Backspace                                                                                                     |
+| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                                                         |
+| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                                                               |
+| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                                                                    |
+| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化                                                     |
+| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化                                                   |
+| `Ctrl-Enter`      | List内は先頭の子または次の兄弟Itemを作る。List外のTable/Code/Source/Blockquoteは構造直後に新規Paragraphを作る |
+| `Ctrl-Shift-v`    | OS Clipboardのplain textだけをpasteし、HTML/Markdown/内部構造の解釈を行わない                                 |
+| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                                                |
 
 `i/a`はcaret位置の前/後、`I/A`は論理行の先頭/末尾からInsertへ入る。
 `o/O`は現在論理行またはblockの下/上に入力先を作る。
+List内の`o`は内部Blockの種類によらず、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。
 
 ## 6. Operatorと編集command
 
@@ -130,7 +132,11 @@ ListItem内ではParagraphのHard Breakも論理行境界となる。選択し�
 
 InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同じItem内の次Paragraphを作る。
 `Shift-Enter`はHard Break。内部Code/Table/引用などは固有のEnter操作を維持し、`Alt-Enter`で同じItem内の次Paragraphへ抜ける。
-`Ctrl-Enter`は最外List全体の直後に新規Paragraphを作る。
+`Ctrl-Enter`とNormalの`o`は所有ListItemの表示順で直後に空Paragraphを持つ新規Itemを作る。
+内部Blockの種類を問わず、直接子Listがあれば最初の子Listの先頭の子、なければ次の兄弟となる。
+追加先のList種別・開始番号を保ち、既存子孫と後続Blockの親子関係・順序・IDを変えない。
+caret位置で本文は分割せず、既存の空Itemを再利用しない。新ParagraphへInsertで移動し、1 Undo単位とする。
+ListItem registerのNormal `p`も同じ挿入位置を使う。`P`、文字単位のput、Table Cellのputは従来のままとする。
 
 `>/<`は選択されたSection/ListItemの階層を、表示順を維持したまま1段変更する。
 
@@ -172,7 +178,7 @@ Table左上CellのShift-TabでEditor外やTreeへfocusを移さない。
 ### 9.2 編集
 
 - Insert EnterはCell内Paragraphを分割し、Shift-EnterはHard Breakを入れる。
-- Ctrl-EnterはTable全体の直後に新しいParagraphを作る。
+- Ctrl-EnterはList内なら所有Itemの先頭の子または次の兄弟として空のItemを作り、List外ならTable全体の直後に新しいParagraphを作る。
 - Table内の`p/P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼る。
 - 矩形`d`はCell内容をclearし、row/column構造を維持する。
 - 矩形`c`はclear後、左上CellのInsertへ入る。

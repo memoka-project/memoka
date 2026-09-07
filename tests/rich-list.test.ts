@@ -133,8 +133,11 @@ describe("rich ListItem editing", () => {
     ]);
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     key(editor, "Enter", { ctrlKey: true });
-    expect(editor.state.doc.childCount).toBe(2);
-    expect(editor.state.doc.lastChild!.type.name).toBe("paragraph");
+    expect(editor.state.doc.childCount).toBe(1);
+    expect(editor.state.doc.firstChild!.childCount).toBe(2);
+    expect(editor.state.doc.firstChild!.lastChild!.firstChild!.type.name).toBe(
+      "paragraph",
+    );
   });
 
   it("keeps Ctrl-j/Ctrl-m equivalent to Enter and Shift-Enter inside the paragraph", async () => {
@@ -170,7 +173,7 @@ describe("rich ListItem editing", () => {
     expect(editor.state.doc.textContent).toBe("/");
   });
 
-  it("exits the whole outer list from code inside a nested quote", async () => {
+  it("creates a sibling at the nearest list depth from code inside a nested quote", async () => {
     const { editor } = await harness([
       list(
         item(
@@ -184,9 +187,272 @@ describe("rich ListItem editing", () => {
     key(editor, "Enter", { ctrlKey: true });
     expect(
       editor.state.doc.content.content.map((node) => node.type.name),
-    ).toEqual(["bulletList", "paragraph", "paragraph"]);
+    ).toEqual(["bulletList", "paragraph"]);
+    const nested = editor.state.doc.firstChild!.firstChild!.lastChild!;
+    expect(nested.childCount).toBe(2);
+    expect(nested.lastChild!.firstChild).toBe(
+      editor.state.selection.$from.parent,
+    );
     expect(editor.state.selection.$from.parent.textContent).toBe("");
     expect(editor.state.doc.lastChild!.textContent).toBe("existing");
+  });
+
+  it.each<JSONContent>([
+    p("inside"),
+    code("inside"),
+    { type: "sourceBlock", content: [{ type: "text", text: "inside" }] },
+    { type: "blockquote", content: [p("inside")] },
+    {
+      type: "blockquote",
+      attrs: { alertType: "note" },
+      content: [p("inside")],
+    },
+    {
+      type: "table",
+      content: [
+        {
+          type: "tableRow",
+          content: [{ type: "tableCell", content: [p("inside")] }],
+        },
+      ],
+    },
+    { type: "image" },
+    {
+      type: "attachment",
+      attrs: { attachmentId: createUuidV7(), label: "file.pdf" },
+    },
+    { type: "horizontalRule" },
+  ])(
+    "creates a first child before existing children from $type, with Undo/Redo",
+    async (block) => {
+      for (const opening of ["Ctrl-Enter", "o"]) {
+        const { editor, adapter } = await harness([
+          list(item(block, p("tail"), list(item(p("child")))), item(p("next"))),
+        ]);
+        if (opening === "o") key(editor, "Escape");
+        if (["image", "attachment", "horizontalRule"].includes(block.type!)) {
+          editor.view.dispatch(
+            editor.state.tr.setSelection(
+              NodeSelection.create(editor.state.doc, 2),
+            ),
+          );
+        } else {
+          editor.commands.setTextSelection(position(editor, "inside") + 2);
+        }
+        const before = editor.state.doc;
+        const firstItem = before.firstChild!.firstChild!;
+        const nextItem = before.firstChild!.lastChild!;
+        const event =
+          opening === "o"
+            ? key(editor, "o")
+            : key(editor, "Enter", { ctrlKey: true });
+        expect(event.defaultPrevented).toBe(true);
+        const result = editor.state.doc.firstChild!;
+        expect(result.childCount).toBe(2);
+        expect(result.firstChild!.attrs).toEqual(firstItem.attrs);
+        expect(result.firstChild!.childCount).toBe(3);
+        expect(result.firstChild!.child(0).eq(firstItem.child(0))).toBe(true);
+        expect(result.firstChild!.child(1).eq(firstItem.child(1))).toBe(true);
+        expect(result.lastChild!.eq(nextItem)).toBe(true);
+        const children = result.firstChild!.lastChild!;
+        expect(children.attrs).toEqual(firstItem.lastChild!.attrs);
+        expect(children.childCount).toBe(2);
+        expect(children.lastChild!.eq(firstItem.lastChild!.firstChild!)).toBe(
+          true,
+        );
+        expect(children.firstChild!.childCount).toBe(1);
+        const paragraph = children.firstChild!.firstChild!;
+        expect(paragraph.type.name).toBe("paragraph");
+        expect(paragraph.textContent).toBe("");
+        expect(editor.state.selection.$from.parent).toBe(paragraph);
+        expect(editor.state.selection.$from.parentOffset).toBe(0);
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        editor.state.doc.check();
+        const after = editor.state.doc;
+        key(editor, "Escape");
+        key(editor, "u");
+        expect(editor.state.doc.eq(before)).toBe(true);
+        key(editor, "r", { ctrlKey: true });
+        expect(editor.state.doc.eq(after)).toBe(true);
+      }
+    },
+  );
+
+  it.each(["Ctrl-Enter", "o"])(
+    "preserves the display order of multiple child lists and trailing blocks with %s",
+    async (opening) => {
+      const { editor } = await harness([
+        {
+          type: "orderedList",
+          attrs: { start: 4 },
+          content: [
+            item(
+              p("parent"),
+              list(item(p("child"))),
+              p("continuation"),
+              {
+                type: "orderedList",
+                attrs: { start: 9 },
+                content: [item(p("other child"))],
+              },
+              code("tail"),
+            ),
+            item(p("sibling")),
+          ],
+        },
+      ]);
+      if (opening === "o") key(editor, "Escape");
+      editor.commands.setTextSelection(position(editor, "parent"));
+      const before = editor.state.doc;
+      if (opening === "o") key(editor, "o");
+      else key(editor, "Enter", { ctrlKey: true });
+      const outer = editor.state.doc.firstChild!;
+      expect(outer.attrs).toEqual(before.firstChild!.attrs);
+      expect(outer.childCount).toBe(2);
+      expect(
+        outer.firstChild!.content.content.map((block) => block.type.name),
+      ).toEqual([
+        "paragraph",
+        "bulletList",
+        "paragraph",
+        "orderedList",
+        "codeBlock",
+      ]);
+      for (const index of [0, 2, 3, 4]) {
+        expect(
+          outer
+            .firstChild!.child(index)
+            .eq(before.firstChild!.firstChild!.child(index)),
+        ).toBe(true);
+      }
+      const children = outer.firstChild!.child(1);
+      expect(children.childCount).toBe(2);
+      expect(children.attrs).toEqual(
+        before.firstChild!.firstChild!.child(1).attrs,
+      );
+      expect(children.firstChild!.textContent).toBe("");
+      expect(
+        children.lastChild!.eq(
+          before.firstChild!.firstChild!.child(1).firstChild!,
+        ),
+      ).toBe(true);
+      expect(editor.state.doc.textContent).toBe(before.textContent);
+      expect(outer.lastChild!.eq(before.firstChild!.lastChild!)).toBe(true);
+      editor.state.doc.check();
+    },
+  );
+
+  it("creates a new item rather than reusing an empty next sibling", async () => {
+    const { editor } = await harness([list(item(p()), item(p()))]);
+    editor.commands.setTextSelection(3);
+    const oldFirst = editor.state.doc.firstChild!.firstChild!;
+    const oldNext = editor.state.doc.firstChild!.lastChild!;
+    key(editor, "Enter", { ctrlKey: true });
+    const result = editor.state.doc.firstChild!;
+    expect(result.childCount).toBe(3);
+    expect(result.firstChild!.eq(oldFirst)).toBe(true);
+    expect(result.lastChild!.eq(oldNext)).toBe(true);
+    expect(result.child(1).attrs.blockId).not.toBe(oldFirst.attrs.blockId);
+    expect(result.child(1).attrs.blockId).not.toBe(oldNext.attrs.blockId);
+  });
+
+  it.each(["bulletList", "orderedList"])(
+    "puts copied list items first in an existing child %s without moving descendants",
+    async (listType) => {
+      const { editor, adapter } = await harness([
+        list(
+          item(p("copy"), list(item(p("copied child")))),
+          item(
+            code("target"),
+            {
+              type: listType,
+              attrs: { start: 7 },
+              content: [item(p("existing child")), item(p("second child"))],
+            },
+            p("tail"),
+          ),
+          item(p("next")),
+        ),
+      ]);
+      key(editor, "Escape");
+      editor.commands.setTextSelection(position(editor, "copy"));
+      key(editor, "V");
+      key(editor, "j");
+      key(editor, "y");
+      expect(adapter.vimSnapshot.register).toBe("ListItem: copy copied child");
+      editor.commands.setTextSelection(position(editor, "target"));
+      const before = editor.state.doc;
+      expect(key(editor, "p").defaultPrevented).toBe(true);
+      const outer = editor.state.doc.firstChild!;
+      expect(outer.childCount).toBe(3);
+      const parent = outer.child(1);
+      expect(parent.attrs).toEqual(before.firstChild!.child(1).attrs);
+      expect(
+        parent.firstChild!.eq(before.firstChild!.child(1).firstChild!),
+      ).toBe(true);
+      expect(parent.lastChild!.eq(before.firstChild!.child(1).lastChild!)).toBe(
+        true,
+      );
+      const children = parent.child(1);
+      const oldChildren = before.firstChild!.child(1).child(1);
+      expect(children.attrs).toEqual(oldChildren.attrs);
+      expect(children.type.name).toBe(listType);
+      expect(children.childCount).toBe(3);
+      expect(children.firstChild!.textContent).toBe("copycopied child");
+      expect(children.firstChild!.lastChild!.type.name).toBe("bulletList");
+      expect(children.firstChild!.attrs.blockId).not.toBe(
+        outer.firstChild!.attrs.blockId,
+      );
+      expect(children.child(1).eq(oldChildren.child(0))).toBe(true);
+      expect(children.child(2).eq(oldChildren.child(1))).toBe(true);
+      const after = editor.state.doc;
+      editor.state.doc.check();
+      key(editor, "u");
+      expect(editor.state.doc.eq(before)).toBe(true);
+      key(editor, "r", { ctrlKey: true });
+      expect(editor.state.doc.eq(after)).toBe(true);
+    },
+  );
+
+  it("keeps P before the owning item and characterwise p inside its text", async () => {
+    const { editor } = await harness([
+      list(item(p("copy")), item(p("target"), list(item(p("child"))))),
+    ]);
+    key(editor, "Escape");
+    editor.commands.setTextSelection(position(editor, "copy"));
+    key(editor, "y");
+    key(editor, "y");
+    editor.commands.setTextSelection(position(editor, "target"));
+    key(editor, "P");
+    expect(
+      editor.state.doc.firstChild!.content.content.map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["copy", "copy", "targetchild"]);
+    editor.commands.setTextSelection(position(editor, "target"));
+    key(editor, "v");
+    key(editor, "y");
+    key(editor, "p");
+    expect(
+      editor.state.doc.firstChild!.lastChild!.firstChild!.textContent,
+    ).toBe("ttarget");
+    expect(editor.state.doc.firstChild!.lastChild!.lastChild!.childCount).toBe(
+      1,
+    );
+  });
+
+  it("does not create a sibling during IME composition", async () => {
+    const { editor } = await harness([list(item(p("inside")))]);
+    editor.commands.setTextSelection(position(editor, "inside"));
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    const before = editor.state.doc;
+    key(editor, "Enter", { ctrlKey: true, isComposing: true });
+    expect(editor.state.doc.eq(before)).toBe(true);
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true, data: "inside" }),
+    );
   });
 
   it.each([
@@ -275,13 +541,16 @@ describe("rich ListItem editing", () => {
     key(editor, "y");
     expect(adapter.vimSnapshot.register).toBe("ListItem: tail");
     key(editor, "p");
-    expect(editor.state.doc.firstChild!.childCount).toBe(2);
-    expect(editor.state.doc.firstChild!.lastChild!.textContent).toBe("tail");
+    expect(editor.state.doc.firstChild!.childCount).toBe(1);
+    expect(
+      editor.state.doc.firstChild!.firstChild!.lastChild!.firstChild!
+        .textContent,
+    ).toBe("tail");
     editor.commands.setTextSelection(position(editor, "tail"));
     key(editor, "V");
     key(editor, "d");
     expect(editor.state.doc.firstChild!.firstChild!.textContent).toBe(
-      "firstsecondchild",
+      "firstsecondtailchild",
     );
     editor.state.doc.check();
   });

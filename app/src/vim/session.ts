@@ -95,6 +95,7 @@ import {
   registerFromMarkdown,
   registerFromHtml,
   registerFromTabularClipboard,
+  preferredPlainClipboardMime,
   type PreferredClipboardFormats,
   type VimClipboardWriteResult,
 } from "./clipboard";
@@ -135,7 +136,10 @@ import {
   BODY_CHUNK_TARGET_BLOCKS,
   BODY_CHUNK_TARGET_BYTES,
 } from "../core/section-model";
-import { isLargePlainTextPaste } from "../editor/large-paste-protocol";
+import {
+  isLargePlainTextPaste,
+  splitPlainTextPasteBlocks,
+} from "../editor/large-paste-protocol";
 import { prepareLargePlainTextPaste } from "../editor/large-plain-text-paste";
 import type { StableEditorPosition } from "../core/stable-position";
 import {
@@ -255,6 +259,7 @@ export interface ProductVimSessionOptions {
     | PreferredClipboardFormats
     | null
     | Promise<PreferredClipboardFormats | null>;
+  onPastePlainRead?: () => string | null | Promise<string | null>;
   onPasteFiles?: (files: readonly File[]) => void | Promise<void>;
   onPasteNativePaths?: (
     paths: readonly string[],
@@ -446,13 +451,16 @@ export class ProductVimSession {
 
   pasteExplicit(
     view: EditorView,
-    format: "markdown" | "html",
+    format: "markdown" | "html" | "plain",
     content: string,
   ): boolean {
     if (this.composing || view.isDestroyed || content.length === 0) {
       this.action = `clipboard:paste:${format}:empty`;
       this.emit();
       return false;
+    }
+    if (format === "plain") {
+      return this.pasteExplicitPlainText(view, content);
     }
     if (format === "markdown") {
       if (this.pasteMarkdownNote(view, content, "markdown")) return true;
@@ -940,6 +948,32 @@ export class ProductVimSession {
     return true;
   }
 
+  private readPlainClipboardPaste(view: EditorView): void {
+    const generation = ++this.clipboardReadGeneration;
+    const document = view.state.doc;
+    const selection = view.state.selection;
+    this.action = "clipboard:paste:plain:reading";
+    this.emit();
+    const finish = (plain: string | null) =>
+      this.finishPreferredClipboardPaste(
+        generation,
+        view,
+        document,
+        selection,
+        { html: "", plain: plain ?? "" },
+        null,
+        true,
+      );
+    let pending: string | null | Promise<string | null>;
+    try {
+      pending = this.options.onPastePlainRead?.() ?? null;
+    } catch {
+      finish(null);
+      return;
+    }
+    void Promise.resolve(pending).then(finish, () => finish(null));
+  }
+
   private finishPreferredClipboardPaste(
     generation: number,
     view: EditorView,
@@ -947,6 +981,7 @@ export class ProductVimSession {
     selection: Selection,
     fallback: PasteFallback,
     formats: PreferredClipboardFormats | null,
+    plainOnly = false,
   ): void {
     if (
       generation !== this.clipboardReadGeneration ||
@@ -958,12 +993,22 @@ export class ProductVimSession {
     if (
       this.mode !== "insert" ||
       this.composing ||
+      (plainOnly && (!this.focusSurfaceActive || !view.hasFocus())) ||
       !view.state.doc.eq(document) ||
       !view.state.selection.eq(selection)
     ) {
       this.action = "clipboard:paste:stale";
       this.emit();
       this.scheduleCaretRefresh(view);
+      return;
+    }
+
+    if (plainOnly) {
+      if (fallback.plain) this.pasteExplicit(view, "plain", fallback.plain);
+      else {
+        this.action = "clipboard:paste:plain:empty";
+        this.emit();
+      }
       return;
     }
 
@@ -1274,6 +1319,43 @@ export class ProductVimSession {
     return true;
   }
 
+  private pasteExplicitPlainText(view: EditorView, text: string): boolean {
+    if (isLargePlainTextPaste(text))
+      return this.beginLargePlainTextPaste(view, text);
+    if (this.pasteListPlainFallback(view, text)) return true;
+
+    const { state } = view;
+    const tr = state.tr;
+    if (state.selection.$from.parent.type.spec.code || !/[\r\n]/u.test(text)) {
+      tr.insertText(text.replace(/\r\n?/gu, "\n"));
+    } else {
+      const paragraph = state.schema.nodes.paragraph;
+      if (!paragraph) return false;
+      const blocks = splitPlainTextPasteBlocks(text);
+      const blockIds = createUuidV7Batch(blocks.length);
+      const marks = state.storedMarks ?? state.selection.$from.marks();
+      const nodes = blocks.map((block, index) =>
+        paragraph.create(
+          { blockId: blockIds[index] },
+          block ? state.schema.text(block, marks) : null,
+        ),
+      );
+      tr.replaceSelection(Slice.maxOpen(Fragment.fromArray(nodes)));
+    }
+    if (!tr.docChanged) return false;
+    const undoManager = findUndoManager(view);
+    const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
+    if (standaloneUndo) undoManager?.stopCapturing();
+    // Dispatch literal text without pasteHTML/pasteText or uiEvent=paste:
+    // Tiptap paste rules would otherwise turn **...**, etc. into marks.
+    view.dispatch(tr.scrollIntoView());
+    if (standaloneUndo) undoManager?.stopCapturing();
+    this.action = "clipboard:paste:plain:changed";
+    this.emit();
+    this.scheduleCaretRefresh(view);
+    return true;
+  }
+
   private pasteListPlainFallback(view: EditorView, text: string): boolean {
     const tr = pastePlainListText(view.state.tr, text);
     if (!tr) return false;
@@ -1351,6 +1433,20 @@ export class ProductVimSession {
       return true;
     }
     const isComposing = event.isComposing || this.composing;
+    if (
+      !isComposing &&
+      this.mode === "insert" &&
+      event.ctrlKey &&
+      event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      event.key.toLowerCase() === "v" &&
+      this.options.onPastePlainRead
+    ) {
+      event.preventDefault();
+      this.readPlainClipboardPaste(view);
+      return true;
+    }
     if (
       !isComposing &&
       this.mode === "insert" &&
@@ -3483,9 +3579,7 @@ function readPasteFallback(
   data: Pick<DataTransfer, "getData" | "types">,
 ): PasteFallback {
   const types = Array.from(data.types);
-  const plainType = types.find(
-    (type) => type === "text/plain" || type.startsWith("text/plain;"),
-  );
+  const plainType = preferredPlainClipboardMime(types);
   return {
     html: types.includes("text/html") ? data.getData("text/html") : "",
     plain: plainType ? data.getData(plainType) : "",

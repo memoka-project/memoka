@@ -74,6 +74,12 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 
 - text、block-lines、structure、section、table-cellsの内部Clipboard schema 7を往復する。
 - rich MIMEが失われた場合のplain fallbackを確認する。
+- HTML・Markdown・textが同時にあるClipboardをInsertの`Ctrl-Shift-v`で貼り、textだけが入る。
+  Markdown記号やGFM Tableも文字のままになり、空Root titleでwhole-note importしないこと、
+  1回のUndo/Redo、textなし、読取中のcaret・文書・mode・focus変更、IME composition優先を確認する。
+- Firefoxから日本語をコピーし、`text/plain`が`\u...`でも`text/plain;charset=utf-8`が日本語なら、
+  `Ctrl-Shift-v`で日本語が入ることを確認する。リスト直下のParagraphでは複数行が兄弟Itemになる。
+  元のtextに含まれるリテラルの`\u...`は変換しない。通常の`Ctrl-v`はHTMLの構造（`pre`など）を保持する。
 - `doc/specification/vim-operations.md`を空Root titleへ貼り、H1、Section、List、Table、Code、
   inline mark、linkを1 Noteとして取り込む。
 - non-empty Note/Focused Sectionではwhole-note importせず通常pasteになる。
@@ -95,7 +101,13 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 2. 直接Paragraphの途中で`Alt-Enter`は同じItem内のParagraph、`Enter`は兄弟Item、
    `Shift-Enter`はHard Breakを作る。HBの前後が行番号・`j/k`・`V`・`dd/yy`で別論理行になることを確認する。
 3. Code/Table/Quote内では`Enter`はそのblockの操作、`Alt-Enter`はItem内のそのblockの直後へParagraph追加、
-   `Ctrl-Enter`は最外List全体の直後へ新規Paragraph追加となることを確認する。
+   `Ctrl-Enter`とNormalの`o`は所有ListItemの表示順で直後へ空Paragraphを持つItem追加となることを確認する。
+   画像・添付・水平線でも同じ動作になり、子Listがあれば最初の子Listの先頭へ、なければ次の兄弟へ追加する。
+   子List後方にParagraphなどがあっても既存の親子関係・表示順・IDが変わらないこと、
+   追加先のList種別（番号付きの開始番号も含む）を維持すること、空の既存Itemを再利用しないこと、
+   Undo/RedoとIME composition優先も確認する。`O`、List外の`o`/`Ctrl-Enter`の動作は変えない。
+   リスト項目の`yy`/Visual Line `y`→`p`も同じ位置へ追加し、コピーした子孫の相対階層を保つ。
+   `P`、文字単位の`p`、Table Cellのputは変わらないことも確認する。
 4. 直接Paragraphに複数行のplain textをInsert paste/Normal `p/P`し、改行ごとの兄弟Itemになることを確認する。
    CRLF、途中の空行、末尾改行1個の除去、caret後方のtext・後続block・子Listが最後のItemへ残ることも確認する。
 5. Markdown/HTML/内部Clipboardでは複数blockの構造を保ち、Code/Table内部へのplain pasteは既存の挙動を保つ。

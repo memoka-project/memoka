@@ -603,23 +603,11 @@ fn read_linux_explicit_clipboard(format: &str) -> Result<Option<ExplicitClipboar
         .collect();
     available_types.sort();
 
-    if available_types
-        .iter()
-        .any(|available| available == requested_mime)
-    {
-        let content = read_linux_clipboard_mime(&clipboard, requested_mime)?;
+    if let Some(mime_type) = explicit_available_mime(requested_mime, &available_types) {
+        let content = read_linux_clipboard_mime(&clipboard, mime_type)?;
         return Ok(Some(ExplicitClipboardContent {
             available_types,
-            source_mime: requested_mime.to_owned(),
-            content,
-        }));
-    }
-
-    if let Some(plain_mime) = explicit_plain_mime(&available_types) {
-        let content = read_linux_clipboard_mime(&clipboard, plain_mime)?;
-        return Ok(Some(ExplicitClipboardContent {
-            available_types,
-            source_mime: plain_mime.to_owned(),
+            source_mime: mime_type.to_owned(),
             content,
         }));
     }
@@ -639,13 +627,33 @@ fn explicit_requested_mime(format: &str) -> Result<&'static str, String> {
     match format {
         "markdown" => Ok(MARKDOWN_CLIPBOARD_MIME),
         "html" => Ok(HTML_CLIPBOARD_MIME),
+        "plain" => Ok(PLAIN_CLIPBOARD_MIME),
         _ => Err(format!("unsupported explicit Clipboard format: {format}")),
     }
 }
 
 #[cfg(target_os = "linux")]
+fn explicit_available_mime(
+    requested_mime: &'static str,
+    available_types: &[String],
+) -> Option<&'static str> {
+    // Plain text is a family of targets, not necessarily the unqualified MIME.
+    // Firefox can offer escaped ASCII there while its UTF-8 target contains
+    // the original Japanese. Never unescape the copied text to compensate.
+    if requested_mime != PLAIN_CLIPBOARD_MIME
+        && available_types
+            .iter()
+            .any(|available| available == requested_mime)
+    {
+        Some(requested_mime)
+    } else {
+        explicit_plain_mime(available_types)
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn explicit_plain_mime(available_types: &[String]) -> Option<&'static str> {
-    [PLAIN_CLIPBOARD_MIME, UTF8_PLAIN_CLIPBOARD_MIME]
+    [UTF8_PLAIN_CLIPBOARD_MIME, PLAIN_CLIPBOARD_MIME]
         .into_iter()
         .find(|mime_type| {
             available_types
@@ -723,8 +731,8 @@ mod tests {
         MAX_PREFERRED_CLIPBOARD_BYTES, MEMOKA_CLIPBOARD_MIME, PLAIN_CLIPBOARD_MIME,
         PORTAL_FILE_TRANSFER_CLIPBOARD_MIME, PORTAL_FILES_CLIPBOARD_MIME, RichClipboardFormats,
         TSV_CLIPBOARD_MIME, URI_CLIPBOARD_MIME_CANDIDATES, URI_LIST_CLIPBOARD_MIME,
-        UTF8_PLAIN_CLIPBOARD_MIME, decode_clipboard_bytes, explicit_plain_mime,
-        explicit_requested_mime, file_uri_from_path, local_path_from_file_uri,
+        UTF8_PLAIN_CLIPBOARD_MIME, decode_clipboard_bytes, explicit_available_mime,
+        explicit_plain_mime, explicit_requested_mime, file_uri_from_path, local_path_from_file_uri,
         parse_linux_file_clipboard, preferred_mime_types, preferred_plain_fallback_mime,
         rich_clipboard_targets, rich_file_clipboard_payloads, validate_clipboard_size,
     };
@@ -784,8 +792,9 @@ mod tests {
             Ok(MARKDOWN_CLIPBOARD_MIME)
         );
         assert_eq!(explicit_requested_mime("html"), Ok(HTML_CLIPBOARD_MIME));
+        assert_eq!(explicit_requested_mime("plain"), Ok(PLAIN_CLIPBOARD_MIME));
         assert!(
-            explicit_requested_mime("plain")
+            explicit_requested_mime("unknown")
                 .unwrap_err()
                 .contains("unsupported")
         );
@@ -794,11 +803,71 @@ mod tests {
                 UTF8_PLAIN_CLIPBOARD_MIME.to_owned(),
                 PLAIN_CLIPBOARD_MIME.to_owned(),
             ]),
-            Some(PLAIN_CLIPBOARD_MIME)
+            Some(UTF8_PLAIN_CLIPBOARD_MIME)
         );
         assert_eq!(
             explicit_plain_mime(&[UTF8_PLAIN_CLIPBOARD_MIME.to_owned()]),
             Some(UTF8_PLAIN_CLIPBOARD_MIME)
+        );
+    }
+
+    #[test]
+    fn prefers_firefox_utf8_text_for_explicit_plain_paste() {
+        let original =
+            "Ctrl-w x : 現在の画面と次の画面を入れ替える\nCtrl-w H : 現在の画面を一番左に移動する";
+        let payloads = [
+            (
+                PLAIN_CLIPBOARD_MIME,
+                r"Ctrl-w x : \u73fe\u5728\u306e\u753b\u9762",
+            ),
+            (HTML_CLIPBOARD_MIME, "<pre>現在の画面</pre>"),
+            (UTF8_PLAIN_CLIPBOARD_MIME, original),
+        ];
+        // Duplicated targets and their enumeration order must not affect priority.
+        let mut types: Vec<_> = payloads
+            .iter()
+            .map(|(mime, _)| (*mime).to_owned())
+            .collect();
+        types.extend(types.clone());
+        for available in [types.clone(), types.into_iter().rev().collect()] {
+            let mime =
+                explicit_available_mime(explicit_requested_mime("plain").unwrap(), &available)
+                    .unwrap();
+            assert_eq!(mime, UTF8_PLAIN_CLIPBOARD_MIME);
+            let raw = payloads.iter().find(|(name, _)| *name == mime).unwrap().1;
+            assert_eq!(
+                decode_clipboard_bytes(mime, raw.as_bytes().to_vec()).unwrap(),
+                original
+            );
+            assert_eq!(
+                explicit_available_mime(HTML_CLIPBOARD_MIME, &available),
+                Some(HTML_CLIPBOARD_MIME)
+            );
+            assert_eq!(
+                explicit_available_mime(MARKDOWN_CLIPBOARD_MIME, &available),
+                Some(UTF8_PLAIN_CLIPBOARD_MIME)
+            );
+        }
+        assert_eq!(
+            preferred_plain_fallback_mime(&[
+                PLAIN_CLIPBOARD_MIME.to_owned(),
+                UTF8_PLAIN_CLIPBOARD_MIME.to_owned()
+            ]),
+            Some(UTF8_PLAIN_CLIPBOARD_MIME)
+        );
+        assert_eq!(
+            explicit_available_mime(PLAIN_CLIPBOARD_MIME, &[PLAIN_CLIPBOARD_MIME.to_owned()]),
+            Some(PLAIN_CLIPBOARD_MIME)
+        );
+        assert_eq!(
+            explicit_available_mime(PLAIN_CLIPBOARD_MIME, &[HTML_CLIPBOARD_MIME.to_owned()]),
+            None
+        );
+        // Literal escapes in actual text remain literal: this is MIME selection,
+        // not a JSON/Unicode-unescape transformation.
+        assert_eq!(
+            decode_clipboard_bytes(UTF8_PLAIN_CLIPBOARD_MIME, br"\u73fe".to_vec()).unwrap(),
+            r"\u73fe"
         );
     }
 

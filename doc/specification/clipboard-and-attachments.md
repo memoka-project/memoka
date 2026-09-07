@@ -50,7 +50,27 @@ Normalの`p/P`は通常はWorkspace内registerを使う。OS focusが戻った�
 text registerの`p`はcaretの後、`P`は前へ貼り、貼り付け後caretは挿入した最後の文字または構造対象へ移る。
 Table内では`p/P`を同じ操作として現在Cellを左上にする。
 
+### テキスト形式を明示するpaste
+
+Insertの`Ctrl-Shift-v`は通常pasteとは別にOS Clipboardのplain textだけを読み取る。
+Linux native/Web Clipboard/DOM pasteで複数のtext MIMEがある場合は、`text/plain;charset=utf-8`を
+無修飾の`text/plain`より優先し、列挙順には依存しない。Firefoxでは前者が日本語、後者が
+`\u...`表記になる場合があるため、形式の選択で扱う。文字列のUnicodeエスケープを再解釈しない。
+HTML、Markdown、内部構造、Table交換形式、file、画像の自動選択へfallbackしない。
+Markdown記号は文字のままで、空Root titleでもwhole-note importせず、GFM Tableの推測も行わない。
+ListItemの複数行分割やCode内の改行など、貼り付け先の通常plain text規則は維持する。
+pasteは1 Undo単位とし、textがない場合は無変更。非同期読取中に文書、caret、mode、focusが変わった場合も無変更で破棄する。
+IME composition中はcommandを実行しない。通常のInsert pasteとNormalのVim key割当は変更しない。
+
+native明示読取は`plain`、`markdown`、`html`を指定できる。plainではLinuxのtext MIMEまたはWindowsの
+`CF_UNICODETEXT`を使用し、native非対応時はWeb ClipboardのUTF-8/plain text MIMEまたは`readText()`を使用する。
+
 ### ListItemへのpaste
+
+ListItemを`yy`やVisual Lineの`y`でコピーしたregisterのNormal `p`は、現在Itemに直接子Listがあれば
+最初の子Listの先頭へ貼り、なければ現在Itemの次の兄弟として貼る。`Ctrl-Enter`/Normal `o`と同じ挿入位置を使う。
+追加先のList種別を保ち、コピーしたItem内の相対的な階層も保つ。既存の子孫や後続Blockは移動しない。
+`P`は従来どおり前側へ貼る。文字単位register、Code line、Table Cellのputは固有規則を維持する。
 
 ListItem直下Paragraphへの通常の複数行plain textは、Insert paste・Normalの`p/P`ともに改行ごとに兄弟Itemへ分割する。
 CRLF/CRをLFに揃え、末尾の改行を1つだけ除く。中間空行と、それ以外の末尾空行は空Itemとして保持する。

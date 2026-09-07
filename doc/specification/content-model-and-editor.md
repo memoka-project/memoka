@@ -77,10 +77,14 @@ Memokaがblock種別に応じて処理する。
 - ListItem直下のParagraphのEnterはcaret位置でItemを分割する。後続Blockと子Listは新しい兄弟Itemへ移る。単独の空ParagraphのItemではList構造を抜ける。
 - ListItem内のCode/Source、Table、引用ではEnterは内部Block本来の編集操作を行う。
 - `Alt-Enter`はListItem直下のParagraphをcaret位置で分割し、同じItem内に次のParagraphを作る。内部Block内では、そのBlockを包含するListItem直下のBlockの後ろに空Paragraphを作る。
-- List内の`Ctrl-Enter`は内部Blockの種類によらず最外List全体の直後に新しいParagraphを作る。既存Paragraphは再利用しない。
+- List内の`Ctrl-Enter`とNormalの`o`は内部Blockの種類によらず、caretに最も近い所有ListItemの表示順で直後に空Paragraphを持つListItemを作ってInsertで移動する。
+  直接子Listがあれば最初の子Listの先頭に新しい子Itemを追加し、なければ元Itemの次の兄弟として追加する。
+  元ItemのBlockをcaret位置で分割せず、既存子孫・後続Blockの親子関係・順序・IDも変えない。
+  追加先のList種別と開始番号を維持し、既存の空Itemは再利用しない。変更は1 Undo単位とする。`O`とList外の`o`は従来どおり。
+  ListItem registerのNormal `p`も同じ挿入位置を使い、コピーしたItem内の相対的な階層を保つ。`P`は元Itemの前のままとする。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。
-- List、Table、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ
+- List外のTable、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ
   新しいParagraphを必ず作って移動する。既存Paragraphを再利用しない。
 - Horizontal Rule、Image、Attachment上の`i/I`は前block末尾、`a/A`は次block先頭へ入る。
   移動先がなければ空Paragraphを作る。
@@ -124,6 +128,8 @@ ListItemの先頭や唯一のBlockに引用、Alert、Code/Source、Table、Imag
 schemaを満たすためだけの空Paragraphは挿入しない。ListItem直下の空Paragraphで`/`を入力すると共通Block pickerを開く。
 Block変換と添付挿入は現在のItem内に適用し、未選択のBlockのIDや順序を変更しない。
 picker確定時だけ`/`を消し、cancel時は残す。ListItem内にSectionは作らない。
+ListItem内のParagraphと子Listは詰めた間隔を維持する。それ以外のBlockは先頭・末尾・唯一のBlockであっても
+種類ごとの前後の余白を維持し、前後の項目やBlockと密着させない。
 
 - 親ListItemの`dd`またはVisual Lineの`d`では、未選択の子Itemを削除しない。
   子Itemは表示位置を保つ範囲で昇格させる。

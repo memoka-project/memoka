@@ -2779,11 +2779,12 @@ textarea {
   max-width: 100%;
 }
 
-.memoka-editor li > :first-child {
+/* Keep text/list edges compact without stripping rich blocks' own spacing. */
+.memoka-editor li > :is(p, ul, ol):first-child {
   margin-top: 0;
 }
 
-.memoka-editor li > :last-child {
+.memoka-editor li > :is(p, ul, ol):last-child {
   margin-bottom: 0;
 }
 

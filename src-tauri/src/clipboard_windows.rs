@@ -310,6 +310,7 @@ pub(super) fn read_explicit_clipboard(
             MARKDOWN_CLIPBOARD_MIME,
         ),
         "html" => (registered_format(HTML_FORMAT)?, HTML_CLIPBOARD_MIME),
+        "plain" => (CF_UNICODETEXT as u32, PLAIN_CLIPBOARD_MIME),
         _ => return Err(format!("unsupported explicit Clipboard format: {format}")),
     };
     let clipboard = open_clipboard()?;
@@ -329,11 +330,15 @@ pub(super) fn read_explicit_clipboard(
     available_types.sort();
 
     let result = if format_available(requested.0) {
-        let bytes = read_global_bytes(requested.0, requested.1)?;
-        let content = if format == "html" {
-            extract_cf_html_fragment(&bytes)?
+        let content = if format == "plain" {
+            read_unicode_text()?
         } else {
-            decode_utf8_without_nul(bytes, requested.1)?
+            let bytes = read_global_bytes(requested.0, requested.1)?;
+            if format == "html" {
+                extract_cf_html_fragment(&bytes)?
+            } else {
+                decode_utf8_without_nul(bytes, requested.1)?
+            }
         };
         Some(ExplicitClipboardContent {
             available_types,
