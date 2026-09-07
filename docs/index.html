@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Memokaは、Vimの操作感でMarkdown記法を意識せずに書ける、ローカルファーストのノートアプリです。ノートをツリーで整理し、Markdownへ書き出せます。"
+    />
+    <!-- Search ConsoleのHTMLタグ方式を使う場合、ここに発行されたmetaタグを追加します。 -->
+    <title>Memoka — Vimの操作感で書くノート</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">本文へ移動</a>
+    <header class="site-header container">
+      <a class="brand" href="./index.html" aria-label="Memoka ホーム">
+        <img src="./icon.svg" width="36" height="36" alt="" />
+        <span>Memoka</span>
+      </a>
+      <nav aria-label="メインナビゲーション">
+        <a href="./index.html" aria-current="page">ホーム</a>
+        <a href="./privacy.html">プライバシー</a>
+        <a href="./terms.html">利用規約</a>
+      </nav>
+    </header>
+
+    <main id="main" class="container" tabindex="-1">
+      <aside class="notice" aria-label="ベータ版について">
+        <strong>開発中のベータ版です。</strong>
+        保存データや設定の互換性を壊す変更を行う可能性があります。重要なデータには、別途バックアップと世代管理を用意してください。
+      </aside>
+
+      <section class="hero" aria-labelledby="hero-title">
+        <div>
+          <p class="eyebrow">Local-first · Open source · Vim-style</p>
+          <h1 id="hero-title">
+            Vimの手つきで。<br /><span>Markdownを書かずに。</span>
+          </h1>
+          <p class="intro">
+            Memokaは、Vimが手に馴染んでしまいメモ帳では満足できず、Markdownを手で書きたくないVimmerのためのノートアプリです。
+          </p>
+          <div class="actions">
+            <a
+              class="button primary"
+              href="https://github.com/memoka-project/memoka/releases/latest"
+              >Linux版をダウンロード</a
+            >
+            <a
+              class="button"
+              href="https://github.com/memoka-project/memoka#対応環境とインストール"
+              >ソースコード・導入手順</a
+            >
+          </div>
+          <p class="caption">
+            LinuxはAppImageを配布。Windowsはソースコードからビルドして利用できます。
+          </p>
+        </div>
+
+        <figure class="note-preview">
+          <figcaption>ノートの表示イメージ</figcaption>
+          <div class="sample-note">
+            <p class="sample-title">今日のメモ</p>
+            <p>思いついたことを、思いついた順に。</p>
+            <div class="sample-section">
+              <p class="sample-heading">次にやりたいこと</p>
+              <ul>
+                <li>アイデアを書き留める</li>
+                <li>関連するノートをまとめる</li>
+                <li><strong>書くこと</strong>に集中する</li>
+              </ul>
+            </div>
+          </div>
+          <div class="sample-status" aria-hidden="true">
+            <span>NORMAL</span> 今日のメモ
+          </div>
+        </figure>
+      </section>
+
+      <section class="features" aria-label="Memokaでできること">
+        <article>
+          <p class="feature-number" aria-hidden="true">01 / WRITE</p>
+          <h2>Vimの操作感で書く</h2>
+          <p>
+            慣れた移動・選択・編集操作で、思考を止めずに。見出しやリスト、表、文字装飾を、Markdown記法を意識せず扱えます。
+          </p>
+          <p class="keycaps" aria-label="Vim風のカーソル移動キー">
+            <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd>
+          </p>
+        </article>
+        <article>
+          <p class="feature-number" aria-hidden="true">02 / ORGANIZE</p>
+          <h2>ツリーで整理する</h2>
+          <p>
+            ノートを親子関係でまとめ、ノートの中はセクションで整理。タイトルや本文の検索から、必要な場所へ戻れます。
+          </p>
+        </article>
+        <article>
+          <p class="feature-number" aria-hidden="true">03 / EXPORT</p>
+          <h2>Markdownへ書き出す</h2>
+          <p>
+            書いたノートはMarkdownとして出力できます。別のテキストエディタやツールでも、内容を活用できます。
+          </p>
+        </article>
+      </section>
+
+      <section class="local-first" aria-labelledby="data-title">
+        <div>
+          <p class="eyebrow">Your notes, on your device</p>
+          <h2 id="data-title">ノートは、あなたの手元に。</h2>
+          <p>
+            ノートは自分で選んだWorkspaceに保存します。通常の編集にアカウント登録は不要です。Memoka独自のサーバーへのノート送信、広告、テレメトリーはありません。
+          </p>
+        </div>
+        <div class="drive-summary">
+          <h3>Google Driveバックアップは任意です</h3>
+          <p>
+            利用者がGoogleで認可した場合だけ、暗号化したバックアップを端末からGoogle
+            Driveの専用フォルダーへ転送します。認可した範囲で、バックアップの読み出し・検証・復旧・保持整理も行います。
+          </p>
+          <p>
+            権限は<code>drive.file</code>を使用します。連携は実験的機能です。アクセスする情報、保存方法、接続解除については、<a
+              href="./privacy.html"
+              >プライバシーポリシー</a
+            >を確認してください。
+          </p>
+        </div>
+      </section>
+
+      <section class="project" aria-labelledby="project-title">
+        <h2 id="project-title">オープンソースのノートアプリ</h2>
+        <p>
+          MemokaはJun
+          Andoが開発し、MITライセンスで公開しています。使い方はアプリ内の<code>:help</code>、導入・開発情報は<a
+            href="https://github.com/memoka-project/memoka"
+            >GitHubリポジトリ</a
+          >で確認できます。
+        </p>
+        <p>
+          一般的なお問い合わせや不具合の報告は<a
+            href="https://github.com/memoka-project/memoka/issues"
+            >GitHub Issues</a
+          >へ。公開されるため、ノートの内容や認証情報などは投稿しないでください。
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer container">
+      <p>© 2026 Jun Ando and contributors</p>
+      <nav aria-label="フッターナビゲーション">
+        <a href="./privacy.html">プライバシーポリシー</a>
+        <a href="./terms.html">利用規約</a>
+        <a href="https://github.com/memoka-project/memoka/blob/main/LICENSE"
+          >MIT License</a
+        >
+      </nav>
+    </footer>
+  </body>
+</html>

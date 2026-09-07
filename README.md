@@ -243,9 +243,13 @@ corepack pnpm tauri:build
 `restic:prepare`と`rclone:prepare`は対応OSの固定artifactを取得し、archiveと実行ファイルのSHA-256を検証します。
 Tauriの開発起動・buildと`cli:build`でも自動実行します。Cargo testを直接実行する場合は先に準備してください。
 
+GitHub Pages用の静的HTMLは`docs`にあります。公開方法と文書の更新手順は[公開サイトのREADME](docs/README.md)を参照してください。
+
 ## ライセンス
 
 [MIT License](LICENSE)
+
+利用条件は[利用規約](TERMS.md)、データの取り扱いは[プライバシーポリシー](PRIVACY.md)を参照してください。
 
 組み込みカラーパレットはNightfox（MIT License、Copyright (c) 2021 James Simpson）に基づきます。
 固定した上流commitとライセンス全文は[Third-party notices](THIRD_PARTY_NOTICES.md)に記載しています。
