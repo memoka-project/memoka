@@ -5,6 +5,40 @@ import {
 } from "../app/src/vim/repeat";
 
 describe("Memoka semantic dot-repeat descriptor", () => {
+  it("stores Visual Char geometry immutably and waits for completed change input", () => {
+    const candidate = {
+      mode: "visual-char" as const,
+      command: "selection.change" as const,
+      operator: null,
+      count: 1,
+      countExplicit: false,
+      visualChar: {
+        lines: 2,
+        columns: 4,
+        toLineEnd: false,
+        acrossCells: false,
+      },
+    };
+    expect(createVimRepeatDescriptor(candidate)).toBeNull();
+    const descriptor = createVimRepeatDescriptor({
+      ...candidate,
+      command: "replace.character",
+      argument: "x",
+    });
+    expect(descriptor?.visualChar).toEqual(candidate.visualChar);
+    if (!descriptor) throw new Error("descriptor was not created");
+    const store = new VimRepeatStore();
+    store.record(descriptor);
+    candidate.visualChar.columns = 90;
+    descriptor.visualChar!.lines = 50;
+    store.read()!.visualChar!.toLineEnd = true;
+    expect(store.read()?.visualChar).toEqual({
+      lines: 2,
+      columns: 4,
+      toLineEnd: false,
+      acrossCells: false,
+    });
+  });
   it("records immediate edits and delete Operators without transactions", () => {
     expect(
       createVimRepeatDescriptor({

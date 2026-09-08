@@ -11,7 +11,7 @@ import {
 } from "@tiptap/pm/state";
 import { liftListItem, sinkListItem } from "@tiptap/pm/schema-list";
 import { addRowAfter, goToNextCell, TableMap } from "@tiptap/pm/tables";
-import { canJoin } from "@tiptap/pm/transform";
+import { canJoin, ReplaceStep } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 import {
   defaultVimBlockSemantics,
@@ -6497,12 +6497,13 @@ export function runEditorReplaceCharacter(
   );
 }
 
-function replaceVisualCharacters(
+export function replaceVisualCharacters(
   view: VimEditorView,
   character: string,
+  range: { from: number; to: number } = view.state.selection,
 ): EditorVimResult {
   const detail = "selection:replace";
-  const { from, to } = view.state.selection;
+  const { from, to } = range;
   if (from === to || Array.from(character).length !== 1)
     return { handled: false, detail };
   const edits: { from: number; to: number; node: ProseMirrorNode }[] = [];
@@ -6562,6 +6563,50 @@ function replaceVisualCharacters(
   view.dispatch(scrollWhenLayoutIsAvailable(transaction));
   view.focus();
   return { handled: true, detail, nextMode: "normal" };
+}
+
+/** Replay a completed Visual change atomically. Building the whole transaction
+ * first means an incompatible destination cannot leave only the deletion behind. */
+export function runEditorVisualCharChange(
+  view: VimEditorView,
+  range: { from: number; to: number },
+  inserted: Slice,
+): EditorVimResult {
+  const detail = "selection:change";
+  const { from, to } = range;
+  try {
+    const text = view.state.doc.textBetween(from, to, "\n", "\uFFFC");
+    const register = text
+      ? textRegisterForRange(view, from, to, text)
+      : undefined;
+    const transaction = view.state.tr.delete(from, to);
+    const position = Selection.near(
+      transaction.doc.resolve(Math.min(from, transaction.doc.content.size)),
+      -1,
+    ).from;
+    // Window-local repeat survives adapter/schema reconstruction (and Note
+    // switches). NodeType objects from the previous editor cannot be reused.
+    const slice = copyStructureWithFreshBlockIds(
+      Slice.fromJSON(view.state.schema, inserted.toJSON()),
+    );
+    transaction.step(new ReplaceStep(position, position, slice));
+    const end = Math.min(position + slice.size, transaction.doc.content.size);
+    const selection = Selection.near(transaction.doc.resolve(end), -1);
+    const before = selection.$from.nodeBefore;
+    const cursor = before?.isText
+      ? selection.from - (Array.from(before.text!).at(-1)?.length ?? 0)
+      : before?.isInline && before.type.name !== "hardBreak"
+        ? selection.from - before.nodeSize
+        : selection.from;
+    transaction.setSelection(
+      TextSelection.near(transaction.doc.resolve(cursor), -1),
+    );
+    view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+    view.focus();
+    return { handled: true, detail, nextMode: "normal", register };
+  } catch {
+    return { handled: false, detail: `${detail}:incompatible` };
+  }
 }
 
 export function runEditorReplaceText(

@@ -149,7 +149,26 @@ Vimとは異なり`vip`はVisual Charを維持する。`ip`の複数Countは未�
 `r{char}`は選択内の各文字を指定文字へ置換してNormalへ戻る。Unicode code point単位で置換し、
 各text runのmarks、Code/Sourceの改行、Hard Breakとblock境界を保つ。Internal Linkは1 atomic単位として置換する。
 画像・添付などのblock atom自体と折り畳み中の非表示本文は置換しない。registerは変更しない。複数blockでも1 transaction/Undoとし、
-Undo後のcaretは変更前selection先頭へ戻る。`s/r`のVisual Char repeatは未対応。
+Undo後のcaretは変更前selection先頭へ戻る。
+
+#### Visual Charの`.` repeat
+
+`c/s/r`はWindow-localな意味的repeat descriptorを記録する。1論理行なら選択文字数、
+複数論理行なら行数と最終行のcolumnを保存し、現在caretを先頭に前方へ適用する。
+code pointとInternal Link単位で数え、`viw`などの元motion/text objectは再評価しない。
+`$`で選択した末尾は固定columnでなく行末として保存する。行末への移動後に別のmotionで範囲を変えた場合は固定範囲へ戻る。
+単一行の範囲は対象行末、単一Cellの範囲はCell末尾にclampし、Focused Sectionの表示論理行を越えない。
+Vimのvisual-repeatと同じく、`.`自体のCountは使わない。
+
+`c/s`は削除後の永続document参照を保持し、Insert終了時だけ確定したSliceを取り出す。
+IMEのキー列やcomposition途中のtextは再生せず、装飾・Hard Break・段落分割を含む最終結果を使う。
+Sliceの挿入で元の入力操作を再構成できることを検査し、範囲外の編集やSection構造変更が含まれる場合は
+古いrepeatを消去して通知する。文字入力ごとの全文走査やdocumentのコピーは行わない。
+新しいblockには新しいIDを付け、再生先のschemaにそのまま適合しない場合は操作全体を変更なしとする。
+
+`r`は同じ範囲と置換文字を保存し、元操作と同じmarks・改行・fold規則で再適用する。
+各`.`は削除と挿入をまとめた1 transaction/Undoとし、Normalへ戻す。Undo時は繰り返し実行位置へ戻る。
+`c/s`では削除範囲をregisterへ保存し、`r`ではregisterを変えない。未確定・キャンセルされた`r`、移動、yank、Undoはrepeatを上書きしない。
 
 ### 8.2 Visual Line
 

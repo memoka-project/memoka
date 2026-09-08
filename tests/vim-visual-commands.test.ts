@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { CoreRuntime } from "../app/src/core/runtime";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { BrowserVimClipboard } from "../app/src/vim/clipboard";
+import { TextSelection } from "@tiptap/pm/state";
+import { addSecondWindow } from "./helpers/runtime";
 
 const text = (value: string): JSONContent => ({ type: "text", text: value });
 const paragraph = (value: string): JSONContent => ({
@@ -81,6 +83,447 @@ async function harness(content: JSONContent[]) {
     },
   };
 }
+
+describe("Visual Char dot-repeat", () => {
+  it("keeps completed input Window-local across an adapter remount", async () => {
+    const h = await harness([paragraph("alpha beta gamma")]);
+    const secondRoot = document.createElement("div");
+    document.body.append(secondRoot);
+    await addSecondWindow(h.runtime);
+    const second = h.runtime.editorForTesting("window-2", secondRoot);
+    try {
+      h.select("alpha");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.insertContent("new");
+      h.press("Escape");
+      await h.runtime.flush();
+      expect(h.runtime.repeatStoreFor("window-1").read()).toMatchObject({
+        command: "selection.change",
+        visualChar: { columns: 5 },
+      });
+      second.editor.view.focus();
+      for (const key of ["Escape", "."])
+        second.editor.view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      expect(second.adapter.vimSnapshot.action).toBe("repeat:empty");
+      h.adapter.destroy();
+      const remounted = h.runtime.editorForTesting("window-1", h.root);
+      try {
+        expect(remounted.adapter.vimSnapshot.mode).toBe("normal");
+        expect(h.runtime.repeatStoreFor("window-1").read()).toMatchObject({
+          command: "selection.change",
+          visualChar: { columns: 5 },
+        });
+        let position = -1;
+        remounted.editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text!.includes("gamma"))
+            position = pos + node.text!.indexOf("gamma");
+        });
+        remounted.editor.commands.setTextSelection(position);
+        remounted.editor.view.focus();
+        remounted.editor.view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: ".",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        expect(remounted.adapter.vimSnapshot.action).toBe(
+          "repeat:selection:change:changed",
+        );
+        expect(remounted.editor.getText()).toBe("new beta new");
+        expect(remounted.adapter.vimSnapshot.mode).toBe("normal");
+      } finally {
+        remounted.adapter.destroy();
+      }
+    } finally {
+      second.adapter.destroy();
+      secondRoot.remove();
+      h.destroy();
+    }
+  });
+  it.each([false, true])(
+    "replays Insert paragraph splitting with fresh IDs (list=%s)",
+    async (list) => {
+      const content = [paragraph("abc tail"), paragraph("target rest")];
+      const h = await harness(
+        list
+          ? [
+              {
+                type: "bulletList",
+                content: content.map((p) => ({
+                  type: "listItem",
+                  content: [p],
+                })),
+              },
+            ]
+          : content,
+      );
+      try {
+        h.select("abc");
+        h.press("v", "i", "w", "c");
+        h.editor.commands.insertContent("before");
+        h.press("Enter");
+        h.editor.commands.insertContent("after");
+        h.press("Escape");
+        const once = h.editor.getJSON();
+        h.select("target");
+        h.press(".");
+        const values: string[] = [],
+          ids: string[] = [];
+        h.editor.state.doc.descendants((n) => {
+          if (n.type.name === "paragraph") values.push(n.textContent);
+          if (n.attrs.blockId) ids.push(n.attrs.blockId);
+        });
+        expect(values).toEqual([
+          "before",
+          "after tail",
+          "before",
+          "afterget rest",
+        ]);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(h.undo.undoStack).toHaveLength(2);
+        h.press("u");
+        expect(h.editor.getJSON()).toEqual(once);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
+  it("can replay a change into an empty Table cell without touching neighbours", async () => {
+    const h = await harness([
+      paragraph("abc"),
+      {
+        type: "table",
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              { type: "tableCell", content: [{ type: "paragraph" }] },
+              { type: "tableCell", content: [paragraph("safe")] },
+            ],
+          },
+        ],
+      },
+    ]);
+    try {
+      h.select("abc");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.insertContent("new");
+      h.press("Escape");
+      let empty = -1;
+      h.editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "paragraph" && !node.content.size)
+          empty = pos + 1;
+      });
+      h.editor.commands.setTextSelection(empty);
+      h.press(".");
+      const row = h.editor.state.doc.lastChild!.firstChild!;
+      expect(row.child(0).textContent).toBe("new");
+      expect(row.child(1).textContent).toBe("safe");
+      expect(h.undo.undoStack).toHaveLength(2);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("does not delete the destination if an inserted rich Slice cannot fit", async () => {
+    const h = await harness([
+      paragraph("abc"),
+      { type: "codeBlock", content: [text("destination")] },
+    ]);
+    try {
+      h.select("abc");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.insertContent([
+        text("x"),
+        { type: "hardBreak" },
+        text("y"),
+      ]);
+      h.press("Escape");
+      const before = h.editor.getJSON();
+      h.select("destination");
+      h.press(".");
+      expect(h.editor.getJSON()).toEqual(before);
+      expect(h.undo.undoStack).toHaveLength(1);
+      expect(h.adapter.vimSnapshot.mode).toBe("normal");
+    } finally {
+      h.destroy();
+    }
+  });
+  it.each(["c", "s"])(
+    "repeats %s with confirmed input and one Undo per change",
+    async (command) => {
+      const h = await harness([paragraph("alpha beta alphabet")]);
+      try {
+        const original = h.editor.getJSON();
+        h.select("alpha", 4);
+        h.press("v", "h", "h", "h", "h", command);
+        h.editor.view.dom.dispatchEvent(
+          new CompositionEvent("compositionstart", { bubbles: true }),
+        );
+        h.editor.commands.insertContent("にほん");
+        const end = h.editor.state.selection.head;
+        h.editor.view.dispatch(
+          h.editor.state.tr.insertText("日本語", end - 3, end),
+        );
+        h.editor.view.dom.dispatchEvent(
+          new CompositionEvent("compositionend", {
+            bubbles: true,
+            data: "日本語",
+          }),
+        );
+        h.press("Escape");
+        const first = h.editor.getJSON();
+        h.select("alphabet");
+        const repeatStart = h.editor.state.selection.head;
+        h.press(".");
+        expect(h.editor.getText()).toBe("日本語 beta 日本語bet");
+        expect(h.adapter.vimSnapshot.mode).toBe("normal");
+        expect(h.runtime.vimRegister.read()?.text).toBe("alpha");
+        expect(h.undo.undoStack).toHaveLength(2);
+        h.press("u");
+        expect(h.editor.getJSON()).toEqual(first);
+        expect(h.editor.state.selection.head).toBe(repeatStart);
+        h.press("u");
+        expect(h.editor.getJSON()).toEqual(original);
+        h.select("alphabet");
+        h.press(".");
+        expect(h.editor.getText()).toBe("alpha beta 日本語bet");
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
+  it("captures the final inserted Slice after corrections, including marks and Hard Breaks", async () => {
+    const h = await harness([paragraph("abc target")]);
+    try {
+      h.select("abc");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.insertContent([
+        { type: "text", text: "誤字", marks: [{ type: "bold" }] },
+        { type: "hardBreak" },
+        text("続き"),
+      ]);
+      const start = h.position("誤字");
+      h.editor.view.dispatch(
+        h.editor.state.tr.insertText("修正", start, start + 2),
+      );
+      h.press("Escape");
+      h.select("target");
+      h.press(".");
+      expect(h.editor.state.doc.firstChild?.textContent).toBe(
+        "修正続き 修正続きget",
+      );
+      const marks: string[][] = [];
+      h.editor.state.doc.descendants((n) => {
+        if (n.isText && n.text === "修正")
+          marks.push(n.marks.map((m) => m.type.name));
+      });
+      expect(marks).toEqual([["bold"], ["bold"]]);
+      expect(h.undo.undoStack).toHaveLength(2);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("repeats a deletion-only change without entering Insert", async () => {
+    const h = await harness([paragraph("abc abc tail")]);
+    try {
+      h.select("abc");
+      h.press("v", "i", "w", "s", "Escape");
+      h.select("abc");
+      h.press(".");
+      expect(h.editor.getText()).toBe("  tail");
+      expect(h.adapter.vimSnapshot.mode).toBe("normal");
+      expect(h.undo.undoStack).toHaveLength(2);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("replays r by characters, leaves the register alone, and ignores a dot count", async () => {
+    const h = await harness([paragraph("ab 😀日more")]);
+    try {
+      h.runtime.vimRegister.set({ kind: "text", text: "saved" });
+      h.select("ab");
+      h.press("v", "l", "r", "🦊");
+      const first = h.editor.getJSON();
+      h.select("😀");
+      h.press("3", ".");
+      expect(h.editor.getText()).toBe("🦊🦊 🦊🦊more");
+      expect(h.runtime.vimRegister.read()?.text).toBe("saved");
+      expect(h.undo.undoStack).toHaveLength(2);
+      h.press("u");
+      expect(h.editor.getJSON()).toEqual(first);
+      expect(h.editor.state.selection.head).toBe(h.position("😀"));
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it.each(["c", "r"])(
+    "repeats %s across the same logical lines and final column",
+    async (command) => {
+      const h = await harness([
+        paragraph("ab12"),
+        paragraph("cd34"),
+        paragraph("separator"),
+        paragraph("uv56"),
+        paragraph("wx78"),
+      ]);
+      try {
+        h.select("12");
+        h.press("v");
+        h.editor.view.dispatch(
+          h.editor.state.tr.setSelection(
+            TextSelection.create(
+              h.editor.state.doc,
+              h.position("12"),
+              h.position("34"),
+            ),
+          ),
+        );
+        h.press(command);
+        if (command === "c") {
+          h.editor.commands.insertContent("Z");
+          h.press("Escape");
+        } else h.press("Z");
+        h.select("56");
+        h.press(".");
+        const paragraphs = h.editor.state.doc.content.content.map(
+          (n) => n.textContent,
+        );
+        expect(paragraphs).toEqual(
+          command === "c"
+            ? ["abZ34", "separator", "uvZ78"]
+            : ["abZZ", "ZZ34", "separator", "uvZZ", "ZZ78"],
+        );
+        expect(h.undo.undoStack).toHaveLength(2);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
+  it("remembers an explicit $ as end-of-line, not the original short length", async () => {
+    const h = await harness([
+      paragraph("first short"),
+      paragraph("next much longer text"),
+    ]);
+    try {
+      h.select("short");
+      h.press("v", "$", "c");
+      h.editor.commands.insertContent("X");
+      h.press("Escape");
+      h.select("much");
+      h.press(".");
+      expect(h.editor.getText()).toBe("first X\n\nnext X");
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("keeps a short destination within the same Table cell", async () => {
+    const h = await harness([
+      paragraph("longword"),
+      {
+        type: "table",
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              { type: "tableCell", content: [paragraph("ab")] },
+              { type: "tableCell", content: [paragraph("untouched")] },
+            ],
+          },
+        ],
+      },
+    ]);
+    try {
+      h.select("longword");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.insertContent("新規");
+      h.press("Escape");
+      h.select("ab");
+      h.press(".");
+      const row = h.editor.state.doc.lastChild!.firstChild!;
+      expect(row.child(0).textContent).toBe("新規");
+      expect(row.child(1).textContent).toBe("untouched");
+      expect(h.editor.state.selection.$head.parent.textContent).toBe("新規");
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("treats internal links as one character in the replay geometry", async () => {
+    const h = await harness([
+      {
+        type: "paragraph",
+        content: [
+          text("a "),
+          {
+            type: "internalSectionLink",
+            attrs: { targetSectionId: "01900000-0000-7000-8000-0000000000aa" },
+            content: [text("long link label")],
+          },
+          text(" tail"),
+        ],
+      },
+    ]);
+    try {
+      h.select("a ");
+      h.press("v", "r", "x");
+      h.editor.commands.setTextSelection(3);
+      h.press(".");
+      expect(h.editor.getText()).toBe("x x tail");
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("does not replace a completed descriptor with a cancelled r or a yank", async () => {
+    const h = await harness([paragraph("abc def ghi")]);
+    try {
+      h.select("abc");
+      h.press("v", "l", "r", "X");
+      h.select("def");
+      h.press("v", "r", "Escape");
+      h.press("Y");
+      h.select("ghi");
+      h.press(".");
+      expect(h.editor.getText()).toBe("XXc def XXi");
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("does not reuse a stale descriptor after an Insert edit outside the change site", async () => {
+    const h = await harness([paragraph("first second third")]);
+    try {
+      h.select("first");
+      h.press("r", "X");
+      h.select("second");
+      h.press("v", "i", "w", "c");
+      h.editor.commands.setTextSelection(h.position("third"));
+      h.editor.commands.insertContent("elsewhere");
+      h.press("Escape");
+      const after = h.editor.getJSON();
+      h.press(".");
+      expect(h.editor.getJSON()).toEqual(after);
+      expect(h.adapter.vimSnapshot.action).toBe("repeat:empty");
+    } finally {
+      h.destroy();
+    }
+  });
+});
 
 describe("Visual Char edits and text objects", () => {
   it("treats s as change and undoes deletion plus delayed insertion in one step", async () => {

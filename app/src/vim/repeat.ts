@@ -1,11 +1,18 @@
 import {
   runEditorReplaceCharacter,
+  runEditorVisualCharChange,
+  replaceVisualCharacters,
   runEditorVimCommand,
   runEditorVimOperator,
   type EditorVimResult,
   type VimEditorView,
   type VimRegister,
 } from "./editor-commands";
+import type { Slice } from "@tiptap/pm/model";
+import {
+  visualCharRepeatRange,
+  type VimVisualCharShape,
+} from "./visual-repeat";
 import type { VimCommand, VimMode, VimOperator } from "./input";
 import type { TableActionRepeat } from "../core/table-actions";
 import {
@@ -21,6 +28,8 @@ export interface VimRepeatDescriptor {
   argument?: string;
   tableRectangle?: { width: number; height: number };
   tableAction?: TableActionRepeat;
+  visualChar?: VimVisualCharShape;
+  inserted?: Slice;
 }
 
 export interface VimRepeatCandidate extends VimRepeatDescriptor {
@@ -45,6 +54,10 @@ function cloneDescriptor(descriptor: VimRepeatDescriptor): VimRepeatDescriptor {
     count: descriptor.count,
     countExplicit: descriptor.countExplicit,
     argument: descriptor.argument,
+    visualChar: descriptor.visualChar
+      ? { ...descriptor.visualChar }
+      : undefined,
+    inserted: descriptor.inserted,
     tableRectangle: descriptor.tableRectangle
       ? { ...descriptor.tableRectangle }
       : undefined,
@@ -62,6 +75,14 @@ function cloneDescriptor(descriptor: VimRepeatDescriptor): VimRepeatDescriptor {
 export function createVimRepeatDescriptor(
   candidate: VimRepeatCandidate,
 ): VimRepeatDescriptor | null {
+  if (
+    candidate.mode === "visual-char" &&
+    candidate.visualChar &&
+    candidate.operator === null &&
+    ((candidate.command === "replace.character" && candidate.argument) ||
+      (candidate.command === "selection.change" && candidate.inserted))
+  )
+    return cloneDescriptor(candidate);
   if (
     candidate.mode === "visual-block" &&
     candidate.tableRectangle &&
@@ -108,6 +129,17 @@ export function replayVimRepeat(
   countExplicit: boolean,
   keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
 ): EditorVimResult {
+  if (descriptor.visualChar) {
+    // Like Vim visual-repeat, an explicit count on '.' does not resize the area.
+    const range = visualCharRepeatRange(view.state, descriptor.visualChar);
+    if (!range)
+      return { handled: false, detail: "visual-char:repeat:boundary" };
+    if (descriptor.command === "replace.character" && descriptor.argument)
+      return replaceVisualCharacters(view, descriptor.argument, range);
+    if (descriptor.command === "selection.change" && descriptor.inserted)
+      return runEditorVisualCharChange(view, range, descriptor.inserted);
+    return { handled: false, detail: "visual-char:repeat:unavailable" };
+  }
   const effectiveCount = countExplicit ? count : descriptor.count;
   if (descriptor.operator) {
     return runEditorVimOperator(

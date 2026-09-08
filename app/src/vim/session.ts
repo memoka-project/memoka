@@ -133,6 +133,7 @@ import {
   replayVimRepeat,
   VimRepeatStore,
 } from "./repeat";
+import { captureVisualCharShape, VisualChangeCapture } from "./visual-repeat";
 import { externalLinkAtPosition } from "./inline-format";
 import { runMarkdownNoteImport } from "./markdown-note-import";
 import { createUuidV7, createUuidV7Batch } from "../core/ids";
@@ -415,6 +416,8 @@ export class ProductVimSession {
   private refreshFrame: number | null = null;
   private focusRefreshTimer: number | null = null;
   private changeUndoCapture: ChangeUndoCapture | null = null;
+  private visualChangeCapture: VisualChangeCapture | null = null;
+  private visualCharToLineEnd = false;
   private focusSurfaceActive = true;
   private normalPutClipboardDirty = true;
   private normalPutClipboardReadInFlight = false;
@@ -2038,6 +2041,19 @@ export class ProductVimSession {
 
     if (command) {
       event.preventDefault();
+      if (
+        this.mode === "visual-char" &&
+        (command.startsWith("motion.") ||
+          command.startsWith("cursor.") ||
+          command.startsWith("text-object."))
+      ) {
+        this.visualCharToLineEnd = command === "motion.line-end";
+      }
+      const visualChar =
+        this.mode === "visual-char" &&
+        (command === "selection.change" || command === "replace.character")
+          ? captureVisualCharShape(view.state, this.visualCharToLineEnd)
+          : null;
       const departingVisualSelection =
         isVisualMode(this.mode) &&
         (command === "selection.yank" ||
@@ -2120,6 +2136,7 @@ export class ProductVimSession {
             countExplicit: resolution.countExplicit ?? false,
             argument: resolution.argument,
             tableRectangle: tableRectangle ?? undefined,
+            visualChar: visualChar ?? undefined,
           })
         : null;
       if (result.handled && putCheckpoint) {
@@ -2130,6 +2147,7 @@ export class ProductVimSession {
       }
       if (
         result.handled &&
+        (undoManager?.undoStack.length ?? 0) > undoStackDepth &&
         !continuesIntoInsert &&
         ((tableRectangle &&
           (command === "selection.delete" || command === "selection.paste")) ||
@@ -2160,6 +2178,13 @@ export class ProductVimSession {
           undoStackDepth,
           cursorBeforeCommand,
         );
+        if (visualChar) {
+          this.repeatStore.clear();
+          this.visualChangeCapture = new VisualChangeCapture(
+            visualChar,
+            view.state,
+          );
+        }
       }
       if (result.nextMode) {
         this.changeMode(
@@ -2534,10 +2559,9 @@ export class ProductVimSession {
     undoManager?.stopCapturing();
     const undoStackDepth = undoManager?.undoStack.length ?? 0;
     const cursorBefore = selectionCursor(view);
-    const continuesIntoInsert = changesIntoInsert(
-      descriptor.command,
-      descriptor.operator,
-    );
+    const continuesIntoInsert =
+      !descriptor.visualChar &&
+      changesIntoInsert(descriptor.command, descriptor.operator);
     const repeatedRegister = this.registerStore.read(view.state.schema);
     const repeatedPut =
       descriptor.command === "put.after" || descriptor.command === "put.before"
@@ -2585,13 +2609,15 @@ export class ProductVimSession {
             ));
     if (
       result.handled &&
+      (undoManager?.undoStack.length ?? 0) > undoStackDepth &&
       !continuesIntoInsert &&
       (descriptor.command === "put.after" ||
         descriptor.command === "put.before" ||
         (descriptor.tableRectangle &&
           (descriptor.command === "selection.delete" ||
             descriptor.command === "selection.paste")) ||
-        descriptor.tableAction)
+        descriptor.tableAction ||
+        descriptor.visualChar)
     ) {
       undoManager?.undoStack.at(-1)?.meta.set(cursorHistoryKey, {
         beforeCursor: cursorBefore,
@@ -2603,7 +2629,7 @@ export class ProductVimSession {
     }
     if (!continuesIntoInsert) undoManager?.stopCapturing();
     if (result.nextMode) this.changeMode(view, result.nextMode);
-    this.action = `repeat:${result.detail}${countExplicit && count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
+    this.action = `repeat:${result.detail}${!descriptor.visualChar && countExplicit && count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
     if (result.consumeRegister) this.registerStore.clear();
     else if (result.register !== undefined)
       this.registerStore.set(result.register);
@@ -3170,6 +3196,7 @@ export class ProductVimSession {
     preparedVisualLine?: VimVisualLineState,
   ): void {
     const previousMode = this.mode;
+    if (previousMode !== nextMode) this.visualCharToLineEnd = false;
     if (isVisualMode(previousMode) && nextMode !== previousMode) {
       this.rememberDepartingVisualSelection(view, departingVisualSelection);
     }
@@ -3255,6 +3282,26 @@ export class ProductVimSession {
   }
 
   private finishChangeUndoCapture(afterCursor?: number): void {
+    const visual = this.visualChangeCapture;
+    this.visualChangeCapture = null;
+    if (visual && this.view) {
+      const inserted = visual.finish(this.view.state);
+      if (inserted) {
+        this.repeatStore.record({
+          command: "selection.change",
+          operator: null,
+          count: 1,
+          countExplicit: false,
+          visualChar: visual.shape,
+          inserted,
+        });
+      } else {
+        this.repeatStore.clear();
+        this.options.onMessage?.(
+          "選択範囲外への編集や構造変更を含むため、この変更は . で繰り返せません。",
+        );
+      }
+    }
     const capture = this.changeUndoCapture;
     if (!capture) return;
     this.changeUndoCapture = null;
