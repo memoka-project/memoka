@@ -75,6 +75,11 @@ import {
   BODY_CHUNK_VIEWPORT_CHANGED_EVENT,
   type BodyChunkViewportChangedDetail,
 } from "./body-chunk-viewport-event";
+import {
+  captureBodyChunkScrollAnchor,
+  restoreBodyChunkScrollAnchor,
+  type BodyChunkScrollAnchor,
+} from "./body-chunk-scroll";
 import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
 import { RichListItem } from "./list-editing";
@@ -997,6 +1002,16 @@ const BodyChunkViewport = Extension.create({
   priority: 1_130,
   addProseMirrorPlugins() {
     const editor = this.editor;
+    let pendingAnchor: {
+      state: EditorState;
+      anchor: BodyChunkScrollAnchor;
+    } | null = null;
+    const restoreAnchor = (view: EditorView): void => {
+      const pending = pendingAnchor;
+      pendingAnchor = null;
+      if (pending?.state === view.state)
+        restoreBodyChunkScrollAnchor(view, pending.anchor);
+    };
     return [
       new Plugin<BodyChunkViewportState>({
         key: bodyChunkViewportKey,
@@ -1017,10 +1032,47 @@ const BodyChunkViewport = Extension.create({
         props: {
           decorations: (state) =>
             bodyChunkViewportKey.getState(state)?.decorations ?? null,
+          handleScrollToSelection: (view) => {
+            // Motions ask to reveal the selection. Restore the viewport before
+            // ProseMirror measures/reveals it, so offscreen chunk height changes
+            // cannot send a nearby destination to the opposite screen edge.
+            restoreAnchor(view);
+            return false;
+          },
         },
         view: (view) => {
           const registry = bodyChunkViewportRegistry(editor);
           registry.bind(view);
+          const beforeTransaction = ({
+            nextState,
+          }: {
+            nextState: EditorState;
+          }) => {
+            pendingAnchor = null;
+            // No DOM reads for ordinary typing or movement within the same
+            // rendered chunks. Document edits keep their existing scroll rules.
+            if (nextState.doc !== view.state.doc) return;
+            const previous = bodyChunkViewportKey.getState(
+              view.state,
+            )?.activeChunkIds;
+            const next =
+              bodyChunkViewportKey.getState(nextState)?.activeChunkIds;
+            if (
+              !previous ||
+              !next ||
+              previous === next ||
+              (previous.size === next.size &&
+                [...previous].every((id) => next.has(id)))
+            )
+              return;
+            const anchor = captureBodyChunkScrollAnchor(view);
+            if (anchor) pendingAnchor = { state: nextState, anchor };
+          };
+          // Viewport-observer transactions do not request selection scrolling.
+          // Restore those after ProseMirror's own scroll-preservation pass.
+          const afterTransaction = () => restoreAnchor(view);
+          editor.on("beforeTransaction", beforeTransaction);
+          editor.on("transaction", afterTransaction);
           let previousActiveChunkIds = new Set(
             bodyChunkViewportKey.getState(view.state)?.activeChunkIds ?? [],
           );
@@ -1052,6 +1104,9 @@ const BodyChunkViewport = Extension.create({
               );
             },
             destroy: () => {
+              editor.off("beforeTransaction", beforeTransaction);
+              editor.off("transaction", afterTransaction);
+              pendingAnchor = null;
               registry.destroy();
               bodyChunkViewportRegistries.delete(editor);
             },

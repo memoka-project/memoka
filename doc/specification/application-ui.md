@@ -169,6 +169,11 @@ BodyChunkの静的表示や大規模Markdown import後も、viewport周辺の行
 Note canvasは設定された最大幅を超えず、広いWindow内では中央寄せにする。上限無効時はWindow幅へ追従する。
 行番号gutter、本文padding、すべてのblockを含むcanvas全体を最大幅の対象にする。
 
+`j/k`などの移動やviewport更新でBodyChunkの静的表示・通常表示が切り替わる場合、
+画面外の本文の高さの変化を補正し、表示中の位置を保つ。その後、移動先caretを見せるために必要な分だけscrollする。
+この表示補正は文書・selection・Undo履歴を変更しない。表示方式が変わらない通常入力・移動では追加のDOM計測を行わない。
+`j/k`は引き続き論理行単位とする。長い折り返し行を1表示行ずつ移動する場合は`gj/gk`を使う。
+
 共通indent幅を次へ使用する。
 
 - 行番号境界から最初のSection guideまで
