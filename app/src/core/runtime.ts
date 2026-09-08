@@ -2,6 +2,12 @@ import type { Editor } from "@tiptap/core";
 import { CellSelection } from "@tiptap/pm/tables";
 import * as Y from "yjs";
 import {
+  nativeAgentEdit,
+  recoverAgentPublication,
+  type AgentEditIdentity,
+  type AgentDelivery,
+} from "./native-agent-edit";
+import {
   applyNamespacePlan,
   listNamespaceEntries,
   namespaceNoteEntries,
@@ -24,6 +30,7 @@ import {
   NOTE_TIMESTAMP_ORIGIN,
   NOTE_DOC_SCHEMA_VERSION,
   PERSISTENCE_LOAD_ORIGIN,
+  EXTERNAL_AGENT_EDIT_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
   addNoteMetadata,
@@ -322,6 +329,9 @@ export class CoreRuntime {
   readonly vimRegister = new VimRegisterStore();
 
   private readonly notePersistence = new Map<string, NotePersistenceSession>();
+  private readonly agentEditors = new Map<TiptapEditorAdapter, string>();
+  private externalCommit: Promise<void> | null = null;
+  private commandsInFlight = 0;
   private readonly noteLoads = new Map<
     string,
     Promise<ManagedCrdtDocument<ProductDocument>>
@@ -487,7 +497,7 @@ export class CoreRuntime {
     options: CoreRuntimeOptions = {},
   ): Promise<CoreRuntime> {
     const manifest = await persistence.manifest();
-    if (manifest.databaseSchemaVersion !== 5) {
+    if (manifest.databaseSchemaVersion !== 6) {
       throw new Error(
         `Unsupported persistence schema ${manifest.databaseSchemaVersion}`,
       );
@@ -786,10 +796,119 @@ export class CoreRuntime {
     return () => this.listeners.delete(listener);
   }
 
-  executeCommand<Name extends CoreCommandName>(
+  async executeCommand<Name extends CoreCommandName>(
     envelope: CoreCommandEnvelope<Name>,
   ): Promise<CoreCommandResults[Name]> {
-    return this.commands.execute(envelope);
+    if (this.externalCommit) await this.externalCommit;
+    this.commandsInFlight++;
+    try {
+      return await this.commands.execute(envelope);
+    } finally {
+      this.commandsInFlight--;
+    }
+  }
+
+  /** Native preparation is private; publish only the acknowledged SQL update.
+   * User input during preparation cancels that attempt. Input after the short
+   * commit boundary joins the Note's persistence queue behind this operation. */
+  async applyExternalAgentEdit(
+    id: string,
+    request: AgentEditIdentity,
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    const fail = (code = "EDIT_BUSY") => ({
+      code,
+      message: "Read again after the editor settles",
+      details: null,
+    });
+    const composing = () => {
+      let active = false;
+      for (const [adapter, noteId] of this.agentEditors) {
+        if (adapter.editor.isDestroyed) {
+          this.agentEditors.delete(adapter);
+          continue;
+        }
+        if (
+          noteId === request.note_id &&
+          (adapter.editor.view.composing || adapter.vimSnapshot.composing)
+        )
+          active = true;
+      }
+      return active;
+    };
+    if (
+      request.workspace_id !== this.workspaceDocument.workspaceId ||
+      !isCurrent()
+    )
+      throw fail("WORKSPACE_MISMATCH");
+    if (composing()) throw fail("IME_ACTIVE");
+    await this.flushDurableState();
+    await this.runWithNotePersistenceLock(request.note_id, async () => {
+      const handle = this.notes.get(request.note_id);
+      let changed = false;
+      const observe = () => {
+        changed = true;
+      };
+      handle?.current.doc.on("update", observe);
+      let release: (() => void) | undefined;
+      try {
+        const prepared = await nativeAgentEdit.prepare(id);
+        if (!isCurrent()) throw fail("WORKSPACE_CHANGED");
+        if (prepared.complete) return;
+        if (composing()) throw fail("IME_ACTIVE");
+        if (
+          changed ||
+          this.notes.get(request.note_id) !== handle ||
+          this.commandsInFlight > 0 ||
+          this.externalCommit
+        )
+          throw fail();
+        this.externalCommit = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const delivery: AgentDelivery = await nativeAgentEdit.commit(id);
+        // A composition may begin after the precommit check. Never force it
+        // to commit or publish a remote document change in the middle of it.
+        while (composing())
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          );
+        if (!isCurrent()) throw fail("AGENT_RESPONSE_LOST");
+        const published = await recoverAgentPublication(() => {
+          if (composing()) throw fail("IME_ACTIVE");
+          for (const document of delivery.documents) {
+            const target =
+              document.kind === "workspace"
+                ? this.workspace
+                : this.notes.get(document.document_id);
+            if (!target) continue; // Hidden Notes need no Editor or in-memory mount.
+            Y.applyUpdate(
+              target.current.doc,
+              new Uint8Array(document.update),
+              EXTERNAL_AGENT_EDIT_ORIGIN,
+            );
+            target.setRevision(document.revision);
+          }
+        }, isCurrent);
+        if (!published) throw fail("AGENT_RESPONSE_LOST");
+        if (delivery.documents.length) {
+          this.changedNoteRevisions.set(
+            request.note_id,
+            delivery.result.revision_after,
+          );
+          this.noteContentRevision++;
+          if (handle) this.queueWorkspaceSearchIndexDocument(request.note_id);
+          else this.queueWorkspaceSearchIndexRebuild();
+          this.setReady();
+        }
+      } finally {
+        handle?.current.doc.off("update", observe);
+        if (release) {
+          this.externalCommit = null;
+          release();
+        }
+      }
+    });
   }
 
   createNoteAtEnd(
@@ -2271,6 +2390,7 @@ export class CoreRuntime {
       internalLinkPopupId: options.internalLinkPopupId,
     });
     this.applyPendingNavigation(windowId, adapter);
+    this.agentEditors.set(adapter, attachedNoteId);
     return adapter;
   }
 
@@ -2321,6 +2441,7 @@ export class CoreRuntime {
    * data is already safe on disk.
    */
   async flushDurableState(): Promise<void> {
+    if (this.externalCommit) await this.externalCommit;
     this.flushPendingWindowViewUpdates();
     await Promise.all(
       [...this.notePersistence.values()].map((session) => session.flush()),
@@ -5334,6 +5455,7 @@ class NotePersistenceSession {
       origin === SECTION_PARAGRAPH_CONVERSION_ORIGIN ||
       origin === NOTE_TIMESTAMP_ORIGIN ||
       origin === PERSISTENCE_LOAD_ORIGIN ||
+      origin === EXTERNAL_AGENT_EDIT_ORIGIN ||
       origin === BOOTSTRAP_ORIGIN
     ) {
       return;

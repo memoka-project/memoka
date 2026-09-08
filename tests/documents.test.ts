@@ -42,7 +42,7 @@ function xmlElement(value: unknown, expectedNodeName: string): Y.XmlElement {
   return value;
 }
 
-describe("Memoka CRDT document schema v5", () => {
+describe("Memoka CRDT document schema v6", () => {
   it("keeps WorkspaceMetadataDoc free of note body content", () => {
     const workspace = createWorkspaceDocument(WORKSPACE_ID);
     const note = createNoteDocument(
@@ -167,7 +167,7 @@ describe("Memoka CRDT document schema v5", () => {
         NOTE_ID,
         snapshot,
       );
-      expect(loaded.document.schemaVersion).toBe(5);
+      expect(loaded.document.schemaVersion).toBe(6);
       expect(loaded.document.rootSection.toString()).toBe(beforeBody);
       expect(loaded.repair?.migratedFromSchemaVersion).toBe(version);
       const durable = loadNoteDocumentWithSectionIdentityRecovery(
@@ -212,7 +212,7 @@ describe("Memoka CRDT document schema v5", () => {
       NOTE_ID,
       v2Snapshot,
     );
-    expect(migrated.document.schemaVersion).toBe(5);
+    expect(migrated.document.schemaVersion).toBe(6);
     expect(migrated.repair?.migratedFromSchemaVersion).toBe(2);
     expect(sectionBodyChunks(migrated.document.rootSection)).toHaveLength(1);
     expect(
@@ -227,7 +227,7 @@ describe("Memoka CRDT document schema v5", () => {
       [migrated.repair!.update],
     );
     expect(durable.repair).toBeNull();
-    expect(durable.document.schemaVersion).toBe(5);
+    expect(durable.document.schemaVersion).toBe(6);
     durable.document.doc.destroy();
     migrated.document.doc.destroy();
     legacy.doc.destroy();
@@ -423,7 +423,7 @@ describe("Memoka CRDT document schema v5", () => {
       [replacementUpdate],
     );
     expect(loaded.repair).toBeNull();
-    expect(loaded.document.schemaVersion).toBe(5);
+    expect(loaded.document.schemaVersion).toBe(6);
     expect(
       childSections(loaded.document.rootSection).map((section) =>
         sectionId(section),

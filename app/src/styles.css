@@ -934,6 +934,36 @@ textarea {
   margin-bottom: 0;
 }
 
+.memoka-task-content {
+  display: contents;
+}
+.memoka-editor li > .memoka-task-content > p {
+  margin-bottom: 0;
+}
+.memoka-editor li > .memoka-task-content > p + p {
+  margin-top: 0.8em;
+}
+.memoka-editor :is(ul, ol) > li[data-task-checked]::before {
+  display: none;
+}
+.memoka-task-checkbox {
+  position: absolute;
+  inset-inline-start: calc(-1 * var(--memoka-list-marker-text-offset));
+  inset-block-start: 0.4em;
+  display: grid;
+  place-content: center;
+  width: 0.85em;
+  height: 0.85em;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 0.12em;
+  background: transparent;
+  color: var(--memoka-color-markup-raw);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .memoka-editor :is(ul, ol) {
   list-style: none;
   margin-inline-start: calc(-1 * var(--memoka-list-inline-shift));
@@ -2870,7 +2900,7 @@ textarea {
 
 /* An item's text origin is already indented. Do not indent its blocks twice. */
 .memoka-editor
-  li
+  :is(li, .memoka-task-content)
   > :is(
     pre,
     .tableWrapper,
@@ -2883,15 +2913,18 @@ textarea {
 }
 
 /* Keep text/list edges compact without stripping rich blocks' own spacing. */
-.memoka-editor li > :is(p, ul, ol):first-child {
+.memoka-editor :is(li, .memoka-task-content) > :is(p, ul, ol):first-child {
   margin-top: 0;
 }
 
-.memoka-editor li > :is(p, ul, ol):last-child {
+.memoka-editor :is(li, .memoka-task-content) > :is(p, ul, ol):last-child {
   margin-bottom: 0;
 }
 
-.memoka-editor li > :not(ul, ol) + :not(ul, ol) {
+.memoka-editor
+  :is(li, .memoka-task-content)
+  > :not(ul, ol, .memoka-task-checkbox)
+  + :not(ul, ol, .memoka-task-content) {
   margin-top: 0.8em;
 }
 

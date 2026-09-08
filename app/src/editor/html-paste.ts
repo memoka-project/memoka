@@ -41,6 +41,7 @@ const SAFE_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
   code: new Set(["class"]),
   details: new Set(["open"]),
   ol: new Set(["start"]),
+  li: new Set(["data-task-checked"]),
   td: new Set(["colspan", "rowspan"]),
   th: new Set(["colspan", "rowspan"]),
 };
@@ -55,6 +56,18 @@ const SAFE_INTEGER = /^-?\d+$/u;
 export function sanitizeExternalHtml(html: string): string {
   const detached = document.implementation.createHTMLDocument("");
   detached.body.innerHTML = html;
+  // Preserve checkbox semantics as inert attributes, then discard all form
+  // controls (including their event handlers) in the usual sanitizer pass.
+  detached.body.querySelectorAll("li").forEach((item) => {
+    const checkbox = item.querySelector<HTMLInputElement>(
+      ":scope > input[type=checkbox], :scope > label > input[type=checkbox]",
+    );
+    if (checkbox)
+      item.setAttribute(
+        "data-task-checked",
+        String(checkbox.hasAttribute("checked")),
+      );
+  });
   for (const selector of BLOCKED_ELEMENTS) {
     detached.body.querySelectorAll(selector).forEach((element) => {
       element.remove();
@@ -67,6 +80,8 @@ export function sanitizeExternalHtml(html: string): string {
       const name = attribute.name.toLocaleLowerCase();
       if (
         !allowed.has(name) ||
+        (name === "data-task-checked" &&
+          !["true", "false"].includes(attribute.value)) ||
         (name === "href" && !isSafeExternalLink(attribute.value)) ||
         (name === "class" && !SAFE_CODE_CLASS.test(attribute.value.trim())) ||
         (name === "data-memoka-alert-type" &&

@@ -16,10 +16,10 @@ use crate::search_index::{
     SearchIndexRebuildRequest, SearchIndexReplaceRequest,
 };
 
-const DATABASE_SCHEMA_VERSION: i64 = 5;
+const DATABASE_SCHEMA_VERSION: i64 = 6;
 const WORKSPACE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 const LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
-const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 5;
+const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 6;
 #[cfg(test)]
 const DOCUMENT_SCHEMA_VERSION: i64 = LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION;
 
@@ -284,6 +284,14 @@ impl ProductStore {
                 response_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS agent_edit_receipts (
+                workspace_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                PRIMARY KEY (workspace_id, request_id)
+            );
+
             CREATE TABLE IF NOT EXISTS workspace_search_invalidations (
                 kind TEXT NOT NULL,
                 document_id TEXT NOT NULL,
@@ -338,7 +346,7 @@ impl ProductStore {
                 PersistenceError::InvalidInput(format!("invalid database_schema_version: {error}"))
             })?;
         match stored_schema_version {
-            DATABASE_SCHEMA_VERSION | 2..=4 => {
+            DATABASE_SCHEMA_VERSION | 2..=5 => {
                 ensure_attachment_schema(&connection)?;
                 ensure_document_schema_backup_tables(&connection)?;
             }
@@ -378,6 +386,90 @@ impl ProductStore {
             database_schema_version,
             active_workspace_id: self.setting("active_workspace_id")?,
         })
+    }
+
+    /// Existing, preflighted Workspace only. The caller must own its lease.
+    pub(crate) fn open_existing_for_edit(
+        workspace: &Path,
+    ) -> Result<Self, crate::document_model::ReadError> {
+        let reader = crate::read_service::WorkspaceReader::open(workspace)?;
+        crate::agent_edit::require_edit_schema(&reader)?;
+        let root = reader.internal_root.clone();
+        drop(reader);
+        let connection = Connection::open_with_flags(
+            root.join("memoka.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.execute_batch(
+            "PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL",
+        )?;
+        Ok(Self { connection, root })
+    }
+
+    pub(crate) fn commit_agent_edit(
+        &mut self,
+        request: &PersistenceCommitRequest,
+        prepared: &crate::agent_edit::PreparedEdit,
+    ) -> Result<serde_json::Value, crate::document_model::ReadError> {
+        use crate::document_model::ReadError;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if let Some(result) = crate::agent_edit::receipt(&transaction, &prepared.request)? {
+            return Ok(result);
+        }
+        let workspace_id: String = transaction.query_row(
+            "SELECT value FROM settings WHERE key='active_workspace_id'",
+            [],
+            |r| r.get(0),
+        )?;
+        if workspace_id != prepared.request.workspace_id {
+            return Err(ReadError::new("WORKSPACE_MISMATCH", "Workspace changed"));
+        }
+        let revision: i64 = transaction.query_row(
+            "SELECT revision FROM documents WHERE kind='note' AND document_id=?1",
+            [&prepared.request.note_id],
+            |r| r.get(0),
+        )?;
+        crate::agent_edit::check_revision(prepared.request.expected_revision, revision)?;
+        let workspace_revision: i64 = transaction.query_row(
+            "SELECT revision FROM documents WHERE kind='workspace' AND document_id=?1",
+            [&workspace_id],
+            |r| r.get(0),
+        )?;
+        if workspace_revision != prepared.workspace_revision {
+            return Err(ReadError::new(
+                "WORKSPACE_CHANGED",
+                "Workspace metadata changed during preparation; read again",
+            ));
+        }
+        if request.fault == Some(CommitFault::BeforeCommit) {
+            return Err(PersistenceError::Injected(CommitFault::BeforeCommit).into());
+        }
+        if !request.documents.is_empty() {
+            let canonical_before =
+                crate::workspace_migration::canonical_workspace_before(&transaction, request)?;
+            let revisions = commit_documents(&transaction, request)?;
+            crate::workspace_migration::advance_content_epoch(
+                &transaction,
+                request,
+                canonical_before,
+            )?;
+            advance_search_index_metadata_revision(&transaction, request, &revisions)?;
+        }
+        transaction.execute("INSERT INTO agent_edit_receipts(workspace_id,request_id,request_hash,result_json) VALUES (?1,?2,?3,?4)", params![workspace_id,prepared.request.request_id,prepared.fingerprint,serde_json::to_string(&prepared.result)?])?;
+        if request.fault == Some(CommitFault::BeforeSqlCommit) {
+            return Err(PersistenceError::Injected(CommitFault::BeforeSqlCommit).into());
+        }
+        transaction.commit()?;
+        if request.fault == Some(CommitFault::AfterCommitResponse) {
+            return Err(ReadError::new(
+                "AGENT_RESPONSE_LOST",
+                "Commit response was lost; resend the same request_id",
+            ));
+        }
+        Ok(prepared.result.clone())
     }
 
     pub fn commit(
@@ -716,6 +808,11 @@ impl ProductPersistenceState {
         app: &AppHandle,
         path: PathBuf,
     ) -> Result<PathBuf, PersistenceError> {
+        if app.state::<crate::agent_edit::bridge::AgentEdits>().busy() {
+            return Err(PersistenceError::InvalidInput(
+                "EDIT_BUSY: Wait for the external edit before switching Workspace".into(),
+            ));
+        }
         let canonical = crate::data_area::prepare_data_area(&path)?;
         let mut guard = self.inner.lock().map_err(|_| {
             PersistenceError::InvalidInput("product persistence lock is poisoned".to_owned())
@@ -884,6 +981,7 @@ fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
             schema_version == LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION
                 || schema_version == 3
                 || schema_version == 4
+                || schema_version == 5
                 || schema_version == NOTE_DOCUMENT_SCHEMA_VERSION
         }
         _ => false,
@@ -998,7 +1096,7 @@ fn commit_documents(
             }
             Some((schema_version, revision)) => {
                 let migrating_note_schema = document.kind == "note"
-                    && matches!(schema_version, 2 | 3 | 4)
+                    && matches!(schema_version, 2..=5)
                     && document.schema_version == NOTE_DOCUMENT_SCHEMA_VERSION;
                 if schema_version != document.schema_version && !migrating_note_schema {
                     return Err(PersistenceError::InvalidInput(format!(
@@ -1742,7 +1840,7 @@ mod tests {
                 "SELECT revision, snapshot_revision, snapshot
                  FROM document_schema_backups
                  WHERE kind = 'note' AND document_id = 'note-migrate'
-                   AND from_schema_version = 2 AND to_schema_version = 5",
+                   AND from_schema_version = 2 AND to_schema_version = 6",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -1754,7 +1852,7 @@ mod tests {
                 "SELECT revision, operation_id, update_blob
                  FROM document_schema_backup_updates
                  WHERE kind = 'note' AND document_id = 'note-migrate'
-                   AND from_schema_version = 2 AND to_schema_version = 5",
+                   AND from_schema_version = 2 AND to_schema_version = 6",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )

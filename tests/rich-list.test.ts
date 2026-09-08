@@ -1,5 +1,5 @@
 import type { Editor, JSONContent } from "@tiptap/core";
-import { Fragment, Slice } from "@tiptap/pm/model";
+import { DOMParser, Fragment, Slice } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CoreRuntime } from "../app/src/core/runtime";
@@ -13,6 +13,7 @@ import {
   type PreferredClipboardFormats,
 } from "../app/src/vim/clipboard";
 import { parseMarkdownPaste } from "../app/src/editor/markdown-paste";
+import { sanitizeExternalHtml } from "../app/src/editor/html-paste";
 import { insertAttachmentBlocks } from "../app/src/editor/attachment-insert";
 import type { AttachmentMetadata } from "../app/src/core/attachments";
 
@@ -96,6 +97,161 @@ async function harness(
 }
 
 describe("rich ListItem editing", () => {
+  it("imports empty tasks without treating escaped checkbox text as a task", async () => {
+    const { editor } = await harness([p()]);
+    const parsed = parseMarkdownPaste(
+      "- [ ]\n- [X]\n- \\[x\\]",
+      editor.schema,
+    )!;
+    const items = parsed.slice.content.firstChild!.content.content;
+    expect(items.map((item) => item.attrs.checked)).toEqual([
+      false,
+      true,
+      null,
+    ]);
+    expect(items[0]!.textContent).toBe("");
+    expect(items[1]!.textContent).toBe("");
+    expect(items[2]!.textContent).toBe("[x]");
+  });
+  it("keeps task checkbox state in sanitized HTML and rich blocks in Markdown", async () => {
+    const { editor, runtime } = await harness([
+      list(
+        { ...item(code("日本語 code")), attrs: { checked: true } },
+        { ...item(p("unchecked")), attrs: { checked: false } },
+      ),
+    ]);
+    const container = document.createElement("div");
+    container.innerHTML = sanitizeExternalHtml(editor.getHTML());
+    const parsed = DOMParser.fromSchema(editor.schema).parse(container);
+    expect(parsed.firstChild!.firstChild!.attrs.checked).toBe(true);
+    expect(parsed.firstChild!.lastChild!.attrs.checked).toBe(false);
+    expect(parsed.firstChild!.firstChild!.firstChild!.type.name).toBe(
+      "codeBlock",
+    );
+    key(editor, "Escape");
+    key(editor, "g");
+    key(editor, "g");
+    key(editor, "V");
+    key(editor, "G");
+    key(editor, "y");
+    const markdown = encodeVimClipboard(
+      runtime.vimRegister.read()!,
+      editor.schema,
+    )[MARKDOWN_CLIPBOARD_MIME];
+    const imported = parseMarkdownPaste(markdown, editor.schema)!;
+    let codeCount = 0;
+    imported.slice.content.descendants((node) => {
+      if (node.type.name === "codeBlock") codeCount++;
+    });
+    expect(codeCount).toBe(1);
+    expect(imported.slice.content.firstChild!.firstChild!.attrs.checked).toBe(
+      true,
+    );
+  });
+  it("imports task state, preserves rich children, and serializes task markers", async () => {
+    const { editor, runtime } = await harness([p()]);
+    const parsed = parseMarkdownPaste(
+      "- [ ] 日本語 **重要**\n\n  続き\n  - [X] 子\n- 普通",
+      editor.schema,
+    )!;
+    editor.commands.setContent({
+      type: "doc",
+      content: parsed.slice.content.toJSON(),
+    });
+    const items = editor.state.doc.firstChild!.content.content;
+    expect(items[0]!.attrs.checked).toBe(false);
+    expect(items[0]!.lastChild!.firstChild!.attrs.checked).toBe(true);
+    expect(items[1]!.attrs.checked).toBe(null);
+    expect(
+      editor.view.dom.querySelectorAll(".memoka-task-checkbox"),
+    ).toHaveLength(2);
+    expect(editor.state.doc.textContent).not.toContain("✓");
+    key(editor, "Escape");
+    key(editor, "g");
+    key(editor, "g");
+    key(editor, "V");
+    key(editor, "G");
+    key(editor, "y");
+    const markdown = encodeVimClipboard(
+      runtime.vimRegister.read()!,
+      editor.schema,
+    )[MARKDOWN_CLIPBOARD_MIME];
+    expect(markdown).toContain("- [ ] 日本語 **重要**");
+    expect(markdown).toContain("- [x] 子");
+    expect(
+      parseMarkdownPaste(markdown, editor.schema)!.slice.content.firstChild!
+        .firstChild!.attrs.checked,
+    ).toBe(false);
+  });
+
+  it("toggles a task by Normal Enter or mouse and keeps the user Undo history", async () => {
+    const { editor, runtime, root } = await harness([
+      list({ ...item(p("task")), attrs: { checked: false } }),
+    ]);
+    const note = runtime.getNoteHandle().current;
+    if (note.kind !== "note") throw new Error("note");
+    note.undoManager.clear();
+    note.undoManager.stopCapturing();
+    editor.commands.setTextSelection(position(editor, "task"));
+    key(editor, "Escape");
+    key(editor, "Enter");
+    expect(editor.state.doc.firstChild!.firstChild!.attrs.checked).toBe(true);
+    key(editor, "u");
+    expect(editor.state.doc.firstChild!.firstChild!.attrs.checked).toBe(false);
+    const button = root.querySelector<HTMLButtonElement>(
+      ".memoka-task-checkbox",
+    )!;
+    button.click();
+    expect(editor.state.doc.firstChild!.firstChild!.attrs.checked).toBe(true);
+    expect(button.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it.each(["Enter", "o", "O"])(
+    "creates an unchecked task with %s",
+    async (command) => {
+      const { editor } = await harness([
+        list({ ...item(p("task")), attrs: { checked: true } }),
+      ]);
+      editor.commands.setTextSelection(position(editor, "task") + 4);
+      if (command !== "Enter") key(editor, "Escape");
+      key(editor, command, { shiftKey: command === "O" });
+      const items = editor.state.doc.firstChild!.content.content;
+      expect(items).toHaveLength(2);
+      expect(items[command === "O" ? 0 : 1]!.attrs.checked).toBe(false);
+    },
+  );
+
+  it("does not toggle an ancestor task from a normal child item", async () => {
+    const { editor } = await harness([
+      list({
+        ...item(p("parent"), list(item(p("child")))),
+        attrs: { checked: true },
+      }),
+    ]);
+    editor.commands.setTextSelection(position(editor, "child"));
+    key(editor, "Escape");
+    key(editor, "Enter");
+    expect(editor.state.doc.firstChild!.firstChild!.attrs.checked).toBe(true);
+  });
+
+  it("converts a paragraph to a Task List using the common block picker command", async () => {
+    const { editor } = await harness([list(item(p("todo")))]);
+    const blockId =
+      editor.state.doc.firstChild!.firstChild!.firstChild!.attrs.blockId;
+    expect(
+      runBlockTransformCommand(editor.view, {
+        name: "block.transform",
+        payload: { blockId, target: "taskList" },
+      }).changed,
+    ).toBe(true);
+    expect(
+      editor.state.doc.firstChild!.firstChild!.firstChild!.firstChild!.attrs
+        .checked,
+    ).toBe(false);
+    expect(
+      editor.view.dom.querySelector(".memoka-task-checkbox"),
+    ).not.toBeNull();
+  });
   it("splits a paragraph within its item with Alt-Enter and into siblings with Enter", async () => {
     const { editor } = await harness([list(item(p("abcd"), code("tail")))]);
     editor.commands.setTextSelection(position(editor, "abcd") + 2);

@@ -21,6 +21,9 @@ const USAGE: &str = "Memoka CLI\n\n\
   memoka-cli tree [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json\n\
   memoka-cli search QUERY [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json\n\
   memoka-cli read --id ID [--workspace DIR] [--generation ID] [--include-trash] --format markdown|json\n\
+  memoka-cli read --id ID --for-edit [--workspace DIR] [--limit N] [--cursor CURSOR] --format json\n\
+  memoka-cli edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
+  memoka-cli edit-schema --format json\n\
   memoka-cli attachment get --id ID --output NEW-FILE [--workspace DIR] [--generation ID] [--include-trash]\n\
   memoka-cli history [--id ID] [--workspace DIR] --format json\n\
   memoka-cli backup run|status|list|copy [--workspace DIR]\n\
@@ -46,6 +49,7 @@ struct Options {
 impl Options {
     fn parse(arguments: Vec<String>) -> Result<Self, ReadError> {
         let flag_names = [
+            "--for-edit",
             "--include-trash",
             "--dry-run",
             "--full",
@@ -55,6 +59,7 @@ impl Options {
             "--stop-destinations",
         ];
         let value_names = [
+            "--input",
             "--workspace",
             "--repository",
             "--format",
@@ -279,7 +284,52 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
+    if positional == ["edit-schema"] {
+        options.allow(&["--format"])?;
+        return print_json(&crate::agent_edit::schema());
+    }
     let request = match positional.as_slice() {
+        ["edit"] => {
+            options.allow(&["--workspace", "--format", "--input", "--dry-run"])?;
+            let input = options.required("--input")?;
+            let mut bytes = Vec::new();
+            if input == "-" {
+                io::stdin()
+                    .take(crate::agent_edit::MAX_INPUT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+            } else {
+                plain_file(Path::new(input))?;
+                fs::File::open(input)?
+                    .take(crate::agent_edit::MAX_INPUT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+            }
+            Request::Edit {
+                request: crate::agent_edit::parse_request(&bytes)?,
+                dry_run: options.flag("--dry-run"),
+            }
+        }
+        ["read"] if options.flag("--for-edit") => {
+            options.allow(&[
+                "--workspace",
+                "--format",
+                "--id",
+                "--for-edit",
+                "--limit",
+                "--cursor",
+            ])?;
+            if format != "json" {
+                return Err(argument("--for-edit requires --format json"));
+            }
+            Request::ReadForEdit {
+                id: options.required("--id")?.into(),
+                limit: options
+                    .get("--limit")
+                    .unwrap_or("100")
+                    .parse()
+                    .map_err(|_| argument("Invalid limit"))?,
+                cursor: options.get("--cursor").map(str::to_owned),
+            }
+        }
         ["tree"] | ["read"] | ["search", _] => {
             let allowed = if command == "read" {
                 vec![
@@ -378,6 +428,22 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
             ));
         }
     };
+    let request_id = match &request {
+        Request::Edit { request, .. } => Some(request.request_id.clone()),
+        _ => None,
+    };
+    run_request(&options, request, format).map_err(|mut error| {
+        if let Some(id) = request_id {
+            if !error.details.is_object() {
+                error.details = json!({});
+            }
+            error.details["request_id"] = id.into();
+        }
+        error
+    })
+}
+
+fn run_request(options: &Options, request: Request, format: &str) -> Result<(), ReadError> {
     let workspace = options.workspace()?;
     // Publish a fresh Attachment only after complete transfer; never send the
     // host output path to IPC, and never overwrite an existing user file.
@@ -400,8 +466,8 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
         })
         .transpose()?;
     let result = match WorkspaceLease::acquire(&workspace) {
-        Ok(_lease) => {
-            let service = NativeService::new(workspace.clone());
+        Ok(lease) => {
+            let service = NativeService::owned(lease);
             match service.query(request.clone())? {
                 Reply::Json(value) => {
                     if matches!(

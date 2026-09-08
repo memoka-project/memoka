@@ -169,7 +169,7 @@ impl WorkspaceReader {
             [],
             |row| row.get(0),
         )?;
-        if schema != crate::workspace_migration::DATABASE_SCHEMA.to_string() {
+        if schema != "5" && schema != crate::workspace_migration::DATABASE_SCHEMA.to_string() {
             return Err(ReadError::new(
                 "MIGRATION_REQUIRED",
                 "Open the Workspace in Memoka before using the reader",

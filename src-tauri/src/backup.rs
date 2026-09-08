@@ -271,9 +271,17 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
             captured_at: captured_at.to_rfc3339(),
             timezone: captured_at.offset().to_string(),
             memoka_version: env!("CARGO_PKG_VERSION").into(),
-            database_schema: crate::workspace_migration::DATABASE_SCHEMA,
+            database_schema: reader.connection.query_row(
+                "SELECT CAST(value AS INTEGER) FROM settings WHERE key='database_schema_version'",
+                [],
+                |r| r.get(0),
+            )?,
             workspace_schema: 3,
-            note_schema: 5,
+            note_schema: reader.connection.query_row(
+                "SELECT COALESCE(MAX(schema_version),6) FROM documents WHERE kind='note'",
+                [],
+                |r| r.get(0),
+            )?,
             content_epoch: reader.content_epoch,
             workspace_revision: reader.workspace_revision,
             document_revisions: reader.document_revisions.clone(),
@@ -313,9 +321,9 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
 
 pub fn validate_descriptor(descriptor: &Descriptor) -> Result<(), ReadError> {
     if descriptor.backup_format_version != FORMAT_VERSION
-        || descriptor.database_schema != crate::workspace_migration::DATABASE_SCHEMA
+        || !matches!(descriptor.database_schema, 5 | 6)
         || descriptor.workspace_schema != 3
-        || !matches!(descriptor.note_schema, 3 | 4 | 5)
+        || !matches!(descriptor.note_schema, 3..=6)
     {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
@@ -796,11 +804,11 @@ pub(crate) mod tests {
             .unwrap()
             .expect("initial capture");
         let mut descriptor = first.descriptor.clone();
-        assert_eq!(descriptor.note_schema, 5);
+        assert_eq!(descriptor.note_schema, 3); // Legacy shared fixture, not silently migrated by capture.
         validate_descriptor(&descriptor).unwrap();
         descriptor.note_schema = 3;
         validate_descriptor(&descriptor).unwrap();
-        descriptor.note_schema = 6;
+        descriptor.note_schema = 7;
         assert_eq!(
             validate_descriptor(&descriptor).unwrap_err().code,
             "UNSUPPORTED_SCHEMA"

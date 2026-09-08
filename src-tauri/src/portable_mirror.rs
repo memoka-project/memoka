@@ -275,7 +275,7 @@ fn load_recovery_documents(
             {
                 document.snapshot = snapshot;
             }
-            document.schema_version = 5;
+            document.schema_version = 6;
             crate::document_model::read_note(&document, false).map_err(legacy_error)?;
             actual.insert(document.document_id.clone());
         }

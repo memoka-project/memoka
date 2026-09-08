@@ -352,8 +352,22 @@ pub fn block_markdown(node: &Value, workspace: &str) -> String {
                         )
                     })
                     .collect::<String>();
+                let body = if item["attrs"]["checked"].is_boolean()
+                    && content(item)
+                        .first()
+                        .is_some_and(|c| c["type"] != "paragraph")
+                {
+                    format!("\n\n{body}")
+                } else {
+                    body
+                };
                 let mut lines = body.trim_end_matches('\n').split('\n');
-                text.push_str(&format!("{marker}{}\n", lines.next().unwrap_or("")));
+                let task = match item["attrs"]["checked"].as_bool() {
+                    Some(true) => "[x] ",
+                    Some(false) => "[ ] ",
+                    None => "",
+                };
+                text.push_str(&format!("{marker}{task}{}\n", lines.next().unwrap_or("")));
                 for line in lines {
                     text.push_str(&format!("{padding}{line}\n"));
                 }

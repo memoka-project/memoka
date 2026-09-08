@@ -166,7 +166,7 @@ pub fn workspace_json(document: &PersistedDocument) -> Result<Value, ReadError> 
 
 pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Note, ReadError> {
     if document.kind != "note"
-        || !(matches!(document.schema_version, 3 | 4 | 5)
+        || !(matches!(document.schema_version, 3..=6)
             || (allow_legacy && document.schema_version == 2))
     {
         return Err(ReadError::new(
@@ -228,7 +228,7 @@ pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Not
 /// until the enclosing, preflighted SQL migration commits atomically.
 pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, ReadError> {
     read_note(document, true)?;
-    if document.schema_version == 5 {
+    if document.schema_version == 6 {
         return Ok(None);
     }
     let doc = decode_document(document)?;
@@ -290,12 +290,12 @@ pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, Rea
     let meta = txn
         .get_map("meta")
         .ok_or_else(|| invalid("Missing Note metadata"))?;
-    meta.insert(&mut txn, "schema_version", 5);
+    meta.insert(&mut txn, "schema_version", 6);
     let bytes = txn.encode_state_as_update_v1(&StateVector::default());
     drop(txn);
     read_note(
         &PersistedDocument {
-            schema_version: 5,
+            schema_version: 6,
             snapshot: bytes.clone(),
             snapshot_revision: document.revision,
             updates: Vec::new(),
@@ -306,7 +306,7 @@ pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, Rea
     Ok(Some(bytes))
 }
 
-fn clone_xml_into(
+pub(crate) fn clone_xml_into(
     txn: &mut TransactionMut<'_>,
     source: &XmlOut,
     parent: &XmlElementRef,
@@ -466,7 +466,7 @@ fn read_section<T: ReadTxn>(
     })
 }
 
-fn xml_json<T: ReadTxn>(
+pub(crate) fn xml_json<T: ReadTxn>(
     txn: &T,
     xml: XmlOut,
     depth: usize,
@@ -510,6 +510,13 @@ fn xml_json<T: ReadTxn>(
                     | "tableCell"
                     | "tableHeader"
             );
+            if name == "listItem"
+                && attrs
+                    .get("checked")
+                    .is_some_and(|value| !value.is_null() && !value.is_boolean())
+            {
+                return Err(invalid("Task checked must be boolean or null"));
+            }
             if block {
                 checked_id(
                     attrs

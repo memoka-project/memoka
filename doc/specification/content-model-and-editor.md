@@ -18,6 +18,7 @@ placeholder文字列は文書へ保存しない。caretを置いて入力する�
 - Paragraph
 - Bullet ListとListItem
 - Numbered ListとListItem
+- Task List（チェック状態を持つ通常のListItem）
 - Code Block
 - Source Block
 - Table、Table Row、Table Header、Table Cell
@@ -54,6 +55,21 @@ Visual Charでtextを選択して`m`を押すと、共通検索paneからmarkを
 
 Internal Section Linkはtarget Section IDを持つatomic inline nodeである。表示textは現在のNote/Section titleから
 導出し、1文字ずつ編集できない。Normal caretはlink全体を覆う。clickはopenせずcaretを置き、`gf`で移動する。
+
+### 3.1 タスクリスト
+
+ListItemの`checked`がnull/未指定なら通常項目、falseなら未完了、trueなら完了タスクとする。
+タスクは通常のItemと同じ豊かなBlock群・子Listを持ち、通常項目との混在も許す。
+checkboxは編集textやcaret位置に数えない。clickで状態を反転するが、本文へ自動的に打ち消しを付けない。
+
+Normalの`Enter`はSection Header上ではSection fold、Details Summary上ではDetails foldを優先する。
+それ以外は最も近いListItemがタスクなら状態を反転する。通常項目の子から祖先タスクへ遡って反転しない。
+通常の本文・通常ListItemではfoldやblock分割を行わない。IME変換中はこのcommandを実行しない。
+`za`等の明示fold commandは従来どおりである。
+
+Task Listへの型変換、slash picker、Markdown貼付けから作成できる。
+タスクからの`Enter`、`o/O`、`Ctrl-Enter`等で新規Itemを作る場合は未完了にする。
+コピーしたItemの状態は保存し、新規入力との違いを維持する。状態変更は通常のUndo対象である。
 
 ## 4. 論理行
 
@@ -181,7 +197,7 @@ Horizontal Ruleは選択中も線を残し、block状のselection表示を重ね
 ## 10. Slash block picker
 
 Section直接Body、ListItem、Details本文の空ParagraphでInsert modeから`/`を入力すると共通検索paneを開く。
-候補はParagraph、Bullet List、Numbered List、Code Block、Source Block、Table、Alert、
+候補はParagraph、Bullet List、Numbered List、Task List、Code Block、Source Block、Table、Alert、
 Blockquote、Horizontal Rule、Details、Image Block stub、Attachment Fileである。
 
 - Enterで選択した型へ変更し、入力済みの`/`を削除する。
@@ -200,7 +216,7 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - Summaryは本文と同じ基本fontを使い、inline textと明示的な文字装飾を保持する。空なら文字を表示せず、placeholderは設けない。
 - 本文は非空の`Block+`。Paragraph、List、引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Rule、入れ子Detailsを許す。
 - `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。
-- 開閉マークのclick、Normalの`Enter` / `za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
+- 開閉マークのclick、Summary上のNormal `Enter`、Details内の`za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
   Details内ではSection foldよりDetailsを優先する。閉じるとき本文にあるcaretはSummary先頭へ戻す。
 - InsertのSummary上の`Enter`（`Ctrl-j/Ctrl-m`を含む）または`Shift-Enter`は本文を開いて先頭へ移る。本文のEnterは通常のblock動作を使う。
 - 本文でNormalの`o`はDetails内に次の入力行を追加する。通常Paragraphでは直後に新規Paragraphを作り、本文末尾でも外へ出ない。

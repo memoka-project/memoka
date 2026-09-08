@@ -7,6 +7,7 @@ import {
   insertListParagraph,
   isDirectListParagraph,
   pastePlainListText,
+  toggleCurrentTask,
 } from "../editor/list-editing";
 import {
   Fragment,
@@ -1465,11 +1466,35 @@ export class ProductVimSession {
       !event.metaKey &&
       !event.shiftKey
     ) {
-      const result = runDetailsFoldCommand(view, "toggle");
+      const parentType = view.state.selection.$from.parent.type.name;
+      if (parentType === "sectionHeader") {
+        const result = runSectionFoldCommand(view, "toggle");
+        if (result.changed)
+          this.options.onSectionFoldsChange?.(
+            result.collapsedSectionIds,
+            result.targetSectionId,
+          );
+        event.preventDefault();
+        this.action = `${result.detail}:${result.changed ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
+      const result =
+        parentType === "detailsSummary"
+          ? runDetailsFoldCommand(view, "toggle")
+          : null;
       if (result) {
         event.preventDefault();
         this.input = createVimInputState();
         this.action = `${result.detail}:${result.changed ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
+      if (toggleCurrentTask(view.state, view.dispatch)) {
+        event.preventDefault();
+        this.action = "task:toggle:changed";
         this.emit();
         this.scheduleCaretRefresh(view);
         return true;

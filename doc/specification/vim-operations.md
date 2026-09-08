@@ -36,19 +36,19 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 
 ## 4. Normal motion
 
-| Key                 | 動作                                       |
-| ------------------- | ------------------------------------------ |
-| `h/l`               | 前/次の文字またはatomic node               |
-| `j/k`               | 次/前の論理行。可能な限り目標columnを維持  |
-| `gj/gk`             | 次/前の画面上の表示行                      |
-| `w/b/e`             | 設定されたwordの次/前/末尾                 |
-| `W/B/E`             | 空白区切りWORDの次/前/末尾                 |
-| `0/$`               | 論理行の先頭/末尾                          |
-| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾 |
+| Key                 | 動作                                            |
+| ------------------- | ----------------------------------------------- |
+| `h/l`               | 前/次の文字またはatomic node                    |
+| `j/k`               | 次/前の論理行。可能な限り目標columnを維持       |
+| `gj/gk`             | 次/前の画面上の表示行                           |
+| `w/b/e`             | 設定されたwordの次/前/末尾                      |
+| `W/B/E`             | 空白区切りWORDの次/前/末尾                      |
+| `0/$`               | 論理行の先頭/末尾                               |
+| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾      |
 | `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置 |
-| `Ctrl-f/Ctrl-b`     | 1画面下/上                                 |
-| `Ctrl-d/Ctrl-u`     | 半画面下/上                                |
-| `[count]n/[count]N` | Note内検索の次/前の一致                    |
+| `Ctrl-f/Ctrl-b`     | 1画面下/上                                      |
+| `Ctrl-d/Ctrl-u`     | 半画面下/上                                     |
+| `[count]n/[count]N` | Note内検索の次/前の一致                         |
 
 `whichwrap`がtrueの場合、Normalの`h/l/w/b/e/W/B/E`は論理行端から前後の論理行へ続く。
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
@@ -97,7 +97,7 @@ List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持
 | `C`              | caretから論理行末尾を変更                   |
 | `S`              | 現在論理行内容を変更                        |
 | `y{motion}`      | motion範囲をyank                            |
-| `yy/Y`           | Count論理行/構造をyank（`Y`は`y$`ではない）  |
+| `yy/Y`           | Count論理行/構造をyank（`Y`は`y$`ではない） |
 | `p/P`            | registerをcaretの後/前へput                 |
 | `[count]r{char}` | Count文字を指定文字へ置換                   |
 | `R`              | Replace modeへ入る                          |
@@ -261,6 +261,11 @@ Table外で矩形をputすると、headerを含むdataはそのままTableにし
 | `Ctrl-o/Ctrl-i` | Window-local Jump Listを戻る/進む                     |
 
 Internal Linkのclickはopenしない。画像を現在Windowで開いた直後の`Ctrl-o`は同じsession内の元Note/caretへ戻る。
+
+Normalの`Enter`はSection title上でSection fold、Details Summary上でDetails foldをtoggleする。
+その他の位置では最も近いListItemがタスクなら完了状態をtoggleし、通常Itemから祖先タスクへ遡らない。
+通常本文では何もしない。変換中のIMEを妨げず、InsertのEnter規則は変更しない。
+外部CLI編集は[専用origin](agent-editing.md)で反映し、ユーザーの`u`/`Ctrl-r`履歴へ混ぜない。
 
 ## 11. WindowとTab
 

@@ -131,7 +131,7 @@ export class MemoryPersistencePort implements PersistencePort {
 
   async manifest(): Promise<PersistenceManifest> {
     return {
-      databaseSchemaVersion: 5,
+      databaseSchemaVersion: 6,
       activeWorkspaceId: this.activeWorkspaceId,
     };
   }
@@ -212,7 +212,7 @@ export class MemoryPersistencePort implements PersistencePort {
       if (existing.schemaVersion !== input.schemaVersion) {
         if (
           existing.kind === "note" &&
-          [2, 3, 4].includes(existing.schemaVersion) &&
+          [2, 3, 4, 5].includes(existing.schemaVersion) &&
           input.schemaVersion === NOTE_DOC_SCHEMA_VERSION
         ) {
           existing.schemaVersion = NOTE_DOC_SCHEMA_VERSION;
@@ -540,7 +540,7 @@ function isSupportedDocumentSchema(
 ): boolean {
   return kind === "workspace"
     ? schemaVersion === 3
-    : [2, 3, 4, NOTE_DOC_SCHEMA_VERSION].includes(schemaVersion);
+    : [2, 3, 4, 5, NOTE_DOC_SCHEMA_VERSION].includes(schemaVersion);
 }
 
 function documentKey(kind: DocumentKind, documentId: string): string {

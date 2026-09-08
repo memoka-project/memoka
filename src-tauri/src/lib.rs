@@ -4,6 +4,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
+pub mod agent_edit;
 mod application_config;
 mod attachment;
 mod background_operation;
@@ -456,6 +457,7 @@ pub fn run() {
         })
         .manage(persistence::ProductPersistenceState::default())
         .manage(native_service::SaveBarriers::default())
+        .manage(agent_edit::bridge::AgentEdits::default())
         .register_asynchronous_uri_scheme_protocol(
             "memoka-history-attachment",
             |context, request, responder| {
@@ -476,6 +478,10 @@ pub fn run() {
         });
     let builder = builder.invoke_handler(tauri::generate_handler![
         native_service::workspace_save_barrier_ack,
+        agent_edit::bridge::agent_edit_prepare,
+        agent_edit::bridge::agent_edit_commit,
+        agent_edit::bridge::agent_edit_test_fault,
+        agent_edit::bridge::agent_edit_ack,
         native_service::workspace_native_query,
         native_service::workspace_backup_cancel,
         native_service::workspace_backup_resume,

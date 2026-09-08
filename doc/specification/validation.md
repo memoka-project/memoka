@@ -31,9 +31,9 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - missing IDの限定repairとinvalid/duplicate IDの拒否
 - Namespaceのcycle、self-parent、orphan、deleted-parent/live-child、一意配置の検査
 - jitter付きFractional Indexingの順序、衝突tie-break、局所再採番
-- NoteDoc v2のBodyChunk化とv5へのmigration、v3/v4からv5のmetadata-only migration（block ID/content保持）
+- NoteDoc v2のBodyChunk化とv6へのmigration、v3/v4/v5からv6のmetadata-only migration（block ID/content保持）
 - Detailsの作成、Summary/本文編集、開閉、再帰的開閉、折畳み本文の検索・移動、yy/dd、List内・入れ子のMarkdown/HTML round-trip
-- SQLite v2/v3/v4からv5への全件preflightとrollback copy
+- SQLite v2/v3/v4/v5からv6への全件preflightとrollback copy
 - snapshot/update log replay、revision conflict、compaction failure recovery
 - 2 Windowで同じNoteDocを開いた場合のcontent共有とWindow-local state分離
 
@@ -234,8 +234,8 @@ OAuth組み込み版のpanel試験には`MEMOKA_E2E_GOOGLE_CONFIGURED=1`を指�
 - Namespace親・group名変更で本文FTS行とNote updated_atを更新しないこと
 - Root H1〜H6境界、Focused Sectionの絶対深さ、複数H1正規化によるH7の全体拒否
 - 失敗時にNote、IDs、revision、Undoが変化せず、plain text fallbackもしないこと
-- DB2/3/4の最終Yjs状態をlive/Trash/Help全件preflightし、H6超過・破損時は元DB/WAL/添付/旧mirrorを変更しないこと
-- rollback用SQLite Online Backup、DB5へのatomic移行、途中失敗後の再試行
+- DB2/3/4/5の最終Yjs状態をlive/Trash/Help全件preflightし、H6超過・破損時は元DB/WAL/添付/旧mirrorを変更しないこと
+- rollback用SQLite Online Backup、DB6へのatomic移行、途中失敗後の再試行
 - 空Workspaceの初回世代、dirty起動・interval・切替・更新前capture、通常終了ではcaptureせず次回起動へ持越し、UI/cacheだけならepoch不変
 - 長いNoteのcapture/copy中も編集可能であること、snapshotとdescriptorの同一時点・hash/revision/catalog一致
 - 添付全件（未参照を含む）とknown_missing、破損・symlink・reparse拒否、1 GiB reserve不足
@@ -260,6 +260,21 @@ group作成/改名、子Note配置、確定保存barrier、現在と過去のNam
 backup処理中の別WindowのInsert入力、読み取り専用preview、previewの一覧遷移後のCtrl-cとfocus復帰を確認する。
 入力計測はkeydownから次のanimation frameまでの参考値であり、実機IMEの計測とは区別する。
 実行前に`corepack pnpm tauri:build`と`corepack pnpm cli:build`で対象binaryを生成する。
+
+### 外部エージェントCLI編集とタスク
+
+- `agent_edit`のnative testで、Unicode・同一mark segment・0/多重/重複一致・base offset・段落の空化を検証する。
+- 親Bodyと子Sectionを区別し、入れ子Paragraphの置換とanchor拒否、既存ID維持、同一gapの順序を検査する。
+- 対応Markdown、literalな置換、safe/internal link、未対応構造のbatch全体拒否、入力・block・diffの上限を検査する。
+- no-op/dry-run、保存前/SQL確定前失敗、確定後応答喪失、永続receipt、再送・revision conflict・cursor staleを検査する。
+- `reader_cli`でDISPLAY/DBUSなしの編集、旧schema非移行、stdout JSON、owner失敗時の直接write fallback禁止を確認する。
+- `corepack pnpm tauri:agent-e2e`で起動GUIとstandaloneの意味的結果を比較し、複数Window、非表示Note、
+  IME拒否、既存Undo、SQL故障時の非公開と確定後応答回復を検証する。独立した一時Workspaceだけを使う。
+  debug buildを`MEMOKA_TAURI_APP`、対応CLIを`MEMOKA_E2E_CLI`で指定する。release artifactでは
+  `MEMOKA_E2E_AGENT_FAULTS=0`でdebug専用故障注入を除外する。Linuxで別GUIを起動したまま実行する場合はprivate D-Bus sessionを使う。
+- Task ListのMarkdown/HTML/Clipboard、rich/nested/mixed内容、click/Normal Enter、新規未完了Item、Undo、IME優先を検査する。
+- Native実行環境でcheckboxの表示、caretがcheckboxに入らないこと、Section/Details titleと本文のEnter差異を確認する。
+- `agent:reference:check`でCLI定義と共通スキルの生成参照資料を同期する。スキルのインストール操作はテスト中に利用者の設定へ適用しない。
 
 ## 10. 大規模dataと性能
 

@@ -417,6 +417,16 @@ describe("Details blocks", () => {
       press("Enter");
       expect(adapter.vimSnapshot.action).toContain("details:fold-toggle");
       expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(0);
+      let body = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (!body && node.isText && node.text === "本文") body = pos;
+      });
+      editor.commands.setTextSelection(body);
+      const unchanged = editor.state.doc.toJSON();
+      press("Enter");
+      expect(editor.state.doc.toJSON()).toEqual(unchanged);
+      expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(0);
+      editor.commands.setTextSelection(summary);
       press("z");
       press("C");
       expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(2);
@@ -469,7 +479,7 @@ describe("Details blocks", () => {
       try {
         expect(loaded.kind).toBe("note");
         if (loaded.kind !== "note") throw new Error("Expected NoteDoc");
-        expect(loaded.schemaVersion).toBe(5);
+        expect(loaded.schemaVersion).toBe(6);
         expect(loaded.rootSection.toString()).toBe(note.rootSection.toString());
         expect(readNotePlainText(loaded)).toBe(readNotePlainText(note));
       } finally {

@@ -175,12 +175,15 @@ OS資格情報ストアへ保存し、`config.toml`には書きません。旧�
 
 ## CLI
 
-`memoka-cli`はGUIなしでWorkspaceの読み出し、検索、履歴の確認と復旧に使えます。起動中のMemokaが
+`memoka-cli`はGUIなしでWorkspaceの読み出し、検索、本文編集、履歴の確認と復旧に使えます。起動中のMemokaが
 同じWorkspaceを開いていれば、そのprocessへ接続します。読み出しのためにデータ移行やHelp更新は行いません。
 
 ```bash
 memoka-cli tree --workspace <data-area> --format json
 memoka-cli read --workspace <data-area> --id <note-or-section-id> --format markdown
+memoka-cli read --workspace <data-area> --id <section-id> --for-edit --format json
+memoka-cli edit --workspace <data-area> --input request.json --dry-run --format json
+memoka-cli edit --workspace <data-area> --input request.json --format json
 memoka-cli search <query> --workspace <data-area> --format json
 memoka-cli attachment get --workspace <data-area> --id <attachment-id> --output <new-file>
 memoka-cli history --workspace <data-area> --format json
@@ -221,6 +224,19 @@ Google Drive用のCLI接続は`memoka-cli cloud connect google-drive --name <lab
 source buildでは`MEMOKA_GOOGLE_OAUTH_CLIENT_FILE`にDesktop client JSONの絶対pathを指定するか、CLIの`--client-file`で指定できます。
 実験的機能の設定と復旧commandは[Help](doc/help.md)、OAuthの配置・配布条件は[認証設定の仕様](doc/specification/platform-release-and-security.md#72-oauth-clientの設定と配布)を参照してください。
 
+### 外部AIエージェント用スキル
+
+共通スキルは[`skills/memoka`](skills/memoka/SKILL.md)にあります。repository rootでローカル版を導入する場合は、
+次を実行して利用するエージェントとインストール先を選んでください。CLI binaryは別途インストールします。
+
+```bash
+npx skills add ./skills/memoka
+```
+
+この変更を含む版のGitHub公開後は`npx skills add memoka-project/memoka --skill memoka`でも導入できます。
+更新は`npx skills update memoka`です。配布ツールの選択肢は[skills公式ドキュメント](https://github.com/vercel-labs/skills)を参照してください。
+編集の対応範囲、JSON形式、再送時の注意点は[CLI編集仕様](doc/specification/agent-editing.md)に記載しています。
+
 ## 開発
 
 必要な環境はNode.js 24 LTS、Corepack、Rust stable、Tauri 2のLinuxまたはWindows向け依存packageです。
@@ -242,6 +258,9 @@ corepack pnpm tauri:build
 
 `restic:prepare`と`rclone:prepare`は対応OSの固定artifactを取得し、archiveと実行ファイルのSHA-256を検証します。
 Tauriの開発起動・buildと`cli:build`でも自動実行します。Cargo testを直接実行する場合は先に準備してください。
+
+CLI契約を変更した場合は`corepack pnpm agent:reference`でスキルの参照資料を再生成し、
+`corepack pnpm agent:reference:check`で同期を確認します。生成元はRust DTOとCLI helpです。
 
 GitHub Pages用の静的HTMLは`docs`にあります。公開方法と文書の更新手順は[公開サイトのREADME](docs/README.md)を参照してください。
 

@@ -49,7 +49,7 @@ import {
   type SectionSnapshot,
 } from "./section-model";
 
-export const NOTE_DOC_SCHEMA_VERSION = 5;
+export const NOTE_DOC_SCHEMA_VERSION = 6;
 export const WORKSPACE_DOC_SCHEMA_VERSION = 3;
 export const NOTE_BODY_FRAGMENT = "body";
 export const NOTE_SCHEMA_MIGRATION_ORIGIN = "memoka:note-schema-migration";
@@ -257,9 +257,11 @@ export interface ListItemBlock {
   type: "listItem";
   blockId: string;
   children: NoteBlock[];
+  checked?: boolean | null;
 }
 
 export const PERSISTENCE_LOAD_ORIGIN = "memoka:persistence-load";
+export const EXTERNAL_AGENT_EDIT_ORIGIN = "memoka:external-agent-edit";
 export const CORE_TRANSACTION_ORIGIN = "memoka:core-transaction";
 export const SECTION_DEPTH_SHIFT_ORIGIN = "memoka:section-depth-shift";
 export const SECTION_PARAGRAPH_CONVERSION_ORIGIN =
@@ -515,7 +517,10 @@ export function loadNoteDocumentWithSectionIdentityRecovery(
 
     const rawSchemaVersion = doc.getMap("meta").get("schema_version");
     const migratedFromSchemaVersion =
-      rawSchemaVersion === 2 || rawSchemaVersion === 3 || rawSchemaVersion === 4
+      rawSchemaVersion === 2 ||
+      rawSchemaVersion === 3 ||
+      rawSchemaVersion === 4 ||
+      rawSchemaVersion === 5
         ? rawSchemaVersion
         : null;
     const maintenanceStateVector = Y.encodeStateVector(doc);
@@ -573,6 +578,17 @@ function repairPersistedBlockIdentities(note: NoteDocument): string[] {
   const repair = new Set<Y.XmlElement>();
   const occupied = new Set<string>();
   for (const element of entries) {
+    const checked =
+      element.nodeName === "listItem"
+        ? element.getAttribute("checked")
+        : undefined;
+    if (
+      checked !== undefined &&
+      checked !== null &&
+      typeof checked !== "boolean"
+    ) {
+      throw new Error("Task checked must be boolean or null");
+    }
     const value = element.getAttribute("blockId");
     const blockId = typeof value === "string" ? value : "";
     if (!blockId) {
@@ -1318,8 +1334,12 @@ export function blockToYXml(block: NoteBlock): Y.XmlElement {
       element.setAttribute("start", (block.start ?? 1) as unknown as string);
       element.insert(0, block.children.map(blockToYXml));
       break;
-    case "bulletList":
     case "listItem":
+      if (typeof block.checked === "boolean")
+        element.setAttribute("checked", block.checked as unknown as string);
+      element.insert(0, block.children.map(blockToYXml));
+      break;
+    case "bulletList":
     case "table":
     case "tableRow":
     case "detailsBody":
@@ -1381,7 +1401,11 @@ function noteDocumentFromYDoc(noteId: string, doc: Y.Doc): NoteDocument {
   const schemaVersion = meta.get("schema_version");
   if (schemaVersion === 2) {
     migrateNoteDocumentV2ToV3(noteId, doc, meta);
-  } else if (schemaVersion === 3 || schemaVersion === 4) {
+  } else if (
+    schemaVersion === 3 ||
+    schemaVersion === 4 ||
+    schemaVersion === 5
+  ) {
     doc.transact(() => {
       meta.set("schema_version", NOTE_DOC_SCHEMA_VERSION);
       meta.set("migrated_from_schema_version", schemaVersion);

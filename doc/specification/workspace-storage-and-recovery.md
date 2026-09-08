@@ -38,14 +38,16 @@ GUIは確定済みCore transactionの保存barrierを通した後で読み出す
 focusやcaretを移さない。IPC timeoutや保存失敗時にlive DBへfallbackしてはならない。
 
 GUIが所有していないときはCLIがleaseを取得し、read-only SQLite transactionとnative Yjs readerで読む。
-current readはmigration、Help同期、Restic初期化を行わない。旧schemaはGUIでの移行を要求する。
+current readはmigration、Help同期、Restic初期化を行わない。読み取りは既知のDB schema 5/6を受け入れ、
+それ以前のschemaはGUIでの移行を要求する。[CLI編集](agent-editing.md)はDB/Note schema 6を必要とする。
 CLI実行時にNode、DOM、GTK、WebKit、WebViewを起動しない。
 
 ## 3. 移行前検査
 
-database schema 2〜4から5への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
-WorkspaceMetadataDoc 2をNamespace付きschema 3へ、NoteDoc 2をBodyChunk、複数block ListItem、Detailsに対応するschema 5へ変換する。
-NoteDoc 3/4は本文・IDを再構築せずmetadataだけschema 5へ移行する。旧世代のNoteDoc 3/4も引き続き読み取れる。
+database schema 2〜5から6への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
+WorkspaceMetadataDoc 2をNamespace付きschema 3へ、NoteDoc 2をBodyChunk、複数block ListItem、Details、タスクに対応するschema 6へ変換する。
+NoteDoc 3/4/5は本文・IDを再構築せずmetadataだけschema 6へ移行する。旧世代のNoteDoc 3/4/5も引き続き読み取れる。
+既存のNamespaceと旧ID対応表は変更しない。外部編集receipt用tableを追加する。
 
 - 元DBに書き込む前にID、Namespace、Root identity、H6上限、添付catalogを検証する。
 - WALが残る場合はDBとWALのprivate copyを検査し、WALにある確定更新を無視しない。
@@ -54,7 +56,7 @@ NoteDoc 3/4は本文・IDを再構築せずmetadataだけschema 5へ移行する
 - 以前の移行試行のrollback copyを上書きせず、再試行時にもその時点の原本を保護する。
 - Note/Section/Block IDと旧Tree表示順を維持し、Entry IDだけを独立して割り当てる。
 - local Tree選択/foldをNote IDからEntry IDへ移す。Buffer/Jump Listのresource参照はNote IDのままである。
-- 移行前から欠けていたCAS objectは`known_missing`として記録する。検査不能、破損、symlinkは欠損扱いで隠さない。
+- schema 2〜4からの移行前に欠けていたCAS objectは`known_missing`として記録する。5以降の新たな欠損を再認定しない。検査不能、破損、symlinkは欠損扱いで隠さない。
 
 ## 4. ローカル履歴
 
@@ -86,7 +88,8 @@ migrationで記録したknown missingはdescriptorへ明示する。新たな欠
 generation IDはMemokaのUUIDv7で、Restic snapshot IDとは分離する。
 descriptorはcapture時刻とtimezone、Workspace ID、epoch、document revisions、Section所有者、
 DB/添付hash・size・schemaを持つ。Restic exit 0だけでなくsnapshotのfile集合・型・sizeも検証して受理する。
-新規descriptorの`note_schema`は5とし、読取・復旧は旧世代の3/4も受け入れる。未対応schemaは拒否する。
+descriptorのdatabase/note schemaはcaptureした実DBに合わせる。現行はDB/Note schema 6で、
+読取・復旧はDB schema 5と旧世代のNoteDoc 3/4/5も受け入れる。未対応schemaは拒否する。
 exit 3、不明file、未知schema、path traversal、symlinkは正常世代にしない。
 
 正本保存用に1 GiBとDB copy等の必要量をreserveする。容量不足や途中失敗でも最後の正常世代を保持する。

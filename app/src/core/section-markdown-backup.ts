@@ -490,6 +490,9 @@ function renderListItem(
     item.content.map((child) =>
       ["bulletList", "orderedList"].includes(snapshotNode(child).type),
     ),
+    typeof item.attrs.checked === "boolean" ? item.attrs.checked : null,
+    item.content.length > 0 &&
+      snapshotNode(item.content[0]).type === "paragraph",
   );
 }
 

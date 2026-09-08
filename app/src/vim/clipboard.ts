@@ -427,6 +427,8 @@ function nodeMarkdown(
         item.content.content.map((child) =>
           ["bulletList", "orderedList"].includes(child.type.name),
         ),
+        item.attrs.checked,
+        item.firstChild?.type.name === "paragraph",
       );
     });
     return result;

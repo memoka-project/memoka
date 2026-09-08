@@ -6030,7 +6030,16 @@ function emptyOpenLineNode(
   unit: Pick<VimStructuralUnit, "from" | "kind">,
 ): ProseMirrorNode | null {
   const empty = emptyStructureReplacement(view, unit);
-  return empty ? copyNodeWithFreshBlockIds(empty) : null;
+  if (!empty) return null;
+  const copied = copyNodeWithFreshBlockIds(empty);
+  return copied.type.name === "listItem" &&
+    typeof copied.attrs.checked === "boolean"
+    ? copied.type.create(
+        { ...copied.attrs, checked: false },
+        copied.content,
+        copied.marks,
+      )
+    : copied;
 }
 
 function openLineTarget(

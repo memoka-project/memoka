@@ -95,7 +95,7 @@ fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
         drop(ProductStore::open(fixture.path()).unwrap());
         let migrated = Connection::open(&path).unwrap();
         let note = load_document(&migrated, "note", NOTE).unwrap();
-        assert_eq!(note.schema_version, 5);
+        assert_eq!(note.schema_version, 6);
         assert_eq!(note.revision, 8);
         assert_eq!(read_note(&note, false).unwrap().root, expected.root);
         let workspace = load_document(
@@ -121,7 +121,7 @@ fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
         let rollback = Connection::open(
             fixture
                 .path()
-                .join("migration-backups/before-namespace-v5.sqlite3"),
+                .join("migration-backups/before-schema-v6.sqlite3"),
         )
         .unwrap();
         let rollback_note = load_document(&rollback, "note", NOTE).unwrap();

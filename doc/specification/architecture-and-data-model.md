@@ -19,8 +19,8 @@
 | 対象                     | 現行schema |
 | ------------------------ | ---------- |
 | WorkspaceMetadataDoc     | 3          |
-| NoteDoc                  | 3          |
-| SQLite database          | 5          |
+| NoteDoc                  | 6          |
+| SQLite database          | 6          |
 | Workspace search index   | 9          |
 | 内部Clipboard            | 7          |
 | Application Window state | 9          |
@@ -75,12 +75,17 @@ WorkspaceMetadataDoc
 
 1 Noteにつき1 NoteDocを持つ。NoteDocは再帰的なSection treeである。
 
-NoteDocの`schema_version`は5。ListItemは非空の`Block+`を持ち、先頭をParagraphに限定しない。
-v5でDetails / DetailsSummary / DetailsBodyを追加する。
-v3/v4からはmetadataだけを更新し、本文、Block/Section/BodyChunk ID、Yjs内の本文要素を作り直さない。
+NoteDocの`schema_version`は6。ListItemは非空の`Block+`を持ち、先頭をParagraphに限定しない。
+v5でDetails / DetailsSummary / DetailsBody、v6でListItemの`checked: null | boolean`を追加する。
+null/未指定は通常項目、booleanはタスクである。本文textへチェック状態を埋め込まない。
+v3/v4/v5からはmetadataだけを更新し、本文、Block/Section/BodyChunk ID、Yjs内の本文要素を作り直さない。
 v2からは既存のBodyChunk化も行う。移行updateを永続化し、旧履歴の読み取りを維持する。
-v5非対応の旧アプリでの再編集は非対応とし、未知schemaを拒否して暗黙の内容欠落を防ぐ。
+v6非対応の旧アプリでの再編集は非対応とし、未知schemaを拒否して暗黙の内容欠落を防ぐ。
 WorkspaceMetadataDocのschemaは3のままである。
+
+SQLite v6は外部CLI編集の`agent_edit_receipts`を持つ。`(workspace_id, request_id)`を一意keyとし、
+canonical request hashと最初の成功結果を文書更新と同じtransactionで保存する。
+これは再生成可能なcacheではなく、DBバックアップにも含める。詳細は[CLI編集](agent-editing.md)を参照する。
 
 ```text
 NoteDoc

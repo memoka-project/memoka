@@ -474,7 +474,7 @@ describe("Memoka explicit Markdown paste parser", () => {
       const parsed = parseMarkdownPaste(markdown, editor.schema);
       const json = parsed?.slice.content.toJSON();
 
-      expect(parsed?.sourceBlockCount).toBe(3);
+      expect(parsed?.sourceBlockCount).toBe(2);
       expect(json).toMatchObject([
         {
           type: "paragraph",
@@ -485,8 +485,19 @@ describe("Memoka explicit Markdown paste parser", () => {
           content: [{ type: "text", text: "[unsafe](javascript:alert)" }],
         },
         {
-          type: "sourceBlock",
-          content: [{ type: "text", text: "- [ ] unsupported task" }],
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              attrs: { checked: false },
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "unsupported task" }],
+                },
+              ],
+            },
+          ],
         },
         {
           type: "sourceBlock",

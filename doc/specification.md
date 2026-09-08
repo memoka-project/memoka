@@ -40,6 +40,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 | [検索とリンク](specification/search-and-links.md)                            | Note内検索、Workspace検索、FTS、内部・外部リンク      |
 | [Clipboardと添付](specification/clipboard-and-attachments.md)                | Clipboard形式、Markdown、Attachment CAS、画像         |
 | [Workspace保存と復旧](specification/workspace-storage-and-recovery.md)       | データ領域、Restic履歴、排他、読み出し・復旧CLI       |
+| [外部エージェント向けCLI編集](specification/agent-editing.md)                | ID限定編集、revision、atomic batch、再送、共通スキル  |
 | [設定とCommand](specification/configuration-and-commands.md)                 | config.toml、Leader、Command-line、外観設定           |
 | [Platform、配布、Security](specification/platform-release-and-security.md)   | 対応OS、配布、Updater、privacy、diagnostics           |
 | [検証](specification/validation.md)                                          | 自動試験、native手動確認、性能基準                    |

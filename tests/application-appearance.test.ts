@@ -98,22 +98,33 @@ describe("Memoka application appearance", () => {
       "utf8",
     );
     expect(css).toMatch(
-      /\.memoka-editor li > :is\(p, ul, ol\):first-child\s*\{\s*margin-top: 0;/su,
+      /\.memoka-editor :is\(li, \.memoka-task-content\) > :is\(p, ul, ol\):first-child\s*\{\s*margin-top: 0;/su,
     );
     expect(css).toMatch(
-      /\.memoka-editor li > :is\(p, ul, ol\):last-child\s*\{\s*margin-bottom: 0;/su,
+      /\.memoka-editor :is\(li, \.memoka-task-content\) > :is\(p, ul, ol\):last-child\s*\{\s*margin-bottom: 0;/su,
     );
     expect(css).not.toMatch(/\.memoka-editor li > :(first|last)-child\s*\{/su);
 
     // Only Paragraph/List edges should match the compact spacing rules,
     // including items whose first/only block is an image, table, or code.
-    const item = document.createElement("li");
-    for (const tag of ["p", "ul", "ol", "pre", "blockquote", "div", "hr"]) {
-      const child = document.createElement(tag);
-      item.replaceChildren(child);
-      const compact = ["p", "ul", "ol"].includes(tag);
-      expect(child.matches("li > :is(p, ul, ol):first-child")).toBe(compact);
-      expect(child.matches("li > :is(p, ul, ol):last-child")).toBe(compact);
+    for (const parent of ["li", "div"]) {
+      const item = document.createElement(parent);
+      if (parent === "div") item.className = "memoka-task-content";
+      for (const tag of ["p", "ul", "ol", "pre", "blockquote", "div", "hr"]) {
+        const child = document.createElement(tag);
+        item.replaceChildren(child);
+        const compact = ["p", "ul", "ol"].includes(tag);
+        expect(
+          child.matches(
+            ":is(li, .memoka-task-content) > :is(p, ul, ol):first-child",
+          ),
+        ).toBe(compact);
+        expect(
+          child.matches(
+            ":is(li, .memoka-task-content) > :is(p, ul, ol):last-child",
+          ),
+        ).toBe(compact);
+      }
     }
   });
 

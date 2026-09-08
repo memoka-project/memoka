@@ -313,7 +313,7 @@ impl NativeService {
         // Standalone CLI waits own the process lifetime, not a GUI departure.
         self.wait_transfers_for(None)
     }
-    fn departing(&self) -> bool {
+    pub(crate) fn departing(&self) -> bool {
         self.departure.lock().map_or(true, |id| id.is_some())
     }
     fn wait_transfers_for(&self, departure_id: Option<&str>) -> Result<Value, ReadError> {
@@ -338,6 +338,19 @@ impl NativeService {
     }
     pub fn query(&self, request: Request) -> Result<Reply, ReadError> {
         match request {
+            Request::Edit { request, dry_run } => {
+                if self._lease.is_none() || self.departing() {
+                    return Err(ReadError::new(
+                        "EDIT_BUSY",
+                        "Editing requires the Workspace owner",
+                    ));
+                }
+                crate::agent_edit::standalone(&self.workspace, request, dry_run).map(Reply::Json)
+            }
+            Request::ReadForEdit { id, limit, cursor } => {
+                crate::agent_edit::read_for_edit(&self.workspace, &id, limit, cursor.as_deref())
+                    .map(Reply::Json)
+            }
             Request::Activate => Err(ReadError::new(
                 "OWNER_UNAVAILABLE",
                 "No GUI activation handler is installed",
@@ -1622,6 +1635,12 @@ pub(crate) fn gui_handler(
         }
         if request.needs_barrier() {
             app.state::<SaveBarriers>().wait(&app)?;
+        }
+        if let Request::Edit { request, dry_run } = request {
+            return app
+                .state::<crate::agent_edit::bridge::AgentEdits>()
+                .dispatch(&app, service.workspace.clone(), request, dry_run)
+                .map(Reply::Json);
         }
         if app
             .state::<crate::persistence::ProductPersistenceState>()

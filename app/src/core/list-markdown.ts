@@ -4,7 +4,18 @@ export function listItemMarkdown(
   marker: string,
   indentation = "",
   nested: readonly boolean[] = [],
+  checked?: boolean | null,
+  firstParagraph = true,
 ): string {
+  if (typeof checked === "boolean" && !firstParagraph) {
+    return listItemMarkdown(
+      ["", ...blocks],
+      marker,
+      indentation,
+      [false, ...nested],
+      checked,
+    );
+  }
   const lines = blocks
     .map(
       (block, index) =>
@@ -14,7 +25,8 @@ export function listItemMarkdown(
     .join("")
     .split("\n");
   const padding = indentation + " ".repeat(marker.length + 1);
-  return `${indentation}${marker} ${lines[0] ?? ""}\n${lines
+  const task = typeof checked === "boolean" ? `[${checked ? "x" : " "}] ` : "";
+  return `${indentation}${marker} ${task}${lines[0] ?? ""}\n${lines
     .slice(1)
     .map((line) => `${padding}${line}\n`)
     .join("")}`;

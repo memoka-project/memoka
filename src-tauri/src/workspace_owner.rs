@@ -26,7 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_REQUEST: usize = 64 * 1024;
+const MAX_REQUEST: usize = 2 * 1024 * 1024;
 const MAX_RESPONSE: usize = 256 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -99,6 +99,16 @@ impl WorkspaceLease {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    Edit {
+        request: crate::agent_edit::EditRequest,
+        #[serde(default)]
+        dry_run: bool,
+    },
+    ReadForEdit {
+        id: String,
+        limit: usize,
+        cursor: Option<String>,
+    },
     Query {
         request: ReadRequest,
     },
@@ -168,6 +178,9 @@ impl Request {
         }
     }
     pub fn needs_barrier(&self) -> bool {
+        if matches!(self, Self::ReadForEdit { .. }) {
+            return true;
+        }
         matches!(
             self,
             Self::Query {
@@ -329,6 +342,12 @@ impl Drop for Server {
 fn serve(stream: &mut Stream, handler: &Handler) -> Result<(), ReadError> {
     let bytes = read_frame(stream, MAX_REQUEST, Instant::now() + IO_TIMEOUT)?;
     let request: Request = serde_json::from_slice(&bytes)?;
+    if !matches!(request, Request::Edit { .. }) && bytes.len() > 64 * 1024 {
+        return Err(ReadError::new(
+            "INVALID_ARGUMENT",
+            "Request exceeds size limit",
+        ));
+    }
     let deadline = Instant::now() + request.timeout();
     let (envelope, attachment) = match handler(request) {
         Ok(Reply::Json(value)) => (

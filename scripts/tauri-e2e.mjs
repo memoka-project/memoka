@@ -4,6 +4,7 @@ import { cpus, release, totalmem } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { runNamespaceHistory } from "./namespace-history-e2e.mjs";
+import { runAgentEditing } from "./agent-edit-e2e.mjs";
 
 const webdriver = process.env.MEMOKA_WEBDRIVER ?? "http://127.0.0.1:4447";
 const application = process.env.MEMOKA_TAURI_APP;
@@ -3919,6 +3920,34 @@ await waitFor(
     .vimMode?.replace('-', ' ').toUpperCase() ?? ''`,
   (value) => value === "NORMAL",
 );
+
+if (process.env.MEMOKA_E2E_AGENT_EDIT_ONLY === "1") {
+  try {
+    const result = await runAgentEditing({
+      sessionId: firstSession,
+      application,
+      workspace: e2eWorkspace,
+      initialNoteId: initial.noteId,
+      execute,
+      waitFor,
+      sendActiveKey,
+      invokeTauriCommand,
+    });
+    writeFileSync(
+      `${evidenceDirectory}/agent-edit-tauri.json`,
+      JSON.stringify(result, null, 2),
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    await screenshot(firstSession, "agent-edit-failure.png").catch(
+      () => undefined,
+    );
+    throw error;
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
 
 if (namespaceHistoryOnly) {
   try {

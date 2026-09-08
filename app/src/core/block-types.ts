@@ -5,6 +5,7 @@ export const BLOCK_TRANSFORM_TARGETS = [
   "paragraph",
   "bulletList",
   "orderedList",
+  "taskList",
   "codeBlock",
   "table",
   "sourceBlock",
@@ -62,6 +63,13 @@ export const BLOCK_TYPE_CATALOG: readonly BlockTypeCatalogEntry[] = [
     aliases: ["numbered", "ordered", "list", "番号", "番号付きリスト"],
     description: "番号付きリストに変更します。",
     example: "1. 項目",
+  },
+  {
+    id: "taskList",
+    name: "Task List",
+    aliases: ["task", "todo", "checkbox", "タスク", "チェックリスト"],
+    description: "チェックボックス付きのリストに変更します。",
+    example: "☐ タスク",
   },
   {
     id: "codeBlock",

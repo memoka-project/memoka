@@ -1,4 +1,8 @@
-import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
+import {
+  Fragment,
+  type Node as ProseMirrorNode,
+  type Schema,
+} from "@tiptap/pm/model";
 import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { createUuidV7 } from "../core/ids";
@@ -122,18 +126,42 @@ function createReplacement(
   }
 
   if (supportedListSource) {
-    if (target === sourceType) return { changed: false, reason: "no-op" };
-    if (target !== "bulletList" && target !== "orderedList") {
+    if (
+      target === sourceType &&
+      !Array.from({ length: source.childCount }, (_, i) =>
+        source.child(i),
+      ).some((item) => typeof item.attrs.checked === "boolean")
+    )
+      return { changed: false, reason: "no-op" };
+    if (
+      target !== "bulletList" &&
+      target !== "orderedList" &&
+      target !== "taskList"
+    ) {
       return { changed: false, reason: "unsupported" };
     }
-    const listType = schema.nodes[target];
+    const listType =
+      schema.nodes[target === "taskList" ? "bulletList" : target];
     if (!listType) return { changed: false, reason: "unsupported" };
     return {
       node: listType.create(
         target === "orderedList"
           ? { ...source.attrs, blockId: source.attrs.blockId, start: 1 }
           : { ...source.attrs, blockId: source.attrs.blockId },
-        source.content,
+        Fragment.fromArray(
+          Array.from({ length: source.childCount }, (_, i) => {
+            const item = source.child(i);
+            return item.type.create(
+              {
+                ...item.attrs,
+                checked:
+                  target === "taskList" ? (item.attrs.checked ?? false) : null,
+              },
+              item.content,
+              item.marks,
+            );
+          }),
+        ),
       ),
       selection: "text",
     };
@@ -177,8 +205,12 @@ function createReplacement(
       selection: "text",
     };
   }
-  if (target === "bulletList" || target === "orderedList") {
-    const list = schema.nodes[target];
+  if (
+    target === "bulletList" ||
+    target === "orderedList" ||
+    target === "taskList"
+  ) {
+    const list = schema.nodes[target === "taskList" ? "bulletList" : target];
     const item = schema.nodes.listItem;
     const paragraph = schema.nodes.paragraph;
     if (!list || !item || !paragraph) {
@@ -192,7 +224,13 @@ function createReplacement(
       { blockId: createUuidV7() },
       paragraphContent,
     );
-    const listItem = item.create({ blockId: createUuidV7() }, innerParagraph);
+    const listItem = item.create(
+      {
+        blockId: createUuidV7(),
+        checked: target === "taskList" ? false : null,
+      },
+      innerParagraph,
+    );
     return {
       node: list.create(
         target === "orderedList" ? { blockId, start: 1 } : { blockId },

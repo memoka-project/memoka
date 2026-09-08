@@ -11,6 +11,7 @@ import {
 import { CoreRuntime, type RuntimeSnapshot } from "./core/runtime";
 import { createDefaultPersistencePort } from "./core/persistence";
 import { installNativeSaveBarrier } from "./core/native-save-barrier";
+import { installNativeAgentEditing } from "./core/native-agent-edit";
 import {
   BackupController,
   createDefaultBackupPort,
@@ -1240,8 +1241,10 @@ export function App({
 
   useEffect(() => {
     const installed = installNativeSaveBarrier(() => runtimeRef.current);
+    const agentEditing = installNativeAgentEditing(() => runtimeRef.current);
     return () => {
       void installed.then((stop) => stop());
+      void agentEditing.then((stop) => stop());
     };
   }, []);
 

@@ -10,7 +10,7 @@ use crate::document_model::{ReadError, migrate_note};
 use crate::namespace::{WORKSPACE_SCHEMA, migrate_workspace, read_namespace};
 use crate::persistence::{PersistedDocument, PersistedUpdate, PersistenceError};
 
-pub const DATABASE_SCHEMA: i64 = 5;
+pub const DATABASE_SCHEMA: i64 = 6;
 
 #[cfg(test)]
 #[path = "workspace_migration_tests.rs"]
@@ -110,7 +110,7 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
     if version == DATABASE_SCHEMA {
         return Ok(None);
     }
-    if !(2..=4).contains(&version) {
+    if !(2..=5).contains(&version) {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
             "Unsupported database migration",
@@ -133,7 +133,11 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
     let mut section_owners = BTreeMap::new();
     for (kind, id) in ids {
         let document = load_document(&connection, &kind, &id)?;
-        let result = if kind == "workspace" {
+        let result = if kind == "workspace" && document.schema_version == WORKSPACE_SCHEMA {
+            read_namespace(&document).map(|namespace| {
+                expected_notes.extend(namespace.notes.keys().cloned());
+            })
+        } else if kind == "workspace" {
             migrate_workspace(&document).and_then(|(snapshot, mapping)| {
                 let migrated = PersistedDocument {
                     schema_version: WORKSPACE_SCHEMA,
@@ -185,7 +189,7 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
         [],
         |row| row.get(0),
     )?;
-    if has_attachments {
+    if has_attachments && version < 5 {
         let records = connection
             .prepare("SELECT attachment_id,sha256,size FROM attachments ORDER BY attachment_id")?
             .query_map([], |row| {
@@ -259,16 +263,13 @@ pub fn migration_rollback_copy(root: &Path, source: &Connection) -> Result<(), R
     let directory = root.join("migration-backups");
     fs::create_dir_all(&directory)?;
     crate::read_service::checked_directory(&directory)?;
-    let first = directory.join("before-namespace-v5.sqlite3");
+    let first = directory.join("before-schema-v6.sqlite3");
     let final_path = match fs::symlink_metadata(&first) {
         // A previous attempt may predate further edits made in the old app.
         // Keep that rollback copy, but always capture this attempt's state.
         Ok(_) => {
             crate::read_service::plain_file(&first)?;
-            directory.join(format!(
-                "before-namespace-v5-{}.sqlite3",
-                uuid::Uuid::now_v7()
-            ))
+            directory.join(format!("before-schema-v6-{}.sqlite3", uuid::Uuid::now_v7()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => first,
         Err(error) => return Err(error.into()),
@@ -306,7 +307,7 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
     }
     for (before, snapshot) in &prepared.documents {
         let target_schema = if before.kind == "note" {
-            5
+            6
         } else {
             WORKSPACE_SCHEMA
         };
@@ -350,7 +351,7 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
         )?;
     }
     transaction.execute(
-        "INSERT OR REPLACE INTO settings(key,value) VALUES('namespace_migration_entry_ids',?1)",
+        "INSERT INTO settings(key,value) VALUES('namespace_migration_entry_ids',?1) ON CONFLICT(key) DO NOTHING",
         [serde_json::to_string(&prepared.entry_ids)?],
     )?;
     transaction.execute(
@@ -358,7 +359,7 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
         [DATABASE_SCHEMA.to_string()],
     )?;
     transaction.execute(
-        "INSERT OR REPLACE INTO settings(key,value) VALUES('content_epoch','1')",
+        "INSERT INTO settings(key,value) VALUES('content_epoch','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",
         [],
     )?;
     transaction.execute("INSERT OR REPLACE INTO workspace_search_invalidations(kind,document_id,source_revision) SELECT kind,document_id,revision FROM documents WHERE kind='workspace'", [])?;

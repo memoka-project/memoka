@@ -67,6 +67,12 @@ native明示読取は`plain`、`markdown`、`html`を指定できる。plainで�
 
 ### ListItemへのpaste
 
+GFMの`- [ ]`、`- [x]`、`- [X]`をタスクとして読み込み、Markdown出力は`[ ]`/`[x]`に揃える。
+番号付きListや入れ子・通常項目との混在、内部Clipboard、HTMLでもchecked状態と子Blockを保持する。
+タスクの先頭がParagraph以外の場合、Markdownではcheckboxの行と後続Blockを分け、後続Blockを文字列化しない。
+HTMLのcheckboxは状態だけを読み、外部のフォーム要素・event handlerをEditorへ持ち込まない。
+plain text貼付けは従来どおりで、`[ ]`を暗黙の状態設定commandとして解釈しない。
+
 ListItemを`yy`やVisual Lineの`y`でコピーしたregisterのNormal `p`は、現在Itemに直接子Listがあれば
 最初の子Listの先頭へ貼り、なければ現在Itemの次の兄弟として貼る。`Ctrl-Enter`/Normal `o`と同じ挿入位置を使う。
 追加先のList種別を保ち、コピーしたItem内の相対的な階層も保つ。既存の子孫や後続Blockは移動しない。

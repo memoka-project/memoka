@@ -356,6 +356,7 @@ THE SOFTWARE.
 - brotli-decompressor@5.0.3 — BSD-3-Clause/MIT — https://github.com/dropbox/rust-brotli-decompressor
 - brotli@8.0.4 — BSD-3-Clause AND MIT — https://github.com/dropbox/rust-brotli
 - bs58@0.5.1 — MIT/Apache-2.0 — https://github.com/Nullus157/bs58-rs
+- bstr@1.13.1 — MIT OR Apache-2.0 — https://github.com/BurntSushi/bstr
 - bumpalo@3.20.3 — MIT OR Apache-2.0 — https://github.com/fitzgen/bumpalo
 - bytemuck@1.25.2 — Zlib OR Apache-2.0 OR MIT — https://github.com/Lokathor/bytemuck
 - byteorder-lite@0.1.0 — Unlicense OR MIT — https://github.com/image-rs/byteorder-lite
@@ -634,6 +635,7 @@ THE SOFTWARE.
 - proc-macro-error@1.0.4 — MIT OR Apache-2.0 — https://gitlab.com/CreepySkeleton/proc-macro-error
 - proc-macro2@1.0.107 — MIT OR Apache-2.0 — https://github.com/dtolnay/proc-macro2
 - process-wrap@10.0.0 — Apache-2.0 OR MIT — https://github.com/watchexec/process-wrap
+- pulldown-cmark@0.13.4 — MIT — https://github.com/raphlinus/pulldown-cmark
 - pxfm@0.1.30 — BSD-3-Clause OR Apache-2.0 — https://github.com/awxkee/pxfm
 - quick-error@2.0.1 — MIT/Apache-2.0 — http://github.com/tailhook/quick-error
 - quick-xml@0.41.0 — MIT — https://github.com/tafia/quick-xml
@@ -710,6 +712,7 @@ THE SOFTWARE.
 - simd_cesu8@1.2.0 — Apache-2.0 OR MIT — https://github.com/seancroach/simd_cesu8
 - simd-adler32@0.3.10 — MIT — https://github.com/mcountryman/simd-adler32
 - simdutf8@0.1.5 — MIT OR Apache-2.0 — https://github.com/rusticstuff/simdutf8
+- similar@3.2.0 — Apache-2.0 — https://github.com/mitsuhiko/similar
 - siphasher@1.0.3 — MIT/Apache-2.0 — https://docs.rs/siphasher
 - slab@0.4.12 — MIT — https://github.com/tokio-rs/slab
 - smallstr@0.3.1 — MIT OR Apache-2.0 — https://github.com/murarth/smallstr
@@ -795,6 +798,7 @@ THE SOFTWARE.
 - unic-common@0.9.0 — MIT/Apache-2.0 — https://github.com/open-i18n/rust-unic/
 - unic-ucd-ident@0.9.0 — MIT/Apache-2.0 — https://github.com/open-i18n/rust-unic/
 - unic-ucd-version@0.9.0 — MIT/Apache-2.0 — https://github.com/open-i18n/rust-unic/
+- unicase@2.9.0 — MIT OR Apache-2.0 — https://github.com/seanmonstar/unicase
 - unicode-ident@1.0.24 — (MIT OR Apache-2.0) AND Unicode-3.0 — https://github.com/dtolnay/unicode-ident
 - unicode-normalization@0.1.25 — MIT OR Apache-2.0 — https://github.com/unicode-rs/unicode-normalization
 - unicode-segmentation@1.13.3 — MIT OR Apache-2.0 — https://github.com/unicode-rs/unicode-segmentation

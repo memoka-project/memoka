@@ -11,6 +11,8 @@ use std::{
     process::{Command, Output},
     sync::Arc,
 };
+use yrs::updates::decoder::Decode;
+use yrs::{Map, ReadTxn, StateVector, Transact};
 
 fn fixture() -> tempfile::TempDir {
     let workspace = tempfile::tempdir().unwrap();
@@ -311,4 +313,118 @@ fn old_schema_is_refused_without_modification() {
         json!("MIGRATION_REQUIRED")
     );
     assert_eq!(hash_file(&path).unwrap(), before);
+}
+
+#[test]
+fn editing_cli_is_headless_atomic_and_does_not_fallback_from_owner_failure() {
+    let workspace = fixture();
+    let note = "01a30000-0000-7000-8000-000000000002";
+    let path = workspace.path().join(".memoka/memoka.sqlite3");
+    let before = hash_file(&path).unwrap();
+    let old = cli(
+        workspace.path(),
+        &["read", "--id", note, "--for-edit", "--format", "json"],
+    );
+    assert!(!old.status.success());
+    assert!(old.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&old.stdout).unwrap()["error"]["code"],
+        "MIGRATION_REQUIRED"
+    );
+    assert_eq!(hash_file(&path).unwrap(), before);
+
+    // Upgrade only this private fixture's Note metadata (v3 bodies already use
+    // chunks). A separate native suite tests GUI preflight/rollback migration.
+    let db = Connection::open(&path).unwrap();
+    let snapshot: Vec<u8> = db
+        .query_row(
+            "SELECT snapshot FROM documents WHERE kind='note' AND document_id=?1",
+            [note],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let document = yrs::Doc::new();
+    document
+        .transact_mut()
+        .apply_update(yrs::Update::decode_v1(&snapshot).unwrap())
+        .unwrap();
+    document
+        .get_or_insert_map("meta")
+        .insert(&mut document.transact_mut(), "schema_version", 6);
+    let migrated = document
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    db.execute("UPDATE documents SET snapshot=?1,schema_version=6,revision=8,snapshot_revision=8 WHERE kind='note' AND document_id=?2",params![migrated,note]).unwrap();
+    db.execute_batch("ALTER TABLE document_updates ADD COLUMN operation_id TEXT;
+        CREATE TABLE agent_edit_receipts(workspace_id TEXT,request_id TEXT,request_hash TEXT,result_json TEXT,PRIMARY KEY(workspace_id,request_id));
+        CREATE TABLE workspace_search_invalidations(kind TEXT,document_id TEXT,source_revision INTEGER,PRIMARY KEY(kind,document_id));
+        UPDATE settings SET value='6' WHERE key='database_schema_version';").unwrap();
+    drop(db);
+    let view: Value = serde_json::from_slice(
+        &cli(
+            workspace.path(),
+            &["read", "--id", note, "--for-edit", "--format", "json"],
+        )
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(view["representation"], "edit_view");
+    let request = json!({"schema_version":1,"workspace_id":view["workspace_id"],"note_id":note,"expected_revision":view["revision"],"request_id":uuid::Uuid::now_v7().to_string(),
+        "edits":[{"op":"append_markdown","section_id":note,"markdown":"CLI日本語😀"}]});
+    let input = workspace.path().join("request.json");
+    fs::write(&input, serde_json::to_vec(&request).unwrap()).unwrap();
+    let args = [
+        "edit",
+        "--input",
+        input.to_str().unwrap(),
+        "--format",
+        "json",
+    ];
+    let lease = WorkspaceLease::acquire(workspace.path()).unwrap();
+    let server = Server::start(
+        lease.clone(),
+        Arc::new(|_| Err(ReadError::new("SAVE_BARRIER_TIMEOUT", "injected"))),
+    )
+    .unwrap();
+    let output = cli(workspace.path(), &args);
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let failed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(failed["error"]["code"], "SAVE_BARRIER_TIMEOUT");
+    assert_eq!(failed["request_id"], request["request_id"]);
+    drop(server);
+    drop(lease);
+    let applied = cli(workspace.path(), &args);
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stdout)
+    );
+    let applied: Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(applied["applied_edits"], 1);
+    let replay = cli(workspace.path(), &args);
+    assert!(replay.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&replay.stdout).unwrap()["replayed"],
+        true
+    );
+    let markdown = cli(
+        workspace.path(),
+        &["read", "--id", note, "--format", "markdown"],
+    );
+    assert_eq!(
+        String::from_utf8(markdown.stdout)
+            .unwrap()
+            .matches("CLI日本語😀")
+            .count(),
+        1
+    );
+    fs::write(&input, b"{\"schema_version\":1,\"schema_version\":1}").unwrap();
+    let malformed = cli(workspace.path(), &args);
+    assert!(!malformed.status.success());
+    assert!(malformed.stderr.is_empty());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&malformed.stdout).unwrap()["error"]["code"],
+        "INVALID_REQUEST"
+    );
 }

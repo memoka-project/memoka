@@ -80,7 +80,6 @@ const IMAGE_LINE =
 const HTML_IMAGE_LINE = /^ {0,3}<img\s+([^<>]+?)\s*\/?>(?:\s*)$/iu;
 const ATTACHMENT_LINE =
   /^\[((?:\\.|[^\]\\\n])+)\]\(attachment:([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\)$/iu;
-const TASK_LIST_LINE = /^ *[-+*][ \t]+\[[ xX]\][ \t]+/u;
 const THEMATIC_BREAK = /^ {0,3}(([-_*])(?:[ \t]*\2){2,})[ \t]*$/u;
 const TABLE_DELIMITER = /^ {0,3}\|? *:?-{3,}:? *(?:\| *:?-{3,}:? *)+\|? *$/u;
 const INLINE_PARSE_PREFIX = "memoka-inline-prefix:";
@@ -721,7 +720,6 @@ function unsupportedBlockEnd(lines: string[], index: number): number | null {
   const line = lines[index] ?? "";
   const next = lines[index + 1] ?? "";
   if (
-    TASK_LIST_LINE.test(line) ||
     /^ {0,3}>/u.test(line) ||
     /^(?: {4}|\t)/u.test(line) ||
     /^ {0,3}</u.test(line) ||
@@ -1355,7 +1353,6 @@ function attachmentBlock(
 }
 
 function parseListLine(line: string): ParsedListLine | null {
-  if (TASK_LIST_LINE.test(line)) return null;
   const bullet = line.match(BULLET_LINE);
   if (bullet) {
     const inline = bullet[4] ?? "";
@@ -1418,10 +1415,26 @@ function listBlock(
   if (!type || !itemType) return null;
   const items: ProseMirrorNode[] = [];
   for (const item of list.children ?? []) {
-    if (item.checked != null) return null; // Keep unsupported task syntax in SourceBlock.
     const blocks: ProseMirrorNode[] = [];
     const itemChildren = item.children ?? [];
+    // GFM parsers leave a checkbox-only item as literal text. Recognize the
+    // unescaped source marker too, so empty tasks and tasks starting with a
+    // rich block survive Markdown export/import without invisible filler text.
+    const first = itemChildren[0];
+    const emptyTask =
+      item.checked == null && first?.type === "paragraph"
+        ? /^\[([ xX])\][\t ]*$/u.exec(
+            source.slice(
+              first.position?.start.offset,
+              first.position?.end.offset,
+            ),
+          )
+        : null;
+    const checked = emptyTask
+      ? emptyTask[1]!.toLowerCase() === "x"
+      : (item.checked ?? null);
     for (let childIndex = 0; childIndex < itemChildren.length; childIndex++) {
+      if (childIndex === 0 && emptyTask) continue;
       const child = itemChildren[childIndex]!;
       if (child.type === "list") {
         const nested = listBlock(schema, child, source, depth + 1);
@@ -1473,7 +1486,9 @@ function listBlock(
     }
     if (blocks.length === 0)
       blocks.push(schema.nodes.paragraph!.create({ blockId: createUuidV7() }));
-    items.push(itemType.createChecked({ blockId: createUuidV7() }, blocks));
+    items.push(
+      itemType.createChecked({ blockId: createUuidV7(), checked }, blocks),
+    );
   }
   return items.length
     ? type.createChecked(
