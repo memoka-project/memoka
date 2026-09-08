@@ -296,6 +296,8 @@ export class TiptapEditorAdapter {
   private projectedCaretExternalLink: string | null | undefined;
   private scrollTimer: number | null = null;
   private viewportCaretFrame: number | null = null;
+  private viewportScrollIntent: "caret" | "viewport" = "viewport";
+  private readonly viewportResizeObserver: ResizeObserver | null;
   private suppressSelectionUpdate = false;
   private observedDocument: ProductDocument | null = null;
   private boundSection: Y.XmlElement | null = null;
@@ -516,8 +518,35 @@ export class TiptapEditorAdapter {
       true,
     );
     this.scrollElement.addEventListener("scroll", this.handleScroll);
+    this.scrollElement.addEventListener(
+      "wheel",
+      this.handleViewportScrollIntent,
+      { passive: true },
+    );
+    this.scrollElement.addEventListener(
+      "touchmove",
+      this.handleViewportScrollIntent,
+      { passive: true },
+    );
+    this.scrollElement.addEventListener(
+      "pointerdown",
+      this.handleViewportPointerDown,
+      true,
+    );
+    this.scrollElement.addEventListener(
+      "keydown",
+      this.handleViewportKeyDown,
+      true,
+    );
     window.addEventListener("resize", this.handleInternalLinkLayoutChange);
     this.currentEditor = this.createEditor();
+    this.viewportResizeObserver =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => this.scheduleViewportCaretReconciliation())
+        : null;
+    this.viewportResizeObserver?.observe(this.element);
+    if (this.scrollElement !== this.element)
+      this.viewportResizeObserver?.observe(this.scrollElement);
     this.scheduleSelectionUpdate(this.currentEditor, false);
     this.observeDocument(handle.current);
     this.unsubscribe = handle.subscribe((document) => {
@@ -1029,6 +1058,25 @@ export class TiptapEditorAdapter {
       true,
     );
     this.scrollElement.removeEventListener("scroll", this.handleScroll);
+    this.scrollElement.removeEventListener(
+      "wheel",
+      this.handleViewportScrollIntent,
+    );
+    this.scrollElement.removeEventListener(
+      "touchmove",
+      this.handleViewportScrollIntent,
+    );
+    this.scrollElement.removeEventListener(
+      "pointerdown",
+      this.handleViewportPointerDown,
+      true,
+    );
+    this.scrollElement.removeEventListener(
+      "keydown",
+      this.handleViewportKeyDown,
+      true,
+    );
+    this.viewportResizeObserver?.disconnect();
     window.removeEventListener("resize", this.handleInternalLinkLayoutChange);
     if (this.navigationRevealFrame !== null) {
       window.cancelAnimationFrame(this.navigationRevealFrame);
@@ -1110,7 +1158,18 @@ export class TiptapEditorAdapter {
         this.publishCaretExternalLink(editor);
         this.scheduleSelectionUpdate(editor, this.suppressSelectionUpdate);
       },
-      onTransaction: ({ editor }) => {
+      onTransaction: ({ editor, transaction, appendedTransactions }) => {
+        if (
+          editor === this.currentEditor &&
+          (transaction.scrolledIntoView ||
+            appendedTransactions.some((tr) => tr.scrolledIntoView))
+        ) {
+          // A command owns the caret destination. Native scroll events and
+          // delayed layout must reveal it, not replace it with a visible line.
+          this.viewportScrollIntent = "caret";
+          // Scroll/ResizeObserver schedule reconciliation only if the viewport
+          // actually changes; ordinary in-view motions need no extra DOM reads.
+        }
         this.publishCaretExternalLink(editor);
         const snapshot = this.vimSession.snapshot();
         this.internalLinkCompletion?.refresh(
@@ -1682,7 +1741,7 @@ export class TiptapEditorAdapter {
       return;
     }
     this.internalLinkCompletion?.refreshLayout();
-    this.scheduleViewportCaretClamp();
+    this.scheduleViewportCaretReconciliation();
     if (!this.options.onScrollUpdate) return;
     if (this.scrollTimer !== null) window.clearTimeout(this.scrollTimer);
     this.scrollTimer = window.setTimeout(() => {
@@ -1691,7 +1750,25 @@ export class TiptapEditorAdapter {
     }, 100);
   };
 
-  private scheduleViewportCaretClamp(): void {
+  private readonly handleViewportScrollIntent = (): void => {
+    this.viewportScrollIntent = "viewport";
+  };
+
+  private readonly handleViewportPointerDown = (event: PointerEvent): void => {
+    // Native scrollbar interactions target the scroll container, rather than
+    // an Editor child. Do not let a previous G/search jump undo a scrollbar drag.
+    if (event.button === 0 && event.target === this.scrollElement)
+      this.handleViewportScrollIntent();
+  };
+
+  private readonly handleViewportKeyDown = (event: KeyboardEvent): void => {
+    if (["PageUp", "PageDown", "Home", "End"].includes(event.key))
+      this.handleViewportScrollIntent();
+    // If Vim handles the key, its scrollIntoView transaction takes ownership
+    // back. Otherwise these keys may scroll the container natively.
+  };
+
+  private scheduleViewportCaretReconciliation(): void {
     if (this.viewportCaretFrame !== null) return;
     this.viewportCaretFrame = window.requestAnimationFrame(() => {
       this.viewportCaretFrame = null;
@@ -1715,6 +1792,24 @@ export class TiptapEditorAdapter {
     const above = caret.top < viewport.top;
     const below = caret.bottom > viewport.bottom;
     if (!above && !below) return;
+
+    if (this.viewportScrollIntent === "caret") {
+      // content-visibility, newly rendered chunks, or image/font layout can
+      // change height after the command's synchronous reveal. Keep its latest
+      // caret and move only the viewport; no extra selection/Undo transaction.
+      const margin = Math.min(5, viewport.height / 4);
+      const height = Math.min(
+        caret.bottom - caret.top,
+        viewport.height - 2 * margin,
+      );
+      const delta = above
+        ? caret.top - viewport.top - margin
+        : caret.top + height - viewport.bottom + margin;
+      this.scrollElement.scrollTop = Math.round(
+        this.scrollElement.scrollTop + delta,
+      );
+      return;
+    }
 
     const caretHeight = Math.max(1, caret.bottom - caret.top);
     const inset = Math.min(

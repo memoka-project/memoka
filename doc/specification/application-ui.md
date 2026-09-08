@@ -174,6 +174,11 @@ Note canvasは設定された最大幅を超えず、広いWindow内では中央
 この表示補正は文書・selection・Undo履歴を変更しない。表示方式が変わらない通常入力・移動では追加のDOM計測を行わない。
 `j/k`は引き続き論理行単位とする。長い折り返し行を1表示行ずつ移動する場合は`gj/gk`を使う。
 
+caret移動によるscrollと、wheel・touch・scrollbarなどの手動scrollを区別する。
+`G`や検索移動が選んだ論理位置は、遅延描画で高さが変わっても保持し、viewport側を調整してcaretを表示する。
+手動scroll後にcaretが画面外へ出た場合は、逆にscroll位置を保ってcaretを画面内の論理行へ移す。
+次の明示的な操作を優先し、前の移動先を復元したり、一定時間scrollを禁止したりしない。
+
 共通indent幅を次へ使用する。
 
 - 行番号境界から最初のSection guideまで
