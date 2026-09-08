@@ -42,6 +42,7 @@ import {
   pastePlainListText,
 } from "../editor/list-editing";
 import { projectListSelection } from "./list-selection";
+import { expandEmptyLineDeletion } from "./line-deletion";
 import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
 import { sectionFoldCollapsedSectionIds } from "../editor/section-folding";
 import { enterDetailsBody } from "../editor/details";
@@ -2808,12 +2809,16 @@ function deleteLineUnits(
     units[Math.min(visualLine.anchorUnit, visualLine.headUnit)] ?? null;
   const preserveHardBreakLine =
     nextMode === "insert" && firstUnit?.kind === "hard-break-line";
-  const range = unitDeletionRange(
+  const selectedRange = unitDeletionRange(
     view,
     visualLine,
     units,
     preserveHardBreakLine,
   );
+  const range =
+    nextMode === "normal" && selectedRange
+      ? expandEmptyLineDeletion(view.state.doc, selectedRange)
+      : selectedRange;
   const replacement =
     nextMode === "insert" && firstUnit && firstUnit.kind !== "hard-break-line"
       ? emptyStructureReplacement(view, firstUnit)
@@ -2904,15 +2909,31 @@ function deleteSelectedListRowsPreservingDescendants(
       from: root.position,
       to: root.position + root.node.nodeSize,
     }));
-    const nonListRanges = selectedUnits
-      .filter(
-        (unit) =>
-          unit.kind !== "list-item" &&
-          !rootRanges.some(
-            (range) => unit.from >= range.from && unit.to <= range.to,
-          ),
+    const nonListRanges: Array<{ from: number; to: number }> = [];
+    for (const unit of selectedUnits) {
+      if (
+        unit.kind === "list-item" ||
+        rootRanges.some(
+          (range) => unit.from >= range.from && unit.to <= range.to,
+        )
       )
-      .map((unit) => ({ from: unit.from, to: unit.to }));
+        continue;
+      const range = unitDeletionRange(
+        view,
+        {
+          anchorUnit: 0,
+          headUnit: 0,
+          cursor: unit.cursorFrom,
+        },
+        [unit],
+      );
+      if (!range) continue;
+      const previous = nonListRanges.at(-1);
+      if (previous && range.from <= previous.to) {
+        previous.from = Math.min(previous.from, range.from);
+        previous.to = Math.max(previous.to, range.to);
+      } else nonListRanges.push(range);
+    }
     const operations: Array<
       | { readonly kind: "list"; readonly root: PositionedListNode }
       | { readonly kind: "delete"; readonly from: number; readonly to: number }
@@ -2932,8 +2953,21 @@ function deleteSelectedListRowsPreservingDescendants(
     });
 
     for (const operation of operations) {
+      const originalFrom =
+        operation.kind === "list" ? operation.root.position : operation.from;
+      const originalTo =
+        operation.kind === "list"
+          ? operation.root.position + operation.root.node.nodeSize
+          : operation.to;
+      const mappedFrom = transaction.mapping.mapResult(originalFrom, 1);
+      const from = mappedFrom.pos;
+      const to = transaction.mapping.map(originalTo, -1);
+      // Removing an empty ancestor may already consume another selected block.
+      if (mappedFrom.deletedAcross || (originalFrom < originalTo && from >= to))
+        continue;
       if (operation.kind === "delete") {
-        transaction.deleteRange(operation.from, operation.to);
+        const range = expandEmptyLineDeletion(transaction.doc, { from, to });
+        transaction.deleteRange(range.from, range.to);
         changed = true;
         continue;
       }
@@ -2945,16 +2979,10 @@ function deleteSelectedListRowsPreservingDescendants(
         false,
       );
       if (remaining) {
-        transaction.replaceWith(
-          root.position,
-          root.position + root.node.nodeSize,
-          remaining,
-        );
+        transaction.replaceWith(from, to, remaining);
       } else {
-        transaction.deleteRange(
-          root.position,
-          root.position + root.node.nodeSize,
-        );
+        const range = expandEmptyLineDeletion(transaction.doc, { from, to });
+        transaction.deleteRange(range.from, range.to);
       }
       changed = true;
     }

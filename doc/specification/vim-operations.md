@@ -109,6 +109,13 @@ Visual yank後はselection先頭へcaretを戻す。`P`後のUndoでは、putを
 
 Table Cell内の`D/C/S`はCell内容だけを対象にし、Table rowを構造変更しない。
 
+`dd`（Countを含む）とVisual Lineの`d`は、削除によって空になるParagraph、Code/Source Block、
+Blockquote（Alertを含む）、Detailsの本体も同じtransaction内で取り除く。空のCode/Sourceも削除対象とする。
+削除に関係する祖先だけを調べ、未選択の本文・inline atom・画像・添付・List/Table構造を空とみなして削除しない。
+Tableでは全rowを削除する場合のみ本体を取り除き、未選択の空rowは維持する。
+DetailsはSummaryに内容が残るなら維持し、必須の空本文Paragraphを補う。ListItem内でも同じ規則とし、未選択の子孫は表示順を保って残す。
+Note/Sectionのidentityとtitle削除規則は変えない。`cc`やVisual Lineの`c`などのchangeは入力先を維持する。
+
 ## 7. Text object
 
 operatorと組み合わせて次を使用できる。

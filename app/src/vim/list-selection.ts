@@ -1,5 +1,6 @@
 import { Fragment, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { VimStructuralUnit } from "./block-semantics";
+import { isEmptyLineDeletionBlock } from "./line-deletion";
 
 const isList = (node: ProseMirrorNode) =>
   node.type.name === "bulletList" || node.type.name === "orderedList";
@@ -30,23 +31,25 @@ export function projectListSelection(
       const from = rows[0]!.from - pos - 1;
       const to = rows.at(-1)!.to - pos - 1;
       if (selected) return [node.copy(node.content.cut(from, to))];
-      if (
-        from === 0 &&
-        to === node.content.size &&
-        rows[0]!.kind === "hard-break-line"
-      )
-        return [];
+      if (from === 0 && to === node.content.size) return [];
       const cutFrom = to === node.content.size && from > 0 ? from - 1 : from;
       const cutTo = to < node.content.size ? to + 1 : to;
-      return [
-        node.copy(node.content.cut(0, cutFrom).append(node.content.cut(cutTo))),
-      ];
+      const remaining = node.content
+        .cut(0, cutFrom)
+        .append(node.content.cut(cutTo));
+      return remaining.size ? [node.copy(remaining)] : [];
     }
     if (node.isTextblock || node.isLeaf) return selected ? [] : [node];
     const children: ProseMirrorNode[] = [];
     node.forEach((child, offset) =>
       children.push(...visit(child, pos + 1 + offset)),
     );
+    if (
+      !selected &&
+      children.length === node.childCount &&
+      children.every((child, index) => child === node.child(index))
+    )
+      return [node];
     if (children.length === 0) return [];
     if (
       !selected &&
@@ -56,7 +59,17 @@ export function projectListSelection(
     ) {
       return children.flatMap((list) => [...list.content.content]);
     }
-    return [node.copy(Fragment.fromArray(children))];
+    const copy = node.copy(Fragment.fromArray(children));
+    if (!selected && isEmptyLineDeletionBlock(copy)) return [];
+    // Details requires a body even when deleting its last body row. Keep its
+    // unselected Summary and create only the schema-required empty input line.
+    const valid =
+      !selected && !node.type.validContent(copy.content)
+        ? node.type.createAndFill(node.attrs, copy.content, node.marks)
+        : copy;
+    // If a future schema cannot retain the remaining content, keep the original
+    // node rather than silently discarding unselected content.
+    return [valid ?? node];
   };
   return visit(root, position)[0] ?? null;
 }
