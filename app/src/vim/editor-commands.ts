@@ -228,10 +228,16 @@ export function runEditorTab(
 ): EditorVimResult {
   const tableRow = blockSemantics.nearestAncestorType(view, "table-row");
   if (tableRow) {
-    let handled = goToNextCell(outdent ? -1 : 1)(view.state, view.dispatch);
+    // The table command selects the target Cell's text by default. Collapse
+    // before dispatch so typing inserts at its start, without a selection flash.
+    const dispatchCellMove = (transaction: Transaction) => {
+      transaction.setSelection(Selection.near(transaction.selection.$from, 1));
+      view.dispatch(transaction);
+    };
+    let handled = goToNextCell(outdent ? -1 : 1)(view.state, dispatchCellMove);
     let detail = outdent ? "table:previous-cell" : "table:next-cell";
     if (!handled && !outdent && addRowAfter(view.state, view.dispatch)) {
-      handled = goToNextCell(1)(view.state, view.dispatch);
+      handled = goToNextCell(1)(view.state, dispatchCellMove);
       detail = "table:add-row";
     }
     view.focus();
@@ -267,7 +273,25 @@ export function runEditorTab(
 
 interface InsertExitBlock {
   depth: number;
-  detailPrefix: "blockquote" | "code" | "table" | "details";
+  detailPrefix: "blockquote" | "code" | "table" | "details" | "list";
+}
+
+function insertExitListInsideDetails(
+  view: VimEditorView,
+): InsertExitBlock | null {
+  const { $from, $to } = view.state.selection;
+  let list: InsertExitBlock | null = null;
+  for (let depth = $from.depth; depth > 0; depth--) {
+    const node = $from.node(depth);
+    if ($to.depth < depth || $to.node(depth) !== node) continue;
+    // Stop at the nearest Details body: a surrounding list owns the Details
+    // itself and must not receive a new item when leaving an inner list.
+    if (node.type.name === "detailsBody") return list;
+    if (node.type.name === "details") return null;
+    if (node.type.name === "bulletList" || node.type.name === "orderedList")
+      list = { depth, detailPrefix: "list" };
+  }
+  return null;
 }
 
 function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
@@ -297,14 +321,18 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
-  // The nearest ListItem owns Ctrl+Enter even from a nested code/quote/table
-  // or an atomic block. Insert before existing children, otherwise a sibling.
-  if (owningListItemDepth(view.state.selection.$from) !== null) {
+  const detailsList = insertExitListInsideDetails(view);
+  // Inside Details, leave the whole inner list. Elsewhere the nearest ListItem
+  // owns Ctrl+Enter, creating its first child or its next sibling.
+  if (
+    !detailsList &&
+    owningListItemDepth(view.state.selection.$from) !== null
+  ) {
     const handled = insertListItemAfter(view.state, view.dispatch);
     if (handled) view.focus();
     return { handled, detail: "list:created-item-after" };
   }
-  const target = insertExitBlock(view);
+  const target = detailsList ?? insertExitBlock(view);
   if (!target) {
     return {
       handled: false,

@@ -84,6 +84,7 @@ Memokaがblock種別に応じて処理する。
   元ItemのBlockをcaret位置で分割せず、既存子孫・後続Blockの親子関係・順序・IDも変えない。
   追加先のList種別と開始番号を維持し、既存の空Itemは再利用しない。変更は1 Undo単位とする。`O`とList外の`o`は従来どおり。
   ListItem registerのNormal `p`も同じ挿入位置を使い、コピーしたItem内の相対的な階層を保つ。`P`は元Itemの前のままとする。
+  例外としてDetails内のListでは、`Ctrl-Enter`はそのDetails内の最外側List直後へ新しいParagraphを作る（§11）。Normalの`o`はItem追加のままとする。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。
 - List外のTable、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ
@@ -196,7 +197,7 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 本文blockとして扱う。Sectionではないため、Note tree・Section深さ・Outlineの項目を増やさない。
 
 - `details`は`detailsSummary`と`detailsBody`を1つずつ持つ。いずれにもstable block IDを割り当てる。
-- Summaryはinline textと文字装飾を保持する。空なら編集不能の薄い「詳細」を表示し、placeholderは保存しない。
+- Summaryは本文と同じ基本fontを使い、inline textと明示的な文字装飾を保持する。空なら文字を表示せず、placeholderは設けない。
 - 本文は非空の`Block+`。Paragraph、List、引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Rule、入れ子Detailsを許す。
 - `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。
 - 開閉マークのclick、Normalの`Enter` / `za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
@@ -205,7 +206,10 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - 本文でNormalの`o`はDetails内に次の入力行を追加する。通常Paragraphでは直後に新規Paragraphを作り、本文末尾でも外へ出ない。
   Details自体がListItem内にあっても外側ListにItemを作らない。本文内のList/Code/TableではそれぞれItem/コード行/Table行を追加する。
 - Details本文の通常Paragraphで`Ctrl-Enter`すると、そのDetails直後に新しいParagraphを作る。
-  内部Code/Table/引用では内部blockを抜ける。ListItem内では既存List操作を優先し、先頭の子または次の兄弟Itemを作る。
+  内部Code/Table/引用では内部blockを抜ける。ただしDetails自体を所有する外側ListItemがある場合は、既存List操作を優先する。
+- Details本文内のListでは、内部Blockの種類を問わず`Ctrl-Enter`でListを抜け、その直後に新しいParagraphを作って移動する。
+  最も近いDetailsの本文内にある最外側Listを対象にし、既存Paragraphは再利用しない。Listとその子孫は変更せず、1 Undo単位とする。
+  Detailsが外側ListItemや別のDetails内にあっても、それらを越えて移動せず、現在のDetails内にとどまる。
 - Summary上の`yy/dd`、Visual Lineの`y/d`は本文を含むDetails全体を対象にする。本文側では通常の論理行操作を使う。
 - 開閉はEditor instance / Window内の表示状態であり、Yjs本文・Undo・Markdownを変更しない。Editorを再生成するとimport時の状態に戻る。
 - 閉じた本文も`/`と`,g`の検索対象とし、移動先を隠しているDetailsを自動展開する。検索previewはDetails本文を展開して表示する。

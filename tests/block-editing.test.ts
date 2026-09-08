@@ -773,10 +773,14 @@ describe("Memoka block editing boundaries", () => {
 
     expect(press(editor, "Tab").defaultPrevented).toBe(true);
     expect(editor.state.selection.$from.parent.textContent).toBe("H2");
+    expect(editor.state.selection.empty).toBe(true);
+    expect(editor.state.selection.from).toBe(textPosition(editor, "H2"));
     expect(press(editor, "Tab", { shiftKey: true }).defaultPrevented).toBe(
       true,
     );
     expect(editor.state.selection.$from.parent.textContent).toBe("H1");
+    expect(editor.state.selection.empty).toBe(true);
+    expect(editor.state.selection.from).toBe(textPosition(editor, "H1"));
 
     editor.commands.setTextSelection(textPosition(editor, "A2"));
     expect(press(editor, "Tab").defaultPrevented).toBe(true);
@@ -786,9 +790,99 @@ describe("Memoka block editing boundaries", () => {
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     expect(editor.state.selection.$from.parent.textContent).toBe("");
     expect(adapter.vimSnapshot.action).toBe("table:add-row:changed");
+    expect(editor.state.selection.empty).toBe(true);
     expect(editor.isFocused).toBe(true);
     destroy();
   });
+
+  it.each([false, true])(
+    "moves Insert Tab to a collapsed caret without selecting or replacing Cell content (reverse=%s)",
+    async (reverse) => {
+      const { adapter, editor, destroy } = await productEditor();
+      try {
+        editor.commands.setContent({
+          type: "doc",
+          content: [
+            {
+              type: "table",
+              content: [
+                {
+                  type: "tableRow",
+                  content: [
+                    {
+                      type: "tableCell",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "left" }],
+                        },
+                      ],
+                    },
+                    {
+                      type: "tableCell",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [
+                            {
+                              type: "text",
+                              text: "日本語",
+                              marks: [{ type: "bold" }],
+                            },
+                          ],
+                        },
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "second paragraph" }],
+                        },
+                      ],
+                    },
+                    {
+                      type: "tableCell",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "right" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+        editor.commands.setTextSelection(
+          textPosition(editor, reverse ? "right" : "left") + 1,
+        );
+        const before = editor.state.doc;
+        const selections: boolean[] = [];
+        const recordSelection = () => {
+          selections.push(editor.state.selection.empty);
+        };
+        editor.on("selectionUpdate", recordSelection);
+        expect(
+          press(editor, "Tab", { shiftKey: reverse }).defaultPrevented,
+        ).toBe(true);
+        editor.off("selectionUpdate", recordSelection);
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        expect(selections.length).toBeGreaterThan(0);
+        expect(selections.every(Boolean)).toBe(true);
+        expect(editor.state.selection.empty).toBe(true);
+        expect(editor.state.selection.from).toBe(
+          textPosition(editor, "日本語"),
+        );
+        expect(editor.state.doc.eq(before)).toBe(true);
+        editor.commands.insertContent("追加");
+        expect(
+          editor.state.doc.firstChild!.firstChild!.child(1).textContent,
+        ).toBe("追加日本語second paragraph");
+        editor.state.doc.check();
+      } finally {
+        destroy();
+      }
+    },
+  );
 
   it("keeps ListItem Enter semantics delegated to TipTap", async () => {
     const { destroy, editor, runtime } = await productEditor();

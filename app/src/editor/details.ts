@@ -89,7 +89,6 @@ export const DetailsSummary = Node.create({
     "summary",
     mergeAttributes(HTMLAttributes, {
       class: "memoka-details-summary",
-      "data-placeholder": "詳細",
     }),
     0,
   ],

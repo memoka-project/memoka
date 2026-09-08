@@ -143,6 +143,10 @@ describe("Memoka application themes", () => {
     expect(css).toContain("var(--memoka-color-mode-normal)");
     expect(css).toContain("var(--memoka-color-mode-insert)");
     expect(css).toContain("var(--memoka-color-mode-visual)");
+    expect(css).toMatch(/\.memoka-details-summary\s*\{[^}]*font: inherit;/u);
+    expect(css).not.toMatch(
+      /\.memoka-details-summary\[data-empty="true"\]::after/u,
+    );
     expect(css).toMatch(
       /mark\[data-memoka-highlight="true"\][\s\S]*?var\(--memoka-color-search-match-surface\)/u,
     );

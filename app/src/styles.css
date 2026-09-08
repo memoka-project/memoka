@@ -1273,20 +1273,13 @@ textarea {
   display: block;
   padding-inline-start: 1.3em;
   min-height: 1.65em;
-  font-weight: 600;
+  font: inherit;
   list-style: none;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document)
   .memoka-details-summary::-webkit-details-marker {
   display: none;
-}
-
-:is(.memoka-editor, .workspace-search-preview-document)
-  .memoka-details-summary[data-empty="true"]::after {
-  content: attr(data-placeholder);
-  opacity: 0.4;
-  pointer-events: none;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-details-toggle {

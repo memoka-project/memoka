@@ -147,6 +147,8 @@ InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同�
 追加先のList種別・開始番号を保ち、既存子孫と後続Blockの親子関係・順序・IDを変えない。
 caret位置で本文は分割せず、既存の空Itemを再利用しない。新ParagraphへInsertで移動し、1 Undo単位とする。
 ListItem registerのNormal `p`も同じ挿入位置を使う。`P`、文字単位のput、Table Cellのputは従来のままとする。
+ただしDetails本文内のListでは、`Ctrl-Enter`で最も近いDetails内の最外側Listを抜け、その直後へ新しいParagraphを作る。
+Details内にとどまり、既存Paragraphを再利用しない。Normalの`o`はこの場合もItem追加のままとする。
 
 `>/<`は選択されたSection/ListItemの階層を、表示順を維持したまま1段変更する。
 
@@ -181,7 +183,7 @@ Visual中の`gv`は現在範囲と直前範囲を交換し、続けて押すと�
 - `j/k`は同じ列の前後rowへ移り、Table境界では前後論理行へ移る。
 - `w/b/e/W/B/E`はCell境界と空Cellも停止位置として扱う。
 - Normalの`Tab/Shift-Tab`はrow-major順に移動し、Table先頭/末尾で止まる。
-- Insertの`Tab/Shift-Tab`もCell移動を行い、最終CellのTabだけは本文rowを追加する。
+- Insertの`Tab/Shift-Tab`は移動先Cell先頭へcollapsed caretを移し、Cell内容を選択しない。最終CellのTabだけは本文rowを追加する。
 
 Table左上CellのShift-TabでEditor外やTreeへfocusを移さない。
 
@@ -189,6 +191,7 @@ Table左上CellのShift-TabでEditor外やTreeへfocusを移さない。
 
 - Insert EnterはCell内Paragraphを分割し、Shift-EnterはHard Breakを入れる。
 - Ctrl-EnterはList内なら所有Itemの先頭の子または次の兄弟として空のItemを作り、List外ならTable全体の直後に新しいParagraphを作る。
+  Details本文内のListにあるTableでは、最も近いDetails内の最外側List直後へ新しいParagraphを作る。
 - Table内の`p/P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼る。
 - 矩形`d`はCell内容をclearし、row/column構造を維持する。
 - 矩形`c`はclear後、左上CellのInsertへ入る。

@@ -241,12 +241,20 @@ Rootの子にする結果、元のH6がH7相当になることがあります。
 折り畳み中はSection titleだけを表示、編集できます。折り畳み状態はWindowごとの表示状態であり、本文や
 Undo履歴へは保存しません。折り畳んだ本文も`/`検索の対象になり、一致へ移動すると必要な祖先だけを展開します。
 
+### Details（折り畳みブロック）
+
+空段落の`/`メニューからDetailsを作ると、タイトルと折り畳める本文を持つブロックになります。
+タイトルは本文と同じフォントで表示し、太字などの文字装飾も使えます。空タイトルには代わりの文字を表示しません。
+開閉マークのクリック、Normalの`Enter`や`za`で開閉できます。タイトルでInsertの`Enter`を押すと本文へ移ります。
+
 ### 構造blockから本文へ戻る
 
 リスト外のTable、Code Block、Source Block、Blockquote内で`Ctrl-Enter`を押すと、その最外構造の直後へ
 新しいParagraphを作って移動します。直後に既存Paragraphがあっても再利用しません。
 リスト内ではblockの種類にかかわらず、現在の項目の表示順で直後に空の項目を作って移動します。
 子項目がある場合はその先頭に新しい子を追加し、ない場合は次の兄弟項目を作ります。
+ただしDetails内のリストでは、`Ctrl-Enter`でリストを抜け、その直後へ新しいParagraphを作ります。
+ネストしたリストでも、現在のDetails内にある最外側のリスト全体を抜け、Details内にとどまります。
 
 Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先頭へ入ります。移動先がない側には
 新しいParagraphを作ります。
@@ -271,6 +279,8 @@ Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先�
 追加先のリスト種別を保ち、作った項目の空段落へ移動します。既存の空項目は再利用しません。
 元の項目の本文はcaret位置では分割しません。既存の子項目や後続ブロックも移動せず、親子関係と表示順を保ちます。
 例えば、子が「子A、子B」なら「新しい子、子A、子B」の順になります。
+ただしDetails内のリストの`Ctrl-Enter`は、項目追加ではなくリスト直後への新しい段落追加になります。
+Normalの`o`はDetails内でも上記の項目追加のままです。
 
 `yy`や`V`→`y`でコピーしたリスト項目を`p`で貼る場合も同じです。現在項目に子があればその先頭へ、
 なければ次の兄弟として貼ります。コピーした項目に子孫がある場合は、その相対的な階層を保ちます。
@@ -292,11 +302,12 @@ Memoka内でコピーした内容や、明示的なMarkdown・HTML、表デー�
 - `j`と`k`は同じ列の前後rowへ移動し、Table境界では前後の論理行へ移動します。
 - `w/b/e/W/B/E`は空Cellを飛ばさず、Cell境界を停止位置として扱います。
 - Normalの`Tab`と`Shift-Tab`はTable先頭と末尾で止まります。
-- Insertの`Tab`と`Shift-Tab`もCellを移動し、最終Cellで`Tab`を押した場合だけ本文rowを追加します。
+- Insertの`Tab`と`Shift-Tab`は移動先Cellの先頭へcaretだけを移し、文字を選択しません。最終Cellで`Tab`を押した場合だけ本文rowを追加します。
 - 左上Cellの`Shift-Tab`でEditor外やTreeへfocusを移しません。
 
 Insertの`Enter`はCell内に新しいParagraphを作り、`Shift-Enter`は同じParagraph内へHard Breakを入れます。
 `Ctrl-Enter`はTable全体の直後へ新しいParagraphを作ります。ただしリスト内のTableでは、現在項目に子があれば先頭の子として、なければ次の兄弟として空の項目を作ります。
+Details内のリストにあるTableでは、リスト全体の直後へ新しいParagraphを作り、Details内にとどまります。
 
 Table内の`p`と`P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼り付けます。
 Visual Blockの`d`はCell内容だけをclearし、rowとcolumnは残します。`c`はclear後に左上CellのInsertへ入ります。

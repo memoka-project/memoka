@@ -83,6 +83,109 @@ function harness(source = markdown) {
 }
 
 describe("Details blocks", () => {
+  it("leaves an empty Summary blank without placeholder text", () => {
+    const { editor, destroy } = harness(
+      "<details open>\n<summary></summary>\n\n本文\n\n</details>",
+    );
+    try {
+      const summary = editor.view.dom.querySelector(".memoka-details-summary")!;
+      expect(summary.hasAttribute("data-placeholder")).toBe(false);
+      expect(summary.textContent).not.toContain("詳細");
+      expect(editor.getHTML()).not.toContain('data-placeholder="詳細"');
+    } finally {
+      destroy();
+    }
+  });
+
+  it.each([
+    "list",
+    "nested list",
+    "code in list",
+    "list in outer ListItem",
+    "list in nested Details",
+  ])(
+    "exits the entire list into a new Details body paragraph with Ctrl-Enter: %s",
+    async (variant) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const element = document.createElement("div");
+      document.body.append(element);
+      const { editor, adapter } = runtime.editorForTesting(
+        "window-1",
+        element,
+        { directBodyOnly: false },
+      );
+      try {
+        const listBody =
+          variant === "nested list"
+            ? "- 親項目\n  - 現在項目\n  - 子の後続\n- 兄弟項目"
+            : variant === "code in list"
+              ? "- 親項目\n\n  ```\n  現在項目\n  ```\n\n- 兄弟項目"
+              : "- 現在項目\n- 兄弟項目";
+        let source = `<details open>\n<summary>対象</summary>\n\n${listBody}\n\n既存段落\n\n</details>`;
+        if (variant === "list in outer ListItem") source = inList(source);
+        if (variant === "list in nested Details")
+          source = `<details open>\n<summary>外側</summary>\n\n${source}\n\n外側の末尾\n\n</details>`;
+        editor.commands.setContent(
+          parseMarkdownNote(
+            `# Note\n\n${source}`,
+            editor.schema,
+            editor.state.doc.firstChild!.attrs.sectionId,
+          )!.root.toJSON(),
+        );
+        let cursor = -1;
+        editor.state.doc.descendants((node, position) => {
+          if (node.isText && node.text?.includes("現在項目"))
+            cursor = position + node.text.indexOf("現在項目");
+        });
+        expect(cursor).toBeGreaterThan(0);
+        editor.commands.setTextSelection(cursor);
+        editor.commands.focus();
+        const before = editor.state.doc;
+        const $before = editor.state.selection.$from;
+        let bodyDepth = $before.depth;
+        while (
+          bodyDepth > 0 &&
+          $before.node(bodyDepth).type.name !== "detailsBody"
+        )
+          bodyDepth--;
+        const body = $before.node(bodyDepth);
+        expect(body.firstChild!.type.name).toBe("bulletList");
+        expect(body.childCount).toBe(2);
+        const press = (key: string, options: KeyboardEventInit = {}) =>
+          editor.view.dom.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              bubbles: true,
+              cancelable: true,
+              ...options,
+            }),
+          );
+        press("Enter", { ctrlKey: true });
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        const { $from } = editor.state.selection;
+        expect($from.node($from.depth - 1).type.name).toBe("detailsBody");
+        const afterBody = $from.node($from.depth - 1);
+        expect(afterBody.childCount).toBe(3);
+        expect(afterBody.child(0).eq(body.child(0))).toBe(true);
+        expect(afterBody.child(2).eq(body.child(1))).toBe(true);
+        expect(afterBody.child(1)).toBe($from.parent);
+        expect($from.parent.textContent).toBe("");
+        expect($from.parentOffset).toBe(0);
+        editor.state.doc.check();
+        const after = editor.state.doc;
+        press("Escape");
+        press("u");
+        expect(editor.state.doc.eq(before)).toBe(true);
+        press("r", { ctrlKey: true });
+        expect(editor.state.doc.eq(after)).toBe(true);
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        element.remove();
+      }
+    },
+  );
+
   it.each([
     { text: "先頭", cursor: "先頭", expected: ["先頭", "追加"] },
     {
