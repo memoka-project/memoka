@@ -58,6 +58,10 @@ async function harness() {
   const lines = semantics.logicalLines(editor.view);
   const start = (index: number) => lines[index]!.cursorPositions[0]!;
   let layoutShift = 0;
+  Object.defineProperties(scroll, {
+    clientHeight: { value: 100 },
+    scrollHeight: { get: () => lines.length * 20 + layoutShift + 200 },
+  });
   const top = (index: number) => index * 20 + layoutShift - scroll.scrollTop;
   const caretRect = (position: number) => {
     const y = top(semantics.currentLineIndex(lines, position));
@@ -141,6 +145,76 @@ async function harness() {
 }
 
 describe("Editor viewport scroll intent", () => {
+  it.each([
+    ["z", 41],
+    ["t", 5],
+    ["b", 77],
+  ] as const)(
+    "z%s aligns the display row, preserves the caret, and survives deferred reflow",
+    async (suffix, expectedTop) => {
+      const h = await harness();
+      try {
+        h.editor.commands.setTextSelection(h.start(20) + 3);
+        const cursor = h.editor.state.selection.head;
+        const before = h.editor.state.doc;
+        const note = h.runtime.getNoteHandle(h.runtime.noteId).current;
+        if (note.kind !== "note") throw new Error("Expected NoteDoc");
+        const undoItems = note.undoManager.undoStack.length;
+        h.press("z", suffix);
+        expect(h.editor.state.selection.head).toBe(cursor);
+        expect(h.editor.view.coordsAtPos(cursor).top).toBe(expectedTop);
+        h.reflow(240, "resize");
+        await frame();
+        expect(h.editor.state.selection.head).toBe(cursor);
+        expect(h.editor.view.coordsAtPos(cursor).top).toBe(expectedTop);
+        const scrollTop = h.scroll.scrollTop;
+        h.press("z", suffix);
+        expect(h.scroll.scrollTop).toBe(scrollTop);
+        expect(h.editor.state.doc).toBe(before);
+        expect(note.undoManager.undoStack).toHaveLength(undoItems);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
+  it("counted zt chooses the logical line while retaining its column", async () => {
+    const h = await harness();
+    try {
+      h.editor.commands.setTextSelection(h.start(20) + 3);
+      h.press("5", "z", "t");
+      expect(h.editor.state.selection.head).toBe(h.start(4) + 3);
+      expect(h.editor.view.coordsAtPos(h.editor.state.selection.head).top).toBe(
+        5,
+      );
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("the next motion or wheel cancels the sticky z alignment", async () => {
+    const h = await harness();
+    try {
+      h.editor.commands.setTextSelection(h.start(20) + 3);
+      h.press("z", "z", "l");
+      h.reflow(10, "resize");
+      await frame();
+      expect(h.editor.view.coordsAtPos(h.editor.state.selection.head).top).toBe(
+        51,
+      );
+      h.press("z", "t");
+      h.scroll.dispatchEvent(new Event("wheel"));
+      h.scroll.scrollTop = 110;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.scroll.scrollTop).toBe(110);
+      expect(h.editor.state.selection.head).not.toBe(h.start(20) + 4);
+      h.expectVisible();
+    } finally {
+      h.destroy();
+    }
+  });
+
   it.each(["scroll", "resize"] as const)(
     "keeps G at the last logical line after a delayed layout change (%s)",
     async (notification) => {

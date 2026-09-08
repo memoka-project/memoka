@@ -2043,7 +2043,9 @@ export class ProductVimSession {
         (command === "selection.yank" ||
           command === "selection.delete" ||
           command === "selection.change" ||
-          command === "selection.paste")
+          command === "selection.paste" ||
+          command === "replace.character" ||
+          command === "text-object.around-paragraph")
           ? this.captureVisualSelection(view)
           : undefined;
       const currentRegister = this.registerStore.read(view.state.schema);
@@ -2082,6 +2084,7 @@ export class ProductVimSession {
               view,
               resolution.argument,
               resolution.count,
+              this.mode,
             )
           : this.mode === "visual-line" && this.visualLine
             ? runVisualLineCommand(
@@ -2127,9 +2130,10 @@ export class ProductVimSession {
       }
       if (
         result.handled &&
-        tableRectangle &&
         !continuesIntoInsert &&
-        (command === "selection.delete" || command === "selection.paste")
+        ((tableRectangle &&
+          (command === "selection.delete" || command === "selection.paste")) ||
+          (this.mode === "visual-char" && command === "replace.character"))
       ) {
         undoManager?.undoStack.at(-1)?.meta.set(cursorHistoryKey, {
           beforeCursor: cursorBeforeCommand,
@@ -2158,7 +2162,12 @@ export class ProductVimSession {
         );
       }
       if (result.nextMode) {
-        this.changeMode(view, result.nextMode, departingVisualSelection);
+        this.changeMode(
+          view,
+          result.nextMode,
+          departingVisualSelection,
+          result.visualLine,
+        );
       } else if (result.visualLine) this.refreshVisualLineDecorations(view);
       if (isolateUndo && !continuesIntoInsert) undoManager?.stopCapturing();
       if (repeatDescriptor) this.repeatStore.record(repeatDescriptor);
@@ -3158,6 +3167,7 @@ export class ProductVimSession {
     view: EditorView,
     nextMode: VimMode,
     departingVisualSelection?: VimVisualSelectionSnapshot | null,
+    preparedVisualLine?: VimVisualLineState,
   ): void {
     const previousMode = this.mode;
     if (isVisualMode(previousMode) && nextMode !== previousMode) {
@@ -3185,7 +3195,7 @@ export class ProductVimSession {
     applyNativeCaretMode(view.dom, nextMode);
 
     if (nextMode === "visual-line") {
-      this.visualLine = beginVisualLine(view);
+      this.visualLine = preparedVisualLine ?? beginVisualLine(view);
       this.refreshVisualLineDecorations(view);
     } else if (nextMode === "visual-block") {
       this.visualLine = null;

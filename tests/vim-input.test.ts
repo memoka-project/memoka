@@ -13,6 +13,34 @@ const noteContext = {
 };
 
 describe("Memoka Vim input grammar", () => {
+  it.each([
+    ["normal", "Y", "line.yank", 1],
+    ["normal", "3Y", "line.yank", 3],
+    ["normal", "zz", "viewport.center", 1],
+    ["normal", "zt", "viewport.top", 1],
+    ["normal", "23zb", "viewport.bottom", 23],
+    ["visual-char", "s", "selection.change", 1],
+    ["visual-char", "rx", "replace.character", 1],
+    ["visual-char", "iw", "text-object.inner-word", 1],
+    ["visual-char", "2aw", "text-object.around-word", 2],
+    ["visual-char", "ip", "text-object.inner-paragraph", 1],
+    ["visual-char", "3ap", "text-object.around-paragraph", 3],
+  ] as const)("parses %s %s", (mode, sequence, command, count) => {
+    let state = createVimInputState();
+    for (const key of sequence.slice(0, -1))
+      state = advanceVimInput(state, mode, key, noteContext).state;
+    expect(
+      advanceVimInput(state, mode, sequence.at(-1)!, noteContext),
+    ).toMatchObject({
+      state: createVimInputState(),
+      sequence,
+      resolvedCommand: command,
+      operator: null,
+      count,
+      action: { kind: "execute", command },
+    });
+  });
+
   it("parses a Normal count while keeping a leading zero as a motion", () => {
     const three = advanceVimInput(
       createVimInputState(),

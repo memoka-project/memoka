@@ -56,6 +56,11 @@ import {
 import type { VimRegisterStore } from "../vim/register-store";
 import type { VimRepeatStore } from "../vim/repeat";
 import type { VimVisualSelectionStore } from "../vim/visual-history";
+import {
+  alignVimViewport,
+  VIM_VIEWPORT_ALIGNMENT_META,
+  type VimViewportAlignment,
+} from "../vim/viewport-scroll";
 import type { VimWindowCommand } from "../vim/input";
 import type { VimApplicationCommand } from "../vim/input";
 import type { ApplicationKeyConfig } from "../core/application-key-config";
@@ -297,6 +302,7 @@ export class TiptapEditorAdapter {
   private scrollTimer: number | null = null;
   private viewportCaretFrame: number | null = null;
   private viewportScrollIntent: "caret" | "viewport" = "viewport";
+  private viewportAlignment: VimViewportAlignment | null = null;
   private readonly viewportResizeObserver: ResizeObserver | null;
   private suppressSelectionUpdate = false;
   private observedDocument: ProductDocument | null = null;
@@ -1159,14 +1165,30 @@ export class TiptapEditorAdapter {
         this.scheduleSelectionUpdate(editor, this.suppressSelectionUpdate);
       },
       onTransaction: ({ editor, transaction, appendedTransactions }) => {
-        if (
-          editor === this.currentEditor &&
-          (transaction.scrolledIntoView ||
-            appendedTransactions.some((tr) => tr.scrolledIntoView))
-        ) {
-          // A command owns the caret destination. Native scroll events and
-          // delayed layout must reveal it, not replace it with a visible line.
-          this.viewportScrollIntent = "caret";
+        if (editor === this.currentEditor) {
+          const alignment = transaction.getMeta(VIM_VIEWPORT_ALIGNMENT_META);
+          if (
+            alignment === "center" ||
+            alignment === "top" ||
+            alignment === "bottom"
+          ) {
+            this.viewportScrollIntent = "caret";
+            this.viewportAlignment = alignment;
+          } else {
+            const transactions = [transaction, ...appendedTransactions];
+            if (
+              transactions.some(
+                (tr) => tr.selectionSet || tr.docChanged || tr.scrolledIntoView,
+              )
+            ) {
+              this.viewportAlignment = null;
+            }
+            if (transactions.some((tr) => tr.scrolledIntoView)) {
+              // A command owns the caret destination. Native scroll events and
+              // delayed layout must reveal it, not replace it with a visible line.
+              this.viewportScrollIntent = "caret";
+            }
+          }
           // Scroll/ResizeObserver schedule reconciliation only if the viewport
           // actually changes; ordinary in-view motions need no extra DOM reads.
         }
@@ -1752,6 +1774,7 @@ export class TiptapEditorAdapter {
 
   private readonly handleViewportScrollIntent = (): void => {
     this.viewportScrollIntent = "viewport";
+    this.viewportAlignment = null;
   };
 
   private readonly handleViewportPointerDown = (event: PointerEvent): void => {
@@ -1783,6 +1806,15 @@ export class TiptapEditorAdapter {
     if (viewport.height <= 0) return;
     const cursor = this.vimSession.currentCursorPosition();
     if (cursor === null) return;
+    if (this.viewportAlignment !== null) {
+      alignVimViewport(
+        editor.view,
+        this.scrollElement,
+        cursor,
+        this.viewportAlignment,
+      );
+      return;
+    }
     let caret: ReturnType<typeof editor.view.coordsAtPos>;
     try {
       caret = editor.view.coordsAtPos(cursor, 1);

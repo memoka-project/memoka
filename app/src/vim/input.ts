@@ -59,6 +59,9 @@ export const VIM_COMMANDS = [
   "cursor.half-page-down",
   "cursor.document-start",
   "cursor.document-end",
+  "viewport.center",
+  "viewport.top",
+  "viewport.bottom",
   "navigation.follow-link",
   "navigation.open-image-tab",
   "navigation.open-external-link",
@@ -263,6 +266,9 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     zC: "section.fold-close-recursive",
     za: "section.fold-toggle",
     zA: "section.fold-toggle-recursive",
+    zz: "viewport.center",
+    zt: "viewport.top",
+    zb: "viewport.bottom",
     ">>": "section.demote",
     "<<": "section.promote",
     gt: "tab.next",
@@ -302,6 +308,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     c: "operator.change",
     dd: "line.delete",
     yy: "line.yank",
+    Y: "line.yank",
     cc: "line.change",
     D: "line.delete-to-end",
     C: "line.change-to-end",
@@ -355,9 +362,15 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     w: "motion.word-forward",
     b: "motion.word-backward",
     e: "motion.word-end",
+    iw: "text-object.inner-word",
+    aw: "text-object.around-word",
+    ip: "text-object.inner-paragraph",
+    ap: "text-object.around-paragraph",
     y: "selection.yank",
     d: "selection.delete",
     c: "selection.change",
+    s: "selection.change",
+    r: "replace.character",
     p: "selection.paste",
     P: "selection.paste",
     m: "selection.format",
@@ -543,6 +556,7 @@ function isCountDigit(state: VimInputState, key: string): boolean {
   if (!/^\d$/u.test(key)) return false;
   if (state.pending?.kind === "replace-character") return false;
   if (state.pending?.kind === "prefix") return false;
+  if (state.pending?.kind === "custom-prefix") return false;
   if (state.pending?.kind === "operator" && state.pending.textObjectPrefix) {
     return false;
   }
@@ -596,6 +610,22 @@ export function advanceVimInput(
       operator: null,
       count: parsedCount(state.count),
       action: { kind: "unmapped" },
+    };
+  }
+
+  if (
+    key === "Escape" &&
+    !context.isComposing &&
+    mode === "visual-char" &&
+    state.pending?.kind === "custom-prefix"
+  ) {
+    return {
+      state: createVimInputState(),
+      sequence,
+      resolvedCommand: "mode.normal",
+      operator: null,
+      count: 1,
+      action: { kind: "execute", command: "mode.normal" },
     };
   }
 

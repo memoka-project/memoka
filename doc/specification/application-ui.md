@@ -178,6 +178,8 @@ caret移動によるscrollと、wheel・touch・scrollbarなどの手動scroll�
 `G`や検索移動が選んだ論理位置は、遅延描画で高さが変わっても保持し、viewport側を調整してcaretを表示する。
 手動scroll後にcaretが画面外へ出た場合は、逆にscroll位置を保ってcaretを画面内の論理行へ移す。
 次の明示的な操作を優先し、前の移動先を復元したり、一定時間scrollを禁止したりしない。
+`zz/zt/zb`の中央/上端/下端配置も、同じ仕組みで遅延描画後の位置を補正する。
+この配置はWindow-localで、別Windowのscroll、文書、Undoを変更しない。
 
 共通indent幅を次へ使用する。
 

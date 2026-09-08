@@ -133,12 +133,18 @@ Details本文内のリストでは、リスト全体の直後に新しいParagra
 | `W` / `B` / `E`         | 空白区切りWORDの次、前、末尾へ移動します。                |
 | `0` / `$`               | 論理行の先頭、末尾へ移動します。                          |
 | `gg` / `G`              | 表示中のFocused Section subtreeの先頭、末尾へ移動します。 |
+| `zz` / `zt` / `zb`     | caretのある表示行をWindowの中央、上端、下端へ配置します。 |
 | `Ctrl-f` / `Ctrl-b`     | 1画面ぶん下、上へ移動します。                             |
 | `Ctrl-d` / `Ctrl-u`     | 半画面ぶん下、上へ移動します。                            |
 | `[count]n` / `[count]N` | ノート内検索の次、前の一致へ移動します。                  |
 
 `whichwrap = true`では、`h/l/w/b/e/W/B/E`が論理行端を越えて前後の論理行へ移動します。
 `false`では論理行端で停止します。
+
+`zz`、`zt`、`zb`はcaretの文字位置を変えず、現在のEditor Windowだけをスクロールします。
+たとえば`20zt`は20論理行目へ移動して上端へ配置します。Countがある場合も、可能な限り現在の文字columnを保ちます。
+ノートの先頭・末尾ではスクロール可能な範囲で配置します。遅延描画で高さが変わっても配置を保ちますが、
+続けてcaretを移動したり、ホイールなどで手動スクロールしたりすると、その新しい操作を優先します。
 
 ### 編集
 
@@ -153,6 +159,7 @@ Details本文内のリストでは、リスト全体の直後に新しいParagra
 | `C`                | caretから論理行末尾までを変更します。             |
 | `S`                | 現在の論理行内容を変更します。                    |
 | `y{motion}` / `yy` | 文字範囲または論理行・構造をyankします。          |
+| `[count]Y`          | `yy`と同じく論理行全体をyankします。行末までの`y$`とは異なります。 |
 | `p` / `P`          | registerの内容をcaretの後、前へputします。        |
 | `[count]r{char}`   | caret下から指定数の文字を1文字で置換します。      |
 | `R`                | Replace modeへ入ります。                          |
@@ -180,11 +187,29 @@ Detailsも見出しと本文の両方が空になれば削除します。見出�
 たとえば`ciw`は現在のwordを変更し、`yap`は現在のParagraphをyankします。Internal Linkは分割せず、
 全体を1つのatomic unitとして扱います。
 
+`v`でVisual Charを開始してからも使用できます。`viw`は現在のword、`vaw`はその周囲の空白も含めて選択します。
+`v2iw`は2 wordを選択します。既に範囲があるときの`iw/aw`は、反対側の端を保って現在のcaret側へ範囲を拡張します。
+word境界・Countの数え方はoperatorと共通で、空白を独立したwordとして数えず、同じ論理行内を対象にします。
+
+`vip`は現在のParagraph/論理単位の内容を文字選択します。`vap`はその構造を含むVisual Lineへ切り替えます。
+`v2ap`では2単位を選択できます。ListItemの未選択の子孫を暗黙に含めることはありません。
+Memokaではこの内容と構造を区別するため、Vimと異なり`vip`はVisual Charのままです。`ip`の複数Countは未対応です。
+引用符・括弧など、ここに記載のないtext objectは未対応です。
+
 ## Visual選択と文字装飾
 
 ### Visual Char
 
 `v`はcaret下の文字を含む文字選択を開始します。motionで範囲を変更し、`y`、`d`、`c`などを実行できます。
+
+- `s`は`c`と同じです。選択文字を削除してInsertへ入り、入力終了までを1回のUndoにまとめます。
+- `r`に続けて1文字を入力すると、選択した各文字をその文字で置き換えてNormalへ戻ります。たとえば`viwrx`は現在のwordを`x`で埋めます。
+  改行、Hard Break、block構造、文字装飾は残します。Internal Link全体は1文字として置換し、画像・添付などのblock自体や折り畳み中の非表示本文は置換しません。
+- `r`やtext objectの入力待ちで`Esc`を押すと、編集せずNormalへ戻ります。
+
+Visual Charの`r`も1回のUndoで戻せます。`s/r`のUndo後のcaretは元の選択範囲の先頭へ戻ります。
+これらのVisual Char編集の`.` repeatは未対応です。
+
 選択後に`m`を押すと共通検索paneが開き、斜体、太字、打ち消し、inline code、highlight、外部link、
 全装飾解除を選べます。同じ装飾を再度選んだ場合はtoggleせず、変更なしになります。
 

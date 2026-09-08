@@ -43,9 +43,17 @@ import {
 } from "../editor/list-editing";
 import { projectListSelection } from "./list-selection";
 import { expandEmptyLineDeletion } from "./line-deletion";
+import {
+  alignVimViewport,
+  VIM_VIEWPORT_ALIGNMENT_META,
+  type VimViewportAlignment,
+} from "./viewport-scroll";
 import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
-import { sectionFoldCollapsedSectionIds } from "../editor/section-folding";
-import { enterDetailsBody } from "../editor/details";
+import {
+  sectionFoldCollapsedSectionIds,
+  sectionFoldHiddenEntries,
+} from "../editor/section-folding";
+import { enterDetailsBody, detailsFoldHiddenEntries } from "../editor/details";
 import {
   moveNormalTableCell,
   moveNormalTableRow,
@@ -3917,31 +3925,55 @@ function wordTextObjectRange(
   view: VimEditorView,
   motion: "text-object.inner-word" | "text-object.around-word",
   count = 1,
+  position = selectionCursor(view),
+  direction: -1 | 1 = 1,
 ): VimOperatorRange | null {
-  const line = currentLogicalLine(view);
+  let line = currentLogicalLine(view, position);
   if (!line || line.cursorPositions.length === 0) return null;
 
+  const $position = view.state.doc.resolve(position);
+  if ($position.parent.isTextblock && tableCellAtPosition(view, position)) {
+    // A TableRow is one logical line, but a word object must never swallow a
+    // Cell boundary or select a neighbouring Cell from an empty Cell.
+    const from = $position.start();
+    const to = $position.end();
+    line = {
+      ...line,
+      from,
+      to,
+      cursorPositions: line.cursorPositions.filter(
+        (candidate) => candidate >= from && candidate < to,
+      ),
+    };
+    if (!line.cursorPositions.length) return null;
+  }
+
   const positions = line.cursorPositions;
-  const cursor = blockSemantics.nearestCursorPosition(
-    line,
-    selectionCursor(view),
-  );
+  const cursor = blockSemantics.nearestCursorPosition(line, position);
   let currentIndex = Math.max(0, positions.indexOf(cursor));
   const classes = wordClasses(view, positions, line.to);
 
   if (classes[currentIndex] === null) {
     let nextIndex = currentIndex;
-    while (nextIndex < positions.length && classes[nextIndex] === null) {
-      nextIndex += 1;
+    while (
+      nextIndex >= 0 &&
+      nextIndex < positions.length &&
+      classes[nextIndex] === null
+    ) {
+      nextIndex += direction;
     }
-    if (nextIndex < positions.length) {
+    if (nextIndex >= 0 && nextIndex < positions.length) {
       currentIndex = nextIndex;
     } else {
       let previousIndex = currentIndex;
-      while (previousIndex >= 0 && classes[previousIndex] === null) {
-        previousIndex -= 1;
+      while (
+        previousIndex >= 0 &&
+        previousIndex < positions.length &&
+        classes[previousIndex] === null
+      ) {
+        previousIndex -= direction;
       }
-      if (previousIndex < 0) return null;
+      if (previousIndex < 0 || previousIndex >= positions.length) return null;
       currentIndex = previousIndex;
     }
   }
@@ -3965,6 +3997,29 @@ function wordTextObjectRange(
     repetition < normalizedCount(count);
     repetition += 1
   ) {
+    if (direction < 0) {
+      let previous = startIndex - 1;
+      let boundary = positions[startIndex]!;
+      while (
+        previous >= 0 &&
+        classes[previous] === null &&
+        exclusiveCharacterPosition(view, positions[previous]!) === boundary
+      ) {
+        boundary = positions[previous]!;
+        previous -= 1;
+      }
+      if (
+        previous < 0 ||
+        classes[previous] === null ||
+        exclusiveCharacterPosition(view, positions[previous]!) !== boundary
+      )
+        break;
+      const previousClass = classes[previous];
+      startIndex = previous;
+      while (startIndex > 0 && classes[startIndex - 1] === previousClass)
+        startIndex -= 1;
+      continue;
+    }
     let nextIndex = endIndex + 1;
     let expected = exclusivePositionAfter(
       view,
@@ -4150,13 +4205,11 @@ function paragraphTextObjectRange(
   view: VimEditorView,
   motion: "text-object.inner-paragraph" | "text-object.around-paragraph",
   count = 1,
+  position = selectionCursor(view),
 ): VimOperatorRange | null {
   const units = blockSemantics.structuralUnits(view);
   if (units.length === 0) return null;
-  const unitIndex = blockSemantics.currentStructuralUnitIndex(
-    units,
-    selectionCursor(view),
-  );
+  const unitIndex = blockSemantics.currentStructuralUnitIndex(units, position);
   const unit = units[unitIndex];
   if (!unit) return null;
 
@@ -4217,20 +4270,103 @@ function textObjectRange(
   view: VimEditorView,
   motion: VimCommand,
   count = 1,
+  position = selectionCursor(view),
+  direction: -1 | 1 = 1,
 ): VimOperatorRange | null {
   if (
     motion === "text-object.inner-word" ||
     motion === "text-object.around-word"
   ) {
-    return wordTextObjectRange(view, motion, count);
+    return wordTextObjectRange(view, motion, count, position, direction);
   }
   if (
     motion === "text-object.inner-paragraph" ||
     motion === "text-object.around-paragraph"
   ) {
-    return paragraphTextObjectRange(view, motion, count);
+    return paragraphTextObjectRange(view, motion, count, position);
   }
   return null;
+}
+
+function selectVisualTextObject(
+  view: VimEditorView,
+  command: VimCommand,
+  count: number,
+): EditorVimResult {
+  const detail = `selection:${command}`;
+  const lines = blockSemantics.logicalLines(view);
+  const { anchor, cursor } = visualCharEndpoints(view, lines);
+  const forward = cursor >= anchor;
+  if (command === "text-object.around-paragraph") {
+    // The around object carries block structure, exactly as yap/dap do. Use
+    // Visual Line's projection so unselected ListItem descendants stay excluded.
+    const units = blockSemantics.visualLineUnits(view);
+    if (!units.length) return { handled: false, detail };
+    const anchorUnit = blockSemantics.currentStructuralUnitIndex(units, anchor);
+    const currentUnit = blockSemantics.currentStructuralUnitIndex(
+      units,
+      cursor,
+    );
+    const headUnit = Math.max(
+      0,
+      Math.min(
+        units.length - 1,
+        currentUnit + (forward ? 1 : -1) * (count - 1),
+      ),
+    );
+    const visualLine = {
+      anchorUnit,
+      headUnit,
+      cursor: units[headUnit]!.cursorFrom,
+    };
+    return {
+      handled: applyVisualLineSelection(view, visualLine),
+      detail,
+      visualLine,
+      nextMode: "visual-line",
+    };
+  }
+  const direction = forward ? 1 : -1;
+  let range = textObjectRange(view, command, count, cursor, direction);
+  if (!range) return { handled: false, detail };
+  const selection = view.state.selection;
+  if (
+    anchor !== cursor &&
+    range.from >= selection.from &&
+    range.to <= selection.to
+  ) {
+    // Repeating iw/aw extends toward the active end, rather than resetting the
+    // opposite endpoint. Object definitions/counts remain shared with operators.
+    const line = currentLogicalLine(view, cursor, lines);
+    const candidates = line?.cursorPositions ?? [];
+    const next = forward
+      ? candidates.find((position) => position >= selection.to)
+      : [...candidates].reverse().find((position) => position < selection.from);
+    if (next !== undefined)
+      range = textObjectRange(view, command, count, next, direction) ?? range;
+  }
+  const from =
+    anchor === cursor
+      ? range.from
+      : forward
+        ? selection.from
+        : Math.min(selection.from, range.from);
+  const to =
+    anchor === cursor
+      ? range.to
+      : forward
+        ? Math.max(selection.to, range.to)
+        : selection.to;
+  const selected = TextSelection.between(
+    view.state.doc.resolve(forward ? from : to),
+    view.state.doc.resolve(forward ? to : from),
+  );
+  if (selected.empty) return { handled: false, detail };
+  view.dispatch(
+    scrollWhenLayoutIsAvailable(view.state.tr.setSelection(selected)),
+  );
+  view.focus();
+  return { handled: true, detail };
 }
 
 function structuralMotionRange(
@@ -4885,6 +5021,50 @@ function moveToDocumentLine(
 
 function viewportScrollRoot(view: VimEditorView): HTMLElement | null {
   return view.dom.closest<HTMLElement>(".editor-scroll");
+}
+
+function positionViewport(
+  view: VimEditorView,
+  alignment: VimViewportAlignment,
+  count: number,
+  countExplicit: boolean,
+): EditorVimResult {
+  const detail = `viewport:${alignment}`;
+  const scroll = viewportScrollRoot(view);
+  if (!scroll || scroll.clientHeight <= 0) return { handled: false, detail };
+  const transaction = view.state.tr
+    .setMeta(VIM_VIEWPORT_ALIGNMENT_META, alignment)
+    .setMeta("addToHistory", false);
+  if (countExplicit) {
+    const lines = blockSemantics.logicalLines(view);
+    const current = currentLogicalLine(view, selectionCursor(view), lines);
+    const target = lines[Math.min(count - 1, lines.length - 1)];
+    if (!current || !target) return { handled: false, detail };
+    const column = Math.max(
+      0,
+      current.cursorPositions.indexOf(selectionCursor(view)),
+    );
+    const cursor =
+      target.cursorPositions[
+        Math.min(column, target.cursorPositions.length - 1)
+      ] ?? target.from;
+    transaction.setSelection(
+      target.kind === "block-atom"
+        ? NodeSelection.create(view.state.doc, target.blockPosition)
+        : TextSelection.create(view.state.doc, cursor),
+    );
+  }
+  // A metadata-only request gives deferred chunk/resize reconciliation the same
+  // intent. No scrollIntoView: its minimal reveal would undo zt/zz/zb placement.
+  view.dispatch(transaction);
+  const handled = alignVimViewport(
+    view,
+    scroll,
+    selectionCursor(view),
+    alignment,
+  );
+  view.focus();
+  return { handled, detail };
 }
 
 function viewportRectFor(
@@ -6306,13 +6486,82 @@ export function runEditorReplaceCharacter(
   view: VimEditorView,
   character: string,
   count = 1,
+  mode: VimMode = "normal",
 ): EditorVimResult {
+  if (mode === "visual-char") return replaceVisualCharacters(view, character);
   return replaceTextAtCursor(
     view,
     character.repeat(normalizedCount(count)),
     "last",
     true,
   );
+}
+
+function replaceVisualCharacters(
+  view: VimEditorView,
+  character: string,
+): EditorVimResult {
+  const detail = "selection:replace";
+  const { from, to } = view.state.selection;
+  if (from === to || Array.from(character).length !== 1)
+    return { handled: false, detail };
+  const edits: { from: number; to: number; node: ProseMirrorNode }[] = [];
+  const hidden = [
+    ...sectionFoldHiddenEntries(view.state),
+    ...detailsFoldHiddenEntries(view.state),
+  ].sort((left, right) => left.hiddenFrom - right.hiddenFrom);
+  let hiddenIndex = 0;
+  view.state.doc.nodesBetween(from, to, (node, position) => {
+    while (
+      hiddenIndex < hidden.length &&
+      hidden[hiddenIndex]!.hiddenTo <= position
+    )
+      hiddenIndex += 1;
+    const fold = hidden[hiddenIndex];
+    if (
+      fold &&
+      position >= fold.hiddenFrom &&
+      position + node.nodeSize <= fold.hiddenTo
+    )
+      return false;
+    if (node.isText) {
+      const start = Math.max(from, position);
+      const end = Math.min(to, position + node.nodeSize);
+      const original = node.text!.slice(start - position, end - position);
+      // Code/Source newlines, Hard Breaks and container boundaries are not
+      // characters to flatten. Keep each text run's marks and block identities.
+      const replacement = original.replace(/[^\r\n]/gu, () => character);
+      if (replacement)
+        edits.push({
+          from: start,
+          to: end,
+          node: view.state.schema.text(replacement, node.marks),
+        });
+    } else if (
+      node.isInline &&
+      node.isAtom &&
+      node.type.name !== "hardBreak" &&
+      position >= from &&
+      position + node.nodeSize <= to
+    ) {
+      edits.push({
+        from: position,
+        to: position + node.nodeSize,
+        node: view.state.schema.text(character, node.marks),
+      });
+      return false;
+    }
+  });
+  if (!edits.length) return { handled: false, detail };
+  const transaction = view.state.tr;
+  for (const edit of [...edits].reverse())
+    transaction.replaceWith(edit.from, edit.to, edit.node);
+  transaction.setSelection(
+    TextSelection.create(transaction.doc, edits[0]!.from),
+  );
+  view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+  view.focus();
+  return { handled: true, detail, nextMode: "normal" };
 }
 
 export function runEditorReplaceText(
@@ -6334,6 +6583,20 @@ type EditorVimCommandHandler = (
 const editorVimCommandHandlers: Partial<
   Record<VimCommand, EditorVimCommandHandler>
 > = {
+  "viewport.center": (view, _mode, _register, count, countExplicit) =>
+    positionViewport(view, "center", count, countExplicit),
+  "viewport.top": (view, _mode, _register, count, countExplicit) =>
+    positionViewport(view, "top", count, countExplicit),
+  "viewport.bottom": (view, _mode, _register, count, countExplicit) =>
+    positionViewport(view, "bottom", count, countExplicit),
+  "text-object.inner-word": (view, _mode, _register, count) =>
+    selectVisualTextObject(view, "text-object.inner-word", count),
+  "text-object.around-word": (view, _mode, _register, count) =>
+    selectVisualTextObject(view, "text-object.around-word", count),
+  "text-object.inner-paragraph": (view, _mode, _register, count) =>
+    selectVisualTextObject(view, "text-object.inner-paragraph", count),
+  "text-object.around-paragraph": (view, _mode, _register, count) =>
+    selectVisualTextObject(view, "text-object.around-paragraph", count),
   "table.next_cell": (view, _mode, _register, count) =>
     moveNormalTableCell(view, 1, count),
   "table.previous_cell": (view, _mode, _register, count) =>

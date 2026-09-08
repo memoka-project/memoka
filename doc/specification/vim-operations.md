@@ -45,6 +45,7 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 | `W/B/E`             | 空白区切りWORDの次/前/末尾                 |
 | `0/$`               | 論理行の先頭/末尾                          |
 | `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾 |
+| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置 |
 | `Ctrl-f/Ctrl-b`     | 1画面下/上                                 |
 | `Ctrl-d/Ctrl-u`     | 半画面下/上                                |
 | `[count]n/[count]N` | Note内検索の次/前の一致                    |
@@ -53,6 +54,11 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。
+
+`zz/zt/zb`はNormal commandとし、Countなしではcaretの文書位置とcolumnを変更しない。
+CountありではFocused Section内の指定論理行へ移り、可能な限り現在のcolumnを保って配置する。
+先頭/末尾では実際のscroll範囲にclampする。Undo、register、`.`を変更しない。
+遅延描画後も配置を保つが、次のcaret移動・編集・手動scrollで配置指定を解除する。
 
 ## 5. Insert mode
 
@@ -91,7 +97,7 @@ List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持
 | `C`              | caretから論理行末尾を変更                   |
 | `S`              | 現在論理行内容を変更                        |
 | `y{motion}`      | motion範囲をyank                            |
-| `yy`             | Count論理行/構造をyank                      |
+| `yy/Y`           | Count論理行/構造をyank（`Y`は`y$`ではない）  |
 | `p/P`            | registerをcaretの後/前へput                 |
 | `[count]r{char}` | Count文字を指定文字へ置換                   |
 | `R`              | Replace modeへ入る                          |
@@ -118,12 +124,19 @@ Note/Sectionのidentityとtitle削除規則は変えない。`cc`やVisual Line�
 
 ## 7. Text object
 
-operatorと組み合わせて次を使用できる。
+operator、またはVisual Charで次を使用できる。
 
 - `iw/aw`: 設定されたwordの内側/周囲
 - `ip/ap`: Paragraphの内側/周囲
 
 word境界は小文字motionとInsert `Ctrl-w`で共通である。Internal Linkは分割せず1 atomic単位とする。
+
+Visual Charの`iw/aw`はinclusiveなcaret位置を起点とし、初回はobject全体を選ぶ。
+既存範囲がある場合は反対側の端を保持してcaret側へ拡張する。Countと空白の解釈は既存operatorと共通で、
+空白自体はword数に含めず、論理行を越えない。`ip`は内容の文字選択、`ap`は構造を含むVisual Lineへ切り替える。
+Vimとは異なり`vip`はVisual Charを維持する。`ip`の複数Countは未対応。`ap`のCountはVisual Lineの単位を数える。
+構造selectionは表示・yank/deleteで共通のprojectionを使い、未選択のListItem子孫を含めない。
+入力待ちのEscapeは文書を変えずNormalへ戻る。未対応objectは挿入操作へ解釈しない。
 
 ## 8. Visual
 
@@ -131,6 +144,12 @@ word境界は小文字motionとInsert `Ctrl-w`で共通である。Internal Link
 
 `v`でcaret下の文字を含むVisual Charへ入る。最初の`h/l`からheadを正しく移動し、
 開始文字をselectionへ含める。motion、operator、`m`によるmark変更を使用できる。
+
+`s`は`c`と同じselection changeで、削除からInsert終了までを1 Undo単位にする。
+`r{char}`は選択内の各文字を指定文字へ置換してNormalへ戻る。Unicode code point単位で置換し、
+各text runのmarks、Code/Sourceの改行、Hard Breakとblock境界を保つ。Internal Linkは1 atomic単位として置換する。
+画像・添付などのblock atom自体と折り畳み中の非表示本文は置換しない。registerは変更しない。複数blockでも1 transaction/Undoとし、
+Undo後のcaretは変更前selection先頭へ戻る。`s/r`のVisual Char repeatは未対応。
 
 ### 8.2 Visual Line
 
