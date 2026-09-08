@@ -3377,13 +3377,28 @@ function moveCharacter(
     for (let index = 0; index < normalizedCount(count); index += 1) {
       const $next = view.state.doc.resolve(next);
       const adjacent = direction > 0 ? $next.nodeAfter : $next.nodeBefore;
+      // ProseMirror text nodes are also leaves/atoms. Step over one code point,
+      // not the whole remaining text node, while keeping inline links atomic.
+      const character = adjacent?.isText
+        ? direction > 0
+          ? Array.from(adjacent.text!.slice(0, 2))[0]
+          : Array.from(adjacent.text!.slice(-2)).at(-1)
+        : undefined;
       const distance =
-        adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
+        character?.length ??
+        (adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
           ? adjacent.nodeSize
-          : 1;
+          : 1);
+      // Table rows end at their last Normal cursor, not the insertion boundary.
+      // Insert movement (including `a`) stays inside the current Cell textblock.
+      const inTableTextblock =
+        blockSemantics.hasBehavior(line.blockNodeName, "table-row") &&
+        $next.parent.isTextblock;
+      const from = inTableTextblock ? $next.start() : line.from;
+      const to = inTableTextblock ? $next.end() : line.to;
       const candidate = Math.max(
-        line.from,
-        Math.min(next + direction * distance, line.to),
+        from,
+        Math.min(next + direction * distance, to),
       );
       if (candidate === next) break;
       next =

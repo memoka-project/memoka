@@ -72,6 +72,8 @@ block間やSection間を移動しても、画面上にcaretが見えるようEdi
 | `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                                                |
 
 `i/a`はcaret位置の前/後、`I/A`は論理行の先頭/末尾からInsertへ入る。
+`a`は現在文字の直後を挿入位置とし、空行では同じ位置を保つ。Tableでは最終文字上・空Cellでも同じCell内にとどまる。
+内部リンクは全体で1文字とするため、リンク上の`a`はリンク全体の直後へ入る。これらは`whichwrap`設定に依存しない。
 `o/O`は現在論理行またはblockの下/上に入力先を作る。
 Details本文からはDetailsの外へ出ず、内部blockの行を追加する。Detailsを所有する外側ListItemより本文内の操作を優先する。
 List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。

@@ -3,8 +3,10 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { mergeApplicationKeyConfig } from "../app/src/core/application-key-config";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { parseMarkdownNote } from "../app/src/editor/markdown-paste";
 import { defaultVimBlockSemantics } from "../app/src/vim/block-semantics";
 import { measureVimBlockCaretGeometry } from "../app/src/vim/caret-geometry";
 import { addSecondWindow } from "./helpers/runtime";
@@ -73,11 +75,13 @@ function emptyTextblockPosition(editor: Editor): number {
   return result;
 }
 
-async function productEditor() {
+async function productEditor(whichwrap = true) {
   const runtime = await CoreRuntime.open(new MemoryPersistencePort());
   const root = document.createElement("div");
   document.body.append(root);
-  const binding = runtime.editorForTesting("window-1", root);
+  const binding = runtime.editorForTesting("window-1", root, {
+    keyConfig: mergeApplicationKeyConfig({ whichwrap }),
+  });
   binding.editor.commands.focus();
   return {
     ...binding,
@@ -91,6 +95,132 @@ async function productEditor() {
 }
 
 describe("Memoka block editing boundaries", () => {
+  it.each([
+    { name: "Paragraph", source: "alpha日本語omega" },
+    { name: "Note title", source: "", title: "alpha日本語omega" },
+    { name: "Section title", source: "## alpha日本語omega" },
+    { name: "ListItem", source: "- alpha日本語omega" },
+    { name: "Blockquote", source: "> alpha日本語omega" },
+    { name: "Code Block", source: "```\nalpha日本語omega\nnext\n```" },
+    {
+      name: "rightmost Table Cell",
+      source: "| left | right |\n| --- | --- |\n| next | alpha日本語omega |",
+    },
+    {
+      name: "Details Summary",
+      source:
+        "<details>\n<summary>alpha日本語omega</summary>\n\nbody\n\n</details>",
+    },
+    {
+      name: "marked text",
+      source: "before **alpha日本語omega** after",
+      marked: true,
+    },
+  ])("keeps a distinct from A in $name", async ({ source, title, marked }) => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { editor, adapter } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      const content = parseMarkdownNote(
+        `# ${title ?? "Note"}\n\n${source}`,
+        editor.schema,
+        editor.state.doc.firstChild!.attrs.sectionId,
+      )!.root.toJSON();
+      for (const key of ["a", "A"] as const) {
+        for (const offset of [2, 5, "alpha日本語omega".length - 1]) {
+          press(editor, "Escape");
+          editor.commands.setContent(content);
+          const position = textPosition(editor, "alpha日本語omega");
+          editor.commands.setTextSelection(position + offset);
+          editor.commands.focus();
+          const before = editor.state.selection.$from.parent;
+          const blockStart = editor.state.selection.$from.start();
+          const expected =
+            key === "a"
+              ? position + offset + 1
+              : position +
+                "alpha日本語omega".length +
+                (marked ? " after".length : 0);
+
+          expect(press(editor, key).defaultPrevented).toBe(true);
+          expect(adapter.vimSnapshot.mode).toBe("insert");
+          expect(editor.state.selection.from).toBe(expected);
+          expect(editor.state.selection.$from.parent).toBe(before);
+          editor.commands.insertContent("追加");
+          expect(editor.state.selection.$from.parent.textContent).toBe(
+            before.textContent.slice(0, expected - blockStart) +
+              "追加" +
+              before.textContent.slice(expected - blockStart),
+          );
+        }
+      }
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
+  it.each([true, false])(
+    "keeps a at insertion boundaries with whichwrap=%s",
+    async (whichwrap) => {
+      const { adapter, editor, destroy } = await productEditor(whichwrap);
+      try {
+        for (const content of [
+          { type: "paragraph" },
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "日本語" },
+              { type: "hardBreak" },
+              { type: "text", text: "次の行" },
+            ],
+          },
+          {
+            type: "codeBlock",
+            content: [{ type: "text", text: "日本語\n次の行" }],
+          },
+          {
+            type: "table",
+            content: [
+              {
+                type: "tableRow",
+                content: [
+                  { type: "tableCell", content: [{ type: "paragraph" }] },
+                  { type: "tableCell", content: [{ type: "paragraph" }] },
+                ],
+              },
+            ],
+          },
+          { type: "paragraph", content: [{ type: "text", text: "😀日本語" }] },
+        ]) {
+          press(editor, "Escape");
+          editor.commands.setContent({ type: "doc", content: [content] });
+          const empty = !editor.state.doc.textContent;
+          const emoji = editor.state.doc.textContent.startsWith("😀");
+          const position = empty
+            ? emptyTextblockPosition(editor)
+            : textPosition(editor, emoji ? "😀" : "語");
+          editor.commands.setTextSelection(position);
+          const before = editor.state.selection.$from.parent;
+          press(editor, "a");
+          expect(adapter.vimSnapshot.mode).toBe("insert");
+          expect(editor.state.selection.from).toBe(
+            position + (empty ? 0 : emoji ? 2 : 1),
+          );
+          expect(editor.state.selection.$from.parent).toBe(before);
+          editor.commands.insertContent("追加");
+          editor.state.doc.check();
+        }
+      } finally {
+        destroy();
+      }
+    },
+  );
+
   it("maps Ctrl-h and Ctrl-j/Ctrl-m onto Insert Backspace and Enter", async () => {
     const { adapter, destroy, editor, runtime } = await productEditor();
     editor.commands.setContent({
