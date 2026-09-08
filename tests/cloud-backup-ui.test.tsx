@@ -315,13 +315,21 @@ describe("Google backup settings boundary", () => {
   });
   it("uses existing authorization, passes a typed destination, and clears secret values before completion", async () => {
     let complete!: (value: boolean) => void;
+    let finishIntents!: () => void;
     const save = vi.fn(
       () =>
         new Promise<boolean>((resolve) => {
           complete = resolve;
         }),
     );
-    const cloud = cloudFixture();
+    const cloud = cloudFixture({
+      intents: vi.fn(
+        () =>
+          new Promise<Awaited<ReturnType<CloudPort["intents"]>>>((resolve) => {
+            finishIntents = () => resolve([]);
+          }),
+      ),
+    });
     const view = panel(cloud, save);
     await waitFor(() =>
       expect(
@@ -333,6 +341,18 @@ describe("Google backup settings boundary", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Google Driveの保存先を追加" }),
     );
+    // The connection list and the initialization intents load separately.
+    // Wait for the form itself, not just the button that opens it; a click
+    // inside its still-disabled fieldset must not submit or consume secrets.
+    const register = screen.getByRole("button", { name: "保存先を登録" });
+    expect(register.matches(":disabled")).toBe(true);
+    fireEvent.click(register);
+    expect(save).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(cloud.intents).toHaveBeenCalledWith("connection"),
+    );
+    await act(async () => finishIntents());
+    expect(register.matches(":disabled")).toBe(false);
     const password = screen.getByLabelText("パスワード") as HTMLInputElement;
     const confirmation = screen.getByLabelText(
       "パスワードを再入力",
@@ -341,7 +361,7 @@ describe("Google backup settings boundary", () => {
     fireEvent.change(password, { target: { value: secret } });
     fireEvent.change(confirmation, { target: { value: secret } });
     expect(view.container.innerHTML).not.toContain(secret);
-    fireEvent.click(screen.getByRole("button", { name: "保存先を登録" }));
+    fireEvent.click(register);
     expect(password.value).toBe("");
     expect(confirmation.value).toBe("");
     expect(save).toHaveBeenCalledWith(
