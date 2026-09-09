@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-09
+
+- **互換性の変更:** Task ListとCLI編集の再送管理に対応するためDB／NoteDocをschema 6へ移行。更新前にMemokaを終了してWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。既存本文・block IDは保持します。
+- 外部エージェント向けのMemoka skillとCLI参照資料を追加。CLIからrevisionを確認して本文の局所置換・Markdown挿入・タスク状態変更、Noteの作成・改名・並び替え、同じNote内のSection作成・改名・移動・削除・既存本文のSection化に対応。dry-runと再送時の重複防止を備え、GUI起動中もowner IPCを介して編集。
+- CLIからアプリ外観と日本語分割の設定、カスタムテーマを変更し、`config.toml`へ保存できるよう変更。外部で編集した設定を再読込し、IME変換中は適用を保留。
+- MarkdownのTask Listと、その表示・完了状態の切り替えに対応。
+- Visual Charの`c/s/r`、text objectによる選択、変更操作の`.` repeat、Normalの`Y`、`zz/zt/zb`による画面位置調整を追加。
+- Normalの`a`が`A`と同じ位置へ移動する問題と、`G`でNote末尾へ届かない問題を修正。
+- `dd`・Visual Lineの`d`で内容が空になるCode/Source・Quote・Alert等のblockを削除。Detailsの空title表示・文字style・内部Listからの脱出と、InsertのTableセル移動時の不要な文字選択を修正。
+- BodyChunk境界での`j/k`による大きなスクロール移動を抑制。mouse scrollでcaretが画面外へ出ると、表示内の位置へ移動し、部分的に隠れた行への移動や画面の点滅を抑制。
+- WindowsでInsertからNormalへ戻る際のIME OFF要求先をfocused WebView2のIME windowへ変更。本文を記録しない手動診断スクリプトと検証手順を追加。
+- **既知の問題:** Windowsで日本語入力の最初の1文字が早期確定する現象は調査中です。IME OFF処理の変更もWindows実機での動作確認は未完了です。Windows向け配布は引き続きソースコードのみです。
+
 ## [0.2.2] - 2026-09-08
 
 - **互換性の変更:** 複数ブロックのListItemとDetailsに対応するためNoteDocをschema 5へ更新。更新前にアプリを閉じてWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。
@@ -110,7 +123,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/memoka-project/memoka/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/memoka-project/memoka/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/memoka-project/memoka/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/memoka-project/memoka/compare/v0.1.8...v0.2.0

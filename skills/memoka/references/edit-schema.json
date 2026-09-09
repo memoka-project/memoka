@@ -1,5 +1,5 @@
 {
-  "cli_version": "0.2.2",
+  "cli_version": "0.2.3",
   "edit": "edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
   "limits": {
     "diff_bytes": 65536,
