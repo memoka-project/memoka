@@ -589,4 +589,133 @@ fn editing_cli_is_headless_atomic_and_does_not_fallback_from_owner_failure() {
     let result: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(result["section"]["title"], "CLIから作成😀");
     assert!(result["markdown"].as_str().unwrap().contains("- [x] 検証"));
+
+    let section_request = |action: Value| {
+        let view: Value = serde_json::from_slice(
+            &cli(
+                workspace.path(),
+                &["read", "--id", note, "--for-edit", "--format", "json"],
+            )
+            .stdout,
+        )
+        .unwrap();
+        json!({"schema_version":1,"workspace_id":view["workspace_id"],"note_id":note,
+            "expected_revision":view["revision"],"request_id":uuid::Uuid::now_v7().to_string(),"action":action})
+    };
+    let args = [
+        "section-edit",
+        "--input",
+        input.to_str().unwrap(),
+        "--format",
+        "json",
+    ];
+    let apply_section = |request: &Value| {
+        fs::write(&input, serde_json::to_vec(request).unwrap()).unwrap();
+        let output = cli(workspace.path(), &args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let request = section_request(json!({"op":"create","parent_section_id":note,
+        "placement":{"kind":"first"},"title":"CLIのセクション😀","markdown":"**本文**\n\n- [ ] 子本文"}));
+    fs::write(&input, serde_json::to_vec(&request).unwrap()).unwrap();
+    let lease = WorkspaceLease::acquire(workspace.path()).unwrap();
+    let server = Server::start(
+        lease.clone(),
+        Arc::new(|_| Err(ReadError::new("SAVE_BARRIER_TIMEOUT", "injected"))),
+    )
+    .unwrap();
+    let rejected: Value = serde_json::from_slice(&cli(workspace.path(), &args).stdout).unwrap();
+    assert_eq!(rejected["error"]["code"], "SAVE_BARRIER_TIMEOUT");
+    assert_eq!(rejected["request_id"], request["request_id"]);
+    drop(server);
+    drop(lease);
+    let preview: Value = serde_json::from_slice(
+        &cli(
+            workspace.path(),
+            &[
+                "section-edit",
+                "--input",
+                input.to_str().unwrap(),
+                "--dry-run",
+                "--format",
+                "json",
+            ],
+        )
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(preview["status"], "preview");
+    assert_eq!(preview["revision_after"], request["expected_revision"]);
+    let created = apply_section(&request);
+    let id = created["section_id"].as_str().unwrap();
+    let replay = apply_section(&request);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["section_id"], id);
+    apply_section(&section_request(
+        json!({"op":"rename","section_id":id,"title":"改名😀"}),
+    ));
+    let b = apply_section(&section_request(
+        json!({"op":"create","parent_section_id":note,
+        "placement":{"kind":"last"},"title":"移動先"}),
+    ));
+    apply_section(&section_request(
+        json!({"op":"move","section_id":id,"parent_section_id":b["section_id"],
+        "placement":{"kind":"last"}}),
+    ));
+    let moved: Value = serde_json::from_slice(
+        &cli(
+            workspace.path(),
+            &["read", "--id", id, "--for-edit", "--format", "json"],
+        )
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(moved["title"], "改名😀");
+    assert_eq!(moved["parent_section_id"], b["section_id"]);
+    assert_eq!(moved["depth"], 2);
+    let sectionize = section_request(json!({"op":"sectionize","section_id":id,
+        "heading_block_id":moved["blocks"][0]["block_id"]}));
+    let converted = apply_section(&sectionize);
+    let child: Value = serde_json::from_slice(
+        &cli(
+            workspace.path(),
+            &[
+                "read",
+                "--id",
+                converted["section_id"].as_str().unwrap(),
+                "--for-edit",
+                "--format",
+                "json",
+            ],
+        )
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(child["title"], "本文");
+    assert_eq!(child["parent_section_id"], id);
+    assert_eq!(child["depth"], 3);
+    assert!(child["blocks"].as_array().unwrap().iter().any(|b| {
+        b["markdown"]
+            .as_str()
+            .is_some_and(|md| md.contains("子本文"))
+    }));
+    assert_eq!(apply_section(&sectionize)["replayed"], true);
+    let delete = section_request(json!({"op":"delete","section_id":id,"mode":"subtree"}));
+    apply_section(&delete);
+    assert_eq!(apply_section(&delete)["replayed"], true);
+    let missing = cli(workspace.path(), &["read", "--id", id, "--format", "json"]);
+    assert!(!missing.status.success());
+    let root = cli(
+        workspace.path(),
+        &["read", "--id", note, "--format", "markdown"],
+    );
+    assert!(
+        String::from_utf8(root.stdout)
+            .unwrap()
+            .contains("CLI日本語😀")
+    );
 }

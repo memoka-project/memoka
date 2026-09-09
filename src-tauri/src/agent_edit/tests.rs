@@ -1,5 +1,7 @@
 use super::*;
 use yrs::{Xml, XmlElementPrelim, XmlFragment, XmlOut};
+#[path = "sectionize_tests.rs"]
+mod sectionize_tests;
 const NOTE: &str = "01a30000-0000-7000-8000-000000000002";
 const WORKSPACE: &str = "01a30000-0000-7000-8000-000000000001";
 fn node(kind: &str, children: Vec<Value>) -> Value {
@@ -62,6 +64,453 @@ fn note_request(temp: &tempfile::TempDir, action: Value) -> NoteRequest {
 }
 fn create_action(title: &str, parent: Option<&str>) -> Value {
     json!({"op":"create","title":title,"parent_entry_id":parent,"placement":{"kind":"last"},"markdown":"**記事**\n\n- [x] 確認\n- [ ] 次回"})
+}
+
+fn section_request(temp: &tempfile::TempDir, action: Value) -> SectionRequest {
+    parse_section_request(&serde_json::to_vec(&json!({
+        "schema_version":1, "workspace_id":WORKSPACE, "note_id":NOTE,
+        "expected_revision":view(temp)["revision"], "request_id":uuid::Uuid::now_v7().to_string(),
+        "action":action
+    })).unwrap()).unwrap()
+}
+fn create_section(temp: &tempfile::TempDir, parent: &str, title: &str) -> String {
+    run(
+        temp,
+        section_request(
+            temp,
+            json!({
+                "op":"create","parent_section_id":parent,"placement":{"kind":"last"},"title":title
+            }),
+        ),
+    )["section_id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+fn current_note(temp: &tempfile::TempDir) -> crate::document_model::Note {
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    read_note(
+        &load_document(&reader.connection, "note", NOTE).unwrap(),
+        false,
+    )
+    .unwrap()
+}
+
+#[test]
+fn section_create_read_context_rename_and_receipts_preserve_existing_content() {
+    let temp = fixture(vec![p("Parent Body is retained")]);
+    let original = current_note(&temp);
+    let req = section_request(
+        &temp,
+        json!({"op":"create","parent_section_id":NOTE,
+        "placement":{"kind":"first"},"title":"見出し **literal**","markdown":"**本文😀**\n\n- [x] 完了"}),
+    );
+    let preview = standalone(temp.path(), req.clone(), true).unwrap();
+    assert_eq!(preview["status"], "preview");
+    assert_eq!(preview["revision_before"], preview["revision_after"]);
+    assert_eq!(current_note(&temp).root, original.root);
+    let result = run(&temp, req.clone());
+    let id = result["section_id"].as_str().unwrap();
+    validate_id(id).unwrap();
+    assert_ne!(id, NOTE);
+    assert_eq!(result["created_section_ids"], json!([id]));
+    let note = current_note(&temp);
+    assert_eq!(note.root.body, original.root.body);
+    assert_eq!(&note.root.children[1..], original.root.children.as_slice());
+    assert_eq!(note.root.children[0].title, "見出し **literal**");
+    assert_eq!(
+        note.root.children[0].body[0]["content"][0]["marks"][0]["type"],
+        "bold"
+    );
+    let child = read_for_edit(temp.path(), id, 1, None).unwrap();
+    assert_eq!(child["parent_section_id"], NOTE);
+    assert_eq!(child["title"], "見出し **literal**");
+    assert_eq!(child["depth"], 1);
+    assert!(view(&temp)["parent_section_id"].is_null());
+    assert_eq!(view(&temp)["depth"], 0);
+    let replay = run(&temp, req.clone());
+    assert_eq!(replay["section_id"], id);
+    assert_eq!(replay["replayed"], true);
+    let mut reused = req;
+    if let SectionAction::Create { title, .. } = &mut reused.action {
+        *title = "別の意図".into();
+    }
+    assert_eq!(
+        prepare(temp.path(), reused).err().unwrap().code,
+        "REQUEST_ID_REUSED"
+    );
+
+    let rename = section_request(&temp, json!({"op":"rename","section_id":id,"title":""}));
+    let result = run(&temp, rename.clone());
+    assert_eq!(result["changes"][0]["before"], "見出し **literal**");
+    let renamed = current_note(&temp);
+    assert_eq!(renamed.root.children[0].body, note.root.children[0].body);
+    assert_eq!(renamed.root.children[0].title, "");
+    let noop = run(
+        &temp,
+        section_request(&temp, json!({"op":"rename","section_id":id,"title":""})),
+    );
+    assert_eq!(noop["status"], "no_change");
+    assert_eq!(noop["revision_before"], noop["revision_after"]);
+    assert_eq!(run(&temp, rename)["replayed"], true);
+}
+
+#[test]
+fn section_moves_preserve_subtrees_and_reorder_in_both_directions() {
+    let temp = fixture(vec![p("parent")]);
+    let a = create_section(&temp, NOTE, "A");
+    let b = create_section(&temp, NOTE, "B");
+    let c = create_section(&temp, &a, "C");
+    let before = current_note(&temp);
+    let model_a = before
+        .root
+        .children
+        .iter()
+        .find(|s| s.section_id == a)
+        .unwrap()
+        .clone();
+    let movement = |parent: &str, placement: Value| {
+        section_request(
+            &temp,
+            json!({"op":"move","section_id":a,"parent_section_id":parent,"placement":placement}),
+        )
+    };
+    run(&temp, movement(NOTE, json!({"kind":"last"})));
+    assert_eq!(current_note(&temp).root.children.last().unwrap(), &model_a);
+    run(
+        &temp,
+        movement(NOTE, json!({"kind":"before","section_id":b})),
+    );
+    assert_eq!(current_note(&temp).root, before.root);
+    run(&temp, movement(NOTE, json!({"kind":"first"})));
+    assert_eq!(current_note(&temp).root.children[0], model_a);
+    let noop = run(&temp, movement(NOTE, json!({"kind":"first"})));
+    assert_eq!(noop["status"], "no_change");
+    let moved = run(&temp, movement(&b, json!({"kind":"last"})));
+    assert_eq!(moved["affected_section_ids"], json!([a, c]));
+    assert_eq!(
+        current_note(&temp)
+            .root
+            .children
+            .iter()
+            .find(|s| s.section_id == b)
+            .unwrap()
+            .children,
+        vec![model_a.clone()]
+    );
+    let child = read_for_edit(temp.path(), &c, 100, None).unwrap();
+    assert_eq!(child["parent_section_id"], a);
+    assert_eq!(child["depth"], 3);
+    for (parent, placement) in [
+        (c.as_str(), json!({"kind":"last"})),
+        (a.as_str(), json!({"kind":"last"})),
+        (NOTE, json!({"kind":"after","section_id":c})),
+        (NOTE, json!({"kind":"before","section_id":a})),
+    ] {
+        assert_eq!(
+            prepare(temp.path(), movement(parent, placement))
+                .err()
+                .unwrap()
+                .code,
+            "INVALID_TARGET"
+        );
+    }
+    assert_eq!(current_note(&temp).root.body, before.root.body);
+    run(
+        &temp,
+        movement(NOTE, json!({"kind":"after","section_id":b})),
+    );
+    assert_eq!(current_note(&temp).root.children.last().unwrap(), &model_a);
+}
+
+#[test]
+fn section_move_keeps_typed_attrs_rich_blocks_text_deltas_and_unrelated_yjs_identity() {
+    let temp = fixture(vec![p("unchanged root")]);
+    let child_id = view(&temp)["children"][0]["section_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let b = create_section(&temp, NOTE, "Destination");
+    // Seed an existing rich subtree in the isolated fixture, beyond CLI's insertion subset.
+    let store = ProductStore::open_existing_for_edit(temp.path()).unwrap();
+    let stored = load_document(&store.connection, "note", NOTE).unwrap();
+    let doc = decode_document(&stored).unwrap();
+    {
+        let mut txn = doc.transact_mut();
+        let XmlOut::Element(root) = txn.get_xml_fragment("body").unwrap().get(&txn, 0).unwrap()
+        else {
+            panic!()
+        };
+        let XmlOut::Element(children) = root.get(&txn, 2).unwrap() else {
+            panic!()
+        };
+        let XmlOut::Element(child) = children.get(&txn, 0).unwrap() else {
+            panic!()
+        };
+        let XmlOut::Element(header) = child.get(&txn, 0).unwrap() else {
+            panic!()
+        };
+        header.insert_attribute(&mut txn, "tags", r#"["保持","tag"]"#);
+        header.insert_attribute(&mut txn, "emoji", "🌸");
+        let XmlOut::Element(body) = child.get(&txn, 1).unwrap() else {
+            panic!()
+        };
+        let len = body.len(&txn);
+        body.remove_range(&mut txn, 0, len);
+        let chunk = body.push_back(&mut txn, XmlElementPrelim::empty("bodyChunk"));
+        chunk.insert_attribute(&mut txn, "chunkId", uuid::Uuid::now_v7().to_string());
+        let mut cell = node("tableCell", vec![p("表")]);
+        cell["attrs"]["colspan"] = 2.into();
+        cell["attrs"]["rowspan"] = 1.into();
+        cell["attrs"]["colwidth"] = json!([80, 120]);
+        let mut task = node("listItem", vec![p("タスク")]);
+        task["attrs"]["checked"] = true.into();
+        let mut linked = p("日本語😀");
+        linked["content"][0]["marks"] =
+            json!([{"type":"bold"},{"type":"link","attrs":{"href":"https://example.com"}}]);
+        let blocks = vec![
+            linked,
+            node("table", vec![node("tableRow", vec![cell])]),
+            node("bulletList", vec![task]),
+            node(
+                "codeBlock",
+                vec![json!({"type":"text","text":"const x = 1;"})],
+            ),
+            node(
+                "details",
+                vec![
+                    node("detailsSummary", vec![json!({"type":"text","text":"詳細"})]),
+                    node("detailsBody", vec![p("本文")]),
+                ],
+            ),
+        ];
+        for (i, block) in blocks.iter().enumerate() {
+            projection::insert_block(&mut txn, &chunk, i as u32, block).unwrap();
+        }
+    }
+    store.connection.execute("UPDATE documents SET snapshot=?1,snapshot_revision=revision WHERE kind='note' AND document_id=?2",
+        params![doc.transact().encode_state_as_update_v1(&StateVector::default()),NOTE]).unwrap();
+    store
+        .connection
+        .execute(
+            "DELETE FROM document_updates WHERE kind='note' AND document_id=?1",
+            [NOTE],
+        )
+        .unwrap();
+    drop(store);
+    let before = current_note(&temp);
+    let original = before.root.children[0].clone();
+    let prepared = prepare(
+        temp.path(),
+        section_request(
+            &temp,
+            json!({"op":"move","section_id":child_id,
+        "parent_section_id":b,"placement":{"kind":"first"}}),
+        ),
+    )
+    .unwrap();
+    // Apply the native delta to a separately loaded replica and retain Root/Body shared identity.
+    let txn = doc.transact();
+    let XmlOut::Element(root_before) = txn.get_xml_fragment("body").unwrap().get(&txn, 0).unwrap()
+    else {
+        panic!()
+    };
+    drop(txn);
+    let update = prepared
+        .documents
+        .iter()
+        .find(|d| d.kind == "note")
+        .unwrap()
+        .update
+        .as_ref()
+        .unwrap();
+    use yrs::updates::decoder::Decode;
+    doc.transact_mut()
+        .apply_update(yrs::Update::decode_v1(update).unwrap())
+        .unwrap();
+    let txn = doc.transact();
+    let XmlOut::Element(root_after) = txn.get_xml_fragment("body").unwrap().get(&txn, 0).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(root_after, root_before);
+    drop(txn);
+    let mut store = ProductStore::open_existing_for_edit(temp.path()).unwrap();
+    commit(&mut store, &prepared).unwrap();
+    let after = current_note(&temp);
+    assert_eq!(after.root.body, before.root.body);
+    assert_eq!(
+        after
+            .root
+            .children
+            .iter()
+            .find(|s| s.section_id == b)
+            .unwrap()
+            .children[0],
+        original
+    );
+}
+
+#[test]
+fn section_deletion_is_explicit_and_revision_checked_and_root_is_protected() {
+    let temp = fixture(vec![p("root")]);
+    let a = create_section(&temp, NOTE, "A");
+    let b = create_section(&temp, &a, "B");
+    let nonempty = section_request(&temp, json!({"op":"delete","section_id":a,"mode":"empty"}));
+    assert_eq!(
+        prepare(temp.path(), nonempty).err().unwrap().code,
+        "SECTION_NOT_EMPTY"
+    );
+    let before = current_note(&temp);
+    let req = section_request(
+        &temp,
+        json!({"op":"delete","section_id":a,"mode":"subtree"}),
+    );
+    let preview = standalone(temp.path(), req.clone(), true).unwrap();
+    assert_eq!(preview["deleted_section_ids"], json!([a, b]));
+    assert_eq!(current_note(&temp).root, before.root);
+    let result = run(&temp, req.clone());
+    assert_eq!(result["fallback_section_id"], NOTE);
+    assert_eq!(run(&temp, req)["replayed"], true);
+    assert_eq!(
+        read_for_edit(temp.path(), &b, 100, None).unwrap_err().code,
+        "TARGET_NOT_FOUND"
+    );
+    let a = create_section(&temp, NOTE, "empty");
+    run(
+        &temp,
+        section_request(&temp, json!({"op":"delete","section_id":a,"mode":"empty"})),
+    );
+    for action in [
+        json!({"op":"rename","section_id":NOTE,"title":"x"}),
+        json!({"op":"delete","section_id":NOTE,"mode":"subtree"}),
+        json!({"op":"move","section_id":NOTE,"parent_section_id":NOTE,"placement":{"kind":"last"}}),
+    ] {
+        assert_eq!(parse_section_request(&serde_json::to_vec(&json!({"schema_version":1,"workspace_id":WORKSPACE,
+            "note_id":NOTE,"expected_revision":1,"request_id":uuid::Uuid::now_v7().to_string(),"action":action})).unwrap()).unwrap_err().code,"INVALID_TARGET");
+    }
+}
+
+#[test]
+fn section_depth_foreign_targets_and_save_conflicts_fail_without_partial_writes() {
+    let temp = fixture(vec![p("root")]);
+    let mut parent = NOTE.to_owned();
+    for _ in 0..crate::document_model::MAX_SECTION_DEPTH {
+        parent = create_section(&temp, &parent, "deep");
+    }
+    let before = current_note(&temp);
+    let too_deep = section_request(
+        &temp,
+        json!({"op":"create","parent_section_id":parent,"placement":{"kind":"last"},"title":"overflow"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), too_deep).err().unwrap().code,
+        "SECTION_DEPTH_LIMIT"
+    );
+    let moving = before.root.children[0].section_id.clone();
+    let deep_move = section_request(
+        &temp,
+        json!({"op":"move","section_id":moving,"parent_section_id":parent,"placement":{"kind":"last"}}),
+    );
+    assert_eq!(
+        prepare(temp.path(), deep_move).err().unwrap().code,
+        "SECTION_DEPTH_LIMIT"
+    );
+    let foreign = uuid::Uuid::now_v7().to_string();
+    let invalid_target = section_request(
+        &temp,
+        json!({"op":"rename","section_id":foreign,"title":"x"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), invalid_target).err().unwrap().code,
+        "INVALID_TARGET"
+    );
+    let req = section_request(
+        &temp,
+        json!({"op":"create","parent_section_id":NOTE,"placement":{"kind":"first"},"title":"not committed"}),
+    );
+    let prepared = prepare(temp.path(), req.clone()).unwrap();
+    let mut store = ProductStore::open_existing_for_edit(temp.path()).unwrap();
+    for fault in [
+        crate::persistence::CommitFault::BeforeCommit,
+        crate::persistence::CommitFault::BeforeSqlCommit,
+    ] {
+        assert!(commit_with_fault(&mut store, &prepared, Some(fault)).is_err());
+        assert!(receipt(&store.connection, req.clone()).unwrap().is_none());
+        assert_eq!(current_note(&temp).root, before.root);
+    }
+    let body = EditRequest {
+        expected_revision: before.revision,
+        ..request(vec![append("a newer user edit")])
+    };
+    run(&temp, body);
+    assert_eq!(
+        commit(&mut store, &prepared).unwrap_err().code,
+        "REVISION_CONFLICT"
+    );
+    assert!(receipt(&store.connection, req).unwrap().is_none());
+}
+
+#[test]
+fn section_requests_reject_implicit_deletion_foreign_notes_and_unsupported_content() {
+    let temp = fixture(vec![p("root")]);
+    let id = create_section(&temp, NOTE, "child");
+    let base = section_request(&temp, json!({"op":"rename","section_id":id,"title":"x"}));
+    for action in [
+        json!({"op":"delete","section_id":id}),
+        json!({"op":"delete","section_id":id,"mode":"force"}),
+        json!({"op":"create","parent_section_id":NOTE,"section_id":id,"placement":{"kind":"last"},"title":"x"}),
+        json!({"op":"move","section_id":id,"parent_section_id":null,"placement":{"kind":"last"}}),
+        json!({"op":"rename","section_id":id,"title":"a\nb"}),
+    ] {
+        let mut value = serde_json::to_value(&base).unwrap();
+        value["action"] = action;
+        assert_eq!(
+            parse_section_request(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err()
+                .code,
+            "INVALID_REQUEST"
+        );
+    }
+    let before = current_note(&temp);
+    let unsupported = section_request(
+        &temp,
+        json!({"op":"create","parent_section_id":NOTE,
+        "placement":{"kind":"last"},"title":"x","markdown":"# Not a body paragraph"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), unsupported).err().unwrap().code,
+        "UNSUPPORTED_CONTENT"
+    );
+    assert_eq!(current_note(&temp).root, before.root);
+
+    let with_body = run(
+        &temp,
+        section_request(
+            &temp,
+            json!({"op":"create","parent_section_id":NOTE,
+        "placement":{"kind":"last"},"title":"body","markdown":"Keep this body"}),
+        ),
+    );
+    let delete = section_request(
+        &temp,
+        json!({"op":"delete","section_id":with_body["section_id"],"mode":"empty"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), delete).err().unwrap().code,
+        "SECTION_NOT_EMPTY"
+    );
+
+    let other = run(&temp, note_request(&temp, create_action("other", None)));
+    let foreign = section_request(
+        &temp,
+        json!({"op":"move","section_id":id,
+        "parent_section_id":other["note_id"],"placement":{"kind":"last"}}),
+    );
+    assert_eq!(
+        prepare(temp.path(), foreign).err().unwrap().code,
+        "INVALID_TARGET"
+    );
 }
 #[test]
 fn note_creation_is_atomic_previewable_replayable_and_preserves_existing_notes() {

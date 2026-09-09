@@ -311,6 +311,17 @@ pub(crate) fn clone_xml_into(
     source: &XmlOut,
     parent: &XmlElementRef,
 ) -> Result<(), ReadError> {
+    clone_xml_at(txn, source, parent, parent.len(txn))
+}
+
+/// Clone an integrated subtree at a specific sibling position, preserving
+/// typed attributes and text deltas. Yjs shared types cannot be reparented.
+pub(crate) fn clone_xml_at(
+    txn: &mut TransactionMut<'_>,
+    source: &XmlOut,
+    parent: &XmlElementRef,
+    index: u32,
+) -> Result<(), ReadError> {
     match source {
         XmlOut::Element(source) => {
             // as_prelim on elements stringifies numeric/bool/object attributes.
@@ -320,7 +331,7 @@ pub(crate) fn clone_xml_into(
                 .map(|(key, value)| (key.to_owned(), value.to_json(txn)))
                 .collect::<Vec<_>>();
             let children = source.children(txn).collect::<Vec<_>>();
-            let copy = parent.push_back(txn, XmlElementPrelim::empty(source.tag().clone()));
+            let copy = parent.insert(txn, index, XmlElementPrelim::empty(source.tag().clone()));
             for (key, value) in attrs {
                 copy.insert_attribute(txn, key, value);
             }
@@ -330,7 +341,7 @@ pub(crate) fn clone_xml_into(
         }
         XmlOut::Text(source) => {
             let prelim = source.as_prelim(txn);
-            parent.push_back(txn, yrs::types::xml::XmlIn::Text(prelim));
+            parent.insert(txn, index, yrs::types::xml::XmlIn::Text(prelim));
         }
         XmlOut::Fragment(_) => return Err(invalid("Unexpected XML fragment")),
     }

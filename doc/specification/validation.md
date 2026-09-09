@@ -269,10 +269,14 @@ backup処理中の別WindowのInsert入力、読み取り専用preview、preview
 - no-op/dry-run、保存前/SQL確定前失敗、確定後応答喪失、永続receipt、再送・revision conflict・cursor staleを検査する。
 - Note作成の本文・Root/entry ID・空タイトル・再送時の重複防止、renameの本文ID維持とNote/Workspace競合、moveの子孫・Note revision/日時の維持を検査する。
 - placementの親・兄弟anchor・cycle拒否、既に正しい位置のno-op、同値position bucketの局所再採番とfrontendのjitter golden値を検査する。
+- `section-edit`の作成・空タイトルへの改名・同親/別親移動・削除を検査する。subtreeのID、typedな表属性・task状態・Details・文字装飾と無関係なYjs typeを保持する。
+- Section Root保護、明示した削除mode、非空Body/子孫のempty削除拒否、別Note/不正anchor/cycle/深さ超過拒否と保存失敗時のrollbackを検査する。
+- `sectionize`は見出しから後続Body全体を先頭の子へ移し、既存の子を動かさない。末尾からの複数見出し変換、空Body、Chunk境界、prefixの共有type、本文ID/装飾/表/画像の保持、見出しと本文のcaret復元を検査する。リンク/Hard Breakを含む見出し、入れ子段落、別Section、古いrevision、深さ超過は拒否する。
+- 分割Windowで移動元の本文/子孫にあるcaret、Focused Section、fold、scrollを保つこと、改名のリンク名反映、削除時の親へのfocus復帰を検査する。
 - Workspace catalogの未設定・旧形式・未mount・MRU重複排除を検査し、一覧取得では設定作成やfilesystem全体の探索をしない。
 - `reader_cli`でDISPLAY/DBUSなしの編集、旧schema非移行、stdout JSON、owner失敗時の直接write fallback禁止を確認する。
 - `corepack pnpm tauri:agent-e2e`で起動GUIとstandaloneの意味的結果を比較し、複数Window、非表示Note、
-  IME拒否、既存Undo、SQL故障時の非公開と確定後応答回復、Note作成・改名・移動でのWindow状態維持を検証する。独立した一時Workspaceだけを使う。
+  IME拒否、既存Undo、SQL故障時の非公開と確定後応答回復、Note/Section作成・改名・移動・Section削除でのWindow状態維持を検証する。独立した一時Workspaceだけを使う。
   debug buildを`MEMOKA_TAURI_APP`、対応CLIを`MEMOKA_E2E_CLI`で指定する。release artifactでは
   `MEMOKA_E2E_AGENT_FAULTS=0`でdebug専用故障注入を除外する。Linuxで別GUIを起動したまま実行する場合はprivate D-Bus sessionを使う。
 - Task ListのMarkdown/HTML/Clipboard、rich/nested/mixed内容、click/Normal Enter、新規未完了Item、Undo、IME優先を検査する。

@@ -849,7 +849,7 @@ Driveでは新しい世代の**転送を優先**し、転送先の内容検証�
 
 ### 外部エージェントからノートを編集する
 
-更新した`memoka-cli`は、GUI起動中・未起動のどちらでもノートの作成・改名・並び替えと、既存ノートの本文編集ができます。
+更新した`memoka-cli`は、GUI起動中・未起動のどちらでもノートの作成・改名・並び替え、既存ノートの本文編集、同じノート内のSection構造の編集ができます。
 古いWorkspaceは、先に更新したGUIで開いて移行してください。CLI自身は移行しません。
 
 ```text
@@ -862,7 +862,7 @@ memoka-cli edit --workspace <data-area> --input request.json --format json
 `--for-edit`は編集用のBlock ID、正確な本文、Note全体のrevisionを返します。
 JSONリクエストでは、本文の完全一致置換、直接本文へのMarkdown追記・挿入、既存タスクのチェック状態設定をまとめられます。
 子Sectionの本文は別に読み、明示的に指定します。Markdown全体を書き戻す方式ではありません。
-Sectionタイトル・ノート全体・表セル・コードの書換え、Section作成には、このCLI編集は対応していません。
+ノート全体・表セル・コードの本文書換えには、このCLI編集は対応していません。Sectionタイトルや構造は後述の`section-edit`で操作します。
 アプリ設定は上記の`config get/set/schema`で別に扱います。
 
 ノートの作成・改名・配置変更には、本文編集とは別の`note-edit`を使います。
@@ -882,6 +882,35 @@ memoka-cli note-edit --workspace <data-area> --input note-request.json --format 
 `move`はentry ID、移動先の親entry IDと位置を指定し、そのNoteやgroupを**子孫ごと**移動します。
 Note IDとentry IDは別物です。Workspace直下を指定する親entry IDは`null`です。
 どの操作も表示中のNoteを勝手に切り替えません。具体的なJSON形式は`edit-schema`で確認してください。
+
+**Sectionの作成・改名・移動・削除、既存本文のSection化**には`section-edit`を使います。
+
+```text
+memoka-cli read --workspace <data-area> --id <section-id> --for-edit --format json
+memoka-cli section-edit --workspace <data-area> --input section-request.json --dry-run --format json
+memoka-cli section-edit --workspace <data-area> --input section-request.json --format json
+```
+
+読み出し結果にはタイトル、親Section ID、ノートからの深さ、直接の子Section一覧も含まれます。
+JSONには`schema_version: 1`、Workspace ID、Note ID、Note全体の`expected_revision`、新しい`request_id`と1つの`action`を指定します。
+
+- `create`：親Section ID、先頭・末尾または兄弟Sectionの前後位置、タイトルを指定します。空タイトル・空本文でも作成できます。任意の初期Markdownは本文編集と同じ対応範囲です。親の既存本文は移動しません。
+- `rename`：Section IDと1行の新タイトルを指定します。Markdownとしては解釈しません。
+- `sectionize`：元の`section_id`と見出しにする段落の`heading_block_id`を指定します。その段落をタイトルにし、**後続の直接本文すべて**を先頭の子Sectionへ移します。既存の子Sectionは移動しません。本文の装飾・リンク・表・画像とブロックIDを保持します。
+- `move`：Section ID、移動先の親Section IDと位置を指定します。**本文・子孫をまとめて移動**し、ID・装飾・表などのブロックは保持します。並び替え、昇格・降格に使えます。同じノート内のみ対応し、循環や深さ制限を超える移動は拒否します。
+- `delete`：Section IDと`mode`を指定します。`empty`は本文が空で子を持たないSectionだけを削除します。`subtree`は**本文・子孫も削除**する明示指定です。外部編集は`u`では戻せないため、対象を確認してください。
+
+親のRootはNote IDです。`null`やNamespaceのentry IDではありません。位置は`{"kind":"first"}`、`{"kind":"last"}`、
+または`{"kind":"before","section_id":"兄弟Section ID"}`（`after`も可）で指定します。
+Root自体は移動・削除できず、改名は`note-edit`を使います。移動で内部リンクの参照先は維持されますが、削除したSectionへのリンクは参照先不明になります。
+移動中のWindowはキャレットやSectionフォーカスを保ち、削除したSectionにフォーカスしていたWindowはその親へ戻ります。
+
+既存記事の太字段落を見出しに整理する場合は`sectionize`を使います。複数の見出しを兄弟Sectionにするには、
+**末尾の見出しから順に**、読み出し・プレビュー・適用を繰り返します。各回で最新のrevisionを取得してください。
+対象段落はSection直下に限り、リストなどの内部段落は対象外です。段落の文字装飾はSectionタイトルの表示に変わります。
+見出しにリンク・内部リンク・Hard Breakがある場合は情報を失わないよう拒否します。見出し段落自体は新しいSection IDへ
+変換され、本文IDは維持されます。元の段落上のキャレットも新しいタイトルへ移ります。
+作成されたIDは適用結果から取得し、次の操作前に読み直して最新のNote revisionを使ってください。
 
 まずdry-runでdiffを確認し、問題なければ同じJSONを適用してください。途中でユーザーが編集すると競合として止まります。
 revisionだけを書き換えて強行せず、最新本文から変更を判断し直します。IME中は強制確定しません。

@@ -878,8 +878,26 @@ export class CoreRuntime {
             requestAnimationFrame(() => resolve()),
           );
         if (!isCurrent()) throw fail("AGENT_RESPONSE_LOST");
+        let restoreSectionViews: (() => void)[] | undefined;
         const published = await recoverAgentPublication(() => {
           if (composing()) throw fail("IME_ACTIVE");
+          if (
+            delivery.result.section_edit &&
+            delivery.documents.length &&
+            !restoreSectionViews
+          ) {
+            restoreSectionViews = [...this.agentEditors]
+              .filter(
+                ([adapter, noteId]) =>
+                  noteId === request.note_id && !adapter.editor.isDestroyed,
+              )
+              .map(([adapter]) =>
+                adapter.preserveExternalSectionView(
+                  delivery.result.fallback_section_id,
+                  delivery.result.sectionized_heading,
+                ),
+              );
+          }
           for (const document of delivery.documents) {
             const target =
               document.kind === "workspace"
@@ -893,8 +911,13 @@ export class CoreRuntime {
             );
             target.setRevision(document.revision);
           }
+          if (delivery.result.section_edit && request.note_id)
+            this.repairExternalSectionViews(request.note_id, delivery.result);
         }, isCurrent);
         if (!published) throw fail("AGENT_RESPONSE_LOST");
+        // Section-bound Editors rebind in a microtask after a cloned move.
+        await Promise.resolve();
+        for (const restore of restoreSectionViews ?? []) restore();
         if (delivery.documents.length) {
           const noteDocuments = delivery.documents.filter(
             (document) => document.kind === "note",
@@ -907,6 +930,17 @@ export class CoreRuntime {
             this.queueWorkspaceSearchIndexDocument(document.document_id);
           }
           if (noteDocuments.length) this.noteContentRevision++;
+          if (delivery.result.section_edit && request.note_id) {
+            // The edit is already durable and published. An ancillary hidden
+            // Note catalog read must not turn that success into a failed edit.
+            try {
+              await this.refreshExternalSectionCatalog(request.note_id);
+            } catch (error) {
+              this.reportError(error);
+            }
+            this.sectionCatalogRevision++;
+            this.internalLinkLabelRevision++;
+          }
           if (delivery.result.workspace_revision_before !== undefined) {
             if (delivery.result.entry_id)
               this.pendingWorkspaceSearchNamespaceEntryIds.add(
@@ -936,6 +970,75 @@ export class CoreRuntime {
     if (request.note_id)
       await this.runWithNotePersistenceLock(request.note_id, apply);
     else await apply();
+  }
+
+  /** A deleted Focus cannot stay bound to a tombstoned Yjs fragment. Other
+   * Windows, modes, folds, selection and scroll remain Window-local. */
+  private repairExternalSectionViews(
+    noteId: string,
+    result: AgentDelivery["result"],
+  ): void {
+    const deleted = new Set(result.deleted_section_ids ?? []);
+    if (!deleted.size) return;
+    const fallback = result.fallback_section_id ?? noteId;
+    const next = structuredClone(this.requireApplicationWindowState());
+    let changed = false;
+    for (const [id, state] of this.windows) {
+      if (state.noteId !== noteId) continue;
+      const view = next.windows[id].view;
+      if (state.focusedSectionId && deleted.has(state.focusedSectionId)) {
+        view.focusedSectionId = fallback === noteId ? null : fallback;
+        view.selection = null;
+        this.pendingWindowViewUpdates.delete(id);
+        changed = true;
+      }
+      const folds = state.collapsedSectionIds.filter((id) => !deleted.has(id));
+      if (folds.length !== state.collapsedSectionIds.length) {
+        view.collapsedSectionIds = folds;
+        changed = true;
+      }
+    }
+    for (const tab of next.tabs) {
+      const outline = tab.rightSidebar.outline;
+      if (
+        outline.noteId === noteId &&
+        outline.selectedSectionId &&
+        deleted.has(outline.selectedSectionId)
+      ) {
+        outline.selectedSectionId = fallback;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    this.applicationWindowState = next;
+    this.localStateQueue = this.localStateQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.transactions.persistLocalStates(this.idFactory(), [
+          toApplicationLocalStateCommit(next),
+        ]);
+      })
+      .catch((error: unknown) => this.reportError(error));
+  }
+
+  private async refreshExternalSectionCatalog(noteId: string): Promise<void> {
+    if (this.notes.has(noteId)) return; // Loaded catalogs are derived from their live Doc.
+    this.internalLinkCandidateCache = this.internalLinkCandidateCache.filter(
+      (c) => c.noteId !== noteId,
+    );
+    const preview = await this.loadNotePreview(noteId);
+    try {
+      this.internalLinkCandidateCache.push(
+        ...deriveInternalLinkCandidates(
+          listNoteMetadata(this.workspaceDocument).filter(
+            (n) => n.noteId === noteId,
+          ),
+          new Map([[noteId, preview.document]]),
+        ),
+      );
+    } finally {
+      preview.release();
+    }
   }
 
   createNoteAtEnd(

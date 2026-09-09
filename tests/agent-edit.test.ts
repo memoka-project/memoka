@@ -10,7 +10,16 @@ import {
   type PersistenceCommitRequest,
 } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
-import { MemoryWorkspaceSearchIndexPort } from "../app/src/core/workspace-search-index";
+import {
+  MemoryWorkspaceSearchIndexPort,
+  WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+} from "../app/src/core/workspace-search-index";
+import { createUuidV7 } from "../app/src/core/ids";
+import {
+  createSectionXml,
+  insertChildSection,
+  sectionHeader,
+} from "../app/src/core/section-model";
 
 class AgentDeliveryPersistence extends MemoryPersistencePort {
   commits: PersistenceCommitRequest[] = [];
@@ -93,7 +102,10 @@ describe("external edit delivery recovery", () => {
     const before = runtime.snapshot();
     const rebuilds = index.rebuildCount;
     let noteId: string | undefined;
-    const publish = async (change: () => Promise<unknown>) => {
+    const publish = async (
+      change: () => Promise<unknown>,
+      sectionNoteId?: string,
+    ) => {
       const baseRevision = runtime.snapshot().workspaceRevision;
       const start = persistence.commits.length;
       await change();
@@ -114,18 +126,33 @@ describe("external edit delivery recovery", () => {
           revision_after: baseRevision + 1,
           status: "applied",
           replayed: false,
-          workspace_revision_before: baseRevision,
-          entry_id: entry.entryId,
+          ...(sectionNoteId
+            ? { section_edit: true }
+            : {
+                workspace_revision_before: baseRevision,
+                entry_id: entry.entryId,
+              }),
         },
         documents,
       };
+      if (sectionNoteId) {
+        // Native Section commits bridge metadata-only Workspace revisions in
+        // the same SQL transaction; this in-memory stand-in has no SQL index.
+        await index.advanceWorkspaceSearchIndexMetadataRevision({
+          schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+          workspaceId: runtime.workspaceDocument.workspaceId,
+          baseRevision,
+          workspaceRevision: source.snapshot().workspaceRevision,
+          noteId: sectionNoteId,
+        });
+      }
       commit.mockResolvedValueOnce(delivery);
       const loads = persistence.noteLoads;
       await runtime.applyExternalAgentEdit(
         "ticket",
         {
           workspace_id: runtime.workspaceDocument.workspaceId,
-          note_id: null,
+          note_id: sectionNoteId ?? null,
           expected_revision: null,
           request_id: "request",
         },
@@ -162,6 +189,23 @@ describe("external edit delivery recovery", () => {
       expect(await runtime.searchWorkspace("Hidden", "title")).toMatchObject({
         results: [expect.objectContaining({ noteId, parentPath: "/" })],
       });
+      const hidden = source.getNoteHandle(noteId!).current;
+      if (hidden.kind !== "note") throw new Error("Expected a Note");
+      const childId = createUuidV7();
+      const child = createSectionXml(childId, "Hidden Section");
+      await publish(async () => {
+        hidden.doc.transact(() =>
+          insertChildSection(hidden.rootSection, child),
+        );
+        await source.flush();
+      }, noteId);
+      expect(runtime.resolveInternalLinkTitle(childId)).toBe("Hidden Section");
+      await publish(async () => {
+        hidden.doc.transact(() => sectionHeader(child).get(0).delete(0, 7));
+        await source.flush();
+      }, noteId);
+      expect(runtime.resolveInternalLinkTitle(childId)).toBe("Section");
+      expect(runtime.snapshot().loadedNoteIds).toEqual(before.loadedNoteIds);
     } finally {
       prepare.mockRestore();
       commit.mockRestore();

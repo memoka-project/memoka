@@ -1,6 +1,6 @@
 ---
 name: memoka
-description: Read, search, create, organize, and edit Memoka notes, or configure Memoka appearance and custom themes through memoka-cli. Use for Memoka note, task-list, and supported application-setting requests, not application source development.
+description: Read, search, create, organize, and edit Memoka notes and their Section structure, or configure Memoka appearance and custom themes through memoka-cli. Use for Memoka note, Section, task-list, and supported application-setting requests, not application source development.
 ---
 
 # Memoka
@@ -86,6 +86,55 @@ Command forms, JSON fields, and limits are in the generated
   Read back the tree and affected Note before any subsequent command. Neither
   command switches the GUI's active Note or merges into user Undo.
 
+## Edit Section structure within a Note
+
+- Use `section-edit --input FILE --format json` and its `section_request`
+  contract from `edit-schema`. One request contains one `action`, with the same
+  JSON-file, dry-run, inspection and receipt workflow as body editing.
+- Read the Note/Section with `--for-edit` to get `workspace_id`, `note_id`, the
+  Note-wide `revision`, `title`, `parent_section_id`, `depth`, and direct
+  `children`. Read child Sections separately before reorganizing/removing them.
+  Do not confuse Section IDs with Namespace entry IDs or Workspace revisions.
+- The envelope uses `expected_revision`, not `expected_workspace_revision`.
+  `create` requires `parent_section_id`, `placement`, literal single-line
+  `title`, and optional `markdown` in the supported Body subset. Omit Markdown
+  for an empty Body. Core generates IDs; use the applied result, not preview IDs.
+  Existing parent Body is **not** transferred to the new child.
+- `rename` changes a non-root title. `move` reparents/reorders a Section
+  **with its whole Body and descendant Sections**, preserving their IDs, marks
+  and blocks (including structures not editable through body-text operations).
+  Specify `parent_section_id` and `{ "kind": "first" | "last" }`, or
+  `{ "kind": "before" | "after", "section_id": "sibling-section-id" }`.
+  The anchor must be another direct child of that parent. Root is the Note ID,
+  not null. Cycles, cross-Note moves and excessive depth are rejected.
+- To organize existing Body into Sections, use `sectionize` with the source
+  `section_id` and `heading_block_id` from a fresh edit view. The heading must
+  be a **direct Body Paragraph**, not one inside a list/quote/table. Its text
+  becomes a fresh first child's plain title; **all following direct Body blocks**
+  move to that child's Body. Earlier blocks and existing child Sections stay
+  where they are. Body IDs, marks, links and rich blocks are retained, without
+  a Markdown round trip. The heading Paragraph is consumed; title text styling
+  becomes Section styling. Links, inline atoms and hard breaks in the heading
+  are rejected rather than silently lost.
+- For multiple headings that should become siblings, sectionize them **from
+  last to first**, rereading and previewing each request. There is no arbitrary
+  middle-range or copy-and-delete operation. Inspect `heading_before`, `title`,
+  `moved_block_ids` and the preview Markdown, including the entire following
+  range (paginate reads). Read the applied `section_id` and `sectionized_heading`
+  mapping; preview IDs are not reserved. Do not replace old heading text with an
+  empty string or rebuild rich Body with `create` as a workaround.
+- `delete` requires explicit `mode: "empty"` or `mode: "subtree"`. Prefer
+  `empty` for an empty leaf. It refuses nonempty Body or any children. Only use
+  `subtree` when removing that content is within the user's authorized scope;
+  never retry an empty-mode refusal as subtree deletion automatically.
+- Root cannot be moved/deleted. Rename Root through `note-edit`. Section moves
+  keep link targets; deletion may leave incoming links unresolved. A Window
+  focused on a deleted Section falls back to its parent. These edits are not
+  available in the user's Undo, so inspect `changes`, `deleted_section_ids`,
+  and `diff_truncated` before applying; if the preview omits content, read the
+  relevant subtree to establish scope. Read back IDs/parents/order/body and the
+  new Note revision before the next action; never precompute a revision chain.
+
 ## Stop or recover safely
 
 - For `commit_state: "unknown"`, preserve the request file and resend **the same
@@ -98,7 +147,7 @@ Command forms, JSON fields, and limits are in the generated
   leave focus and composition alone; retry after the user finishes, or report it.
 - A migration requirement means the Workspace must first be opened in the updated
   GUI. Do not migrate it with SQL or start a second writer after IPC failure.
-- Unsupported operations include Note deletion, Section creation/rename/movement,
+- Unsupported operations include Note deletion, cross-Note Section moves,
   group creation/rename, full-note rewrites, keymap/backup setting changes, attachment import,
   and editing managed Help/Trash/history. Report these limits instead of
   bypassing the CLI.

@@ -18,6 +18,7 @@ memoka-cli read --id ID [--workspace DIR] [--generation ID] [--include-trash] --
 memoka-cli read --id ID --for-edit [--workspace DIR] [--limit N] [--cursor CURSOR] --format json
 memoka-cli edit --input FILE|- [--workspace DIR] [--dry-run] --format json
 memoka-cli note-edit --input FILE|- [--workspace DIR] [--dry-run] --format json
+memoka-cli section-edit --input FILE|- [--workspace DIR] [--dry-run] --format json
 memoka-cli edit-schema --format json
 memoka-cli attachment get --id ID --output NEW-FILE [--workspace DIR] [--generation ID] [--include-trash]
 memoka-cli history [--id ID] [--workspace DIR] --format json
@@ -386,7 +387,234 @@ The machine-readable contract is [edit-schema.json](edit-schema.json). The insta
     "title": "EditRequest",
     "type": "object"
   },
-  "schema_version": 1
+  "schema_version": 1,
+  "section_edit": "section-edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
+  "section_limits": {
+    "max_affected_nodes": 10000,
+    "max_depth": 5,
+    "max_subtree_bytes": 8388608,
+    "root_depth": 0
+  },
+  "section_request": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "definitions": {
+      "DeleteMode": {
+        "oneOf": [
+          {
+            "description": "Only a childless Section whose Body contains no content except empty paragraphs.",
+            "enum": ["empty"],
+            "type": "string"
+          },
+          {
+            "description": "Explicitly remove the Section, its Body, and all descendant Sections.",
+            "enum": ["subtree"],
+            "type": "string"
+          }
+        ]
+      },
+      "SectionAction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Create a child with a fresh Section ID; existing parent Body stays intact.",
+            "properties": {
+              "markdown": {
+                "description": "Optional initial Body, using the same Markdown subset as append_markdown.",
+                "type": ["string", "null"]
+              },
+              "op": {
+                "enum": ["create"],
+                "type": "string"
+              },
+              "parent_section_id": {
+                "type": "string"
+              },
+              "placement": {
+                "$ref": "#/definitions/SectionPlacement"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["op", "parent_section_id", "placement", "title"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Rename a non-root title as literal single-line text.",
+            "properties": {
+              "op": {
+                "enum": ["rename"],
+                "type": "string"
+              },
+              "section_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["op", "section_id", "title"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Convert one direct Body Paragraph to a plain child title. Its following Body blocks become that first child's Body; existing children stay put.",
+            "properties": {
+              "heading_block_id": {
+                "type": "string"
+              },
+              "op": {
+                "enum": ["sectionize"],
+                "type": "string"
+              },
+              "section_id": {
+                "type": "string"
+              }
+            },
+            "required": ["heading_block_id", "op", "section_id"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Reparent/reorder a non-root Section with all Body and descendants, in the same Note.",
+            "properties": {
+              "op": {
+                "enum": ["move"],
+                "type": "string"
+              },
+              "parent_section_id": {
+                "type": "string"
+              },
+              "placement": {
+                "$ref": "#/definitions/SectionPlacement"
+              },
+              "section_id": {
+                "type": "string"
+              }
+            },
+            "required": ["op", "parent_section_id", "placement", "section_id"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Delete a non-root Section. Content removal requires explicit mode: subtree.",
+            "properties": {
+              "mode": {
+                "$ref": "#/definitions/DeleteMode"
+              },
+              "op": {
+                "enum": ["delete"],
+                "type": "string"
+              },
+              "section_id": {
+                "type": "string"
+              }
+            },
+            "required": ["mode", "op", "section_id"],
+            "type": "object"
+          }
+        ]
+      },
+      "SectionPlacement": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": ["first"],
+                "type": "string"
+              }
+            },
+            "required": ["kind"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": ["last"],
+                "type": "string"
+              }
+            },
+            "required": ["kind"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": ["before"],
+                "type": "string"
+              },
+              "section_id": {
+                "type": "string"
+              }
+            },
+            "required": ["kind", "section_id"],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": ["after"],
+                "type": "string"
+              },
+              "section_id": {
+                "type": "string"
+              }
+            },
+            "required": ["kind", "section_id"],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "properties": {
+      "action": {
+        "allOf": [
+          {
+            "$ref": "#/definitions/SectionAction"
+          }
+        ],
+        "description": "One structural operation. Read the result before constructing the next."
+      },
+      "expected_revision": {
+        "description": "Note-wide revision from a fresh read --for-edit, not Workspace revision.",
+        "format": "int64",
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "note_id": {
+        "type": "string"
+      },
+      "request_id": {
+        "type": "string"
+      },
+      "schema_version": {
+        "format": "uint32",
+        "maximum": 1,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspace_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "action",
+      "expected_revision",
+      "note_id",
+      "request_id",
+      "schema_version",
+      "workspace_id"
+    ],
+    "title": "SectionRequest",
+    "type": "object"
+  }
 }
 ```
 

@@ -4,7 +4,9 @@ pub mod bridge;
 mod markdown;
 mod notes;
 mod projection;
+mod sections;
 pub use notes::{NoteAction, NoteRequest};
+pub use sections::{SectionAction, SectionRequest};
 
 use crate::document_model::{ReadError, decode_document, read_note};
 use crate::persistence::{DocumentCommitInput, PersistenceCommitRequest, ProductStore};
@@ -27,13 +29,14 @@ pub const MAX_DIFF_BYTES: usize = 64 * 1024;
 pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NEW_BLOCKS: usize = 10_000;
 
-/// Both public editing envelopes use one owner, durable receipt, and GUI
+/// Public editing envelopes use one owner, durable receipt, and GUI
 /// delivery boundary. Untagged serialization preserves existing receipt hashes.
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum AgentRequest {
     Body(EditRequest),
     Note(NoteRequest),
+    Section(SectionRequest),
 }
 impl From<EditRequest> for AgentRequest {
     fn from(value: EditRequest) -> Self {
@@ -45,28 +48,37 @@ impl From<NoteRequest> for AgentRequest {
         Self::Note(value)
     }
 }
+impl From<SectionRequest> for AgentRequest {
+    fn from(value: SectionRequest) -> Self {
+        Self::Section(value)
+    }
+}
 impl AgentRequest {
     pub fn workspace_id(&self) -> &str {
         match self {
             Self::Body(r) => &r.workspace_id,
             Self::Note(r) => &r.workspace_id,
+            Self::Section(r) => &r.workspace_id,
         }
     }
     pub fn request_id(&self) -> &str {
         match self {
             Self::Body(r) => &r.request_id,
             Self::Note(r) => &r.request_id,
+            Self::Section(r) => &r.request_id,
         }
     }
     pub fn note_id(&self) -> Option<&str> {
         match self {
             Self::Body(r) => Some(&r.note_id),
             Self::Note(r) => r.action.note_id(),
+            Self::Section(r) => Some(&r.note_id),
         }
     }
     pub fn expected_note_revision(&self) -> Option<i64> {
         match self {
             Self::Body(r) => Some(r.expected_revision),
+            Self::Section(r) => Some(r.expected_revision),
             Self::Note(r) => match r.action {
                 NoteAction::Rename {
                     expected_revision, ..
@@ -79,6 +91,7 @@ impl AgentRequest {
         match self {
             Self::Body(r) => r.validate(),
             Self::Note(r) => r.validate(),
+            Self::Section(r) => r.validate(),
         }
     }
     pub fn identity(&self) -> Value {
@@ -177,21 +190,13 @@ pub fn validate_id(id: &str) -> Result<(), ReadError> {
 }
 impl EditRequest {
     pub fn validate(&self) -> Result<(), ReadError> {
-        if self.schema_version != 1
-            || self.expected_revision < 1
-            || self.expected_revision > 9_007_199_254_740_991
-        {
-            return Err(invalid("Unsupported schema or invalid expected_revision"));
-        }
-        validate_id(&self.workspace_id)?;
-        validate_id(&self.note_id)?;
-        let request_id = uuid::Uuid::parse_str(&self.request_id)
-            .map_err(|_| invalid("request_id must be a UUIDv4 or UUIDv7"))?;
-        if !matches!(request_id.get_version_num(), 4 | 7)
-            || request_id.to_string() != self.request_id
-        {
-            return Err(invalid("request_id must be a canonical UUIDv4 or UUIDv7"));
-        }
+        validate_note_envelope(
+            self.schema_version,
+            &self.workspace_id,
+            &self.note_id,
+            self.expected_revision,
+            &self.request_id,
+        )?;
         if self.edits.is_empty()
             || self.edits.len() > MAX_EDITS
             || serde_json::to_vec(self)?.len() > MAX_INPUT_BYTES
@@ -232,6 +237,26 @@ impl EditRequest {
     }
 }
 
+fn validate_note_envelope(
+    schema_version: u32,
+    workspace_id: &str,
+    note_id: &str,
+    expected_revision: i64,
+    request_id: &str,
+) -> Result<(), ReadError> {
+    if schema_version != 1 || !(1..=9_007_199_254_740_991).contains(&expected_revision) {
+        return Err(invalid("Unsupported schema or invalid expected_revision"));
+    }
+    validate_id(workspace_id)?;
+    validate_id(note_id)?;
+    let id = uuid::Uuid::parse_str(request_id)
+        .map_err(|_| invalid("request_id must be a UUIDv4 or UUIDv7"))?;
+    if !matches!(id.get_version_num(), 4 | 7) || id.to_string() != request_id {
+        return Err(invalid("request_id must be a canonical UUIDv4 or UUIDv7"));
+    }
+    Ok(())
+}
+
 /// Do not let serde_json::Value silently collapse duplicate object keys.
 pub fn parse_request(bytes: &[u8]) -> Result<EditRequest, ReadError> {
     let request: EditRequest = parse_unique_request(bytes)?;
@@ -241,6 +266,12 @@ pub fn parse_request(bytes: &[u8]) -> Result<EditRequest, ReadError> {
 
 pub fn parse_note_request(bytes: &[u8]) -> Result<NoteRequest, ReadError> {
     let request: NoteRequest = parse_unique_request(bytes)?;
+    request.validate()?;
+    Ok(request)
+}
+
+pub fn parse_section_request(bytes: &[u8]) -> Result<SectionRequest, ReadError> {
+    let request: SectionRequest = parse_unique_request(bytes)?;
     request.validate()?;
     Ok(request)
 }
@@ -311,11 +342,13 @@ pub(crate) fn parse_unique_request<T: serde::de::DeserializeOwned>(
 }
 
 pub fn schema() -> Value {
-    json!({"schema_version":1,"cli_version":env!("CARGO_PKG_VERSION"),"request":schemars::schema_for!(EditRequest),"note_request":schemars::schema_for!(NoteRequest),
+    json!({"schema_version":1,"cli_version":env!("CARGO_PKG_VERSION"),"request":schemars::schema_for!(EditRequest),"note_request":schemars::schema_for!(NoteRequest),"section_request":schemars::schema_for!(SectionRequest),
         "limits":{"input_bytes":MAX_INPUT_BYTES,"edits":MAX_EDITS,"diff_bytes":MAX_DIFF_BYTES,"new_blocks":MAX_NEW_BLOCKS,"result_bytes":MAX_RESULT_BYTES,"edit_view_block_bytes":256*1024,"edit_view_page_bytes":MAX_INPUT_BYTES},
         "read":"read --id ID --for-edit --format json [--workspace DIR] [--limit N] [--cursor CURSOR]",
         "edit":"edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
-        "note_edit":"note-edit --input FILE|- --format json [--workspace DIR] [--dry-run]"})
+        "note_edit":"note-edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
+        "section_edit":"section-edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
+        "section_limits":{"max_depth":crate::document_model::MAX_SECTION_DEPTH,"max_affected_nodes":MAX_NEW_BLOCKS,"max_subtree_bytes":sections::MAX_SUBTREE_BYTES,"root_depth":0}})
 }
 
 pub struct PreparedEdit {
@@ -421,6 +454,7 @@ pub fn prepare(
 ) -> Result<PreparedEdit, ReadError> {
     let request = match request.into() {
         AgentRequest::Note(request) => return notes::prepare(workspace, request),
+        AgentRequest::Section(request) => return sections::prepare(workspace, request),
         AgentRequest::Body(request) => request,
     };
     request.validate()?;
@@ -626,6 +660,7 @@ pub(crate) fn commit_with_fault(
         local_states: vec![],
         search_index_metadata_only_note_id: match &prepared.request {
             AgentRequest::Body(request) => Some(request.note_id.clone()),
+            AgentRequest::Section(request) => Some(request.note_id.clone()),
             AgentRequest::Note(_) => None,
         },
         fault,

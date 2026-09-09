@@ -1,6 +1,12 @@
 import { Editor, Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, TextSelection } from "@tiptap/pm/state";
+import {
+  NodeSelection,
+  Plugin,
+  Selection,
+  TextSelection,
+} from "@tiptap/pm/state";
+import { CellSelection } from "@tiptap/pm/tables";
 import * as Y from "yjs";
 import { isBlockContainer } from "./block-container";
 import {
@@ -928,6 +934,128 @@ export class TiptapEditorAdapter {
     const document = this.handle.current;
     if (document.kind !== "note" || this.currentEditor.isDestroyed) return null;
     return saveStableEditorPosition(document, this.currentEditor.view);
+  }
+
+  /** A native Section move clones Yjs types while preserving logical IDs.
+   * Capture both ends by ID, not by coordinates or deleted Relative Positions.
+   * Call the returned function after Yjs bindings and structural rebinds settle. */
+  preserveExternalSectionView(
+    fallbackSectionId?: string,
+    sectionizedHeading?: { block_id: string; section_id: string },
+  ): () => void {
+    const editor = this.currentEditor;
+    const original = editor.state.selection;
+    const hadFocus = editor.isFocused;
+    const lock = { scrollTop: this.scrollElement.scrollTop };
+    const point = (position: number, boundary: boolean) => {
+      const direct = editor.state.doc.nodeAt(position);
+      if (
+        (boundary || direct?.isAtom) &&
+        typeof direct?.attrs.blockId === "string"
+      )
+        return {
+          id: direct.attrs.blockId as string,
+          kind: "blockId",
+          offset: 0,
+          boundary: true,
+          position,
+        };
+      const resolved = editor.state.doc.resolve(position);
+      for (let depth = resolved.depth; depth > 0; depth--) {
+        const node = resolved.node(depth);
+        const kind =
+          node.type.name === "sectionHeader" ? "sectionId" : "blockId";
+        if (typeof node.attrs[kind] === "string")
+          return {
+            id: node.attrs[kind] as string,
+            kind,
+            offset: position - resolved.start(depth),
+            boundary: false,
+            position,
+          };
+      }
+      return {
+        id: null,
+        kind: "blockId",
+        offset: 0,
+        boundary: false,
+        position,
+      };
+    };
+    const cell = original instanceof CellSelection;
+    const anchor = point(
+      cell ? original.$anchorCell.pos : original.anchor,
+      cell || original instanceof NodeSelection,
+    );
+    const head = point(
+      cell ? original.$headCell.pos : original.head,
+      cell || original instanceof NodeSelection,
+    );
+    this.captureWindowViewBeforeLayoutChange();
+    this.beginSectionDepthScrollLock(lock);
+    return () => {
+      try {
+        const current = this.currentEditor;
+        if (current.isDestroyed) return;
+        const resolve = (saved: ReturnType<typeof point>) => {
+          let found: number | null = null;
+          const converted =
+            saved.kind === "blockId" &&
+            saved.id === sectionizedHeading?.block_id;
+          const kind = converted ? "sectionId" : saved.kind;
+          const id = converted ? sectionizedHeading!.section_id : saved.id;
+          if (saved.id)
+            current.state.doc.descendants((node, position) => {
+              if (found !== null) return false;
+              if (node.attrs[kind] === id) {
+                found =
+                  saved.boundary && !converted
+                    ? position
+                    : position + 1 + Math.min(saved.offset, node.content.size);
+                return false;
+              }
+              return true;
+            });
+          return (
+            found ??
+            (fallbackSectionId
+              ? sectionHeaderPosition(current.view, fallbackSectionId, 0)
+              : null) ??
+            Selection.atStart(current.state.doc).head
+          );
+        };
+        const from = resolve(anchor);
+        const to = resolve(head);
+        let restored: Selection | null = null;
+        if (cell) {
+          const isCell = (position: number) =>
+            ["tableCell", "tableHeader"].includes(
+              current.state.doc.nodeAt(position)?.type.name ?? "",
+            );
+          if (isCell(from) && isCell(to))
+            restored = CellSelection.create(current.state.doc, from, to);
+        } else if (
+          original instanceof NodeSelection &&
+          current.state.doc.nodeAt(from) &&
+          NodeSelection.isSelectable(current.state.doc.nodeAt(from)!)
+        ) {
+          restored = NodeSelection.create(current.state.doc, from);
+        }
+        restored ??= TextSelection.between(
+          current.state.doc.resolve(from),
+          current.state.doc.resolve(to),
+        );
+        current.view.dispatch(
+          current.state.tr
+            .setSelection(restored)
+            .setMeta("addToHistory", false),
+        );
+        if (hadFocus) current.view.focus();
+        this.scheduleSelectionUpdate(current, false);
+      } finally {
+        this.finishSectionDepthScrollLock(lock);
+      }
+    };
   }
 
   captureNoteSearchOrigin(): NoteSearchOrigin | null {

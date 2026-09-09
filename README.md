@@ -193,7 +193,7 @@ OS資格情報ストアへ保存し、`config.toml`には書きません。旧�
 
 ## CLI
 
-`memoka-cli`はGUIなしでWorkspaceの読み出し、検索、Noteの作成・整理・本文編集、履歴の確認と復旧に使えます。起動中のMemokaが
+`memoka-cli`はGUIなしでWorkspaceの読み出し、検索、Noteの作成・整理・本文編集、Section構造の編集、履歴の確認と復旧に使えます。起動中のMemokaが
 同じWorkspaceを開いていれば、そのprocessへ接続します。読み出しのためにデータ移行やHelp更新は行いません。
 
 ```bash
@@ -209,6 +209,8 @@ memoka-cli edit --workspace <data-area> --input request.json --dry-run --format 
 memoka-cli edit --workspace <data-area> --input request.json --format json
 memoka-cli note-edit --workspace <data-area> --input note-request.json --dry-run --format json
 memoka-cli note-edit --workspace <data-area> --input note-request.json --format json
+memoka-cli section-edit --workspace <data-area> --input section-request.json --dry-run --format json
+memoka-cli section-edit --workspace <data-area> --input section-request.json --format json
 memoka-cli search <query> --workspace <data-area> --format json
 memoka-cli attachment get --workspace <data-area> --id <attachment-id> --output <new-file>
 memoka-cli history --workspace <data-area> --format json

@@ -84,6 +84,22 @@ export async function runAgentEditing({
       ...(dry ? ["--dry-run"] : []),
     );
   };
+  const sectionEdit = async (action, noteId = initialNoteId, dry = false) => {
+    const view = await cli(workspace, "read", "--id", noteId, "--for-edit");
+    const request = { ...make(view, []), note_id: noteId, action };
+    delete request.edits;
+    const path = join(temporary, `${randomUUID()}.json`);
+    await writeFile(path, JSON.stringify(request));
+    const result = await cli(
+      workspace,
+      "section-edit",
+      "--input",
+      path,
+      ...(dry ? ["--dry-run"] : []),
+    );
+    assert.equal(result.ok, true, JSON.stringify(result));
+    return result;
+  };
   const replacement = (old_text, new_text) => ({
     op: "replace_text",
     section_id: initialNoteId,
@@ -448,6 +464,210 @@ export async function runAgentEditing({
       noteBeforeSettings.revision,
       "settings do not edit NoteDoc",
     );
+    const sectionPreview = await sectionEdit(
+      {
+        op: "create",
+        title: "PreviewOnly",
+        parent_section_id: initialNoteId,
+        placement: { kind: "last" },
+      },
+      initialNoteId,
+      true,
+    );
+    assert.equal(sectionPreview.status, "preview");
+    assert.equal((await read()).revision, noteBeforeSettings.revision);
+    const a = await sectionEdit({
+      op: "create",
+      title: "Section A",
+      parent_section_id: initialNoteId,
+      placement: { kind: "last" },
+      markdown:
+        "Section body **rich**\n\n移る本文 **太字**\n\n- [x] 残すタスク",
+    });
+    const b = await sectionEdit({
+      op: "create",
+      title: "Section B",
+      parent_section_id: initialNoteId,
+      placement: { kind: "last" },
+    });
+    const c = await sectionEdit({
+      op: "create",
+      title: "Section C",
+      parent_section_id: a.section_id,
+      placement: { kind: "last" },
+      markdown: "Nested body",
+    });
+    const aBody = await cli(
+      workspace,
+      "read",
+      "--id",
+      a.section_id,
+      "--for-edit",
+    );
+    const bodyId = aBody.blocks[0].block_id;
+    await waitFor(
+      sessionId,
+      `return [...document.querySelectorAll('.memoka-editor')].map(e=>e.textContent)`,
+      (v) =>
+        v.length === 2 &&
+        v.every((s) => s.includes("Section A") && s.includes("Nested body")),
+    );
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      stableView,
+      "Section creation does not move existing carets",
+    );
+    // Native selection + actual Vim keys exercise a focused subtree binding,
+    // not only a root Editor observing a remote update.
+    await execute(
+      sessionId,
+      `const editor = document.querySelectorAll('.memoka-editor')[0];
+      const block = editor.querySelector('[data-block-id="${bodyId}"]');
+      block.scrollIntoView({block:'center'}); editor.focus();
+      getSelection().setBaseAndExtent(block.firstChild,2,block.firstChild,2); return true;`,
+    );
+    await waitFor(sessionId, viewportScript, (v) => v.anchorBlock === bodyId);
+    await sendActiveKey(sessionId, "l");
+    await sendActiveKey(sessionId, "z");
+    await sendActiveKey(sessionId, "f");
+    await waitFor(
+      sessionId,
+      "return document.querySelectorAll('.memoka-editor')[0]?.querySelector('[data-section-header]')?.dataset.sectionId",
+      (v) => v === a.section_id,
+    );
+    const focusedView = await execute(sessionId, viewportScript);
+    await sectionEdit({
+      op: "move",
+      section_id: a.section_id,
+      parent_section_id: b.section_id,
+      placement: { kind: "last" },
+    });
+    const movedA = await cli(
+      workspace,
+      "read",
+      "--id",
+      a.section_id,
+      "--for-edit",
+    );
+    assert.equal(movedA.parent_section_id, b.section_id);
+    assert.equal(movedA.children[0].section_id, c.section_id);
+    await waitFor(sessionId, viewportScript, (v) => v.anchorBlock === bodyId);
+    const afterSectionMove = await execute(sessionId, viewportScript);
+    assert.equal(afterSectionMove.activeWindow, focusedView.activeWindow);
+    assert.equal(afterSectionMove.anchorOffset, focusedView.anchorOffset);
+    assert.equal(afterSectionMove.anchorBlock, focusedView.anchorBlock);
+    await sectionEdit({
+      op: "rename",
+      section_id: a.section_id,
+      title: "Section renamed 日本語",
+    });
+    await waitFor(
+      sessionId,
+      "return document.querySelectorAll('.memoka-editor')[0]?.querySelector('[data-section-header]')?.textContent",
+      (v) => v === "Section renamed 日本語",
+    );
+    const sectionizeAction = {
+      op: "sectionize",
+      section_id: a.section_id,
+      heading_block_id: bodyId,
+    };
+    const beforeSectionize = await execute(sessionId, viewportScript);
+    const splitPreview = await sectionEdit(
+      sectionizeAction,
+      initialNoteId,
+      true,
+    );
+    assert.equal(splitPreview.changes[0].title, "Section body rich");
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      beforeSectionize,
+    );
+    const sectionized = await sectionEdit(sectionizeAction);
+    const split = await cli(
+      workspace,
+      "read",
+      "--id",
+      sectionized.section_id,
+      "--for-edit",
+    );
+    assert.equal(split.parent_section_id, a.section_id);
+    assert.equal(split.title, "Section body rich");
+    assert.deepEqual(
+      split.blocks,
+      aBody.blocks.slice(1),
+      "Sectionize keeps all suffix block IDs, marks and task attributes",
+    );
+    const splitParent = await cli(
+      workspace,
+      "read",
+      "--id",
+      a.section_id,
+      "--for-edit",
+    );
+    assert.equal(splitParent.blocks.length, 0);
+    assert.deepEqual(
+      splitParent.children.map((s) => s.section_id),
+      [sectionized.section_id, c.section_id],
+    );
+    await waitFor(
+      sessionId,
+      `const s = getSelection(); const node = s?.anchorNode;
+      const element = node?.nodeType === 1 ? node : node?.parentElement;
+      return {section:element?.closest('[data-section-header]')?.dataset.sectionId, offset:s?.anchorOffset};`,
+      (v) =>
+        v.section === sectionized.section_id &&
+        v.offset === beforeSectionize.anchorOffset,
+    );
+    const splitView = await execute(sessionId, viewportScript);
+    assert.equal(splitView.activeWindow, beforeSectionize.activeWindow);
+    assert.deepEqual(splitView.windows, beforeSectionize.windows);
+    assert.equal(
+      await execute(
+        sessionId,
+        "return document.querySelectorAll('.memoka-editor')[0]?.querySelector('[data-section-header]')?.dataset.sectionId",
+      ),
+      a.section_id,
+    );
+    const removed = await sectionEdit({
+      op: "delete",
+      section_id: a.section_id,
+      mode: "subtree",
+    });
+    assert.deepEqual(removed.deleted_section_ids, [
+      a.section_id,
+      sectionized.section_id,
+      c.section_id,
+    ]);
+    await waitFor(
+      sessionId,
+      "return document.querySelectorAll('.memoka-editor')[0]?.querySelector('[data-section-header]')?.dataset.sectionId",
+      (v) => v === b.section_id,
+    );
+    assert.equal(
+      (await execute(sessionId, viewportScript)).activeWindow,
+      focusedView.activeWindow,
+    );
+    assert.equal(
+      (await read()).blocks.some((block) =>
+        block.markdown?.includes("AgentGamma"),
+      ),
+      true,
+    );
+    const beforeHiddenSection = await execute(sessionId, viewportScript);
+    await sectionEdit(
+      {
+        op: "create",
+        title: "Hidden Section",
+        parent_section_id: created.note_id,
+        placement: { kind: "last" },
+      },
+      created.note_id,
+    );
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      beforeHiddenSection,
+      "hidden Section edits do not mount an Editor",
+    );
     return {
       passed: true,
       gui_and_standalone_equal: true,
@@ -457,6 +677,8 @@ export async function runAgentEditing({
       ime_rejected: true,
       hidden_note: true,
       note_create_rename_move: true,
+      section_structure_and_focused_window: true,
+      sectionize_preserves_existing_body: true,
       live_custom_theme_from_cli: true,
       native_sql_faults: faults,
       revision: gui.revision_after,

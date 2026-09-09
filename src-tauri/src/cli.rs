@@ -27,6 +27,7 @@ const USAGE: &str = "Memoka CLI\n\n\
   memoka-cli read --id ID --for-edit [--workspace DIR] [--limit N] [--cursor CURSOR] --format json\n\
   memoka-cli edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
   memoka-cli note-edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
+  memoka-cli section-edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
   memoka-cli edit-schema --format json\n\
   memoka-cli attachment get --id ID --output NEW-FILE [--workspace DIR] [--generation ID] [--include-trash]\n\
   memoka-cli history [--id ID] [--workspace DIR] --format json\n\
@@ -330,7 +331,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
         )?);
     }
     let request = match positional.as_slice() {
-        ["edit"] | ["note-edit"] => {
+        ["edit"] | ["note-edit"] | ["section-edit"] => {
             options.allow(&["--workspace", "--format", "--input", "--dry-run"])?;
             let input = options.required("--input")?;
             let mut bytes = Vec::new();
@@ -344,7 +345,12 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
                     .take(crate::agent_edit::MAX_INPUT_BYTES as u64 + 1)
                     .read_to_end(&mut bytes)?;
             }
-            if command == "note-edit" {
+            if command == "section-edit" {
+                Request::SectionEdit {
+                    request: crate::agent_edit::parse_section_request(&bytes)?,
+                    dry_run: options.flag("--dry-run"),
+                }
+            } else if command == "note-edit" {
                 Request::NoteEdit {
                     request: crate::agent_edit::parse_note_request(&bytes)?,
                     dry_run: options.flag("--dry-run"),
@@ -479,6 +485,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
     let request_id = match &request {
         Request::Edit { request, .. } => Some(request.request_id.clone()),
         Request::NoteEdit { request, .. } => Some(request.request_id.clone()),
+        Request::SectionEdit { request, .. } => Some(request.request_id.clone()),
         _ => None,
     };
     run_request(&options, request, format).map_err(|mut error| {

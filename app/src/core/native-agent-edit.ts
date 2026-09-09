@@ -16,6 +16,10 @@ export interface AgentDelivery {
     workspace_revision_before?: number;
     entry_id?: string;
     reindexed_entry_ids?: string[];
+    section_edit?: boolean;
+    deleted_section_ids?: string[];
+    fallback_section_id?: string;
+    sectionized_heading?: { block_id: string; section_id: string };
   };
   documents: {
     kind: "workspace" | "note";

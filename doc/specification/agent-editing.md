@@ -10,7 +10,8 @@ CLIのためにNode、DOM、GTK、WebKit、非表示Editorを起動しない。o
 
 本文編集は局所置換、直接BodyへのMarkdown追記・挿入、既存タスクの完了状態設定である。
 `note-edit`でNoteの作成・Root titleの改名、Note/group entryの移動・並び替えにも対応する。
-Note削除、Sectionの新規作成・削除・改名・移動、group作成・改名、全体置換、複数既存Noteのtransaction、
+`section-edit`は同じNote内のSection作成・改名・subtree移動・削除と、既存本文のSection化を扱う。
+Note削除、Note間Section移動、group作成・改名、全体置換、複数既存Noteのtransaction、
 添付取り込み、過去世代・Trash・管理Helpの編集には対応しない。diffは確認用出力であり入力形式ではない。
 アプリ外観と日本語分割の設定は、Workspaceとは独立した`config get/set/schema`で扱う。
 
@@ -25,6 +26,7 @@ Note ID指定は同じIDのRoot Sectionを意味する。
 
 応答は`schema_version: 1`、`representation: "edit_view"`、`source: "current"`、`workspace_id`、
 `note_id`、`section_id`、Note全体の`revision`、`scope: "body"`を持つ。
+構造編集の文脈として`title`、`parent_section_id`（Rootはnull）、`depth`（Rootは0）も返す。
 `blocks`は対象Sectionの直接Bodyを表示順に平坦化した一覧である。ListItemや引用等の内側も含めるが、
 子Sectionの本文は含めず、`children`に直接の子のIDとtitleを返す。BodyChunkは隠す。
 
@@ -59,7 +61,7 @@ memoka-cli edit-schema --format json
 ```
 
 `FILE`はUTF-8 JSON、`-`は標準入力である。shellで本文を解釈・実行せず、外部URLをfetchしない。
-`edit-schema`はRust DTOから生成したJSON Schema（本文用`request`、Note操作用`note_request`）、command形式、上限を返す。
+`edit-schema`はRust DTOから生成したJSON Schema（本文用`request`、Note操作用`note_request`、Section操作用`section_request`）、command形式、上限を返す。
 
 本文編集のfieldは`schema_version: 1`、`workspace_id`、`note_id`、`expected_revision`、`request_id`、`edits`である。
 entity IDはlowercase UUIDv7。request IDはcanonical lowercase UUIDv4/v7。revisionは正のJavaScript safe integerとする。
@@ -92,7 +94,7 @@ Heading、Table、Code/Source、Details、Alert、raw HTML、画像・添付な�
 
 ## 4. 永続化・GUIとの整合
 
-本文編集とrenameではNote単位の`expected_revision`を保存直前に再検証する。別Sectionの変更も競合とし、自動rebase/forceは行わない。
+本文編集・Note rename・Section操作ではNote単位の`expected_revision`を保存直前に再検証する。別Sectionの変更も競合とし、自動rebase/forceは行わない。
 Workspace metadataが準備中に変わった場合も再読取を要求する。
 
 GUIではまず確定編集の保存barrierと既存Note queueを通す。解析・対象解決・diff・staging更新はnative workerで行い、
@@ -241,3 +243,103 @@ dry-runはfile・directory・lockを作成せず、`status: "preview"`、適用�
 明示設定の削除は有効値が同じでも保存する。既に有効な値の再代入だけならfileを書き換えない。
 Note用のreceipt/request IDは持たない。応答が不明な場合は`config get`で確認し、古いrevisionを最新値へ機械的に差し替えて再送しない。
 設定はNoteのUndo・履歴・バックアップとは独立する。キー設定・資格情報・バックアップ設定はこのAPIの対象外。
+
+## 10. 同じNote内のSection構造編集
+
+```text
+memoka-cli section-edit --input FILE|- --format json [--workspace DIR] [--dry-run]
+```
+
+本文編集と同じNote revision・owner IPC・保存barrier・native準備・atomic保存・receiptを使う。
+1 requestは1 action。共通fieldは`schema_version: 1`、`workspace_id`、`note_id`、
+`expected_revision`、`request_id`、`action`である。`expected_revision`は最新の`read --for-edit`で得た**Note全体**のrevisionで、Workspace revisionではない。
+
+```json
+{
+  "schema_version": 1,
+  "workspace_id": "<Workspace UUIDv7>",
+  "note_id": "<Note UUIDv7>",
+  "expected_revision": 42,
+  "request_id": "<fresh UUIDv4/v7>",
+  "action": {
+    "op": "create",
+    "parent_section_id": "<Note UUIDv7>",
+    "placement": { "kind": "last" },
+    "title": "新しいセクション",
+    "markdown": "本文と**強調**\n\n- [ ] 次にすること"
+  }
+}
+```
+
+| op           | fieldと動作                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`     | `parent_section_id`, `placement`, `title`, 任意の`markdown`。直接の子を1つ作る。初期本文は本文挿入と同じMarkdown subset。省略時は空Paragraph |
+| `rename`     | `section_id`, `title`。non-root Sectionのタイトルだけをliteral textとして変更                                                                |
+| `sectionize` | `section_id`, `heading_block_id`。直接BodyのParagraphをタイトルへ変換し、後続Body全体を先頭の子Sectionへ移す                                 |
+| `move`       | `section_id`, `parent_section_id`, `placement`。本文・子孫を含むsubtreeを再配置。親変更と兄弟間の並び替え                                    |
+| `delete`     | `section_id`, `mode: "empty" / "subtree"`。削除範囲を明示。`mode`省略は拒否                                                                  |
+
+タイトルは空も可、最大4096 UTF-8 bytes、CR/LF/NUL不可である。
+RootはNote IDと同一である。Rootの改名は`note-edit`のみ。Root移動・削除とNote間移動は非対応。
+作成・移動とも親は明示したSection ID（Rootの場合もnullではない）とし、既存の親本文を新しい子へ移さない。
+本文を分割しない`create`/`move`と、本文を分割する`sectionize`を区別する。
+
+### 10.1 既存本文のSection化
+
+`sectionize`の対象は、指定したSectionの直接BodyにあるParagraphのみ。RootのBodyにも使える。
+対象Paragraphのtextを単一行タイトルとする新しいSectionを**先頭の子**に作り、対象より後ろの直接Bodyをすべて移す。
+対象より前のBodyと既存の子Section（その子孫を含む）はそのまま残す。表示順を変える任意の中間範囲・配置指定は設けない。
+兄弟にしたい見出しが複数ある場合、末尾から先頭へ順に実行する。毎回最新revisionを読み直す。
+
+```json
+{
+  "op": "sectionize",
+  "section_id": "<元のSection UUIDv7>",
+  "heading_block_id": "<直接BodyのParagraph UUIDv7>"
+}
+```
+
+タイトル化するParagraphは消費され、新しいSection IDへ対応付く。空タイトル・空の後続Bodyも可で、空Paragraphを残したり補ったりしない。
+見出しのbold/italic/strike/code/highlightはSectionのタイトル表示へ置き換わる。リンクなどそれ以外のmark、inline atom、
+Hard Breakは`UNSUPPORTED_CONTENT`で拒否し、不可視情報を黙って捨てない。タイトル長・禁止文字は通常のタイトルと同じ。
+新規Sectionのtagsは空、emojiはなし。既存本文のBlock ID、typed属性、rich text、添付参照はそのまま保ち、Markdown再解釈しない。
+prefixの共有typeを保持し、移動するsuffixだけをcloneして同一transactionで元を削除する。
+丸ごと移るBodyChunkはIDを保持し、境界で分割した新しいChunkだけ新IDとする。空Chunkは残さない。
+移動対象全体（消費する見出しを含む）に10,000 nodes / 8 MiBの制限を適用し、新Sectionも深さ制限に従う。
+
+結果の`section_id`は新Section ID。`deleted_block_ids`に消費した見出し、`moved_block_ids`に本文のID、
+`sectionized_heading: {block_id, section_id}`に変換元・先を返す。GUIはこの対応で見出し上の選択位置を新タイトルに復元し、
+後続本文は従来通りBlock IDとoffsetで復元する。WindowのFocused Sectionは切り替えない。
+`changes`には元Paragraphの`heading_before`、`title`、親ID、index 0、移動ID、直接本文数とSection Markdownを返す。
+
+### 10.2 共通の配置・保存・結果
+
+placementは`{"kind":"first"}`、`{"kind":"last"}`、
+`{"kind":"before","section_id":"兄弟ID"}`、`{"kind":"after","section_id":"兄弟ID"}`。
+anchorは移動先親の別の直接の子でなければならない。移動元を除いた兄弟列で挿入位置を決める。
+別NoteのID、自身/子孫への移動、移動元自身をanchorにする指定を拒否する。既に同じ位置や同じタイトルならno-op。
+最大深さはNote Rootを0として5。作成先と移動後の子孫すべてに適用し、超過時は`SECTION_DEPTH_LIMIT`。
+
+`empty`削除は子Sectionがなく、Bodyが空または空Paragraphのみの場合に限定する。
+内容のあるParagraph、空でもCode/Table/画像等の構造を持つBody、子Sectionの存在は`SECTION_NOT_EMPTY`で拒否する。
+`subtree`はそのSection・本文・全子孫を削除する明示指定であり、拒否後に自動でこのmodeへ切り替えない。
+削除によって既存の内部リンクは未解決になり得る。リンク元を書き換えたり別のSectionへ付け替えたりしない。
+
+移動は既存Section/Block/BodyChunk ID、タグ・emoji、typed属性、rich text、添付参照を保持する。
+Yjsの共有type自体は再parentできないため、native側で**対象subtreeだけ**を型付きで複製し、同じtransaction内で元を削除する。
+無関係なSection、本文、Rootは作り直さない。内部リンクの参照IDを保ち、移動先の深さ色・Outlineを更新する。
+GUIの各Windowの選択はBlock/Section IDとoffsetで退避・復元し、移動したSectionにフォーカス中なら新しい共有typeへ再bindする。
+削除されたSectionにフォーカス中のWindowは削除元の親（RootならNote全体）へ戻し、失われた選択も親titleへ戻す。
+削除したIDはWindow-local foldとOutline選択から整理する。無関係なWindowやactive Tabは切り替えない。
+非表示NoteのSection候補も再読込し、検索・リンク表示のためだけにBuffer/Editorを作らない。
+
+requestは1 MiB。作成・移動・削除・Section化の対象は10,000 nodes（SectionとBody内のtextを含むJSON nodes）、
+serialized Section modelで8 MiBまで。既存Note全体を無制限に複製するAPIではない。
+moveはBody編集のMarkdown subset外のブロックも保持するが、新規Markdown取り込みの対応範囲は広げない。
+
+結果は`revision_scope: "note"`、対象`section_id`、`affected_section_ids`、`created_section_ids`、
+`deleted_section_ids`、`created_block_ids`、`deleted_block_ids`を返す。削除は`fallback_section_id`も返す。
+`changes`はcreateの親・index・title・Markdown、renameのbefore/after、moveの前後parent/indexとsubtree ID、
+deleteの対象ID・削除Markdownを持つ意味的差分。indexは0始まり。64 KiB超過時は`changes`を省略し`diff_truncated: true`を返す。
+全応答は2 MiB以内。previewのIDは予約しない。receiptの再送は生成IDを含む確定済み結果を返す。
+次の操作は適用後に読み直してから作り、過去のrevisionの連番を推測しない。GUI Undoへは追加しない。

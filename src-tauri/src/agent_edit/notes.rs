@@ -112,7 +112,7 @@ impl NoteRequest {
         Ok(())
     }
 }
-fn validate_title(title: &str) -> Result<(), ReadError> {
+pub(super) fn validate_title(title: &str) -> Result<(), ReadError> {
     if title.len() > 4096 || title.contains(['\r', '\n', '\0']) {
         Err(invalid(
             "title must be a single line of at most 4096 UTF-8 bytes",

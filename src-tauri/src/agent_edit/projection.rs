@@ -285,10 +285,13 @@ impl Index {
             blocks.push(row);
             end += 1;
         }
-        let mut pending = vec![&note.root];
+        let mut pending = vec![(&note.root, None, 0)];
         let mut children = vec![];
-        while let Some(section) = pending.pop() {
+        let mut context = Value::Null;
+        while let Some((section, parent_id, depth)) = pending.pop() {
             if section.section_id == section_id {
+                context =
+                    json!({"title":section.title,"parent_section_id":parent_id,"depth":depth});
                 children = section
                     .children
                     .iter()
@@ -296,10 +299,16 @@ impl Index {
                     .collect();
                 break;
             }
-            pending.extend(&section.children);
+            pending.extend(
+                section
+                    .children
+                    .iter()
+                    .map(|s| (s, Some(section.section_id.as_str()), depth + 1)),
+            );
         }
         let result = json!({"schema_version":1,"representation":"edit_view","source":"current","workspace_id":workspace_id,"note_id":note.note_id,
-            "section_id":section_id,"revision":note.revision,"scope":"body","blocks":blocks,"children":children,"total":section.blocks.len(),
+            "section_id":section_id,"title":context["title"],"parent_section_id":context["parent_section_id"],"depth":context["depth"],
+            "revision":note.revision,"scope":"body","blocks":blocks,"children":children,"total":section.blocks.len(),
             "next_cursor":if end<section.blocks.len(){Some(format!("{prefix}{end}"))}else{None}});
         if serde_json::to_vec(&result)?.len() > MAX_RESULT_BYTES {
             return Err(invalid("Section edit view exceeds the response limit"));
@@ -678,7 +687,10 @@ pub(super) fn insert_block(
     Ok(node)
 }
 
-pub(super) fn split_chunks(txn: &mut yrs::TransactionMut, body: &XmlElementRef) -> Result<(), ReadError> {
+pub(super) fn split_chunks(
+    txn: &mut yrs::TransactionMut,
+    body: &XmlElementRef,
+) -> Result<(), ReadError> {
     let chunks = body.children(txn).collect::<Vec<_>>();
     for (chunk_index, chunk) in chunks.into_iter().enumerate().rev() {
         let XmlOut::Element(chunk) = chunk else {
