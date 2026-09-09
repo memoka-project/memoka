@@ -267,9 +267,12 @@ backup処理中の別WindowのInsert入力、読み取り専用preview、preview
 - 親Bodyと子Sectionを区別し、入れ子Paragraphの置換とanchor拒否、既存ID維持、同一gapの順序を検査する。
 - 対応Markdown、literalな置換、safe/internal link、未対応構造のbatch全体拒否、入力・block・diffの上限を検査する。
 - no-op/dry-run、保存前/SQL確定前失敗、確定後応答喪失、永続receipt、再送・revision conflict・cursor staleを検査する。
+- Note作成の本文・Root/entry ID・空タイトル・再送時の重複防止、renameの本文ID維持とNote/Workspace競合、moveの子孫・Note revision/日時の維持を検査する。
+- placementの親・兄弟anchor・cycle拒否、既に正しい位置のno-op、同値position bucketの局所再採番とfrontendのjitter golden値を検査する。
+- Workspace catalogの未設定・旧形式・未mount・MRU重複排除を検査し、一覧取得では設定作成やfilesystem全体の探索をしない。
 - `reader_cli`でDISPLAY/DBUSなしの編集、旧schema非移行、stdout JSON、owner失敗時の直接write fallback禁止を確認する。
 - `corepack pnpm tauri:agent-e2e`で起動GUIとstandaloneの意味的結果を比較し、複数Window、非表示Note、
-  IME拒否、既存Undo、SQL故障時の非公開と確定後応答回復を検証する。独立した一時Workspaceだけを使う。
+  IME拒否、既存Undo、SQL故障時の非公開と確定後応答回復、Note作成・改名・移動でのWindow状態維持を検証する。独立した一時Workspaceだけを使う。
   debug buildを`MEMOKA_TAURI_APP`、対応CLIを`MEMOKA_E2E_CLI`で指定する。release artifactでは
   `MEMOKA_E2E_AGENT_FAULTS=0`でdebug専用故障注入を除外する。Linuxで別GUIを起動したまま実行する場合はprivate D-Bus sessionを使う。
 - Task ListのMarkdown/HTML/Clipboard、rich/nested/mixed内容、click/Normal Enter、新規未完了Item、Undo、IME優先を検査する。

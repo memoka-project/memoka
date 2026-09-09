@@ -416,7 +416,7 @@ impl ProductStore {
         let transaction = self
             .connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        if let Some(result) = crate::agent_edit::receipt(&transaction, &prepared.request)? {
+        if let Some(result) = crate::agent_edit::receipt(&transaction, prepared.request.clone())? {
             return Ok(result);
         }
         let workspace_id: String = transaction.query_row(
@@ -424,15 +424,20 @@ impl ProductStore {
             [],
             |r| r.get(0),
         )?;
-        if workspace_id != prepared.request.workspace_id {
+        if workspace_id != prepared.request.workspace_id() {
             return Err(ReadError::new("WORKSPACE_MISMATCH", "Workspace changed"));
         }
-        let revision: i64 = transaction.query_row(
-            "SELECT revision FROM documents WHERE kind='note' AND document_id=?1",
-            [&prepared.request.note_id],
-            |r| r.get(0),
-        )?;
-        crate::agent_edit::check_revision(prepared.request.expected_revision, revision)?;
+        if let Some(expected_revision) = prepared.request.expected_note_revision() {
+            let revision: i64 = transaction.query_row(
+                "SELECT revision FROM documents WHERE kind='note' AND document_id=?1",
+                [prepared
+                    .request
+                    .note_id()
+                    .expect("note revision requires Note ID")],
+                |r| r.get(0),
+            )?;
+            crate::agent_edit::check_revision(expected_revision, revision)?;
+        }
         let workspace_revision: i64 = transaction.query_row(
             "SELECT revision FROM documents WHERE kind='workspace' AND document_id=?1",
             [&workspace_id],
@@ -458,7 +463,7 @@ impl ProductStore {
             )?;
             advance_search_index_metadata_revision(&transaction, request, &revisions)?;
         }
-        transaction.execute("INSERT INTO agent_edit_receipts(workspace_id,request_id,request_hash,result_json) VALUES (?1,?2,?3,?4)", params![workspace_id,prepared.request.request_id,prepared.fingerprint,serde_json::to_string(&prepared.result)?])?;
+        transaction.execute("INSERT INTO agent_edit_receipts(workspace_id,request_id,request_hash,result_json) VALUES (?1,?2,?3,?4)", params![workspace_id,prepared.request.request_id(),prepared.fingerprint,serde_json::to_string(&prepared.result)?])?;
         if request.fault == Some(CommitFault::BeforeSqlCommit) {
             return Err(PersistenceError::Injected(CommitFault::BeforeSqlCommit).into());
         }

@@ -33,8 +33,10 @@ pub mod read_service;
 pub mod restic;
 mod search_index;
 mod sidecar;
+mod sibling_position;
 mod workspace_migration;
 pub mod workspace_owner;
+mod workspace_catalog;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

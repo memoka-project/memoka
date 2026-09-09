@@ -2,7 +2,9 @@
 //! the lease-owning standalone CLI; it never edits a live frontend document.
 pub mod bridge;
 mod markdown;
+mod notes;
 mod projection;
+pub use notes::{NoteAction, NoteRequest};
 
 use crate::document_model::{ReadError, decode_document, read_note};
 use crate::persistence::{DocumentCommitInput, PersistenceCommitRequest, ProductStore};
@@ -24,6 +26,68 @@ pub const MAX_EDITS: usize = 100;
 pub const MAX_DIFF_BYTES: usize = 64 * 1024;
 pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NEW_BLOCKS: usize = 10_000;
+
+/// Both public editing envelopes use one owner, durable receipt, and GUI
+/// delivery boundary. Untagged serialization preserves existing receipt hashes.
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum AgentRequest {
+    Body(EditRequest),
+    Note(NoteRequest),
+}
+impl From<EditRequest> for AgentRequest {
+    fn from(value: EditRequest) -> Self {
+        Self::Body(value)
+    }
+}
+impl From<NoteRequest> for AgentRequest {
+    fn from(value: NoteRequest) -> Self {
+        Self::Note(value)
+    }
+}
+impl AgentRequest {
+    pub fn workspace_id(&self) -> &str {
+        match self {
+            Self::Body(r) => &r.workspace_id,
+            Self::Note(r) => &r.workspace_id,
+        }
+    }
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Body(r) => &r.request_id,
+            Self::Note(r) => &r.request_id,
+        }
+    }
+    pub fn note_id(&self) -> Option<&str> {
+        match self {
+            Self::Body(r) => Some(&r.note_id),
+            Self::Note(r) => r.action.note_id(),
+        }
+    }
+    pub fn expected_note_revision(&self) -> Option<i64> {
+        match self {
+            Self::Body(r) => Some(r.expected_revision),
+            Self::Note(r) => match r.action {
+                NoteAction::Rename {
+                    expected_revision, ..
+                } => Some(expected_revision),
+                _ => None,
+            },
+        }
+    }
+    pub fn validate(&self) -> Result<(), ReadError> {
+        match self {
+            Self::Body(r) => r.validate(),
+            Self::Note(r) => r.validate(),
+        }
+    }
+    pub fn identity(&self) -> Value {
+        json!({"workspace_id":self.workspace_id(),"request_id":self.request_id(),"note_id":self.note_id(),"expected_revision":self.expected_note_revision()})
+    }
+    fn fingerprint(&self) -> Result<String, ReadError> {
+        Ok(hex(&Sha256::digest(serde_json::to_vec(self)?)))
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -166,13 +230,22 @@ impl EditRequest {
         }
         Ok(())
     }
-    fn fingerprint(&self) -> Result<String, ReadError> {
-        Ok(hex(&Sha256::digest(serde_json::to_vec(self)?)))
-    }
 }
 
 /// Do not let serde_json::Value silently collapse duplicate object keys.
 pub fn parse_request(bytes: &[u8]) -> Result<EditRequest, ReadError> {
+    let request: EditRequest = parse_unique_request(bytes)?;
+    request.validate()?;
+    Ok(request)
+}
+
+pub fn parse_note_request(bytes: &[u8]) -> Result<NoteRequest, ReadError> {
+    let request: NoteRequest = parse_unique_request(bytes)?;
+    request.validate()?;
+    Ok(request)
+}
+
+fn parse_unique_request<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, ReadError> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(invalid("Input exceeds 1 MiB"));
     }
@@ -232,21 +305,19 @@ pub fn parse_request(bytes: &[u8]) -> Result<EditRequest, ReadError> {
     }
     let value: UniqueValue = serde_json::from_slice(bytes)
         .map_err(|_| invalid("Invalid JSON, duplicate keys, or nesting limit exceeded"))?;
-    let request: EditRequest = serde_json::from_value(value.0)
-        .map_err(|e| invalid(&format!("Invalid edit request: {e}")))?;
-    request.validate()?;
-    Ok(request)
+    serde_json::from_value(value.0).map_err(|e| invalid(&format!("Invalid edit request: {e}")))
 }
 
 pub fn schema() -> Value {
-    json!({"schema_version":1,"cli_version":env!("CARGO_PKG_VERSION"),"request":schemars::schema_for!(EditRequest),
+    json!({"schema_version":1,"cli_version":env!("CARGO_PKG_VERSION"),"request":schemars::schema_for!(EditRequest),"note_request":schemars::schema_for!(NoteRequest),
         "limits":{"input_bytes":MAX_INPUT_BYTES,"edits":MAX_EDITS,"diff_bytes":MAX_DIFF_BYTES,"new_blocks":MAX_NEW_BLOCKS,"result_bytes":MAX_RESULT_BYTES,"edit_view_block_bytes":256*1024,"edit_view_page_bytes":MAX_INPUT_BYTES},
         "read":"read --id ID --for-edit --format json [--workspace DIR] [--limit N] [--cursor CURSOR]",
-        "edit":"edit --input FILE|- --format json [--workspace DIR] [--dry-run]"})
+        "edit":"edit --input FILE|- --format json [--workspace DIR] [--dry-run]",
+        "note_edit":"note-edit --input FILE|- --format json [--workspace DIR] [--dry-run]"})
 }
 
 pub struct PreparedEdit {
-    pub request: EditRequest,
+    pub request: AgentRequest,
     pub fingerprint: String,
     pub documents: Vec<DocumentCommitInput>,
     pub result: Value,
@@ -254,10 +325,14 @@ pub struct PreparedEdit {
     pub replayed: bool,
 }
 
-pub fn receipt(connection: &Connection, request: &EditRequest) -> Result<Option<Value>, ReadError> {
+pub fn receipt(
+    connection: &Connection,
+    request: impl Into<AgentRequest>,
+) -> Result<Option<Value>, ReadError> {
+    let request = request.into();
     let row: Option<(String, String)> = connection.query_row(
         "SELECT request_hash,result_json FROM agent_edit_receipts WHERE workspace_id=?1 AND request_id=?2",
-        params![request.workspace_id, request.request_id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+        params![request.workspace_id(), request.request_id()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
     row.map(|(fingerprint, result)| {
         if fingerprint != request.fingerprint()? {
             return Err(ReadError::new(
@@ -338,7 +413,14 @@ pub fn read_for_edit(
     ))
 }
 
-pub fn prepare(workspace: &Path, request: EditRequest) -> Result<PreparedEdit, ReadError> {
+pub fn prepare(
+    workspace: &Path,
+    request: impl Into<AgentRequest>,
+) -> Result<PreparedEdit, ReadError> {
+    let request = match request.into() {
+        AgentRequest::Note(request) => return notes::prepare(workspace, request),
+        AgentRequest::Body(request) => request,
+    };
     request.validate()?;
     let reader = WorkspaceReader::open(workspace)?;
     require_edit_schema(&reader)?;
@@ -348,10 +430,10 @@ pub fn prepare(workspace: &Path, request: EditRequest) -> Result<PreparedEdit, R
             "Workspace identity does not match the request",
         ));
     }
-    let fingerprint = request.fingerprint()?;
-    if let Some(result) = receipt(&reader.connection, &request)? {
+    let fingerprint = AgentRequest::from(request.clone()).fingerprint()?;
+    if let Some(result) = receipt(&reader.connection, request.clone())? {
         return Ok(PreparedEdit {
-            request,
+            request: request.into(),
             fingerprint,
             documents: vec![],
             result,
@@ -486,7 +568,7 @@ pub fn prepare(workspace: &Path, request: EditRequest) -> Result<PreparedEdit, R
         return Err(invalid("Edit result is too large; use a smaller batch"));
     }
     Ok(PreparedEdit {
-        request,
+        request: request.into(),
         fingerprint,
         documents,
         result,
@@ -513,6 +595,9 @@ pub fn preview(prepared: &PreparedEdit) -> Value {
         result["status"] = "preview".into();
         result["applied_edits"] = 0.into();
         result["revision_after"] = result["revision_before"].clone();
+        if result.get("workspace_revision_before").is_some() {
+            result["workspace_revision_after"] = result["workspace_revision_before"].clone();
+        }
     }
     result
 }
@@ -529,15 +614,18 @@ pub(crate) fn commit_with_fault(
     prepared: &PreparedEdit,
     fault: Option<crate::persistence::CommitFault>,
 ) -> Result<Value, ReadError> {
-    if let Some(result) = receipt(&store.connection, &prepared.request)? {
+    if let Some(result) = receipt(&store.connection, prepared.request.clone())? {
         return Ok(result);
     }
     let request = PersistenceCommitRequest {
-        operation_id: format!("agent-edit-{}", prepared.request.request_id),
+        operation_id: format!("agent-edit-{}", prepared.request.request_id()),
         scope: "workspace-structure".into(),
         documents: prepared.documents.clone(),
         local_states: vec![],
-        search_index_metadata_only_note_id: Some(prepared.request.note_id.clone()),
+        search_index_metadata_only_note_id: match &prepared.request {
+            AgentRequest::Body(request) => Some(request.note_id.clone()),
+            AgentRequest::Note(_) => None,
+        },
         fault,
     };
     store.commit_agent_edit(&request, prepared)
@@ -545,7 +633,7 @@ pub(crate) fn commit_with_fault(
 
 pub fn standalone(
     workspace: &Path,
-    request: EditRequest,
+    request: impl Into<AgentRequest>,
     dry_run: bool,
 ) -> Result<Value, ReadError> {
     let prepared = prepare(workspace, request)?;

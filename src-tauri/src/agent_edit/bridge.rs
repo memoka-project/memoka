@@ -12,7 +12,7 @@ use tauri::{Emitter, Manager};
 
 struct Pending {
     workspace: PathBuf,
-    request: EditRequest,
+    request: AgentRequest,
     dry_run: bool,
     prepared: Option<PreparedEdit>,
     delivery: Option<Value>,
@@ -37,20 +37,21 @@ impl AgentEdits {
         &self,
         app: &tauri::AppHandle,
         workspace: PathBuf,
-        request: EditRequest,
+        request: impl Into<AgentRequest>,
         dry_run: bool,
     ) -> Result<Value, ReadError> {
+        let request = request.into();
         request.validate()?;
         // Stable receipts win over liveness, revision, IME and busy checks.
         let reader = WorkspaceReader::open(&workspace)?;
         require_edit_schema(&reader)?;
-        if reader.workspace_id != request.workspace_id {
+        if reader.workspace_id != request.workspace_id() {
             return Err(ReadError::new(
                 "WORKSPACE_MISMATCH",
                 "Workspace identity does not match",
             ));
         }
-        if let Some(result) = receipt(&reader.connection, &request)? {
+        if let Some(result) = receipt(&reader.connection, request.clone())? {
             return Ok(result);
         }
         drop(reader);
@@ -82,7 +83,10 @@ impl AgentEdits {
             );
         }
         if app
-            .emit("memoka-agent-edit", json!({"id":id,"request":request}))
+            .emit(
+                "memoka-agent-edit",
+                json!({"id":id,"request":request.identity()}),
+            )
             .is_err()
         {
             self.pending.lock().map_err(|_| busy())?.remove(&id);
@@ -175,7 +179,7 @@ pub async fn agent_edit_commit(app: tauri::AppHandle, id: String) -> Result<Valu
             .iter()
             .map(|document| {
                 json!({"kind":document.kind,"document_id":document.document_id,
-            "revision":document.base_revision+1,"update":document.update})
+            "revision":document.base_revision+1,"update":document.update.as_ref().or(document.snapshot.as_ref())})
             })
             .collect::<Vec<_>>();
         let delivery = json!({"result":result,"documents":documents});

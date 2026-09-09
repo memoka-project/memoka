@@ -112,20 +112,8 @@ pub(crate) fn save_selected_data_area(
     path: &Path,
 ) -> Result<(), PersistenceError> {
     let selection_path = selection_path(app)?;
-    if let Some(parent) = selection_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    write_json_atomic(
-        &selection_path,
-        &SelectedWorkspace {
-            schema_version: DATA_AREA_SCHEMA_VERSION,
-            path: path.to_path_buf(),
-        },
-    )?;
-    if let Some(parent) = selection_path.parent() {
-        sync_directory(parent)?;
-    }
-    Ok(())
+    crate::workspace_catalog::save_selection(&selection_path, path)
+        .map_err(|error| PersistenceError::InvalidInput(error.to_string()))
 }
 
 fn selection_path(app: &AppHandle) -> Result<PathBuf, PersistenceError> {

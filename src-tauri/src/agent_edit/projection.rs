@@ -678,7 +678,7 @@ pub(super) fn insert_block(
     Ok(node)
 }
 
-fn split_chunks(txn: &mut yrs::TransactionMut, body: &XmlElementRef) -> Result<(), ReadError> {
+pub(super) fn split_chunks(txn: &mut yrs::TransactionMut, body: &XmlElementRef) -> Result<(), ReadError> {
     let chunks = body.children(txn).collect::<Vec<_>>();
     for (chunk_index, chunk) in chunks.into_iter().enumerate().rev() {
         let XmlOut::Element(chunk) = chunk else {

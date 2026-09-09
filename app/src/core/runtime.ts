@@ -829,7 +829,7 @@ export class CoreRuntime {
           continue;
         }
         if (
-          noteId === request.note_id &&
+          (request.note_id === null || noteId === request.note_id) &&
           (adapter.editor.view.composing || adapter.vimSnapshot.composing)
         )
           active = true;
@@ -843,13 +843,16 @@ export class CoreRuntime {
       throw fail("WORKSPACE_MISMATCH");
     if (composing()) throw fail("IME_ACTIVE");
     await this.flushDurableState();
-    await this.runWithNotePersistenceLock(request.note_id, async () => {
-      const handle = this.notes.get(request.note_id);
+    const apply = async () => {
+      const handle = request.note_id
+        ? this.notes.get(request.note_id)
+        : undefined;
       let changed = false;
       const observe = () => {
         changed = true;
       };
       handle?.current.doc.on("update", observe);
+      this.workspace.current.doc.on("update", observe);
       let release: (() => void) | undefined;
       try {
         const prepared = await nativeAgentEdit.prepare(id);
@@ -858,7 +861,8 @@ export class CoreRuntime {
         if (composing()) throw fail("IME_ACTIVE");
         if (
           changed ||
-          this.notes.get(request.note_id) !== handle ||
+          (request.note_id !== null &&
+            this.notes.get(request.note_id) !== handle) ||
           this.commandsInFlight > 0 ||
           this.externalCommit
         )
@@ -892,23 +896,46 @@ export class CoreRuntime {
         }, isCurrent);
         if (!published) throw fail("AGENT_RESPONSE_LOST");
         if (delivery.documents.length) {
-          this.changedNoteRevisions.set(
-            request.note_id,
-            delivery.result.revision_after,
+          const noteDocuments = delivery.documents.filter(
+            (document) => document.kind === "note",
           );
-          this.noteContentRevision++;
-          if (handle) this.queueWorkspaceSearchIndexDocument(request.note_id);
-          else this.queueWorkspaceSearchIndexRebuild();
+          for (const document of noteDocuments) {
+            this.changedNoteRevisions.set(
+              document.document_id,
+              document.revision,
+            );
+            this.queueWorkspaceSearchIndexDocument(document.document_id);
+          }
+          if (noteDocuments.length) this.noteContentRevision++;
+          if (delivery.result.workspace_revision_before !== undefined) {
+            if (delivery.result.entry_id)
+              this.pendingWorkspaceSearchNamespaceEntryIds.add(
+                delivery.result.entry_id,
+              );
+            for (const entryId of delivery.result.reindexed_entry_ids ?? [])
+              this.pendingWorkspaceSearchNamespaceEntryIds.add(entryId);
+            this.queueWorkspaceSearchIndexHierarchyUpdate(
+              delivery.result.workspace_revision_before,
+              noteDocuments.map((document) => document.document_id),
+            );
+            this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
+            this.sectionCatalogRevision++;
+            this.internalLinkLabelRevision++;
+          }
           this.setReady();
         }
       } finally {
         handle?.current.doc.off("update", observe);
+        this.workspace.current.doc.off("update", observe);
         if (release) {
           this.externalCommit = null;
           release();
         }
       }
-    });
+    };
+    if (request.note_id)
+      await this.runWithNotePersistenceLock(request.note_id, apply);
+    else await apply();
   }
 
   createNoteAtEnd(
@@ -4713,9 +4740,7 @@ export class CoreRuntime {
     if (!this.workspaceSearchIndex) return;
     const metadata = readNoteMetadata(this.workspaceDocument, noteId);
     if (!metadata || metadata.deletedAt) return;
-    const handle = this.notes.get(noteId);
     const session = this.notePersistence.get(noteId);
-    if (!handle || handle.current.kind !== "note") return;
 
     // The debounce runs after an editor update has been queued, but more
     // updates may have joined the same persistence chain in the meantime.
@@ -4725,47 +4750,52 @@ export class CoreRuntime {
     // the Tauri bridge after each short typing pause.
     await session?.flush();
     const workspaceRevision = this.workspace.revision;
-    const sourceRevision = handle.revision;
-    const sourceDocument = handle.current;
-    const document: WorkspaceSearchIndexedDocument = {
-      ...(await deriveWorkspaceSearchDocumentAsync(
-        sourceDocument,
-        metadata.title,
-        noteAncestorPath(
-          listNoteMetadata(this.workspaceDocument),
-          metadata.noteId,
-        ),
-        metadata.updatedAt,
-        metadata.parentNoteId,
-      )),
-      sourceRevision,
-    };
-    if (
-      this.workspace.revision !== workspaceRevision ||
-      handle.current !== sourceDocument ||
-      handle.revision !== sourceRevision
-    ) {
-      this.queueWorkspaceSearchIndexDocument(noteId);
-      return;
-    }
-    const status =
-      await this.workspaceSearchIndex.replaceWorkspaceSearchIndexDocument({
-        schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
-        workspaceId: this.workspaceDocument.workspaceId,
-        workspaceRevision,
-        document,
-      });
-    if (status === "stale") {
-      this.queueWorkspaceSearchIndexRebuild();
-      return;
-    }
-    if (
-      handle.revision === sourceRevision &&
-      this.workspace.revision === workspaceRevision
-    ) {
-      this.workspaceSearchDirtyNoteIds.delete(noteId);
-    } else {
-      this.queueWorkspaceSearchIndexDocument(noteId);
+    const changedRevision = this.changedNoteRevisions.get(noteId);
+    // Hidden external edits need one persisted Note, not a Workspace rebuild
+    // or an Editor mount. Loaded NoteDocs are borrowed without a DB roundtrip.
+    const preview = await this.loadNotePreview(noteId);
+    try {
+      const sourceRevision = preview.revision;
+      const sourceDocument = preview.document;
+      const current = () =>
+        this.workspace.revision === workspaceRevision &&
+        this.changedNoteRevisions.get(noteId) === changedRevision &&
+        (this.notes.get(noteId)?.revision ?? sourceRevision) === sourceRevision;
+      const document: WorkspaceSearchIndexedDocument = {
+        ...(await deriveWorkspaceSearchDocumentAsync(
+          sourceDocument,
+          metadata.title,
+          noteAncestorPath(
+            listNoteMetadata(this.workspaceDocument),
+            metadata.noteId,
+          ),
+          metadata.updatedAt,
+          metadata.parentNoteId,
+        )),
+        sourceRevision,
+      };
+      if (!current()) {
+        this.queueWorkspaceSearchIndexDocument(noteId);
+        return;
+      }
+      const status =
+        await this.workspaceSearchIndex.replaceWorkspaceSearchIndexDocument({
+          schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+          workspaceId: this.workspaceDocument.workspaceId,
+          workspaceRevision,
+          document,
+        });
+      if (status === "stale") {
+        this.queueWorkspaceSearchIndexRebuild();
+        return;
+      }
+      if (current()) {
+        this.workspaceSearchDirtyNoteIds.delete(noteId);
+      } else {
+        this.queueWorkspaceSearchIndexDocument(noteId);
+      }
+    } finally {
+      preview.release();
     }
   }
 

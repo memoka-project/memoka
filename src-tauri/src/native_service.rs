@@ -338,6 +338,12 @@ impl NativeService {
     }
     pub fn query(&self, request: Request) -> Result<Reply, ReadError> {
         match request {
+            Request::NoteEdit { request, dry_run } => {
+                if self._lease.is_none() || self.departing() {
+                    return Err(ReadError::new("EDIT_BUSY", "Editing requires the Workspace owner"));
+                }
+                crate::agent_edit::standalone(&self.workspace, request, dry_run).map(Reply::Json)
+            }
             Request::Edit { request, dry_run } => {
                 if self._lease.is_none() || self.departing() {
                     return Err(ReadError::new(
@@ -1637,6 +1643,12 @@ pub(crate) fn gui_handler(
             app.state::<SaveBarriers>().wait(&app)?;
         }
         if let Request::Edit { request, dry_run } = request {
+            return app
+                .state::<crate::agent_edit::bridge::AgentEdits>()
+                .dispatch(&app, service.workspace.clone(), request, dry_run)
+                .map(Reply::Json);
+        }
+        if let Request::NoteEdit { request, dry_run } = request {
             return app
                 .state::<crate::agent_edit::bridge::AgentEdits>()
                 .dispatch(&app, service.workspace.clone(), request, dry_run)

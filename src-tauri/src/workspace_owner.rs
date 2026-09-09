@@ -99,6 +99,11 @@ impl WorkspaceLease {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    NoteEdit {
+        request: crate::agent_edit::NoteRequest,
+        #[serde(default)]
+        dry_run: bool,
+    },
     Edit {
         request: crate::agent_edit::EditRequest,
         #[serde(default)]
@@ -342,7 +347,7 @@ impl Drop for Server {
 fn serve(stream: &mut Stream, handler: &Handler) -> Result<(), ReadError> {
     let bytes = read_frame(stream, MAX_REQUEST, Instant::now() + IO_TIMEOUT)?;
     let request: Request = serde_json::from_slice(&bytes)?;
-    if !matches!(request, Request::Edit { .. }) && bytes.len() > 64 * 1024 {
+    if !matches!(request, Request::Edit { .. } | Request::NoteEdit { .. }) && bytes.len() > 64 * 1024 {
         return Err(ReadError::new(
             "INVALID_ARGUMENT",
             "Request exceeds size limit",

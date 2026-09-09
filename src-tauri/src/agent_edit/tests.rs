@@ -51,8 +51,336 @@ fn append(markdown: &str) -> Value {
 fn view(temp: &tempfile::TempDir) -> Value {
     read_for_edit(temp.path(), NOTE, 100, None).unwrap()
 }
-fn run(temp: &tempfile::TempDir, request: EditRequest) -> Value {
+fn run(temp: &tempfile::TempDir, request: impl Into<AgentRequest>) -> Value {
     standalone(temp.path(), request, false).unwrap()
+}
+
+fn note_request(temp: &tempfile::TempDir, action: Value) -> NoteRequest {
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    parse_note_request(&serde_json::to_vec(&json!({"schema_version":1,"workspace_id":WORKSPACE,
+        "expected_workspace_revision":reader.workspace_revision,"request_id":uuid::Uuid::now_v7().to_string(),"action":action})).unwrap()).unwrap()
+}
+fn create_action(title: &str, parent: Option<&str>) -> Value {
+    json!({"op":"create","title":title,"parent_entry_id":parent,"placement":{"kind":"last"},"markdown":"**記事**\n\n- [x] 確認\n- [ ] 次回"})
+}
+#[test]
+fn note_creation_is_atomic_previewable_replayable_and_preserves_existing_notes() {
+    let temp = fixture(vec![p("元の本文")]);
+    let before = view(&temp);
+    let request = note_request(&temp, create_action("新しい記事", None));
+    let preview = standalone(temp.path(), request.clone(), true).unwrap();
+    assert_eq!(preview["status"], "preview");
+    assert_eq!(
+        preview["workspace_revision_before"],
+        preview["workspace_revision_after"]
+    );
+    assert_eq!(
+        WorkspaceReader::open(temp.path())
+            .unwrap()
+            .namespace
+            .notes
+            .len(),
+        1
+    );
+    let result = run(&temp, request.clone());
+    let note_id = result["note_id"].as_str().unwrap();
+    validate_id(note_id).unwrap();
+    assert_ne!(note_id, result["entry_id"].as_str().unwrap());
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    assert_eq!(reader.namespace.notes.len(), 2);
+    assert_eq!(reader.namespace.notes[note_id]["title_cache"], "新しい記事");
+    let entry = reader.namespace.note_entry(note_id).unwrap();
+    assert!(entry.parent_entry_id.is_none());
+    let note = read_note(
+        &load_document(&reader.connection, "note", note_id).unwrap(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(note.revision, 1);
+    assert_eq!(note.root.section_id, note_id);
+    assert_eq!(note.root.body[0]["content"][0]["marks"][0]["type"], "bold");
+    assert_eq!(note.root.body[1]["content"][0]["attrs"]["checked"], true);
+    drop(reader);
+    assert_eq!(view(&temp)["blocks"], before["blocks"]);
+    assert_eq!(view(&temp)["revision"], before["revision"]);
+    let replay = run(&temp, request.clone());
+    assert_eq!(replay["note_id"], result["note_id"]);
+    assert_eq!(replay["replayed"], true);
+    let mut reused = request;
+    if let NoteAction::Create { title, .. } = &mut reused.action {
+        *title = "別内容".into();
+    }
+    assert_eq!(
+        prepare(temp.path(), reused).err().unwrap().code,
+        "REQUEST_ID_REUSED"
+    );
+}
+
+#[test]
+fn root_rename_changes_only_title_and_preserves_body_ids_and_noop_revisions() {
+    let temp = fixture(vec![p("変更しない😀")]);
+    let before = view(&temp);
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    let created_at = reader.namespace.notes[NOTE]["created_at"].clone();
+    drop(reader);
+    let renamed = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"rename","note_id":NOTE,"expected_revision":1,"title":"日本語の新題"}),
+        ),
+    );
+    assert_eq!(renamed["revision_scope"], "note");
+    assert_eq!(renamed["revision_after"], 2);
+    assert_eq!(view(&temp)["blocks"], before["blocks"]);
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    let note = read_note(
+        &load_document(&reader.connection, "note", NOTE).unwrap(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(note.root.title, "日本語の新題");
+    assert_eq!(reader.namespace.notes[NOTE]["title_cache"], "日本語の新題");
+    assert_eq!(reader.namespace.notes[NOTE]["created_at"], created_at);
+    let revision = reader.workspace_revision;
+    drop(reader);
+    let no_change = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"rename","note_id":NOTE,"expected_revision":2,"title":"日本語の新題"}),
+        ),
+    );
+    assert_eq!(no_change["status"], "no_change");
+    assert_eq!(no_change["workspace_revision_after"], revision);
+    assert_eq!(no_change["revision_after"], 2);
+    let stale = note_request(
+        &temp,
+        json!({"op":"rename","note_id":NOTE,"expected_revision":1,"title":"古い意図"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), stale).err().unwrap().code,
+        "REVISION_CONFLICT"
+    );
+}
+
+#[test]
+fn placement_moves_keep_subtrees_note_revisions_and_timestamps() {
+    let temp = fixture(vec![p("元の本文")]);
+    let original = WorkspaceReader::open(temp.path())
+        .unwrap()
+        .namespace
+        .note_entry(NOTE)
+        .unwrap()
+        .entry_id
+        .clone();
+    let parent = run(&temp, note_request(&temp, create_action("親", None)));
+    let parent_entry = parent["entry_id"].as_str().unwrap();
+    let child = run(
+        &temp,
+        note_request(&temp, create_action("子", Some(parent_entry))),
+    );
+    let child_entry = child["entry_id"].as_str().unwrap();
+    let before = WorkspaceReader::open(temp.path()).unwrap();
+    let notes = before.namespace.notes.clone();
+    let revisions = before.document_revisions.clone();
+    drop(before);
+    let cycle = note_request(
+        &temp,
+        json!({"op":"move","entry_id":parent_entry,"parent_entry_id":child_entry,"placement":{"kind":"last"}}),
+    );
+    assert_eq!(
+        prepare(temp.path(), cycle).err().unwrap().code,
+        "INVALID_TARGET"
+    );
+    let moved = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"move","entry_id":parent_entry,"parent_entry_id":original,"placement":{"kind":"first"}}),
+        ),
+    );
+    assert_eq!(moved["status"], "applied");
+    let after = WorkspaceReader::open(temp.path()).unwrap();
+    assert_eq!(
+        after.namespace.entries[child_entry]
+            .parent_entry_id
+            .as_deref(),
+        Some(parent_entry)
+    );
+    assert_eq!(
+        after.namespace.entries[parent_entry]
+            .parent_entry_id
+            .as_deref(),
+        Some(original.as_str())
+    );
+    assert_eq!(after.namespace.notes, notes);
+    assert_eq!(after.document_revisions, revisions);
+    drop(after);
+    let noop = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"move","entry_id":parent_entry,"parent_entry_id":original,"placement":{"kind":"last"}}),
+        ),
+    );
+    assert_eq!(noop["status"], "no_change");
+    let top = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"move","entry_id":child_entry,"parent_entry_id":null,"placement":{"kind":"before","entry_id":original}}),
+        ),
+    );
+    assert_eq!(top["status"], "applied");
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    assert_eq!(reader.namespace.ordered(false)[0].0.entry_id, child_entry);
+}
+
+#[test]
+fn note_commands_reject_stale_workspace_and_rollback_failed_creation() {
+    let temp = fixture(vec![p("元の本文")]);
+    let req = note_request(&temp, create_action("記事", None));
+    let prepared = prepare(temp.path(), req.clone()).unwrap();
+    let mut store = ProductStore::open_existing_for_edit(temp.path()).unwrap();
+    for fault in [
+        crate::persistence::CommitFault::BeforeCommit,
+        crate::persistence::CommitFault::BeforeSqlCommit,
+    ] {
+        assert!(commit_with_fault(&mut store, &prepared, Some(fault)).is_err());
+        assert_eq!(
+            WorkspaceReader::open(temp.path())
+                .unwrap()
+                .namespace
+                .notes
+                .len(),
+            1
+        );
+        assert!(receipt(&store.connection, req.clone()).unwrap().is_none());
+    }
+    assert_eq!(
+        commit_with_fault(
+            &mut store,
+            &prepared,
+            Some(crate::persistence::CommitFault::AfterCommitResponse)
+        )
+        .unwrap_err()
+        .code,
+        "AGENT_RESPONSE_LOST"
+    );
+    let replay = run(&temp, req.clone());
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(
+        WorkspaceReader::open(temp.path())
+            .unwrap()
+            .namespace
+            .notes
+            .len(),
+        2
+    );
+    let mut stale = req;
+    stale.request_id = uuid::Uuid::now_v7().to_string();
+    assert_eq!(
+        prepare(temp.path(), stale).err().unwrap().code,
+        "WORKSPACE_CHANGED"
+    );
+    let unsupported = note_request(
+        &temp,
+        json!({"op":"create","title":"拒否","parent_entry_id":null,"placement":{"kind":"first"},"markdown":"# heading"}),
+    );
+    assert_eq!(
+        prepare(temp.path(), unsupported).err().unwrap().code,
+        "UNSUPPORTED_CONTENT"
+    );
+    assert_eq!(
+        WorkspaceReader::open(temp.path())
+            .unwrap()
+            .namespace
+            .notes
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn note_command_commit_rechecks_workspace_and_rejects_protected_targets() {
+    let temp = fixture(vec![p("内容")]);
+    let req = note_request(&temp, create_action("staged", None));
+    let prepared = prepare(temp.path(), req.clone()).unwrap();
+    let empty = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"create","title":"","parent_entry_id":null,"placement":{"kind":"first"}}),
+        ),
+    );
+    let mut store = ProductStore::open_existing_for_edit(temp.path()).unwrap();
+    assert_eq!(
+        commit_with_fault(&mut store, &prepared, None)
+            .unwrap_err()
+            .code,
+        "WORKSPACE_CHANGED"
+    );
+    assert!(receipt(&store.connection, req).unwrap().is_none());
+    let new_note = read_note(
+        &load_document(
+            &store.connection,
+            "note",
+            empty["note_id"].as_str().unwrap(),
+        )
+        .unwrap(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(new_note.root.title, "");
+    assert_eq!(new_note.root.body.len(), 1);
+    assert_eq!(new_note.root.body[0]["type"], "paragraph");
+
+    let persisted = load_document(&store.connection, "workspace", WORKSPACE).unwrap();
+    let doc = decode_document(&persisted).unwrap();
+    {
+        let mut txn = doc.transact_mut();
+        let workspace = txn.get_map("workspace").unwrap();
+        let Some(yrs::Out::YMap(notes)) = workspace.get(&txn, "notes") else {
+            panic!()
+        };
+        let Some(yrs::Out::YMap(note)) = notes.get(&txn, NOTE) else {
+            panic!()
+        };
+        note.insert(&mut txn, "system_role", "help");
+    }
+    store.connection.execute("UPDATE documents SET snapshot=?1,snapshot_revision=revision WHERE kind='workspace' AND document_id=?2",
+        params![doc.transact().encode_state_as_update_v1(&StateVector::default()),WORKSPACE]).unwrap();
+    store
+        .connection
+        .execute(
+            "DELETE FROM document_updates WHERE kind='workspace' AND document_id=?1",
+            [WORKSPACE],
+        )
+        .unwrap();
+    let namespace = WorkspaceReader::open(temp.path()).unwrap().namespace;
+    let entry_id = &namespace.note_entry(NOTE).unwrap().entry_id;
+    for action in [
+        json!({"op":"rename","note_id":NOTE,"expected_revision":1,"title":"forbidden"}),
+        json!({"op":"move","entry_id":entry_id,"parent_entry_id":null,"placement":{"kind":"last"}}),
+    ] {
+        assert_eq!(
+            prepare(temp.path(), note_request(&temp, action))
+                .err()
+                .unwrap()
+                .code,
+            "READ_ONLY_TARGET"
+        );
+    }
+    assert_eq!(
+        WorkspaceReader::open(temp.path())
+            .unwrap()
+            .namespace
+            .notes
+            .len(),
+        2
+    );
+    assert!(parse_note_request(br#"{"schema_version":1,"schema_version":1}"#).is_err());
 }
 #[test]
 fn unicode_segments_literal_replacement_and_replay_survive_restart() {
@@ -482,7 +810,7 @@ fn noop_receipt_and_dry_run_do_not_advance_content_or_revision() {
     assert!(
         receipt(
             &WorkspaceReader::open(temp.path()).unwrap().connection,
-            &req
+            req.clone()
         )
         .unwrap()
         .is_none()
@@ -516,7 +844,7 @@ fn revision_cursor_and_precommit_failures_are_safe() {
     assert!(store.commit_agent_edit(&input, &prepared).is_err());
     assert_eq!(view(&temp)["revision"], 1);
     assert!(
-        receipt(&store.connection, &prepared.request)
+        receipt(&store.connection, prepared.request.clone())
             .unwrap()
             .is_none()
     );
@@ -793,7 +1121,7 @@ fn old_database_requires_gui_migration_and_receipts_survive_later_revisions() {
         .run_to_completion(128, std::time::Duration::from_millis(1), None)
         .unwrap();
     assert_eq!(
-        receipt(&Connection::open(copy).unwrap(), &first)
+        receipt(&Connection::open(copy).unwrap(), first.clone())
             .unwrap()
             .unwrap()["replayed"],
         true

@@ -4,12 +4,13 @@
 
 ## 1. 公開範囲
 
-`memoka-cli`は現在のWorkspaceの既存Noteを、Section/Block IDで限定して編集する。
+`memoka-cli`は現在のWorkspaceの既存NoteをSection/Block IDで限定して編集し、Noteの作成・改名とNamespace上の配置変更を行う。
 GUI ownerがあれば同一ユーザーのowner IPCへ接続し、なければWorkspace leaseを取得してnative処理だけで実行する。
 CLIのためにNode、DOM、GTK、WebKit、非表示Editorを起動しない。ownerへの接続失敗を別writerへの切替理由にしない。
 
-対応操作は本文の局所置換、直接BodyへのMarkdown追記・挿入、既存タスクの完了状態設定である。
-Note/Sectionの新規作成、削除、rename、移動、見出し編集、全体置換、複数Noteのtransaction、
+本文編集は局所置換、直接BodyへのMarkdown追記・挿入、既存タスクの完了状態設定である。
+`note-edit`でNoteの作成・Root titleの改名、Note/group entryの移動・並び替えにも対応する。
+Note削除、Sectionの新規作成・削除・改名・移動、group作成・改名、全体置換、複数既存Noteのtransaction、
 添付取り込み、アプリ設定変更、過去世代・Trash・管理Helpの編集には対応しない。diffは確認用出力であり入力形式ではない。
 
 ## 2. 編集用の読み出し
@@ -57,9 +58,9 @@ memoka-cli edit-schema --format json
 ```
 
 `FILE`はUTF-8 JSON、`-`は標準入力である。shellで本文を解釈・実行せず、外部URLをfetchしない。
-`edit-schema`はRust DTOから生成したJSON Schema、command形式、上限を返す。
+`edit-schema`はRust DTOから生成したJSON Schema（本文用`request`、Note操作用`note_request`）、command形式、上限を返す。
 
-共通fieldは`schema_version: 1`、`workspace_id`、`note_id`、`expected_revision`、`request_id`、`edits`である。
+本文編集のfieldは`schema_version: 1`、`workspace_id`、`note_id`、`expected_revision`、`request_id`、`edits`である。
 entity IDはlowercase UUIDv7。request IDはcanonical lowercase UUIDv4/v7。revisionは正のJavaScript safe integerとする。
 不明field、重複JSON key、不正ID、深すぎるJSONを拒否する。
 
@@ -90,7 +91,7 @@ Heading、Table、Code/Source、Details、Alert、raw HTML、画像・添付な�
 
 ## 4. 永続化・GUIとの整合
 
-Note単位の`expected_revision`を保存直前に再検証する。別Sectionの変更も競合とし、自動rebase/forceは行わない。
+本文編集とrenameではNote単位の`expected_revision`を保存直前に再検証する。別Sectionの変更も競合とし、自動rebase/forceは行わない。
 Workspace metadataが準備中に変わった場合も再読取を要求する。
 
 GUIではまず確定編集の保存barrierと既存Note queueを通す。解析・対象解決・diff・staging更新はnative workerで行い、
@@ -110,7 +111,7 @@ focus、caret、scroll、foldを初期化しない。外部originを再度autosa
 
 成功応答は`schema_version: 1`、`ok: true`、`request_id`、`status`、`revision_before/after`、
 `applied_edits`、`validated_edits`、`changed_block_ids`、`created_block_ids`、`changes`、`diff_truncated`、`replayed`を持つ。
-`changes`はSection IDと`unified_diff`。diffが上限を超えれば明示的に省略し、文書の保存可否とは分離する。
+本文編集の`changes`はSection IDと`unified_diff`。diffが上限を超えれば明示的に省略し、文書の保存可否とは分離する。
 
 `status`は`applied`、`no_change`、`preview`。dry-runは文書・receipt・Undo・revision・epochを変更せず、
 適用数は0とする。新規IDは予約せず、本適用時に変わり得る。dry-runはロックや承認tokenではない。
@@ -135,7 +136,84 @@ receiptは自動期限切れにせず、DBとともに履歴・バックアッ�
 保存済みでTauri応答だけが失われた場合は、同じnative ticketの保持済みdeliveryを再取得してから保存queueを解放する。
 process再起動後はDBとreceiptから回復する。再送の`revision_after`は現在revisionではなく、そのrequestを最初に確定したrevisionである。
 
-## 6. 共通スキルと参照資料
+## 6. 既知のWorkspace一覧
+
+```text
+memoka-cli workspaces --format json
+```
+
+GUIで明示的に開いたWorkspaceのpathを最近利用した順に最大100件記憶する。
+`selected-workspace.json`のschema 1を保ち、現在の`path`と`recentPaths`をatomicに保存する。
+旧形式の選択fileからは現在pathのみを引き継ぐ。過去に開いた全Workspaceを遡って発見する機能ではない。
+
+応答は`schema_version: 1`、`source: "known_workspaces"`、`items`、`total`。
+各itemは`path`、`selected`、`available`を持つ。`available`はdirectoryとdata-area markerの存在の目安であり、
+DBの健全性や権限を保証しない。未mount/削除されたpathも`available: false`で残す。
+一覧取得はfilesystem探索・Workspace選択・初期化・移行・DB open・sidecar起動をしない。
+設定がなければ空一覧を返し、設定directoryも作らない。IDは対象を明示した`tree`等で解決する。
+
+## 7. Noteの作成・改名・配置
+
+```text
+memoka-cli note-edit --input FILE|- --format json [--workspace DIR] [--dry-run]
+```
+
+本文編集と同じowner IPC・native準備・保存barrier・SQLite transaction・receipt・GUI公開経路を使う。
+1 requestは1 action、上限1 MiBとする。共通fieldは次のとおり。
+
+```json
+{
+  "schema_version": 1,
+  "workspace_id": "<Workspace UUIDv7>",
+  "expected_workspace_revision": 42,
+  "request_id": "<fresh UUIDv4/v7>",
+  "action": {
+    "op": "create",
+    "title": "新しい記事",
+    "parent_entry_id": null,
+    "placement": { "kind": "last" },
+    "markdown": "**概要**\n\n- [ ] 確認する"
+  }
+}
+```
+
+`expected_workspace_revision`は最新の`tree`の`source.workspace_metadata_revision`を指定し、準備時と保存直前に照合する。
+本文編集のNote revisionとは区別する。renameのみNoteの`expected_revision`も必要とする。
+titleは改行・NULを含まない最大4096 UTF-8 bytesのliteral text。空文字は許可し、GUIは「新しいノート」をplaceholder表示する。
+
+| action   | fieldと動作                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| `create` | `title`, `parent_entry_id`, `placement`, 任意`markdown`。新しいNoteとその唯一のentryを同時に作る |
+| `rename` | `note_id`, `expected_revision`, `title`。Root titleとWorkspaceのtitle cacheだけを変更する        |
+| `move`   | `entry_id`, `parent_entry_id`, `placement`。Noteまたはgroupのentryを子孫ごと移動・並び替える     |
+
+parent/anchorにはNote IDではなくNamespaceのentry IDを指定する。親はlive Note/group entry、`null`（省略時も同じ）はNamespace直下。
+`placement`は`{"kind":"first"}`、`{"kind":"last"}`、または`{"kind":"before"|"after","entry_id":"<anchor>"}`。
+before/afterのanchorは指定した親の下にある別のlive siblingでなければ拒否する。
+自己・子孫への移動は拒否し、既に要求した親・表示順にあればno-opとする。Trashや管理Help自体へのrename/moveは拒否する。
+
+作成時のNote/entry IDはCoreが新規生成し、Root Section IDはNote IDとする。初期本文を省略すると空Paragraphを1つ持つ。
+Markdownは本文編集と同じ限定subsetで、空白だけの場合や見出し等の未対応構造はrequest全体を拒否する。
+本文・子Section全体を書き戻すAPIではない。renameでも本文、Section/Block ID、entry配置は維持する。
+
+配置にはfrontendと同じbase62 fractional indexと64-bit jitterを使う。
+同値positionはentry IDでtie-breakし、挿入gapが同値の中にある場合だけ当該bucketを表示順のまま再採番する。
+一度の局所再採番は1000 entryまで、positionは1024文字までとし、上限超過は無変更で拒否する。
+移動ではNoteDoc・Note revision・Noteの`updated_at`を変更しない。祖先pathの変更で子孫本文のFTS再索引を行わず、Namespace hierarchyだけ更新する。
+新規・改名では当該Noteだけを索引更新し、非表示NoteのためにEditorをmountしない。
+
+応答には`note_id`（group移動はnull）、操作によって`entry_id`、`workspace_revision_before/after`、`revision_scope`を追加する。
+create/moveの`revision_before/after`はWorkspace、renameはNoteのrevisionを示す。
+`changes`はcreateのtitle/親/配置/初期Markdown、renameのtitle前後、moveの親・position前後の意味的な差分を返す。
+本文のunified diffとは異なる。64 KiBを超えれば`changes: []`と`diff_truncated: true`で省略する。
+局所再採番したentry IDは`reindexed_entry_ids`に含める。
+
+作成のdry-runで返す新規IDは予約ではなく、本適用時に変わり得る。作成結果が不明なら必ず同じrequestを再送する。
+保存済みrequestの再送は同じ生成IDと元の結果を返し、二重作成しない。
+新規作成・移動を含め、GUIの現在Note・Window focus・caret・scroll・foldを変更せず、ユーザーUndoへ混入させない。
+Namespace操作のうち対象Noteが固定されない作成・移動は、いずれかのEditorでIME変換中なら拒否する。
+
+## 8. 共通スキルと参照資料
 
 配布用の共通スキルは[`skills/memoka`](../../skills/memoka/SKILL.md)に置く。
 手順・安全境界はSKILL.md、CLI引数とJSON Schemaは生成したreferencesへ分ける。

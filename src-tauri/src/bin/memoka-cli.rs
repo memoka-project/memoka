@@ -6,7 +6,7 @@ fn main() {
         arguments.first().map(String::as_str),
         Some("verify" | "restore")
     );
-    let agent = arguments.first().is_some_and(|arg| arg == "edit")
+    let agent = arguments.first().is_some_and(|arg| matches!(arg.as_str(), "edit" | "note-edit"))
         || arguments.iter().any(|arg| arg == "--for-edit");
     if let Err(error) = cli::install_interrupt_handler().and_then(|_| cli::run(arguments)) {
         if agent {

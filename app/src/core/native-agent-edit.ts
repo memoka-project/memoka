@@ -4,12 +4,19 @@ import type { CoreRuntime } from "./runtime";
 
 export interface AgentEditIdentity {
   workspace_id: string;
-  note_id: string;
-  expected_revision: number;
+  note_id: string | null;
+  expected_revision: number | null;
   request_id: string;
 }
 export interface AgentDelivery {
-  result: { revision_after: number; replayed: boolean; status: string };
+  result: {
+    revision_after: number;
+    replayed: boolean;
+    status: string;
+    workspace_revision_before?: number;
+    entry_id?: string;
+    reindexed_entry_ids?: string[];
+  };
   documents: {
     kind: "workspace" | "note";
     document_id: string;

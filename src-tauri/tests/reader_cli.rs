@@ -81,7 +81,7 @@ fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {
     let executable = installation.join("memoka-cli");
     fs::copy(env!("CARGO_BIN_EXE_memoka-cli"), &executable).unwrap();
     let config = temp.path().join("isolated-config");
-    let output = Command::new(executable)
+    let output = Command::new(&executable)
         .args(["cloud", "list", "--format", "json"])
         .env("XDG_CONFIG_HOME", &config)
         .env(
@@ -102,6 +102,24 @@ fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {
     assert!(!config.exists());
     assert!(!installation.join("rclone").exists());
     assert!(!installation.join("restic").exists());
+    let catalog = Command::new(&executable)
+        .args(["workspaces", "--format", "json"])
+        .env("XDG_CONFIG_HOME", &config)
+        .env_remove("DISPLAY")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
+        .output()
+        .unwrap();
+    assert!(
+        catalog.status.success(),
+        "{}",
+        String::from_utf8_lossy(&catalog.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&catalog.stdout).unwrap()["items"],
+        json!([])
+    );
+    assert!(!config.exists());
 }
 #[test]
 fn current_read_is_headless_and_does_not_migrate_initialize_or_sync_help() {
@@ -427,4 +445,69 @@ fn editing_cli_is_headless_atomic_and_does_not_fallback_from_owner_failure() {
         serde_json::from_slice::<Value>(&malformed.stdout).unwrap()["error"]["code"],
         "INVALID_REQUEST"
     );
+    let tree: Value =
+        serde_json::from_slice(&cli(workspace.path(), &["tree", "--format", "json"]).stdout)
+            .unwrap();
+    let note_request = json!({"schema_version":1,"workspace_id":view["workspace_id"],
+        "expected_workspace_revision":tree["source"]["workspace_metadata_revision"],"request_id":uuid::Uuid::now_v7().to_string(),
+        "action":{"op":"create","title":"CLIから作成😀","parent_entry_id":null,"placement":{"kind":"last"},"markdown":"- [x] 検証"}});
+    fs::write(&input, serde_json::to_vec(&note_request).unwrap()).unwrap();
+    let args = [
+        "note-edit",
+        "--input",
+        input.to_str().unwrap(),
+        "--format",
+        "json",
+    ];
+    let lease = WorkspaceLease::acquire(workspace.path()).unwrap();
+    let server = Server::start(
+        lease.clone(),
+        Arc::new(|_| Err(ReadError::new("SAVE_BARRIER_TIMEOUT", "injected"))),
+    )
+    .unwrap();
+    let rejected: Value = serde_json::from_slice(&cli(workspace.path(), &args).stdout).unwrap();
+    assert_eq!(rejected["error"]["code"], "SAVE_BARRIER_TIMEOUT");
+    assert_eq!(rejected["request_id"], note_request["request_id"]);
+    drop(server);
+    drop(lease);
+    let preview = cli(
+        workspace.path(),
+        &[
+            "note-edit",
+            "--input",
+            input.to_str().unwrap(),
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&preview.stdout).unwrap()["status"],
+        "preview",
+        "{}",
+        String::from_utf8_lossy(&preview.stdout)
+    );
+    let output = cli(workspace.path(), &args);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let created: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let replay: Value = serde_json::from_slice(&cli(workspace.path(), &args).stdout).unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["note_id"], created["note_id"]);
+    let result = cli(
+        workspace.path(),
+        &[
+            "read",
+            "--id",
+            created["note_id"].as_str().unwrap(),
+            "--format",
+            "json",
+        ],
+    );
+    let result: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(result["section"]["title"], "CLIから作成😀");
+    assert!(result["markdown"].as_str().unwrap().contains("- [x] 検証"));
 }

@@ -787,7 +787,7 @@ Driveでは新しい世代の**転送を優先**し、転送先の内容検証�
 
 ### 外部エージェントからノートを編集する
 
-更新した`memoka-cli`は、GUI起動中・未起動のどちらでも既存ノートの本文を安全に編集できます。
+更新した`memoka-cli`は、GUI起動中・未起動のどちらでもノートの作成・改名・並び替えと、既存ノートの本文編集ができます。
 古いWorkspaceは、先に更新したGUIで開いて移行してください。CLI自身は移行しません。
 
 ```text
@@ -800,7 +800,25 @@ memoka-cli edit --workspace <data-area> --input request.json --format json
 `--for-edit`は編集用のBlock ID、正確な本文、Note全体のrevisionを返します。
 JSONリクエストでは、本文の完全一致置換、直接本文へのMarkdown追記・挿入、既存タスクのチェック状態設定をまとめられます。
 子Sectionの本文は別に読み、明示的に指定します。Markdown全体を書き戻す方式ではありません。
-見出し・ノート全体・表セル・コードの書換え、ノート作成や設定変更には、このCLI編集は対応していません。
+Sectionタイトル・ノート全体・表セル・コードの書換え、Section作成やアプリ設定変更には、このCLI編集は対応していません。
+
+ノートの作成・改名・配置変更には、本文編集とは別の`note-edit`を使います。
+`workspaces`はGUIで開いたことのあるWorkspaceを最大100件返します。新しい一覧機能の導入前に開いた全履歴や、ディスク上の全Workspaceではありません。
+
+```text
+memoka-cli workspaces --format json
+memoka-cli tree --workspace <data-area> --format json
+memoka-cli note-edit --workspace <data-area> --input note-request.json --dry-run --format json
+memoka-cli note-edit --workspace <data-area> --input note-request.json --format json
+```
+
+`note-edit`のJSONには、`tree`が返したWorkspace IDと`source.workspace_metadata_revision`、新しいrequest ID、1つの`action`を指定します。
+`create`はタイトル、親entry ID、先頭・末尾または兄弟entryの前後位置を指定し、任意の初期Markdownも渡せます。
+空タイトル・空本文での作成もできます。Note IDとentry IDは自動生成され、**実際に適用した結果**から取得します。
+`rename`はNote IDと最新のNote revision、1行の新タイトルを指定します。本文は変更しません。
+`move`はentry ID、移動先の親entry IDと位置を指定し、そのNoteやgroupを**子孫ごと**移動します。
+Note IDとentry IDは別物です。Workspace直下を指定する親entry IDは`null`です。
+どの操作も表示中のNoteを勝手に切り替えません。具体的なJSON形式は`edit-schema`で確認してください。
 
 まずdry-runでdiffを確認し、問題なければ同じJSONを適用してください。途中でユーザーが編集すると競合として止まります。
 revisionだけを書き換えて強行せず、最新本文から変更を判断し直します。IME中は強制確定しません。

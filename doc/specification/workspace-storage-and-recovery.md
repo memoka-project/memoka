@@ -5,7 +5,8 @@
 ## 1. データ領域と正本
 
 初回起動時に利用者が選択するdirectoryを1 Workspaceとする。
-以後はapplication config directoryの`selected-workspace.json`へ選択pathだけを保存する。
+以後はapplication config directoryの`selected-workspace.json`へ現在の選択`path`と、最近開いたpath一覧`recentPaths`（最大100件）を保存する。
+`memoka-cli workspaces --format json`で既知のWorkspaceを読み出せる。IDやDB内容を複製するcatalogではなく、filesystemの全Workspaceを探索しない。
 既存領域はvalidなMemoka data areaか完全に空のdirectoryでなければ拒否する。
 
 ```text

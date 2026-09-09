@@ -63,6 +63,27 @@ export async function runAgentEditing({
     request_id: randomUUID(),
     edits,
   });
+  const makeNote = async (action) => {
+    const tree = await cli(workspace, "tree");
+    return {
+      schema_version: 1,
+      workspace_id: tree.workspace_id,
+      expected_workspace_revision: tree.source.workspace_metadata_revision,
+      request_id: randomUUID(),
+      action,
+    };
+  };
+  const noteEdit = async (request, dry = false) => {
+    const path = join(temporary, `${randomUUID()}.json`);
+    await writeFile(path, JSON.stringify(request));
+    return cli(
+      workspace,
+      "note-edit",
+      "--input",
+      path,
+      ...(dry ? ["--dry-run"] : []),
+    );
+  };
   const replacement = (old_text, new_text) => ({
     op: "replace_text",
     section_id: initialNoteId,
@@ -227,6 +248,12 @@ export async function runAgentEditing({
     assert.ok(afterUndo.markdown.includes("- [x] AgentTask"));
     assert.ok(!afterUndo.markdown.includes("userUndoSuffix"));
     const compositionBase = await read();
+    const createWhileComposing = await makeNote({
+      op: "create",
+      title: "IME_BLOCKED",
+      parent_entry_id: null,
+      placement: { kind: "last" },
+    });
     await execute(
       sessionId,
       "document.querySelector('.memoka-editor').dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'あ'}));return true",
@@ -240,6 +267,9 @@ export async function runAgentEditing({
       ["IME_ACTIVE", "EDIT_BUSY"].includes(ime.error.code),
       JSON.stringify(ime),
     );
+    const imeCreate = await noteEdit(createWhileComposing);
+    assert.equal(imeCreate.ok, false, JSON.stringify(imeCreate));
+    assert.ok(["IME_ACTIVE", "EDIT_BUSY"].includes(imeCreate.error.code));
     await execute(
       sessionId,
       "document.querySelector('.memoka-editor').dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:''}));return true",
@@ -271,6 +301,79 @@ export async function runAgentEditing({
       "return [...document.querySelectorAll('.memoka-editor')].map(e=>e.textContent)",
       (v) => v.length === 2 && v.every((s) => s.includes("AgentGamma")),
     );
+    const tree = await cli(workspace, "tree");
+    const originalEntry = tree.items.find(
+      (item) => item.target?.id === initialNoteId,
+    );
+    assert.ok(originalEntry, JSON.stringify(tree));
+    const stableView = await execute(sessionId, viewportScript);
+    const createRequest = await makeNote({
+      op: "create",
+      title: "CLI新規ノート😀",
+      parent_entry_id: originalEntry.entry_id,
+      placement: { kind: "first" },
+      markdown: "**日本語記事**\n\n- [ ] 次の予定",
+    });
+    const createPreview = await noteEdit(createRequest, true);
+    assert.equal(
+      createPreview.status,
+      "preview",
+      JSON.stringify(createPreview),
+    );
+    assert.deepEqual((await cli(workspace, "tree")).items, tree.items);
+    const created = await noteEdit(createRequest);
+    assert.equal(created.ok, true, JSON.stringify(created));
+    assert.equal((await noteEdit(createRequest)).note_id, created.note_id);
+    const createdRead = await cli(workspace, "read", "--id", created.note_id);
+    assert.equal(createdRead.section.title, "CLI新規ノート😀");
+    assert.ok(createdRead.markdown.includes("**日本語記事**"));
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      stableView,
+      "creating a Note does not open it or alter Window state",
+    );
+    const renameBase = await read();
+    const rename = await noteEdit(
+      await makeNote({
+        op: "rename",
+        note_id: initialNoteId,
+        expected_revision: renameBase.revision,
+        title: "CLIから改名😀",
+      }),
+    );
+    assert.equal(rename.ok, true, JSON.stringify(rename));
+    await waitFor(
+      sessionId,
+      "return [...document.querySelectorAll('.memoka-editor')].map(e=>e.querySelector('[data-section-header]')?.textContent)",
+      (v) => v.length === 2 && v.every((s) => s === "CLIから改名😀"),
+    );
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      stableView,
+      "renaming keeps caret, scroll, modes and Window focus",
+    );
+    const moveRequest = await makeNote({
+      op: "move",
+      entry_id: created.entry_id,
+      parent_entry_id: null,
+      placement: { kind: "before", entry_id: originalEntry.entry_id },
+    });
+    const moved = await noteEdit(moveRequest);
+    assert.equal(moved.ok, true, JSON.stringify(moved));
+    assert.equal(
+      (await cli(workspace, "tree")).items[0].entry_id,
+      created.entry_id,
+    );
+    assert.equal(
+      (await cli(workspace, "read", "--id", created.note_id)).source
+        .document_revision,
+      createdRead.source.document_revision,
+    );
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      stableView,
+      "moving a Note does not navigate the GUI",
+    );
     return {
       passed: true,
       gui_and_standalone_equal: true,
@@ -279,6 +382,7 @@ export async function runAgentEditing({
       window_views_preserved: true,
       ime_rejected: true,
       hidden_note: true,
+      note_create_rename_move: true,
       native_sql_faults: faults,
       revision: gui.revision_after,
     };
