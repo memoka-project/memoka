@@ -15,18 +15,18 @@ themeなどをCommandから確定した場合は、既存commentと無関係な�
 
 ## 2. 既定値
 
-| 設定                               | 既定値                                   | 範囲/候補                                                 |
-| ---------------------------------- | ---------------------------------------- | --------------------------------------------------------- |
-| `theme`                            | `nightfox`                               | nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox |
-| `font_family`                      | Interを先頭とするsystem sans-serif stack | validなCSS font-family                                    |
-| `zoom_percent`                     | 100                                      | 50〜200、10刻み                                           |
-| `note_max_width_px`                | 1000                                     | 320〜4096、0で無効                                        |
-| `line_number_min_width_px`         | 480                                      | 240〜4096、0で常時表示                                    |
-| `indent_width_px`                  | 24                                       | 16〜64                                                    |
-| `leader`                           | `,`                                      | 1 Unicode文字                                             |
-| `vim.whichwrap`                    | true                                     | boolean                                                   |
-| `japanese.word_segmentation`       | fine                                     | fine/budoux/unicode                                       |
-| `japanese.line_break_segmentation` | fine                                     | fine/budoux/native                                        |
+| 設定                               | 既定値                                   | 範囲/候補                                 |
+| ---------------------------------- | ---------------------------------------- | ----------------------------------------- |
+| `theme`                            | `nightfox`                               | 収録7テーマまたは定義済みカスタムテーマID |
+| `font_family`                      | Interを先頭とするsystem sans-serif stack | validなCSS font-family                    |
+| `zoom_percent`                     | 100                                      | 50〜200、10刻み                           |
+| `note_max_width_px`                | 1000                                     | 320〜4096、0で無効                        |
+| `line_number_min_width_px`         | 480                                      | 240〜4096、0で常時表示                    |
+| `indent_width_px`                  | 24                                       | 16〜64                                    |
+| `leader`                           | `,`                                      | 1 Unicode文字                             |
+| `vim.whichwrap`                    | true                                     | boolean                                   |
+| `japanese.word_segmentation`       | fine                                     | fine/budoux/unicode                       |
+| `japanese.line_break_segmentation` | fine                                     | fine/budoux/native                        |
 
 旧設定`shutdown.wait_for_mirror`は既知の無視キーとして受け付ける。値に関係なく旧mirrorを動かさず、
 このキーだけを理由に他の有効な設定を既定へ戻さない。バックアップの保存間隔・複数追加先・有効状態・保存先ごとの直近/日次/月次保持数は
@@ -254,3 +254,46 @@ SectionとblockにはNote ID、見出しpath、block位置から導出した安�
 
 Help Noteは利用者向け操作情報の正本表示であり、user-visibleなkey、command、設定、制約を変更した場合は
 この仕様と`doc/help.md`を実装と同じcommitで更新する。
+
+## 12. CLIからの設定変更
+
+`memoka-cli config get`は`config.toml`のpath・有効値・file revisionを読み、`config schema`は機械可読な契約を返す。
+`config set --input FILE|- [--dry-run]`はJSONの`set`/`unset`をまとめて適用する。いずれも`--format json`に対応する。
+設定はOSユーザーのapplication全体に適用し、`--workspace`は受理しない。
+
+対応する設定とGUI commandは次のとおり。両経路で同じ値の検証と保存処理を使う。
+
+| CLIの設定key                       | GUI command                                |
+| ---------------------------------- | ------------------------------------------ |
+| `theme`                            | `:colorscheme`                             |
+| `font_family`                      | `:font`                                    |
+| `zoom_percent`                     | `:zoom`                                    |
+| `note_max_width_px`                | `:note-width`                              |
+| `line_number_min_width_px`         | `:line-number-min-width`                   |
+| `indent_width_px`                  | `:indent-width`                            |
+| `japanese.word_segmentation`       | `:word-segmentation`                       |
+| `japanese.line_break_segmentation` | `:line-break-segmentation`                 |
+| `themes.<id>`                      | カスタムテーマの定義。選択は`:colorscheme` |
+
+GUIは1秒間隔およびOS windowへのfocus復帰時に小さい設定fileのhashを確認し、変更時のみ再parseする。
+上表の設定をEditorの再mount・Noteの編集・focusやkeymapの変更なしに再適用する。font/幅変更で必要なlayout再計算は行う。
+IME変換中・theme/fontのpreview中は再適用を保留する。GUI自身の保存と競合する古いreload結果は捨てる。
+不正fileのlive reloadはwarningを出し、既定へ切り替えず現在の表示を維持する。起動時の既定fallbackは従来どおり。
+Leader・keymap・`vim.whichwrap`の変更はこのCLIでは受理せず、手動変更後の再起動を必要とする。
+
+preview・排他・競合・応答形式は[外部エージェントCLI](agent-editing.md#9-アプリ設定の読み書き)を参照する。
+
+## 13. カスタムカラーテーマ
+
+`[themes.<id>]`の`base`は収録7テーマのいずれか、`name`は任意の表示名、`palette`は任意の色override mapとする。
+IDは`[a-z][a-z0-9-]{0,47}`で、収録テーマ名を予約する。定義は64件まで、表示名は空白のみや制御文字を除く128 UTF-8 bytes以下。
+baseに別のカスタムテーマは指定せず、連鎖や循環を作らない。明暗区分と省略色はbaseを継承する。
+
+paletteは`bg0`〜`bg4`、`fg0`〜`fg3`、`selection`、`selectionStrong`、`comment`、
+`black`、`red`、`green`、`yellow`、`blue`、`magenta`、`cyan`、`white`、`orange`、`pink`に限る。
+値は`#RRGGBB`のみ。CSS、外部stylesheet、URL、JavaScriptを受理・実行しない。
+paletteから既存のsemantic token層を再生成し、本文・装飾・見出し・Outline・mode・検索・modal等に一貫して適用する。
+
+`theme = "<id>"`または`:colorscheme <id>`で選択する。引数なしのpickerにも表示し、preview・取消・保存は収録テーマと共通。
+CLIの`set["themes.<id>"]`は1定義全体を置き換え、他の定義は保持する。テーマ追加と選択は同じrequestにまとめられる。
+選択中の定義だけを削除するrequestは拒否し、同時に別テーマを選ぶか`theme`をunsetする。

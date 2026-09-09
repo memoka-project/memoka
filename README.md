@@ -121,7 +121,8 @@ corepack pnpm tauri:build
 
 ユーザー設定は、TauriがOSごとに解決するapplication config directoryの`config.toml`から読み込みます。
 ファイルがない場合は既定値で起動し、起動するだけではファイルを作成しません。設定commandを確定すると
-必要な項目が保存されます。ファイルを直接編集した場合はMemokaを再起動してください。
+必要な項目が保存されます。外観と日本語分割の設定は約1秒で再読込します（IME変換中・テーマ/フォント選択中は終了後）。
+Leader・keymap・`whichwrap`を直接編集した場合はMemokaを再起動してください。
 
 ```toml
 theme = "nightfox" # nightfox/dayfox/dawnfox/duskfox/nordfox/terafox/carbonfox
@@ -169,6 +170,23 @@ line_break_segmentation = "fine" # fine/budoux/native
 | `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行     |
 
 カラーテーマには[Nightfox](https://github.com/EdenEast/nightfox.nvim)を基にした7テーマを収録しています。
+既存テーマをベースにカスタムテーマも設定できます。次は`config.toml`の例です。
+`theme`はfileの先頭側に、`[themes.*]`は末尾側に記載します。
+
+```toml
+theme = "my-night"
+
+[themes.my-night]
+base = "nightfox"
+name = "My Night"
+
+[themes.my-night.palette]
+bg1 = "#151520"
+blue = "#88aaff"
+orange = "#ffaa66"
+```
+
+カスタムテーマも`:colorscheme`で選べます。色は`#RRGGBB`で指定し、省略した色はbaseから引き継ぎます。
 
 バックアップ間隔と追加保存先は、Workspaceごとに`:backup-settings`で設定します。追加先のパスワードは
 OS資格情報ストアへ保存し、`config.toml`には書きません。旧設定`shutdown.wait_for_mirror`は無視します。
@@ -179,6 +197,10 @@ OS資格情報ストアへ保存し、`config.toml`には書きません。旧�
 同じWorkspaceを開いていれば、そのprocessへ接続します。読み出しのためにデータ移行やHelp更新は行いません。
 
 ```bash
+memoka-cli config get --format json
+memoka-cli config schema --format json
+memoka-cli config set --input settings.json --dry-run --format json
+memoka-cli config set --input settings.json --format json
 memoka-cli workspaces --format json
 memoka-cli tree --workspace <data-area> --format json
 memoka-cli read --workspace <data-area> --id <note-or-section-id> --format markdown

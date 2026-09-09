@@ -20,7 +20,9 @@ export const APPLICATION_THEME_IDS = [
   "carbonfox",
 ] as const;
 
-export type ApplicationThemeId = (typeof APPLICATION_THEME_IDS)[number];
+export type BuiltinApplicationThemeId = (typeof APPLICATION_THEME_IDS)[number];
+/** Validated against the built-in and user-defined theme registry. */
+export type ApplicationThemeId = string;
 export type ApplicationThemeAppearance = "dark" | "light";
 export type MarkupHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -50,6 +52,15 @@ export interface ApplicationThemePalette {
   readonly orange: string;
   readonly pink: string;
 }
+
+export interface CustomApplicationTheme {
+  readonly base: BuiltinApplicationThemeId;
+  readonly name?: string;
+  readonly palette?: Partial<ApplicationThemePalette>;
+}
+export type CustomApplicationThemes = Readonly<
+  Record<string, CustomApplicationTheme>
+>;
 
 export interface ApplicationThemeTokens {
   readonly canvas: string;
@@ -307,6 +318,67 @@ const THEMES_BY_ID = new Map(
   APPLICATION_THEMES.map((theme) => [theme.id, theme] as const),
 );
 
+/** Validate every definition before changing the registry. No CSS/URLs are accepted. */
+export function resolveCustomApplicationThemes(
+  custom: CustomApplicationThemes,
+): readonly ApplicationThemeDefinition[] {
+  if (Object.keys(custom).length > 64)
+    throw new Error("カスタムテーマは64件までです");
+  return Object.entries(custom).map(([id, definition]) => {
+    const base = APPLICATION_THEMES.find(
+      (theme) => theme.id === definition.base,
+    );
+    if (
+      !/^[a-z][a-z0-9-]{0,47}$/u.test(id) ||
+      APPLICATION_THEMES.some((theme) => theme.id === id) ||
+      !base
+    ) {
+      throw new Error(`不正なカスタムテーマIDまたはbaseです: ${id}`);
+    }
+    if (
+      Object.keys(definition).some(
+        (key) => !["base", "name", "palette"].includes(key),
+      )
+    )
+      throw new Error(`不明なテーマ項目です: ${id}`);
+    const name = definition.name ?? id;
+    if (
+      !name.trim() ||
+      new TextEncoder().encode(name).length > 128 ||
+      [...name].some((char) => {
+        const code = char.codePointAt(0)!;
+        return code < 32 || (code >= 127 && code <= 159);
+      })
+    )
+      throw new Error(`不正なテーマ表示名です: ${id}`);
+    for (const [field, color] of Object.entries(definition.palette ?? {})) {
+      if (
+        !Object.hasOwn(base.palette, field) ||
+        typeof color !== "string" ||
+        !/^#[\da-f]{6}$/iu.test(color)
+      )
+        throw new Error(`${id}.${field}: 色は#RRGGBBで指定してください`);
+    }
+    const palette = { ...base.palette, ...definition.palette };
+    return {
+      id,
+      name,
+      appearance: base.appearance,
+      palette,
+      tokens: semanticTokens(palette),
+    };
+  });
+}
+
+export function setCustomApplicationThemes(
+  custom: CustomApplicationThemes,
+): void {
+  const resolved = resolveCustomApplicationThemes(custom);
+  THEMES_BY_ID.clear();
+  for (const theme of [...APPLICATION_THEMES, ...resolved])
+    THEMES_BY_ID.set(theme.id, theme);
+}
+
 export function isApplicationThemeId(
   value: string,
 ): value is ApplicationThemeId {
@@ -350,8 +422,9 @@ export function filterApplicationThemes(
   query: string,
 ): readonly ApplicationThemeDefinition[] {
   const terms = normalizeSearch(query).split(/\s+/u).filter(Boolean);
-  if (terms.length === 0) return APPLICATION_THEMES;
-  return APPLICATION_THEMES.filter((theme) => {
+  const themes = [...THEMES_BY_ID.values()];
+  if (terms.length === 0) return themes;
+  return themes.filter((theme) => {
     const searchable = normalizeSearch(
       `${theme.id} ${theme.name} ${theme.appearance} ${theme.appearance === "dark" ? "dark dark-theme 暗色" : "light light-theme 明色"}`,
     );

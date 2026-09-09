@@ -9,6 +9,8 @@ CLI version: `0.2.2`. Editing protocol: `1`.
 ```text
 Memoka CLI
 
+memoka-cli config get|schema --format json
+memoka-cli config set --input FILE|- [--dry-run] --format json
 memoka-cli workspaces --format json
 memoka-cli tree [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json
 memoka-cli search QUERY [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json
@@ -387,3 +389,9 @@ The machine-readable contract is [edit-schema.json](edit-schema.json). The insta
   "schema_version": 1
 }
 ```
+
+## Application settings
+
+Application-wide settings do not take --workspace. Get the current path, effective values and revision with `memoka-cli config get --format json`. The generated contract is [config-schema.json](config-schema.json); query the installed CLI with `memoka-cli config schema --format json`.
+
+Use `config set --input FILE --dry-run --format json` before applying that file. On CONFIG_CONFLICT reread and reconsider the change. Settings use absolute assignments plus compare-and-swap, not Note editing receipts or request IDs. After an uncertain response, read back the configuration; do not overwrite a newer revision.

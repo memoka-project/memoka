@@ -40,6 +40,12 @@ import {
 } from "../app/src/platform/application-appearance";
 import { DEFAULT_APPLICATION_FONT_FAMILY } from "../app/src/core/application-appearance";
 import { getJapaneseSegmentationConfiguration } from "../app/src/core/japanese-segmentation";
+import {
+  createDefaultApplicationConfigPort,
+  loadApplicationConfig,
+  type LoadedApplicationConfig,
+} from "../app/src/platform/application-config";
+import { setCustomApplicationThemes } from "../app/src/core/application-theme";
 
 function createNoteSearchOrigin(): NoteSearchOrigin {
   return {
@@ -110,7 +116,140 @@ function japaneseSegmentationConfigSavers() {
 }
 
 describe("Memoka Application utilities", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setCustomApplicationThemes({});
+  });
+
+  it("reloads external appearance settings without remounting the editor or changing its focus and text", async () => {
+    const defaults = await loadApplicationConfig();
+    let notify: ((loaded: LoadedApplicationConfig) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const port = {
+      ...createDefaultApplicationConfigPort(),
+      subscribe: (listener: (loaded: LoadedApplicationConfig) => void) => {
+        notify = listener;
+        return unsubscribe;
+      },
+    };
+    const view = render(<App applicationConfig={port} showDebugLine={false} />);
+    const editor = await waitFor(() => {
+      const editor = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!editor) throw new Error("Editor did not mount");
+      return editor;
+    });
+    enterNormal(editor);
+    const text = editor.textContent;
+    const loaded: LoadedApplicationConfig = {
+      ...defaults,
+      theme: "custom-night",
+      fontFamily: "serif",
+      indentWidthPx: 32,
+      customThemes: {
+        "custom-night": { base: "nightfox", palette: { red: "#ee8877" } },
+      },
+    };
+    act(() => notify!(loaded));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--memoka-color-markup-heading-1",
+      ),
+    ).toBe("#ee8877");
+    expect(
+      document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+    ).toBe("custom-night");
+    expect(document.activeElement).toBe(editor);
+    expect(editor.textContent).toBe(text);
+    expect(view.container.querySelector(".editor-window .memoka-editor")).toBe(
+      editor,
+    );
+    act(() =>
+      notify!({
+        ...loaded,
+        valid: false,
+        theme: "bad",
+        warning: "invalid TOML",
+      }),
+    );
+    expect(
+      document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+    ).toBe("custom-night");
+    expect(screen.getByText(/現在の設定を維持します/u)).toBeTruthy();
+    act(() =>
+      notify!({
+        ...loaded,
+        customThemes: {
+          "custom-night": { base: "nightfox", palette: { red: "#aabbcc" } },
+        },
+      }),
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--memoka-color-markup-heading-1",
+      ),
+    ).toBe("#aabbcc");
+    fireEvent.compositionStart(editor);
+    act(() => notify!({ ...loaded, fontFamily: "monospace" }));
+    expect(
+      document.documentElement.style.getPropertyValue(
+        APPLICATION_FONT_CSS_VARIABLE,
+      ),
+    ).toBe("serif");
+    fireEvent.compositionEnd(editor);
+    await waitFor(() =>
+      expect(
+        document.documentElement.style.getPropertyValue(
+          APPLICATION_FONT_CSS_VARIABLE,
+        ),
+      ).toBe("monospace"),
+    );
+    expect(view.container.querySelector(".editor-window .memoka-editor")).toBe(
+      editor,
+    );
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("defers external theme updates until the preview picker closes", async () => {
+    const defaults = await loadApplicationConfig();
+    let notify: ((loaded: LoadedApplicationConfig) => void) | undefined;
+    const port = {
+      ...createDefaultApplicationConfigPort(),
+      subscribe: (listener: (loaded: LoadedApplicationConfig) => void) => {
+        notify = listener;
+        return () => {};
+      },
+    };
+    const view = render(<App applicationConfig={port} showDebugLine={false} />);
+    const editor = await waitFor(() => {
+      const editor = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!editor) throw new Error("Editor did not mount");
+      return editor;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "colorscheme" } });
+    fireEvent.keyDown(command, { key: "Enter" });
+    const picker = await screen.findByRole("combobox", {
+      name: "カラーテーマを検索",
+    });
+    act(() => notify!({ ...defaults, theme: "duskfox" }));
+    expect(
+      document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+    ).toBe("nightfox");
+    expect(document.activeElement).toBe(picker);
+    fireEvent.keyDown(picker, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        document.documentElement.getAttribute(APPLICATION_THEME_DATA_ATTRIBUTE),
+      ).toBe("duskfox"),
+    );
+    expect(document.activeElement).toBe(editor);
+    view.unmount();
+  });
 
   it("previews, cancels, and persists application color themes", async () => {
     const saveTheme = vi.fn(async () => {});

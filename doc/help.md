@@ -535,7 +535,7 @@ MemokaのCommand-lineは完全なVim Ex parserではありません。
 | `:update`                                         | 署名済み更新を確認、適用します。                                 |
 | `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。                    |
 | `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                            |
-| `:colorscheme [name]` / `:colo`                   | Nightfox themeを選択、変更します。                               |
+| `:colorscheme [name]` / `:colo`                   | 収録テーマやカスタムテーマを選択、変更します。                   |
 | `:font`                                           | Application全体のfontを選択します。                              |
 | `:zoom [50..200]`                                 | Zoomを確認、変更します。                                         |
 | `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。                       |
@@ -554,7 +554,7 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 
 主な設定値は次のとおりです。
 
-- `theme`はNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxから選びます。
+- `theme`はNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxまたは自分で定義したテーマから選びます。
 - `font_family`は通常UIと本文のCSS font-familyです。
 - `zoom_percent`は50〜200の10%刻みです。
 - `note_max_width_px`はNote canvasの最大幅で、`0`は上限なしです。
@@ -564,6 +564,68 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 - `japanese.word_segmentation`と`japanese.line_break_segmentation`は操作と表示の日本語分割を個別に指定します。
 - 旧設定`shutdown.wait_for_mirror`は受け付けますが無視します。このキーが残っていても他の設定は失われません。
 - バックアップ設定は`:backup-settings`でWorkspaceごとに保存します。追加保存先のパスワードを`config.toml`へ書かないでください。
+
+外観と日本語分割の設定は、ファイルを編集した後も約1秒で再読込します。IME変換中やテーマ・フォントの選択中は終了後に反映します。
+不正な設定の再読込では警告を表示し、現在の表示を維持します。Leader・keymap・`whichwrap`の変更は再起動後に反映します。
+
+### カスタムテーマを作る
+
+既存テーマの色を一部置き換えられます。次を`config.toml`に記載すると、`:colorscheme my-night`で選べます。
+`theme`はファイルの先頭側、`[themes.*]`の定義は末尾側に置いてください。
+
+```toml
+theme = "my-night"
+
+[themes.my-night]
+base = "nightfox"
+name = "My Night"
+
+[themes.my-night.palette]
+bg1 = "#151520"
+fg1 = "#eeeeee"
+blue = "#88aaff"
+orange = "#ffaa66"
+```
+
+`base`は収録7テーマのいずれかです。省略した色と明暗区分を引き継ぎます。
+`palette`には`bg0`〜`bg4`、`fg0`〜`fg3`、`selection`、`selectionStrong`、`comment`、
+`black`、`red`、`green`、`yellow`、`blue`、`magenta`、`cyan`、`white`、`orange`、`pink`を`#RRGGBB`で指定できます。
+色は本文だけでなく、見出し・装飾・Outline・mode・検索画面にも使われます。任意CSSやscriptの読み込みは行いません。
+IDは小文字英字から始まる英数字・ハイフンで48文字までです。収録テーマと同じIDは使えません。
+
+### CLIや外部AIエージェントで設定する
+
+外観・日本語分割・カスタムテーマはCLIからも設定できます。これは**Workspace単位ではなくアプリ全体の設定**です。
+この操作では`--workspace`を付けません。Leader・keymap・`whichwrap`・バックアップ・資格情報は対象外です。
+
+```text
+memoka-cli config get --format json
+memoka-cli config schema --format json
+memoka-cli config set --input settings.json --dry-run --format json
+memoka-cli config set --input settings.json --format json
+```
+
+`config get`が返した`revision`を`expected_revision`へコピーして、次のような`settings.json`を作ります。
+`set`のkeyは`config.toml`と同じ名前です。日本語分割は`japanese.word_segmentation`のようにピリオドで区切ります。
+
+```json
+{
+  "schema_version": 1,
+  "expected_revision": "config getが返した64桁のrevision",
+  "set": {
+    "theme": "my-night",
+    "themes.my-night": {
+      "base": "nightfox",
+      "palette": { "blue": "#88aaff", "orange": "#ffaa66" }
+    }
+  }
+}
+```
+
+まず`--dry-run`で変更内容を確認し、問題なければ同じfileを適用します。途中で設定が変わると`CONFIG_CONFLICT`になり、上書きしません。
+その場合は現在値を読み直して変更を見直してください。通信などで結果が分からない場合も、`config get`で保存内容を確認します。
+`unset: ["zoom_percent"]`のように指定すると、明示設定を削除して既定に戻せます。
+`themes.my-night`の指定はそのテーマ定義全体の置換です。選択中のテーマを削除する際は、同時に別テーマを選ぶか`theme`もunsetしてください。
 
 ## Clipboard・添付・画像
 
@@ -800,7 +862,8 @@ memoka-cli edit --workspace <data-area> --input request.json --format json
 `--for-edit`は編集用のBlock ID、正確な本文、Note全体のrevisionを返します。
 JSONリクエストでは、本文の完全一致置換、直接本文へのMarkdown追記・挿入、既存タスクのチェック状態設定をまとめられます。
 子Sectionの本文は別に読み、明示的に指定します。Markdown全体を書き戻す方式ではありません。
-Sectionタイトル・ノート全体・表セル・コードの書換え、Section作成やアプリ設定変更には、このCLI編集は対応していません。
+Sectionタイトル・ノート全体・表セル・コードの書換え、Section作成には、このCLI編集は対応していません。
+アプリ設定は上記の`config get/set/schema`で別に扱います。
 
 ノートの作成・改名・配置変更には、本文編集とは別の`note-edit`を使います。
 `workspaces`はGUIで開いたことのあるWorkspaceを最大100件返します。新しい一覧機能の導入前に開いた全履歴や、ディスク上の全Workspaceではありません。

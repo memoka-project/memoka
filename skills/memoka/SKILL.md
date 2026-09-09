@@ -1,15 +1,19 @@
 ---
 name: memoka
-description: Read, search, create, rename, organize, and make scoped edits to Memoka notes through memoka-cli. Use for a user's Memoka note, organization, or task-list requests, not for editing the Memoka application source.
+description: Read, search, create, organize, and edit Memoka notes, or configure Memoka appearance and custom themes through memoka-cli. Use for Memoka note, task-list, and supported application-setting requests, not application source development.
 ---
 
 # Memoka
 
-Use `memoka-cli` to operate on the user's explicitly selected Workspace. The CLI
+Use `memoka-cli` to operate on the user's explicitly selected Workspace. Application
+settings are OS-user-wide and use a separate, Workspace-free command below. The CLI
 connects to an existing GUI owner or acquires the Workspace lease headlessly.
 Never modify SQLite, Yjs data, receipts, or lock files directly.
 
 ## Discover and read
+
+For note operations, follow this section. For settings-only requests, skip
+Workspace discovery and use **Configure appearance and custom themes** below.
 
 1. Check `memoka-cli --version` and `memoka-cli --help`. Before editing, obtain
    `memoka-cli edit-schema --format json`; the installed CLI's contract wins over
@@ -95,9 +99,36 @@ Command forms, JSON fields, and limits are in the generated
 - A migration requirement means the Workspace must first be opened in the updated
   GUI. Do not migrate it with SQL or start a second writer after IPC failure.
 - Unsupported operations include Note deletion, Section creation/rename/movement,
-  group creation/rename, full-note rewrites, settings changes, attachment import,
+  group creation/rename, full-note rewrites, keymap/backup setting changes, attachment import,
   and editing managed Help/Trash/history. Report these limits instead of
   bypassing the CLI.
 - External edits do not enter the GUI user's Undo stack. History/backup capture
   remains independent; no dedicated pre-edit generation is guaranteed. Receipts
   survive restart, but not rollback to a backup that predates them.
+
+## Configure appearance and custom themes
+
+- Use `config schema --format json` and [the generated settings contract](references/config-schema.json)
+  when constructing requests. `config get --format json` returns the actual
+  config path, effective values and file revision. These settings affect all of
+  this OS user's Memoka Workspaces; do not pass `--workspace` or infer permission
+  to change settings from a note-editing request.
+- Write a JSON file with `schema_version: 1`, the returned `expected_revision`,
+  `set: { "setting-key": value }`, and/or `unset: ["setting-key"]` for restoring
+  defaults/removing definitions. Only the schema's allowlisted appearance and
+  Japanese segmentation settings are supported, not arbitrary Ex commands,
+  keymaps, credentials, or backup configuration.
+- Add a custom theme with `set["themes.<id>"]` containing a complete definition:
+  `base` is a built-in theme, `name` is optional, and `palette` overrides named
+  colors using `#RRGGBB`. The operation replaces that one definition; include its
+  existing overrides when modifying it. Set `theme` to the ID in the same request
+  to add and select atomically. Built-in IDs cannot be replaced. Do not install
+  CSS, scripts, URLs or fonts to work around a rejected color definition.
+- Preview with `config set --input FILE --dry-run --format json`, inspect the
+  changes, and apply the same file within the user's authorized scope. Read back
+  afterward. A `CONFIG_CONFLICT` requires a fresh read and reconsideration, not
+  merely substituting the latest revision. Unlike note edits, settings have no
+  `request_id` receipt: after an uncertain result, read back before retrying.
+- GUI appearance refreshes shortly after saving, deferred during IME composition
+  or theme/font previews. Invalid live config retains the current display. Do
+  not restart a GUI or disturb input automatically to force the refresh.

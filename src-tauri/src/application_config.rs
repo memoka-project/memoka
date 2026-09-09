@@ -1,10 +1,56 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::Path;
 use tauri::{AppHandle, Manager};
 use toml_edit::{Document, value};
+
+#[path = "application_config_cli.rs"]
+pub(crate) mod command;
+
+pub(crate) const MAX_CONFIG_BYTES: usize = 256 * 1024;
+const PALETTE_FIELDS: &[&str] = &[
+    "bg0",
+    "bg1",
+    "bg2",
+    "bg3",
+    "bg4",
+    "fg0",
+    "fg1",
+    "fg2",
+    "fg3",
+    "selection",
+    "selectionStrong",
+    "comment",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "orange",
+    "pink",
+];
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CustomTheme {
+    base: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(default)]
+    palette: BTreeMap<String, String>,
+}
+
+fn custom_theme_id(id: &str) -> bool {
+    (1..=48).contains(&id.len())
+        && id.as_bytes()[0].is_ascii_lowercase()
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        && ApplicationTheme::parse(id).is_none()
+}
 
 const DEFAULT_APPLICATION_THEME: ApplicationTheme = ApplicationTheme::Nightfox;
 const DEFAULT_APPLICATION_FONT_FAMILY: &str =
@@ -125,7 +171,9 @@ impl JapaneseLineBreakSegmentation {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfigFile {
-    theme: Option<ApplicationTheme>,
+    theme: Option<String>,
+    #[serde(default)]
+    themes: BTreeMap<String, CustomTheme>,
     font_family: Option<String>,
     zoom_percent: Option<u16>,
     note_max_width_px: Option<u16>,
@@ -182,8 +230,10 @@ pub struct ApplicationKeyConfigOverride {
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationKeyConfigLoadResult {
     config_path: String,
+    revision: Option<String>,
     config: Option<ApplicationKeyConfigOverride>,
-    theme: ApplicationTheme,
+    theme: String,
+    custom_themes: BTreeMap<String, CustomTheme>,
     font_family: String,
     zoom_percent: u16,
     note_max_width_px: u16,
@@ -201,8 +251,10 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
         Err(error) => {
             return ApplicationKeyConfigLoadResult {
                 config_path: "config.toml".to_owned(),
+                revision: None,
                 config: None,
-                theme: DEFAULT_APPLICATION_THEME,
+                theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
+                custom_themes: BTreeMap::new(),
                 font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
                 zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
                 note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
@@ -221,13 +273,23 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
 
 #[tauri::command]
 pub fn application_theme_save(app: AppHandle, theme: String) -> Result<(), String> {
-    let theme = ApplicationTheme::parse(&theme)
-        .ok_or_else(|| format!("未対応のカラーテーマです: {theme}"))?;
     let directory = app
         .path()
         .app_config_dir()
         .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
-    save_application_theme(&directory.join("config.toml"), theme)
+    update_application_config(&directory.join("config.toml"), |document| {
+        document["theme"] = value(theme);
+    })
+}
+
+#[tauri::command]
+pub fn application_config_revision(app: AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("config.toml");
+    command::revision_at(&path).map_err(|e| e.message)
 }
 
 #[tauri::command]
@@ -326,8 +388,10 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     if !path.exists() {
         return ApplicationKeyConfigLoadResult {
             config_path,
+            revision: Some(command::revision("")),
             config: None,
-            theme: DEFAULT_APPLICATION_THEME,
+            theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
+            custom_themes: BTreeMap::new(),
             font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
             zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
             note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
@@ -338,13 +402,13 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             warning: None,
         };
     }
-    let source = match fs::read_to_string(path) {
+    let source = match command::read_source(path) {
         Ok(source) => source,
         Err(error) => {
-            return warning_result(path, format!("設定を読み込めません: {error}"));
+            return warning_result(path, format!("設定を読み込めません: {}", error.message));
         }
     };
-    let parsed = match toml::from_str::<ApplicationConfigFile>(&source) {
+    let parsed = match validate_source(&source) {
         Ok(parsed) => parsed,
         Err(error) => {
             return warning_result(path, format!("TOMLを解釈できません: {error}"));
@@ -353,7 +417,9 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     let _legacy_mirror_setting = parsed
         .shutdown
         .and_then(|shutdown| shutdown.wait_for_mirror);
-    let theme = parsed.theme.unwrap_or(DEFAULT_APPLICATION_THEME);
+    let theme = parsed
+        .theme
+        .unwrap_or_else(|| DEFAULT_APPLICATION_THEME.as_str().to_owned());
     let font_family = match parsed.font_family.as_deref() {
         Some(value) => match validate_application_font_family(value) {
             Ok(value) => value.to_owned(),
@@ -408,6 +474,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     });
     ApplicationKeyConfigLoadResult {
         config_path,
+        revision: Some(command::revision(&source)),
         config: Some(ApplicationKeyConfigOverride {
             leader_key: parsed.leader,
             whichwrap: parsed.vim.and_then(|value| value.whichwrap),
@@ -419,6 +486,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             table_bindings: keymap.and_then(|value| value.table),
         }),
         theme,
+        custom_themes: parsed.themes,
         font_family,
         zoom_percent,
         note_max_width_px,
@@ -430,6 +498,7 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     }
 }
 
+#[cfg(test)]
 fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), String> {
     update_application_config(path, |document| {
         document["theme"] = value(theme.as_str());
@@ -494,54 +563,94 @@ fn update_application_config(
     path: &Path,
     update: impl FnOnce(&mut Document),
 ) -> Result<(), String> {
-    let source = if path.exists() {
-        fs::read_to_string(path)
-            .map_err(|error| format!("{}: 設定を読み込めません: {error}", path.display()))?
-    } else {
-        String::new()
-    };
-    if !source.trim().is_empty() {
-        toml::from_str::<ApplicationConfigFile>(&source).map_err(|error| {
-            format!(
-                "{}: 既存設定が不正なため設定を保存できません: {error}",
-                path.display()
-            )
-        })?;
-    }
+    let _lease = command::lock(path).map_err(|e| e.message)?;
+    let source = command::read_source(path).map_err(|e| e.message)?;
+    validate_source(&source)
+        .map_err(|error| format!("既存設定が不正なため設定を保存できません: {error}"))?;
     let mut document = source
         .parse::<Document>()
         .map_err(|error| format!("{}: 既存設定を編集できません: {error}", path.display()))?;
+    let before = document.clone();
     update(&mut document);
+    preserve_value_comments(before.as_item(), document.as_item_mut());
+    validate_source(&document.to_string())?;
     let mut output = document.to_string();
     if !output.ends_with('\n') {
         output.push('\n');
     }
-    if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory).map_err(|error| {
-            format!(
-                "{}: 設定ディレクトリを作成できません: {error}",
-                directory.display()
-            )
-        })?;
+    if output == source {
+        return Ok(());
     }
-    let staging = path.with_extension("toml.tmp");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&staging)
-        .map_err(|error| format!("{}: 一時設定を書き込めません: {error}", staging.display()))?;
-    file.write_all(output.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|error| format!("{}: 設定を確定できません: {error}", staging.display()))?;
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        fs::remove_file(path)
-            .map_err(|error| format!("{}: 旧設定を置換できません: {error}", path.display()))?;
+    command::persist(path, &output).map_err(|e| e.message)
+}
+
+fn preserve_value_comments(before: &toml_edit::Item, after: &mut toml_edit::Item) {
+    if let (Some(old), Some(new)) = (before.as_table_like(), after.as_table_like_mut()) {
+        for (key, child) in old.iter() {
+            if let Some(target) = new.get_mut(key) {
+                preserve_value_comments(child, target);
+            }
+        }
     }
-    fs::rename(&staging, path)
-        .map_err(|error| format!("{}: 設定ファイルを公開できません: {error}", path.display()))?;
-    Ok(())
+    if let (Some(old), Some(new)) = (before.as_value(), after.as_value_mut()) {
+        *new.decor_mut() = old.decor().clone();
+    }
+}
+
+fn validate_source(source: &str) -> Result<ApplicationConfigFile, String> {
+    if source.len() > MAX_CONFIG_BYTES {
+        return Err("設定ファイルのサイズ上限を超えています".into());
+    }
+    let parsed: ApplicationConfigFile = toml::from_str(source).map_err(|e| e.to_string())?;
+    if parsed.themes.len() > 64 {
+        return Err("カスタムテーマは64件までです".into());
+    }
+    for (id, theme) in &parsed.themes {
+        if !custom_theme_id(id)
+            || !ApplicationTheme::parse(&theme.base).is_some_and(|base| base.as_str() == theme.base)
+        {
+            return Err(format!("不正なカスタムテーマIDまたはbaseです: {id}"));
+        }
+        if theme.name.as_ref().is_some_and(|name| {
+            name.trim().is_empty() || name.len() > 128 || name.chars().any(char::is_control)
+        }) {
+            return Err(format!("不正なテーマ表示名です: {id}"));
+        }
+        for (field, color) in &theme.palette {
+            if !PALETTE_FIELDS.contains(&field.as_str())
+                || color.len() != 7
+                || !color.starts_with('#')
+                || !color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+            {
+                return Err(format!(
+                    "{id}.{field}: paletteは既知の項目と#RRGGBBで指定してください"
+                ));
+            }
+        }
+    }
+    if let Some(theme) = &parsed.theme {
+        if !ApplicationTheme::parse(theme).is_some_and(|base| base.as_str() == theme)
+            && !parsed.themes.contains_key(theme)
+        {
+            return Err(format!("未対応のカラーテーマです: {theme}"));
+        }
+    }
+    if let Some(font) = &parsed.font_family {
+        validate_application_font_family(font)?;
+    }
+    if let Some(value) = parsed.zoom_percent {
+        validate_application_zoom_percent(value)?;
+    }
+    if let Some(value) = parsed.note_max_width_px {
+        validate_application_note_max_width_px(value)?;
+    }
+    if let Some(value) = parsed.line_number_min_width_px {
+        validate_application_line_number_min_width_px(value)?;
+    }
+    if let Some(value) = parsed.indent_width_px {
+        validate_application_indent_width_px(value)?;
+    }
+    Ok(parsed)
 }
 
 fn validate_application_font_family(value: &str) -> Result<&str, String> {
@@ -603,8 +712,10 @@ fn validate_application_indent_width_px(value: u16) -> Result<(), String> {
 fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult {
     ApplicationKeyConfigLoadResult {
         config_path: path.display().to_string(),
+        revision: None,
         config: None,
-        theme: DEFAULT_APPLICATION_THEME,
+        theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
+        custom_themes: BTreeMap::new(),
         font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
         zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
         note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
@@ -640,7 +751,7 @@ mod tests {
         let missing = directory.path().join("config.toml");
         let absent = load_application_key_config(&missing);
         assert!(absent.config.is_none());
-        assert_eq!(absent.theme, ApplicationTheme::Nightfox);
+        assert_eq!(absent.theme, "nightfox");
         assert_eq!(absent.font_family, DEFAULT_APPLICATION_FONT_FAMILY);
         assert_eq!(absent.zoom_percent, DEFAULT_APPLICATION_ZOOM_PERCENT);
         assert_eq!(
@@ -702,7 +813,7 @@ wait_for_mirror = false
         let loaded = load_application_key_config(&missing);
         let config = loaded.config.expect("config");
         assert_eq!(config.leader_key.as_deref(), Some(";"));
-        assert_eq!(loaded.theme, ApplicationTheme::Duskfox);
+        assert_eq!(loaded.theme, "duskfox");
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
         assert_eq!(loaded.note_max_width_px, 960);
@@ -785,7 +896,7 @@ wait_for_mirror = false
         assert!(updated.contains("word_segmentation = \"unicode\""));
         assert!(updated.contains("line_break_segmentation = \"budoux\""));
         let loaded = load_application_key_config(&path);
-        assert_eq!(loaded.theme, ApplicationTheme::Dayfox);
+        assert_eq!(loaded.theme, "dayfox");
         assert_eq!(loaded.font_family, "Noto Serif CJK JP, serif");
         assert_eq!(loaded.zoom_percent, 130);
         assert_eq!(loaded.note_max_width_px, 880);

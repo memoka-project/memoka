@@ -18,6 +18,8 @@ use std::{
 };
 
 const USAGE: &str = "Memoka CLI\n\n\
+  memoka-cli config get|schema --format json\n\
+  memoka-cli config set --input FILE|- [--dry-run] --format json\n\
   memoka-cli workspaces --format json\n\
   memoka-cli tree [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json\n\
   memoka-cli search QUERY [--workspace DIR] [--generation ID] [--include-trash] [--limit N] [--cursor CURSOR] --format json\n\
@@ -286,6 +288,37 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
+    if command == "config" {
+        use crate::application_config::command as config;
+        return match positional.as_slice() {
+            ["config", "schema"] => {
+                options.allow(&["--format"])?;
+                print_json(&config::schema())
+            }
+            ["config", "get"] => {
+                options.allow(&["--format"])?;
+                print_json(&config::get(&config::path()?)?)
+            }
+            ["config", "set"] => {
+                options.allow(&["--format", "--input", "--dry-run"])?;
+                let input = options.required("--input")?;
+                let mut bytes = Vec::new();
+                let limit = crate::application_config::MAX_CONFIG_BYTES as u64 + 1;
+                if input == "-" {
+                    io::stdin().take(limit).read_to_end(&mut bytes)?;
+                } else {
+                    plain_file(Path::new(input))?;
+                    fs::File::open(input)?.take(limit).read_to_end(&mut bytes)?;
+                }
+                print_json(&config::set(
+                    &config::path()?,
+                    &config::parse(&bytes)?,
+                    options.flag("--dry-run"),
+                )?)
+            }
+            _ => Err(argument("Expected config get, set or schema")),
+        };
+    }
     if positional == ["edit-schema"] {
         options.allow(&["--format"])?;
         return print_json(&crate::agent_edit::schema());

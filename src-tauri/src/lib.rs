@@ -494,6 +494,7 @@ pub fn run() {
         set_normal_mode_ime_guard,
         input_method_environment,
         application_config::application_key_config_load,
+        application_config::application_config_revision,
         application_config::application_theme_save,
         application_config::application_font_family_save,
         application_config::application_zoom_percent_save,

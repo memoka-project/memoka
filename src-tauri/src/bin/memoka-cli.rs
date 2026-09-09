@@ -6,7 +6,9 @@ fn main() {
         arguments.first().map(String::as_str),
         Some("verify" | "restore")
     );
-    let agent = arguments.first().is_some_and(|arg| matches!(arg.as_str(), "edit" | "note-edit"))
+    let agent = arguments
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "edit" | "note-edit"))
         || arguments.iter().any(|arg| arg == "--for-edit");
     if let Err(error) = cli::install_interrupt_handler().and_then(|_| cli::run(arguments)) {
         if agent {
@@ -33,7 +35,8 @@ fn exit_code(error: &ReadError) -> i32 {
         "NOT_FOUND" | "WORKSPACE_REQUIRED" => 3,
         "IN_TRASH" => 4,
         "UNSUPPORTED_SCHEMA" | "MIGRATION_REQUIRED" | "SECTION_DEPTH_LIMIT" => 5,
-        "WORKSPACE_LOCKED"
+        "CONFIG_BUSY"
+        | "WORKSPACE_LOCKED"
         | "OWNER_UNAVAILABLE"
         | "IPC_TIMEOUT"
         | "BACKUP_BUSY"
@@ -51,7 +54,7 @@ fn exit_code(error: &ReadError) -> i32 {
         | "INCOMPLETE_GENERATION"
         | "RESTIC_INCOMPLETE"
         | "UNSAFE_PATH" => 9,
-        "CURSOR_STALE" | "REVISION_CONFLICT" | "WORKSPACE_CHANGED" => 10,
+        "CONFIG_CONFLICT" | "CURSOR_STALE" | "REVISION_CONFLICT" | "WORKSPACE_CHANGED" => 10,
         _ => 1,
     }
 }

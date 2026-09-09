@@ -91,6 +91,7 @@ import type { ApplicationCommandId } from "./core/application-command";
 import {
   DEFAULT_APPLICATION_THEME_ID,
   normalizeApplicationThemeId,
+  setCustomApplicationThemes,
   type ApplicationThemeId,
 } from "./core/application-theme";
 import {
@@ -185,6 +186,7 @@ import {
 import {
   createDefaultApplicationConfigPort,
   type ApplicationConfigPort,
+  type LoadedApplicationConfig,
 } from "./platform/application-config";
 import { applyApplicationTheme } from "./platform/application-theme";
 import {
@@ -251,6 +253,7 @@ export function App({
   const applicationConfig =
     applicationConfigOverride ?? defaultApplicationConfig;
   const [themeId, setThemeId] = useState<ApplicationThemeId>(initialTheme);
+  const [themeRegistryRevision, setThemeRegistryRevision] = useState(0);
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
   const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
   const [noteMaxWidthPx, setNoteMaxWidthPx] = useState(initialNoteMaxWidthPx);
@@ -393,10 +396,112 @@ export function App({
   const runtimeRef = useRef<CoreRuntime | null>(null);
   const backupController = useRef<BackupController | null>(null);
   const startupUpdateCheckStarted = useRef(false);
+  const configPreviewActive = useRef(false);
+  useEffect(() => {
+    configPreviewActive.current = !!themePicker || !!fontPicker;
+  }, [themePicker, fontPicker]);
+
+  useEffect(() => {
+    if (!applicationConfig.subscribe) return;
+    let stopped = false;
+    let pending: LoadedApplicationConfig | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let composing = false;
+    let customFingerprint: string | undefined;
+    const flush = () => {
+      if (stopped || !pending) return;
+      if (
+        configPreviewActive.current ||
+        composing ||
+        [...editorAdapters.current.values()].some(
+          (adapter) =>
+            adapter.editor.view.composing || adapter.vimSnapshot.composing,
+        )
+      ) {
+        timer = setTimeout(flush, 100);
+        return;
+      }
+      const loaded = pending;
+      pending = null;
+      if (loaded.valid === false) {
+        setCommandMessage(
+          `設定の再読込: ${loaded.warning}; 現在の設定を維持します`,
+        );
+        return;
+      }
+      if (loaded.warning) setCommandMessage(loaded.warning);
+      const fingerprint = JSON.stringify(loaded.customThemes ?? {});
+      if (fingerprint !== customFingerprint) {
+        setCustomApplicationThemes(loaded.customThemes ?? {});
+        customFingerprint = fingerprint;
+        setThemeRegistryRevision((revision) => revision + 1);
+      }
+      setThemeId(loaded.theme);
+      setFontFamily(loaded.fontFamily);
+      noteMaxWidthPxRef.current = persistedNoteMaxWidthPx.current =
+        loaded.noteMaxWidthPx;
+      noteMaxWidthRequestGeneration.current += 1;
+      setNoteMaxWidthPx(loaded.noteMaxWidthPx);
+      lineNumberMinWidthPxRef.current = persistedLineNumberMinWidthPx.current =
+        loaded.lineNumberMinWidthPx;
+      lineNumberMinWidthRequestGeneration.current += 1;
+      setLineNumberMinWidthPx(loaded.lineNumberMinWidthPx);
+      indentWidthPxRef.current = persistedIndentWidthPx.current =
+        loaded.indentWidthPx;
+      indentWidthRequestGeneration.current += 1;
+      setIndentWidthPx(loaded.indentWidthPx);
+      persistedJapaneseWordSegmentation.current =
+        loaded.japaneseWordSegmentation;
+      japaneseWordSegmentationRequestGeneration.current += 1;
+      setJapaneseWordSegmentation(loaded.japaneseWordSegmentation);
+      persistedJapaneseLineBreakSegmentation.current =
+        loaded.japaneseLineBreakSegmentation;
+      japaneseLineBreakSegmentationRequestGeneration.current += 1;
+      setJapaneseLineBreakSegmentation(loaded.japaneseLineBreakSegmentation);
+      if (zoomPercentRef.current !== loaded.zoomPercent) {
+        const generation = ++zoomRequestGeneration.current;
+        void applicationZoom.setZoomPercent(loaded.zoomPercent).then(
+          () => {
+            if (stopped || generation !== zoomRequestGeneration.current) return;
+            zoomPercentRef.current = persistedZoomPercent.current =
+              loaded.zoomPercent;
+            setZoomPercent(loaded.zoomPercent);
+            refreshApplicationLayout();
+          },
+          (cause) => {
+            if (!stopped)
+              setCommandMessage(
+                `Zoom設定を適用できませんでした: ${String(cause)}`,
+              );
+          },
+        );
+      }
+    };
+    const onCompositionStart = () => {
+      composing = true;
+    };
+    const onCompositionEnd = () => {
+      composing = false;
+    };
+    window.addEventListener("compositionstart", onCompositionStart, true);
+    window.addEventListener("compositionend", onCompositionEnd, true);
+    const unsubscribe = applicationConfig.subscribe((loaded) => {
+      pending = loaded;
+      clearTimeout(timer);
+      flush();
+    });
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      unsubscribe();
+      window.removeEventListener("compositionstart", onCompositionStart, true);
+      window.removeEventListener("compositionend", onCompositionEnd, true);
+    };
+  }, [applicationConfig, applicationZoom]);
 
   useLayoutEffect(() => {
     applyApplicationTheme(document.documentElement, themeId);
-  }, [themeId]);
+  }, [themeId, themeRegistryRevision]);
   useEffect(
     () =>
       attachmentRepository.subscribe(() =>

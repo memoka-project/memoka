@@ -1,6 +1,9 @@
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
-import { DEFAULT_APPLICATION_THEME_ID } from "./core/application-theme";
+import {
+  DEFAULT_APPLICATION_THEME_ID,
+  setCustomApplicationThemes,
+} from "./core/application-theme";
 import { DEFAULT_APPLICATION_ZOOM_PERCENT } from "./core/application-appearance";
 import {
   createDefaultApplicationConfigPort,
@@ -24,6 +27,7 @@ void loadApplicationConfig().then(
   async ({
     config,
     theme,
+    customThemes,
     fontFamily,
     zoomPercent,
     noteMaxWidthPx,
@@ -33,6 +37,7 @@ void loadApplicationConfig().then(
     japaneseLineBreakSegmentation,
     warning,
   }) => {
+    setCustomApplicationThemes(customThemes ?? {});
     applyApplicationTheme(document.documentElement, theme);
     applyApplicationFont(document.documentElement, fontFamily);
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);

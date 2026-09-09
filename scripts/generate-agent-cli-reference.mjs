@@ -25,6 +25,7 @@ const cli = (...args) =>
     maxBuffer: 4 * 1024 * 1024,
   });
 const contract = JSON.parse(cli("edit-schema", "--format", "json"));
+const configContract = JSON.parse(cli("config", "schema", "--format", "json"));
 const help = cli("--help").trim();
 const directory = path.join(root, "skills", "memoka", "references");
 const schema = await format(JSON.stringify(contract, null, 2), {
@@ -52,12 +53,22 @@ const markdown = await format(
     JSON.stringify(contract, null, 2),
     "```",
     "",
+    "## Application settings",
+    "",
+    "Application-wide settings do not take --workspace. Get the current path, effective values and revision with `memoka-cli config get --format json`. The generated contract is [config-schema.json](config-schema.json); query the installed CLI with `memoka-cli config schema --format json`.",
+    "",
+    "Use `config set --input FILE --dry-run --format json` before applying that file. On CONFIG_CONFLICT reread and reconsider the change. Settings use absolute assignments plus compare-and-swap, not Note editing receipts or request IDs. After an uncertain response, read back the configuration; do not overwrite a newer revision.",
+    "",
   ].join("\n"),
   { parser: "markdown" },
 );
 for (const [name, expected] of [
   ["cli.md", markdown],
   ["edit-schema.json", schema],
+  [
+    "config-schema.json",
+    await format(JSON.stringify(configContract, null, 2), { parser: "json" }),
+  ],
 ]) {
   const destination = path.join(directory, name);
   if (check) {

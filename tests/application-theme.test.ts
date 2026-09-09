@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   APPLICATION_THEMES,
   APPLICATION_THEME_IDS,
@@ -10,6 +10,8 @@ import {
   markupHeadingLevelForSectionDepth,
   nextMarkupHeadingLevel,
   normalizeApplicationThemeId,
+  setCustomApplicationThemes,
+  type CustomApplicationThemes,
 } from "../app/src/core/application-theme";
 import {
   APPLICATION_THEME_APPEARANCE_DATA_ATTRIBUTE,
@@ -19,6 +21,59 @@ import {
 } from "../app/src/platform/application-theme";
 
 describe("Memoka application themes", () => {
+  afterEach(() => setCustomApplicationThemes({}));
+
+  it("derives named custom palettes and exposes them in the picker and every semantic token", () => {
+    setCustomApplicationThemes({
+      "my-dark": {
+        base: "nightfox",
+        name: "私の夜",
+        palette: { bg1: "#101020", red: "#ef7777", blue: "#99bbff" },
+      },
+    });
+    const custom = applicationTheme("my-dark");
+    expect(custom.appearance).toBe("dark");
+    expect(custom.tokens.canvas).toBe("#101020");
+    expect(custom.tokens.markupHeading1).toBe("#ef7777");
+    expect(custom.tokens.modeNormal).toBe("#99bbff");
+    expect(custom.palette.green).toBe(
+      applicationTheme("nightfox").palette.green,
+    );
+    expect(filterApplicationThemes("私の").map((theme) => theme.id)).toEqual([
+      "my-dark",
+    ]);
+    const element = document.createElement("div");
+    applyApplicationTheme(element, "my-dark");
+    expect(element.style.getPropertyValue("--memoka-color-mode-normal")).toBe(
+      "#99bbff",
+    );
+    setCustomApplicationThemes({
+      "my-dark": { base: "dayfox", palette: { blue: "#224488" } },
+    });
+    applyApplicationTheme(element, "my-dark");
+    expect(element.style.colorScheme).toBe("light");
+    expect(element.style.getPropertyValue("--memoka-color-mode-normal")).toBe(
+      "#224488",
+    );
+    setCustomApplicationThemes({});
+    expect(normalizeApplicationThemeId("my-dark")).toBeNull();
+  });
+
+  it("rejects a bad custom theme batch without replacing the active registry", () => {
+    setCustomApplicationThemes({ kept: { base: "nightfox" } });
+    for (const bad of [
+      { nightfox: { base: "dayfox" } },
+      { bad: { base: "kept" } },
+      { bad: { base: "dayfox", palette: { red: "url(https://example.com)" } } },
+      { bad: { base: "dayfox", palette: { typo: "#abcdef" } } },
+      { bad: { base: "dayfox", stylesheet: "evil" } },
+    ]) {
+      expect(() =>
+        setCustomApplicationThemes(bad as unknown as CustomApplicationThemes),
+      ).toThrow();
+      expect(applicationTheme("kept").id).toBe("kept");
+    }
+  });
   it("ships every Nightfox variant with stable adopted palette values", () => {
     expect(APPLICATION_THEME_IDS).toEqual([
       "nightfox",

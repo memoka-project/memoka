@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
@@ -374,6 +374,80 @@ export async function runAgentEditing({
       stableView,
       "moving a Note does not navigate the GUI",
     );
+    // Application settings use the test GUI's isolated per-user config, not
+    // the runner's real config or Workspace owner routing.
+    const configRoot = join(dirname(workspace), "config");
+    const settings = async (...args) => {
+      const result = await run(
+        binary,
+        ["config", ...args, "--format", "json"],
+        {
+          env: { ...process.env, XDG_CONFIG_HOME: configRoot },
+          timeout: 10000,
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      assert.equal(result.stderr, "");
+      const value = JSON.parse(result.stdout);
+      assert.equal(
+        resolve(value.config_path),
+        resolve(configRoot, "dev.memoka.desktop/config.toml"),
+      );
+      return value;
+    };
+    const configuration = await settings("get");
+    const configFile = join(temporary, "settings.json");
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        schema_version: 1,
+        expected_revision: configuration.revision,
+        set: {
+          "themes.agent-theme": {
+            base: "nightfox",
+            name: "Agent Theme",
+            palette: { blue: "#66aaff", orange: "#ffaa55" },
+          },
+          theme: "agent-theme",
+        },
+      }),
+    );
+    const noteBeforeSettings = await read();
+    const themeBefore = await execute(
+      sessionId,
+      "return document.documentElement.dataset.memokaTheme",
+    );
+    const settingsPreview = await settings(
+      "set",
+      "--input",
+      configFile,
+      "--dry-run",
+    );
+    assert.equal(settingsPreview.status, "preview");
+    assert.equal(
+      await execute(
+        sessionId,
+        "return document.documentElement.dataset.memokaTheme",
+      ),
+      themeBefore,
+    );
+    const appliedSettings = await settings("set", "--input", configFile);
+    assert.equal(appliedSettings.status, "applied");
+    await waitFor(
+      sessionId,
+      "return getComputedStyle(document.documentElement).getPropertyValue('--memoka-color-mode-normal').trim()",
+      (v) => v === "#66aaff",
+    );
+    assert.deepEqual(
+      await execute(sessionId, viewportScript),
+      stableView,
+      "settings reload preserves caret, scroll, folds, mode and focus",
+    );
+    assert.equal(
+      (await read()).revision,
+      noteBeforeSettings.revision,
+      "settings do not edit NoteDoc",
+    );
     return {
       passed: true,
       gui_and_standalone_equal: true,
@@ -383,6 +457,7 @@ export async function runAgentEditing({
       ime_rejected: true,
       hidden_note: true,
       note_create_rename_move: true,
+      live_custom_theme_from_cli: true,
       native_sql_faults: faults,
       revision: gui.revision_after,
     };

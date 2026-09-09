@@ -278,6 +278,10 @@ backup処理中の別WindowのInsert入力、読み取り専用preview、preview
 - Task ListのMarkdown/HTML/Clipboard、rich/nested/mixed内容、click/Normal Enter、新規未完了Item、Undo、IME優先を検査する。
 - Native実行環境でcheckboxの表示、caretがcheckboxに入らないこと、Section/Details titleと本文のEnter差異を確認する。
 - `agent:reference:check`でCLI定義と共通スキルの生成参照資料を同期する。スキルのインストール操作はテスト中に利用者の設定へ適用しない。
+- `application_config`と`reader_cli`で設定未作成時の読取/preview、headless・Workspace非依存、競合・排他、コメント保持、設定とテーマのatomic変更、無効値の全体拒否、既定へのresetを検査する。
+- カスタムテーマのbase・ID・paletteの制約、CSS/URL拒否、pickerとsemantic tokenへの反映、同じIDの定義更新・削除を検査する。
+- live reloadでは変更時だけparseし、GUI保存との競合、IME・picker中の保留、不正設定時の現在値維持、EditorのDOM・focus・本文の維持、解除後のpoll停止を検査する。
+- `tauri:agent-e2e`はGUIとCLIに同じ一時application config directoryを指定し、カスタムテーマの追加・選択と自動反映、Note revision・各Windowのcaret/scroll/focusの維持も検証する。
 
 ## 10. 大規模dataと性能
 

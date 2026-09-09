@@ -1,0 +1,121 @@
+{
+  "cli_version": "0.2.2",
+  "color": "#RRGGBB; no CSS, scripts, URLs or external files",
+  "conflict": "expected_revision is SHA-256 of the exact config bytes; reread on conflict, no force or auto-rebase",
+  "constraints": {
+    "font_family": "1..256 UTF-8 bytes; no control characters, semicolons or braces",
+    "indent_width_px": "16..64",
+    "japanese.line_break_segmentation": ["fine", "budoux", "native"],
+    "japanese.word_segmentation": ["fine", "budoux", "unicode"],
+    "line_number_min_width_px": "0 or 240..4096",
+    "note_max_width_px": "0 or 320..4096",
+    "zoom_percent": "50..200, step 10"
+  },
+  "custom_theme": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "properties": {
+      "base": {
+        "type": "string"
+      },
+      "name": {
+        "type": ["string", "null"]
+      },
+      "palette": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "default": {},
+        "type": "object"
+      }
+    },
+    "required": ["base"],
+    "title": "CustomTheme",
+    "type": "object"
+  },
+  "custom_theme_key": "themes.<id> (replace one complete definition)",
+  "get": "config get --format json",
+  "limits": {
+    "config_bytes": 262144,
+    "edits": 128,
+    "input_bytes": 262144,
+    "themes": 64
+  },
+  "palette_fields": [
+    "bg0",
+    "bg1",
+    "bg2",
+    "bg3",
+    "bg4",
+    "fg0",
+    "fg1",
+    "fg2",
+    "fg3",
+    "selection",
+    "selectionStrong",
+    "comment",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "orange",
+    "pink"
+  ],
+  "reload": "appearance and Japanese segmentation reload in running GUIs; keymaps and credentials are not writable here",
+  "request": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": false,
+    "properties": {
+      "expected_revision": {
+        "type": "string"
+      },
+      "schema_version": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "set": {
+        "additionalProperties": true,
+        "default": {},
+        "type": "object"
+      },
+      "unset": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      }
+    },
+    "required": ["expected_revision", "schema_version"],
+    "title": "ConfigRequest",
+    "type": "object"
+  },
+  "schema_version": 1,
+  "scope": "application",
+  "set": "config set --input FILE|- --format json [--dry-run]",
+  "set_keys": [
+    "theme",
+    "font_family",
+    "zoom_percent",
+    "note_max_width_px",
+    "line_number_min_width_px",
+    "indent_width_px",
+    "japanese.word_segmentation",
+    "japanese.line_break_segmentation"
+  ],
+  "theme_bases": [
+    "nightfox",
+    "dayfox",
+    "dawnfox",
+    "duskfox",
+    "nordfox",
+    "terafox",
+    "carbonfox"
+  ],
+  "theme_id": "[a-z][a-z0-9-]{0,47}; built-in IDs are reserved"
+}

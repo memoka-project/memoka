@@ -245,7 +245,9 @@ pub fn parse_note_request(bytes: &[u8]) -> Result<NoteRequest, ReadError> {
     Ok(request)
 }
 
-fn parse_unique_request<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, ReadError> {
+pub(crate) fn parse_unique_request<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+) -> Result<T, ReadError> {
     if bytes.len() > MAX_INPUT_BYTES {
         return Err(invalid("Input exceeds 1 MiB"));
     }

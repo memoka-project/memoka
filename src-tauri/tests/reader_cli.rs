@@ -72,6 +72,85 @@ fn cli(workspace: &std::path::Path, arguments: &[&str]) -> Output {
         .output()
         .unwrap()
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn config_cli_is_workspace_free_headless_previewable_and_revision_checked() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config 日本語");
+    let run = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_memoka-cli"))
+            .args(arguments)
+            .env("XDG_CONFIG_HOME", &config)
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS")
+            .output()
+            .unwrap()
+    };
+    let read = run(&["config", "get", "--format", "json"]);
+    assert!(
+        read.status.success(),
+        "{}",
+        String::from_utf8_lossy(&read.stderr)
+    );
+    let read: Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(read["scope"], "application");
+    assert_eq!(read["values"]["theme"], "nightfox");
+    assert!(!config.exists());
+    let request = temp.path().join("request.json");
+    fs::write(&request, serde_json::to_vec(&json!({"schema_version":1,"expected_revision":read["revision"],"set":{"themes.test-theme":{"base":"nightfox","palette":{"red":"#ff3333"}},"theme":"test-theme"}})).unwrap()).unwrap();
+    let input = request.to_str().unwrap();
+    let preview = run(&[
+        "config",
+        "set",
+        "--input",
+        input,
+        "--dry-run",
+        "--format",
+        "json",
+    ]);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert!(!config.exists());
+    let apply = run(&["config", "set", "--input", input, "--format", "json"]);
+    assert!(
+        apply.status.success(),
+        "{}",
+        String::from_utf8_lossy(&apply.stderr)
+    );
+    let reread = run(&["config", "get"]);
+    let values: Value = serde_json::from_slice(&reread.stdout).unwrap();
+    assert_eq!(values["values"]["theme"], "test-theme");
+    assert_eq!(
+        values["values"]["themes"]["test-theme"]["palette"]["red"],
+        "#ff3333"
+    );
+    let stale = run(&["config", "set", "--input", input]);
+    assert_eq!(stale.status.code(), Some(10));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stale.stderr).unwrap()["code"],
+        "CONFIG_CONFLICT"
+    );
+    assert!(
+        !config
+            .join("dev.memoka.desktop/selected-workspace.json")
+            .exists()
+    );
+    assert!(
+        !run(&[
+            "config",
+            "get",
+            "--workspace",
+            temp.path().to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+}
 #[cfg(target_os = "linux")]
 #[test]
 fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {

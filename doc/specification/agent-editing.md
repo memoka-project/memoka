@@ -11,7 +11,8 @@ CLIのためにNode、DOM、GTK、WebKit、非表示Editorを起動しない。o
 本文編集は局所置換、直接BodyへのMarkdown追記・挿入、既存タスクの完了状態設定である。
 `note-edit`でNoteの作成・Root titleの改名、Note/group entryの移動・並び替えにも対応する。
 Note削除、Sectionの新規作成・削除・改名・移動、group作成・改名、全体置換、複数既存Noteのtransaction、
-添付取り込み、アプリ設定変更、過去世代・Trash・管理Helpの編集には対応しない。diffは確認用出力であり入力形式ではない。
+添付取り込み、過去世代・Trash・管理Helpの編集には対応しない。diffは確認用出力であり入力形式ではない。
+アプリ外観と日本語分割の設定は、Workspaceとは独立した`config get/set/schema`で扱う。
 
 ## 2. 編集用の読み出し
 
@@ -219,3 +220,24 @@ Namespace操作のうち対象Noteが固定されない作成・移動は、い�
 手順・安全境界はSKILL.md、CLI引数とJSON Schemaは生成したreferencesへ分ける。
 `corepack pnpm agent:reference`でCLI定義から再生成し、`agent:reference:check`で差分を検出する。
 インストール操作は利用者が外部skillsツールで行い、Memoka内の管理画面・独自installerは提供しない。
+
+## 9. アプリ設定の読み書き
+
+`config get --format json`はOSユーザーの`config.toml`のpath、有効値、正確なfile bytesのSHA-256 `revision`を返す。
+Workspace指定・選択・DB open・owner IPC・sidecar・ネットワークは使わない。file不在は既定値を返し、作成しない。
+`config schema --format json`はRust DTOから生成したrequest schema、変更可能なkey、値の制約、テーマ定義を返す。
+
+`config set --input FILE|- --format json [--dry-run]`はUTF-8 JSONを受け付ける。
+必須fieldは`schema_version: 1`と`expected_revision`。`set`は設定keyから値へのmap、`unset`は既定へ戻すkeyまたは削除するテーマ定義のkeyの配列。
+両者合わせて1〜128件。入出力設定・requestは256 KiB以下。不明field・重複JSON key・set/unset重複・不正な値を拒否する。
+変更可能なkeyは[設定仕様](configuration-and-commands.md#12-cliからの設定変更)のallowlistに限り、任意Ex commandの実行は提供しない。
+
+GUIとCLIは同じ検証・排他lock・atomic file置換を使用する。コメントと無関係な設定を保持し、Windowsでも旧fileを先に削除しない。
+symlink/reparse point経由の設定書換えを拒否する。CLIはlock取得後にrevisionを確認し、異なれば`CONFIG_CONFLICT`（exit 10）で無変更とする。
+競合を自動rebaseしない。排他中は`CONFIG_BUSY`。外部テキストエディタ等、Memokaのlockに従わないwriterとの同時保存までは保証しない。
+
+dry-runはfile・directory・lockを作成せず、`status: "preview"`、適用予定の`revision_after`、有効値の`changes`を返す。
+適用結果は`applied`または`no_change`、前後revision、`changes`、削除した明示設定の`unset_keys`を返す。
+明示設定の削除は有効値が同じでも保存する。既に有効な値の再代入だけならfileを書き換えない。
+Note用のreceipt/request IDは持たない。応答が不明な場合は`config get`で確認し、古いrevisionを最新値へ機械的に差し替えて再送しない。
+設定はNoteのUndo・履歴・バックアップとは独立する。キー設定・資格情報・バックアップ設定はこのAPIの対象外。

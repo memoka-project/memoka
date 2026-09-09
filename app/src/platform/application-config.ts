@@ -7,7 +7,10 @@ import {
 } from "../core/application-key-config";
 import {
   DEFAULT_APPLICATION_THEME_ID,
+  APPLICATION_THEME_IDS,
   normalizeApplicationThemeId,
+  resolveCustomApplicationThemes,
+  type CustomApplicationThemes,
   type ApplicationThemeId,
 } from "../core/application-theme";
 import {
@@ -34,8 +37,10 @@ import {
 
 interface ApplicationKeyConfigLoadWire {
   readonly configPath: string;
+  readonly revision?: string | null;
   readonly config: PartialApplicationKeyConfig | null;
   readonly theme: string;
+  readonly customThemes?: CustomApplicationThemes;
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
@@ -47,9 +52,12 @@ interface ApplicationKeyConfigLoadWire {
 }
 
 export interface LoadedApplicationConfig {
+  readonly valid?: boolean;
+  readonly revision?: string | null;
   readonly config: ApplicationKeyConfig;
   readonly configPath: string | null;
   readonly theme: ApplicationThemeId;
+  readonly customThemes?: CustomApplicationThemes;
   readonly fontFamily: string;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
@@ -61,6 +69,10 @@ export interface LoadedApplicationConfig {
 }
 
 export interface ApplicationConfigPort {
+  /** Live appearance updates only; never recreate editors or change keymaps mid-input. */
+  readonly subscribe?: (
+    listener: (config: LoadedApplicationConfig) => void,
+  ) => () => void;
   readonly saveTheme: (theme: ApplicationThemeId) => Promise<void>;
   readonly saveFontFamily: (fontFamily: string) => Promise<void>;
   readonly saveZoomPercent: (zoomPercent: number) => Promise<void>;
@@ -78,40 +90,51 @@ export interface ApplicationConfigPort {
 }
 
 export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
+  const writes = { pending: 0, generation: 0 };
+  const save = async (command: string, args: Record<string, unknown>) => {
+    writes.pending += 1;
+    writes.generation += 1;
+    try {
+      await invoke(command, args);
+    } finally {
+      writes.pending -= 1;
+    }
+  };
   return {
+    subscribe: (listener) => subscribeApplicationConfig(listener, writes),
     saveTheme: async (theme) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_theme_save", { theme });
+      await save("application_theme_save", { theme });
     },
     saveFontFamily: async (fontFamily) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_font_family_save", { fontFamily });
+      await save("application_font_family_save", { fontFamily });
     },
     saveZoomPercent: async (zoomPercent) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_zoom_percent_save", { zoomPercent });
+      await save("application_zoom_percent_save", { zoomPercent });
     },
     saveNoteMaxWidthPx: async (noteMaxWidthPx) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_note_max_width_px_save", { noteMaxWidthPx });
+      await save("application_note_max_width_px_save", { noteMaxWidthPx });
     },
     saveLineNumberMinWidthPx: async (lineNumberMinWidthPx) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_line_number_min_width_px_save", {
+      await save("application_line_number_min_width_px_save", {
         lineNumberMinWidthPx,
       });
     },
     saveIndentWidthPx: async (indentWidthPx) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_indent_width_px_save", { indentWidthPx });
+      await save("application_indent_width_px_save", { indentWidthPx });
     },
     saveJapaneseWordSegmentation: async (mode) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_japanese_word_segmentation_save", { mode });
+      await save("application_japanese_word_segmentation_save", { mode });
     },
     saveJapaneseLineBreakSegmentation: async (mode) => {
       if (!isTauriRuntime()) return;
-      await invoke("application_japanese_line_break_segmentation_save", {
+      await save("application_japanese_line_break_segmentation_save", {
         mode,
       });
     },
@@ -121,6 +144,7 @@ export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
 export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> {
   if (!isTauriRuntime()) {
     return {
+      valid: true,
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: null,
       theme: DEFAULT_APPLICATION_THEME_ID,
@@ -143,6 +167,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     const warning = `config.toml: 設定の読込に失敗しました: ${errorMessage(cause)}; 既定設定を使用します`;
     console.warn(warning);
     return {
+      valid: false,
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: null,
       theme: DEFAULT_APPLICATION_THEME_ID,
@@ -159,6 +184,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
   if (loaded.warning && !loaded.config) {
     console.warn(loaded.warning);
     return {
+      valid: false,
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: loaded.configPath,
       theme: DEFAULT_APPLICATION_THEME_ID,
@@ -178,7 +204,15 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       ? mergeApplicationKeyConfig(loaded.config)
       : DEFAULT_APPLICATION_KEY_CONFIG;
     validateVimKeyConfig(config);
-    const theme = normalizeApplicationThemeId(loaded.theme);
+    const customThemes = loaded.customThemes ?? {};
+    const custom = resolveCustomApplicationThemes(customThemes);
+    const theme = custom.some((theme) => theme.id === loaded.theme)
+      ? loaded.theme
+      : APPLICATION_THEME_IDS.includes(
+            loaded.theme as (typeof APPLICATION_THEME_IDS)[number],
+          )
+        ? normalizeApplicationThemeId(loaded.theme)
+        : null;
     if (!theme) throw new Error(`未対応のカラーテーマです: ${loaded.theme}`);
     const fontFamily = normalizeApplicationFontFamily(loaded.fontFamily);
     if (!fontFamily) {
@@ -226,9 +260,12 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       );
     }
     return {
+      valid: true,
       config,
       configPath: loaded.configPath,
       theme,
+      revision: loaded.revision,
+      customThemes,
       fontFamily,
       zoomPercent,
       noteMaxWidthPx,
@@ -242,6 +279,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     const warning = `${loaded.configPath}: ${errorMessage(cause)}; 既定設定を使用します`;
     console.warn(warning);
     return {
+      valid: false,
       config: DEFAULT_APPLICATION_KEY_CONFIG,
       configPath: loaded.configPath,
       theme: DEFAULT_APPLICATION_THEME_ID,
@@ -255,6 +293,55 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       warning,
     };
   }
+}
+
+/** Hash the small config once a second; parse and update React only on change. */
+function subscribeApplicationConfig(
+  listener: (config: LoadedApplicationConfig) => void,
+  writes: { pending: number; generation: number },
+): () => void {
+  if (!isTauriRuntime()) return () => {};
+  let stopped = false;
+  let running = false;
+  let revision: string | undefined;
+  let lastError: string | undefined;
+  const poll = async () => {
+    if (running || stopped || writes.pending > 0) return;
+    const generation = writes.generation;
+    running = true;
+    try {
+      const current = await invoke<string>("application_config_revision");
+      if (stopped || current === revision) return;
+      const loaded = await loadApplicationConfig();
+      if (stopped || writes.pending > 0 || writes.generation !== generation)
+        return;
+      // On invalid TOML retain the live settings rather than apply startup defaults.
+      revision = loaded.revision ?? current;
+      listener(loaded);
+      lastError = undefined;
+    } catch (cause) {
+      const message = errorMessage(cause);
+      if (!stopped && lastError !== message) {
+        lastError = message;
+        window.dispatchEvent(
+          new CustomEvent("memoka-editor-error", {
+            detail: { message: `設定の再読込に失敗しました: ${message}` },
+          }),
+        );
+      }
+    } finally {
+      running = false;
+    }
+  };
+  const onFocus = () => void poll();
+  const timer = window.setInterval(onFocus, 1000);
+  window.addEventListener("focus", onFocus);
+  void poll();
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+    window.removeEventListener("focus", onFocus);
+  };
 }
 
 /** @deprecated Prefer loadApplicationConfig when consuming application settings. */
