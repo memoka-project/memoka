@@ -1157,7 +1157,15 @@ describe("Memoka Application utilities", () => {
 
     const helpCommand = openCommandLine(editor);
     fireEvent.change(helpCommand, { target: { value: "help" } });
-    fireEvent.keyDown(helpCommand, { key: "Enter" });
+    const openHelpNote = vi.spyOn(CoreRuntime.prototype, "openHelpNote");
+    // Importing the complete Help can exceed waitFor's default one second on
+    // shared CI runners. Await the real command and React commit first, then
+    // assert the mounted editor and restored focus without relaxing them.
+    await act(async () => {
+      fireEvent.keyDown(helpCommand, { key: "Enter" });
+      expect(openHelpNote).toHaveBeenCalledExactlyOnceWith("window-1");
+      await openHelpNote.mock.results[0]!.value;
+    });
     const helpEditor = await waitFor(() => {
       const mounted = view.container.querySelector<HTMLElement>(
         '.editor-window .memoka-editor[data-vim-mode="normal"]',
