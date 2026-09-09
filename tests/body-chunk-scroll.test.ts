@@ -5,7 +5,10 @@ import { createNoteDocument } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import { productEditorExtensions } from "../app/src/editor/extensions";
 import { parseMarkdownNote } from "../app/src/editor/markdown-paste";
-import { runEditorVimCommand } from "../app/src/vim/editor-commands";
+import {
+  moveVimSelectionToViewportPosition,
+  runEditorVimCommand,
+} from "../app/src/vim/editor-commands";
 
 /** Layout model for the real BodyChunk NodeViews. Activating an offscreen
  * chunk adds 720px above the visible caret, as rich paragraphs take more room
@@ -145,11 +148,54 @@ function harness(activeHeight = 960) {
     caretTop,
     revealTops,
     visible,
+    positions,
     destroy,
   };
 }
 
 describe("BodyChunk viewport anchoring", () => {
+  it("uses visible content when an observer renders chunks before wheel correction", () => {
+    const h = harness();
+    try {
+      h.select("Paragraph 0-0");
+      const target = h.positions.get("Section 5")!;
+      h.scroll.scrollTop = h.sectionTop(5) - 100;
+      const hit = vi
+        .spyOn(h.editor.view, "posAtCoords")
+        .mockReturnValue({ pos: target, inside: -1 });
+      h.visible([4, 5, 6]);
+      expect(h.caretTop(target)).toBe(100);
+      expect(h.editor.state.selection.$head.parent.textContent).toBe(
+        "Paragraph 0-0",
+      );
+      hit.mockRestore();
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("anchors the visible destination, not the departed offscreen caret, during wheel correction", () => {
+    const h = harness();
+    try {
+      h.select("Paragraph 0-0");
+      h.visible([4, 5, 6]);
+      const target = h.positions.get("Paragraph 5-0")!;
+      h.scroll.scrollTop = h.sectionTop(5) + 40 - 30;
+      expect(h.caretTop(target)).toBe(30);
+      h.revealTops.length = 0;
+      const before = h.editor.state.doc;
+      moveVimSelectionToViewportPosition(h.editor.view, "normal", target, null);
+      expect(h.editor.state.selection.head).toBe(target);
+      // Chunks around the old caret become static; keep the visible paragraph
+      // in place even though its absolute offset in the document decreases.
+      expect(h.caretTop(target)).toBe(30);
+      expect(h.revealTops).toEqual([]);
+      expect(h.editor.state.doc).toBe(before);
+    } finally {
+      h.destroy();
+    }
+  });
+
   it.each([50, 200])(
     "keeps k from a Section title local when an earlier chunk activates (y=%i)",
     (top) => {

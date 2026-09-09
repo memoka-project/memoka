@@ -148,7 +148,15 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - Outlineの内部scroll、caret追従、fold/focus反映
 - 相対行番号と現在absolute番号、大Note/static chunk、狭いWindowでの省略
 - Note最大幅、indent grid、theme、font、Zoom
+- wheel/touch/scrollbarでcaretが上下端の途中で欠ける場合に、余白を避けて表示行全体が見える位置へ補正すること
+- 通常/分割Window、折返し・装飾のあるParagraph/List、Table/Code/画像で、補正によるscrollの引戻しや点滅がないこと
+- 手動scrollの補正・viewport observerによるBodyChunk切替は表示中の内容を基準にanchoringし、画面外の古いcaretを基準にしないこと
+- IME変換中はselectionを動かさず、変換終了後に補正すること。VisualのanchorとUndo履歴を維持すること
 - release buildにdebug line/入力計測が存在しないこと
+
+`corepack pnpm tauri:viewport-e2e`は一時WorkspaceのHelp Noteを使い、native WebKitの通常/分割Window、
+Normal/Insertで上下scroll、遅延描画後のcaret可視性、selection/scrollの安定性を検証する。
+実行前にnative binaryをbuildし、必要に応じて`MEMOKA_TAURI_APP`で指定する。
 
 ## 9. Namespace、履歴、移行・復旧
 

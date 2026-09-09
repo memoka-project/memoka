@@ -39,6 +39,7 @@ import {
   beginVisualLine,
   clampVimBlockCursor,
   moveVimSelectionToViewportPosition,
+  resolveVimViewportCaretPosition,
   pasteVimRegisterAtSelection,
   runEditorEnterInsertFromHorizontalRule,
   runEditorExitBlock,
@@ -70,6 +71,8 @@ import {
 import {
   measureVimBlockCaretGeometry,
   measureVimInsertCaretGeometry,
+  measureVimViewportCaretGeometry,
+  type VimCaretGeometry,
 } from "./caret-geometry";
 import {
   createVisualCharDecorations,
@@ -80,6 +83,7 @@ import {
   captureTableActionSelection,
   createVisualBlockDecorations,
   moveVisualBlockHeadToPosition,
+  resolveVisualBlockViewportCursor,
   restoreVisualBlockSelection,
   repeatTableAction,
   runVisualBlockCommand,
@@ -2700,6 +2704,30 @@ export class ProductVimSession {
         : visualCursor(view, this.mode);
   }
 
+  isComposing(): boolean {
+    return this.composing || this.view?.composing === true;
+  }
+
+  viewportCaretGeometry(
+    position = this.currentCursorPosition(),
+  ): VimCaretGeometry | null {
+    const view = this.view;
+    if (!view || view.isDestroyed || position === null) return null;
+    return measureVimViewportCaretGeometry(
+      view,
+      position,
+      this.mode === "insert",
+    );
+  }
+
+  resolveViewportCaretPosition(position: number): number | null {
+    const view = this.view;
+    if (!view || view.isDestroyed) return null;
+    return this.mode === "visual-block"
+      ? resolveVisualBlockViewportCursor(view, position)
+      : resolveVimViewportCaretPosition(view, this.mode, position);
+  }
+
   preserveVisualSelection(): void {
     const view = this.view;
     if (!view || view.isDestroyed) return;
@@ -2751,7 +2779,7 @@ export class ProductVimSession {
 
   applyViewportCaretPosition(position: number): boolean {
     const view = this.view;
-    if (!view || view.isDestroyed) return false;
+    if (!view || view.isDestroyed || this.isComposing()) return false;
     const result =
       this.mode === "visual-block"
         ? moveVisualBlockHeadToPosition(view, position)
@@ -2767,7 +2795,9 @@ export class ProductVimSession {
     this.refreshVisualLineDecorations(view);
     this.action = `${result.detail}:changed`;
     this.emit();
-    this.scheduleCaretRefresh(view);
+    // The adapter runs this in the scroll-layout frame. Paint the corrected
+    // caret in that frame too, rather than leaving a blank overlay for a frame.
+    this.refreshCaret(view);
     return true;
   }
 
@@ -3559,6 +3589,22 @@ export class ProductVimSession {
       this.hideCaret();
       return;
     }
+    // The overlay lives under document.body, outside the Editor's overflow
+    // clipping. Never paint it over tabs/status/another Window while a scroll
+    // correction or IME composition is waiting for the next layout frame.
+    const scroll = view.dom.closest<HTMLElement>(".editor-scroll");
+    const viewport =
+      scroll && scroll.clientHeight > 0 ? scroll.getBoundingClientRect() : null;
+    if (
+      viewport &&
+      (geometry.top >= viewport.bottom ||
+        geometry.top + geometry.height <= viewport.top ||
+        geometry.left >= viewport.right ||
+        geometry.left + geometry.width <= viewport.left)
+    ) {
+      this.hideCaret();
+      return;
+    }
     const caret = this.caret ?? this.createCaret();
     hideRenderedVimCarets(caret);
     const caretNodeName = view.state.doc.nodeAt(geometry.cursor)?.type.name;
@@ -3586,6 +3632,10 @@ export class ProductVimSession {
       top: `${geometry.top}px`,
       width: `${geometry.width}px`,
       height: `${geometry.height}px`,
+      // Preserve the existing 1px caret shadow inside the viewport.
+      clipPath: viewport
+        ? `inset(${Math.max(-1, viewport.top - geometry.top)}px ${Math.max(-1, geometry.left + geometry.width - viewport.right)}px ${Math.max(-1, geometry.top + geometry.height - viewport.bottom)}px ${Math.max(-1, viewport.left - geometry.left)}px)`
+        : "",
     });
   }
 

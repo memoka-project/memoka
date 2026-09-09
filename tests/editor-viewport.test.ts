@@ -145,6 +145,113 @@ async function harness() {
 }
 
 describe("Editor viewport scroll intent", () => {
+  it.each(["above", "below"] as const)(
+    "skips partially clipped rows when scrolling the caret %s the viewport",
+    async (edge) => {
+      const h = await harness();
+      try {
+        h.editor.commands.setTextSelection(
+          h.start(edge === "above" ? 0 : h.lines.length - 1),
+        );
+        const document = h.editor.state.doc;
+        h.scroll.dispatchEvent(new Event("wheel"));
+        h.scroll.scrollTop = 109;
+        h.scroll.dispatchEvent(new Event("scroll"));
+        await frame();
+        h.expectVisible();
+        expect(h.editor.state.selection.head).toBe(
+          h.start(edge === "above" ? 6 : 9),
+        );
+        expect(h.scroll.scrollTop).toBe(109);
+        const cursor = h.editor.state.selection.head;
+        for (let repeat = 0; repeat < 3; repeat++) {
+          h.reflow(0, "resize");
+          await frame();
+          expect(h.editor.state.selection.head).toBe(cursor);
+          expect(h.scroll.scrollTop).toBe(109);
+        }
+        expect(h.editor.state.doc).toBe(document);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
+  it("probes past a block margin instead of accepting an offscreen hit", async () => {
+    const h = await harness();
+    try {
+      h.editor.commands.setTextSelection(h.start(0));
+      const hit = vi.mocked(h.editor.view.posAtCoords).getMockImplementation()!;
+      vi.spyOn(h.editor.view, "posAtCoords").mockImplementation((point) =>
+        point.top < 35 ? { pos: h.start(4), inside: -1 } : hit(point),
+      );
+      h.scroll.dispatchEvent(new Event("wheel"));
+      h.scroll.scrollTop = 109;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      h.expectVisible();
+      expect(h.scroll.scrollTop).toBe(109);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("defers selection correction until IME composition ends", async () => {
+    const h = await harness();
+    try {
+      h.press("i");
+      h.editor.commands.setTextSelection(h.start(0));
+      h.editor.view.dom.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true }),
+      );
+      h.scroll.dispatchEvent(new Event("wheel"));
+      h.scroll.scrollTop = 109;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.editor.state.selection.head).toBe(h.start(0));
+      expect(h.adapter.vimSnapshot.mode).toBe("insert");
+      h.editor.view.dom.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true }),
+      );
+      await frame();
+      h.expectVisible();
+      expect(h.adapter.vimSnapshot.mode).toBe("insert");
+      expect(h.scroll.scrollTop).toBe(109);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it.each(["v", "V"])(
+    "preserves the %s selection anchor without creating Undo entries",
+    async (key) => {
+      const h = await harness();
+      try {
+        h.editor.commands.setTextSelection(h.start(0));
+        h.press(key);
+        const anchor = h.editor.state.selection.anchor;
+        const note = h.runtime.getNoteHandle(h.runtime.noteId).current;
+        if (note.kind !== "note") throw new Error("Expected NoteDoc");
+        const undoItems = note.undoManager.undoStack.length;
+        h.scroll.dispatchEvent(new Event("wheel"));
+        h.scroll.scrollTop = 109;
+        h.scroll.dispatchEvent(new Event("scroll"));
+        await frame();
+        expect(h.adapter.vimSnapshot.mode).toBe(
+          key === "v" ? "visual-char" : "visual-line",
+        );
+        if (key === "v") expect(h.editor.state.selection.anchor).toBe(anchor);
+        expect(h.adapter.vimSnapshot.action).toBe(
+          "viewport:scroll-caret:changed",
+        );
+        expect(h.scroll.scrollTop).toBe(109);
+        expect(note.undoManager.undoStack).toHaveLength(undoItems);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+
   it.each([
     ["z", 41],
     ["t", 5],

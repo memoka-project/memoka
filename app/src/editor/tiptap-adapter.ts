@@ -60,6 +60,11 @@ import {
   type SectionParagraphConversionSelection,
 } from "../vim/editor-commands";
 import type { VimRegisterStore } from "../vim/register-store";
+import {
+  caretFitsViewport,
+  findViewportCaretPosition,
+} from "../vim/viewport-caret";
+import { BODY_CHUNK_VIEWPORT_CHANGED_EVENT } from "./body-chunk-viewport-event";
 import type { VimRepeatStore } from "../vim/repeat";
 import type { VimVisualSelectionStore } from "../vim/visual-history";
 import {
@@ -530,6 +535,11 @@ export class TiptapEditorAdapter {
       true,
     );
     this.scrollElement.addEventListener("scroll", this.handleScroll);
+    this.element.addEventListener(
+      BODY_CHUNK_VIEWPORT_CHANGED_EVENT,
+      this.handleViewportLayoutChange,
+      true,
+    );
     this.scrollElement.addEventListener(
       "wheel",
       this.handleViewportScrollIntent,
@@ -1192,6 +1202,11 @@ export class TiptapEditorAdapter {
       true,
     );
     this.scrollElement.removeEventListener("scroll", this.handleScroll);
+    this.element.removeEventListener(
+      BODY_CHUNK_VIEWPORT_CHANGED_EVENT,
+      this.handleViewportLayoutChange,
+      true,
+    );
     this.scrollElement.removeEventListener(
       "wheel",
       this.handleViewportScrollIntent,
@@ -1927,9 +1942,18 @@ export class TiptapEditorAdapter {
     });
   }
 
+  private readonly handleViewportLayoutChange = (): void => {
+    this.scheduleViewportCaretReconciliation();
+  };
+
   private keepCaretInsideViewport(): void {
     const editor = this.currentEditor;
-    if (editor.isDestroyed || this.sectionDepthScrollLock) return;
+    if (
+      editor.isDestroyed ||
+      this.sectionDepthScrollLock ||
+      this.vimSession.isComposing()
+    )
+      return;
     const viewport = this.scrollElement.getBoundingClientRect();
     if (viewport.height <= 0) return;
     const cursor = this.vimSession.currentCursorPosition();
@@ -1943,25 +1967,24 @@ export class TiptapEditorAdapter {
       );
       return;
     }
-    let caret: ReturnType<typeof editor.view.coordsAtPos>;
-    try {
-      caret = editor.view.coordsAtPos(cursor, 1);
-    } catch {
-      return;
-    }
+    const caret = this.vimSession.viewportCaretGeometry(cursor);
+    if (!caret || caretFitsViewport(caret, viewport)) return;
     const above = caret.top < viewport.top;
-    const below = caret.bottom > viewport.bottom;
-    if (!above && !below) return;
+    // A tall image/atom cannot fit in full. Its visible NodeView frame is a
+    // valid caret while it intersects the viewport; do not bounce past it.
+    if (
+      caret.height > viewport.height &&
+      caret.top < viewport.bottom &&
+      caret.top + caret.height > viewport.top
+    )
+      return;
 
     if (this.viewportScrollIntent === "caret") {
       // content-visibility, newly rendered chunks, or image/font layout can
       // change height after the command's synchronous reveal. Keep its latest
       // caret and move only the viewport; no extra selection/Undo transaction.
       const margin = Math.min(5, viewport.height / 4);
-      const height = Math.min(
-        caret.bottom - caret.top,
-        viewport.height - 2 * margin,
-      );
+      const height = Math.min(caret.height, viewport.height - 2 * margin);
       const delta = above
         ? caret.top - viewport.top - margin
         : caret.top + height - viewport.bottom + margin;
@@ -1971,32 +1994,14 @@ export class TiptapEditorAdapter {
       return;
     }
 
-    const caretHeight = Math.max(1, caret.bottom - caret.top);
-    const inset = Math.min(
-      Math.max(1, caretHeight / 2),
-      Math.max(1, viewport.height / 2),
+    const target = findViewportCaretPosition(
+      editor.view,
+      viewport,
+      caret,
+      (position) => this.vimSession.resolveViewportCaretPosition(position),
+      (position) => this.vimSession.viewportCaretGeometry(position),
     );
-    const targetTop = above ? viewport.top + inset : viewport.bottom - inset;
-    const editorRect = editor.view.dom.getBoundingClientRect();
-    const minimumLeft = Math.max(viewport.left + 1, editorRect.left + 1);
-    const maximumLeft = Math.min(viewport.right - 1, editorRect.right - 1);
-    const sourceLeft = (caret.left + caret.right) / 2;
-    const targetLeft =
-      maximumLeft >= minimumLeft
-        ? Math.max(minimumLeft, Math.min(maximumLeft, sourceLeft))
-        : sourceLeft;
-    const probes = [targetLeft, minimumLeft];
-    for (const left of probes) {
-      try {
-        const target = editor.view.posAtCoords({ left, top: targetTop });
-        if (target && this.vimSession.applyViewportCaretPosition(target.pos)) {
-          return;
-        }
-      } catch {
-        // A transient WebKit layout gap can make one probe unavailable. The
-        // next scroll event retries after layout has settled.
-      }
-    }
+    if (target !== null) this.vimSession.applyViewportCaretPosition(target);
   }
 
   private readonly handleInternalLinkKeyDown = (event: KeyboardEvent): void => {
@@ -2019,6 +2024,7 @@ export class TiptapEditorAdapter {
 
   private readonly handleInternalLinkCompositionEnd = (): void => {
     queueMicrotask(() => this.refreshInternalLinkCompletion());
+    this.scheduleViewportCaretReconciliation();
   };
 
   private readonly handleInternalLinkLayoutChange = (): void => {

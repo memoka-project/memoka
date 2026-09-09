@@ -24,6 +24,7 @@ import {
   type VimCharacterCellRect,
 } from "./caret-geometry";
 import type { VimCommand, VimMode, VimOperator } from "./input";
+import { VIM_VIEWPORT_CARET_META } from "./viewport-caret";
 import {
   normalizedJoinSeparator,
   segmentVimWORDCharacters,
@@ -1326,6 +1327,7 @@ function applyVisualLineSelection(
   visualLine: VimVisualLineState,
   scrollIntoView = true,
   focus = true,
+  viewportCaret = false,
 ): boolean {
   const units = blockSemantics.visualLineUnits(view);
   if (units.length === 0) return false;
@@ -1356,6 +1358,8 @@ function applyVisualLineSelection(
   }
 
   const transaction = view.state.tr.setSelection(selection);
+  if (viewportCaret)
+    transaction.setMeta(VIM_VIEWPORT_CARET_META, visualLine.cursor);
   view.dispatch(
     scrollIntoView ? scrollWhenLayoutIsAvailable(transaction) : transaction,
   );
@@ -3252,6 +3256,7 @@ function dispatchSelection(
   semanticLines?: VimLogicalLine[],
   scrollIntoView = true,
   focus = true,
+  viewportCaret = false,
 ): void {
   const maximum = view.state.doc.content.size;
   const bounded = Math.max(0, Math.min(position, maximum));
@@ -3280,10 +3285,36 @@ function dispatchSelection(
           )
         : TextSelection.create(view.state.doc, next);
   const transaction = view.state.tr.setSelection(selection);
+  if (viewportCaret) transaction.setMeta(VIM_VIEWPORT_CARET_META, next);
   view.dispatch(
     scrollIntoView ? scrollWhenLayoutIsAvailable(transaction) : transaction,
   );
   if (focus) view.focus();
+}
+
+/** Resolve hit-test positions without changing selection or virtualized DOM. */
+export function resolveVimViewportCaretPosition(
+  view: VimEditorView,
+  mode: VimMode,
+  position: number,
+): number | null {
+  const bounded = Math.max(0, Math.min(position, view.state.doc.content.size));
+  if (mode === "normal" || mode === "visual-char")
+    return clampVimBlockCursor(view, bounded);
+  if (mode === "visual-line") {
+    const units = blockSemantics.visualLineUnits(view);
+    const target =
+      units[blockSemantics.currentStructuralUnitIndex(units, bounded)];
+    if (!target) return null;
+    return target.cursorPositions.reduce(
+      (nearest, candidate) =>
+        Math.abs(candidate - bounded) < Math.abs(nearest - bounded)
+          ? candidate
+          : nearest,
+      target.cursorPositions[0] ?? target.cursorFrom,
+    );
+  }
+  return Selection.near(view.state.doc.resolve(bounded)).head;
 }
 
 /**
@@ -3320,7 +3351,7 @@ export function moveVimSelectionToViewportPosition(
       return { handled: false, detail, visualLine };
     }
     const next = { ...visualLine, headUnit, cursor };
-    applyVisualLineSelection(view, next, false, false);
+    applyVisualLineSelection(view, next, false, false, true);
     return { handled: true, detail, visualLine: next };
   }
 
@@ -3337,7 +3368,16 @@ export function moveVimSelectionToViewportPosition(
       ? visualCharEndpoints(view, lines).cursor
       : selectionCursor(view);
   if (next === current) return { handled: false, detail };
-  dispatchSelection(view, next, mode, lines, false, false);
+  if (mode === "insert" || mode === "replace") {
+    const selection = Selection.near(view.state.doc.resolve(next));
+    view.dispatch(
+      view.state.tr
+        .setSelection(selection)
+        .setMeta(VIM_VIEWPORT_CARET_META, selection.head),
+    );
+  } else {
+    dispatchSelection(view, next, mode, lines, false, false, true);
+  }
   return { handled: true, detail };
 }
 

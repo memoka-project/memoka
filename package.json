@@ -28,6 +28,7 @@
     "tauri:attachment-e2e": "MEMOKA_E2E_ATTACHMENT_ONLY=1 bash scripts/run-tauri-e2e.sh",
     "tauri:history-e2e": "MEMOKA_E2E_NAMESPACE_HISTORY_ONLY=1 bash scripts/run-tauri-e2e.sh",
     "tauri:agent-e2e": "MEMOKA_E2E_AGENT_EDIT_ONLY=1 bash scripts/run-tauri-e2e.sh",
+    "tauri:viewport-e2e": "MEMOKA_E2E_VIEWPORT_CARET_ONLY=1 bash scripts/run-tauri-e2e.sh",
     "restic:prepare": "node scripts/prepare-restic.mjs",
     "rclone:prepare": "node scripts/prepare-rclone.mjs",
     "test:rclone": "node scripts/test-rclone-boundary.mjs",

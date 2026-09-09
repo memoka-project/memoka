@@ -34,6 +34,7 @@ import {
 import { canSplit, Mapping } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
+import { VIM_VIEWPORT_CARET_META } from "../vim/viewport-caret";
 import StarterKit from "@tiptap/starter-kit";
 import * as Y from "yjs";
 import { createUuidV7, isUuidV7 } from "../core/ids";
@@ -1045,8 +1046,10 @@ const BodyChunkViewport = Extension.create({
           registry.bind(view);
           const beforeTransaction = ({
             nextState,
+            transaction,
           }: {
             nextState: EditorState;
+            transaction: Transaction;
           }) => {
             pendingAnchor = null;
             // No DOM reads for ordinary typing or movement within the same
@@ -1065,7 +1068,11 @@ const BodyChunkViewport = Extension.create({
                 [...previous].every((id) => next.has(id)))
             )
               return;
-            const anchor = captureBodyChunkScrollAnchor(view);
+            const viewportCursor = transaction.getMeta(VIM_VIEWPORT_CARET_META);
+            const anchor = captureBodyChunkScrollAnchor(
+              view,
+              typeof viewportCursor === "number" ? viewportCursor : undefined,
+            );
             if (anchor) pendingAnchor = { state: nextState, anchor };
           };
           // Viewport-observer transactions do not request selection scrolling.

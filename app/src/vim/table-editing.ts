@@ -25,6 +25,7 @@ import type {
   VimVisualLineState,
 } from "./editor-commands";
 import type { VimCommand, VimMode } from "./input";
+import { VIM_VIEWPORT_CARET_META } from "./viewport-caret";
 
 export type TableAlignment = "left" | "center" | "right" | null;
 
@@ -338,6 +339,27 @@ export function restoreVisualBlockSelection(
   }
 }
 
+export function resolveVisualBlockViewportCursor(
+  view: VimEditorView,
+  position: number,
+): number | null {
+  const selection = view.state.selection;
+  if (!(selection instanceof CellSelection)) return null;
+  const anchor = tableContextFromCell(view, selection.$anchorCell.pos);
+  const target = tableContextNearPosition(view, position);
+  if (
+    !anchor ||
+    !target ||
+    anchor.tablePosition !== target.tablePosition ||
+    !mutableTable(anchor.table, anchor.map)
+  )
+    return null;
+  return (
+    cellCursorPositions(view, target.cellPosition, target.cell)[0] ??
+    target.cellPosition + 2
+  );
+}
+
 export function moveVisualBlockHeadToPosition(
   view: VimEditorView,
   position: number,
@@ -358,13 +380,18 @@ export function moveVisualBlockHeadToPosition(
     return { handled: false, detail: "table:visual-block:viewport-boundary" };
   }
   view.dispatch(
-    view.state.tr.setSelection(
-      CellSelection.create(
-        view.state.doc,
-        selection.$anchorCell.pos,
-        targetContext.cellPosition,
+    view.state.tr
+      .setSelection(
+        CellSelection.create(
+          view.state.doc,
+          selection.$anchorCell.pos,
+          targetContext.cellPosition,
+        ),
+      )
+      .setMeta(
+        VIM_VIEWPORT_CARET_META,
+        resolveVisualBlockViewportCursor(view, position),
       ),
-    ),
   );
   return { handled: true, detail: "viewport:scroll-caret" };
 }

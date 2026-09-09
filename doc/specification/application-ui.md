@@ -176,7 +176,14 @@ Note canvasは設定された最大幅を超えず、広いWindow内では中央
 
 caret移動によるscrollと、wheel・touch・scrollbarなどの手動scrollを区別する。
 `G`や検索移動が選んだ論理位置は、遅延描画で高さが変わっても保持し、viewport側を調整してcaretを表示する。
-手動scroll後にcaretが画面外へ出た場合は、逆にscroll位置を保ってcaretを画面内の論理行へ移す。
+手動scroll後にcaretが画面外へ出た場合は、逆に表示内容を保ってcaretを画面内の近い表示行へ移す。
+候補のhit-test位置をmodeごとのcaret位置へ正規化し、描画と共通のgeometryで上下端に欠けがないことを確認してからselectionを変える。
+余白や一部だけ見える行を候補にせず、長いParagraph/Code/Tableでもblock全体でなく表示行を基準にする。
+Imageなどのatomic blockがviewportより高い場合は、そのframeが画面内にある間は選択を保つ。
+補正によりBodyChunkの表示方式が変わる際は、移動前の画面外caretではなく表示中の移動先を基準に位置を保つ。
+viewport observerが補正より先に動く場合も、画面外の位置をscroll anchorにしない。
+IME composition中はselection補正を保留し、終了後に再判定する。caret overlayはEditor viewport外に描画しない。
+mode、Visualのanchor、文書、Undo履歴、他Windowのfocusは変更しない。Outline/breadcrumbは補正後のcaretへ追従する。
 次の明示的な操作を優先し、前の移動先を復元したり、一定時間scrollを禁止したりしない。
 `zz/zt/zb`の中央/上端/下端配置も、同じ仕組みで遅延描画後の位置を補正する。
 この配置はWindow-localで、別Windowのscroll、文書、Undoを変更しない。

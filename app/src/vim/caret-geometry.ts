@@ -354,6 +354,33 @@ export function measureVimInsertCaretGeometry(
   }
 }
 
+/** The viewport uses the same display-row geometry as the painted caret. For
+ * image/attachment/HR atoms, the NodeView's frame is the caret instead. */
+export function measureVimViewportCaretGeometry(
+  view: VimCaretView,
+  cursor: number,
+  insert: boolean,
+): VimCaretGeometry | null {
+  const node = view.state.doc.nodeAt(cursor);
+  if (node?.isAtom && node.isBlock && view.nodeDOM) {
+    const element = view.nodeDOM(cursor);
+    if (element instanceof HTMLElement) {
+      const rect = element.getBoundingClientRect();
+      if (rect.height > 0 && rect.width > 0)
+        return {
+          cursor,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        };
+    }
+  }
+  return insert
+    ? measureVimInsertCaretGeometry(view, cursor)
+    : measureVimBlockCaretGeometry(view, cursor);
+}
+
 export function measureVimBlockCaretGeometry(
   view: VimCaretView,
   cursor: number,

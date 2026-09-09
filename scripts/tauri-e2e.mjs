@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { runNamespaceHistory } from "./namespace-history-e2e.mjs";
 import { runAgentEditing } from "./agent-edit-e2e.mjs";
+import { runViewportCaret } from "./viewport-caret-e2e.mjs";
 
 const webdriver = process.env.MEMOKA_WEBDRIVER ?? "http://127.0.0.1:4447";
 const application = process.env.MEMOKA_TAURI_APP;
@@ -3920,6 +3921,30 @@ await waitFor(
     .vimMode?.replace('-', ' ').toUpperCase() ?? ''`,
   (value) => value === "NORMAL",
 );
+
+if (process.env.MEMOKA_E2E_VIEWPORT_CARET_ONLY === "1") {
+  try {
+    const result = await runViewportCaret({
+      sessionId: firstSession,
+      execute,
+      waitFor,
+      sendActiveKey,
+    });
+    writeFileSync(
+      `${evidenceDirectory}/viewport-caret-tauri.json`,
+      JSON.stringify(result, null, 2),
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } catch (error) {
+    await screenshot(firstSession, "viewport-caret-failure.png").catch(
+      () => undefined,
+    );
+    throw error;
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
 
 if (process.env.MEMOKA_E2E_AGENT_EDIT_ONLY === "1") {
   try {

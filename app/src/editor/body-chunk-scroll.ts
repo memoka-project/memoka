@@ -13,19 +13,55 @@ export interface BodyChunkScrollAnchor {
  * the same document position even when that NodeView is recreated. */
 export function captureBodyChunkScrollAnchor(
   view: EditorView,
+  preferredPosition?: number,
 ): BodyChunkScrollAnchor | null {
   const scrollRoot = view.dom.closest<HTMLElement>(".editor-scroll");
   if (!scrollRoot || scrollRoot.clientHeight <= 0) return null;
-  const { $head } = view.state.selection;
-  for (let depth = $head.depth; depth > 0; depth--) {
-    const name = $head.node(depth).type.name;
-    if (name !== BODY_CHUNK_NODE && name !== SECTION_HEADER_NODE) continue;
-    const position = $head.before(depth);
-    const element = view.nodeDOM(position);
-    if (!(element instanceof HTMLElement)) return null;
-    const rect = element.getBoundingClientRect();
-    if (rect.height <= 0 || !Number.isFinite(rect.top)) return null;
-    return { position, top: rect.top, scrollRoot };
+  const viewport = scrollRoot.getBoundingClientRect();
+  const capture = (cursor: number): BodyChunkScrollAnchor | null => {
+    const $head = view.state.doc.resolve(cursor);
+    for (let depth = $head.depth; depth > 0; depth--) {
+      const name = $head.node(depth).type.name;
+      if (name !== BODY_CHUNK_NODE && name !== SECTION_HEADER_NODE) continue;
+      const position = $head.before(depth);
+      const element = view.nodeDOM(position);
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      if (
+        rect.height <= 0 ||
+        !Number.isFinite(rect.top) ||
+        rect.bottom <= viewport.top ||
+        rect.top >= viewport.bottom
+      )
+        return null;
+      return { position, top: rect.top, scrollRoot };
+    }
+    return null;
+  };
+  // During wheel correction, use the destination that is already visible, not
+  // the old offscreen selection whose chunks are about to become static.
+  const anchor = capture(preferredPosition ?? view.state.selection.head);
+  if (anchor) return anchor;
+  // IntersectionObserver may render chunks before the selection correction.
+  // Anchor visible content in that case too; never anchor an offscreen caret.
+  const editorRect = view.dom.getBoundingClientRect();
+  const left =
+    (Math.max(viewport.left, editorRect.left) +
+      Math.min(viewport.right, editorRect.right)) /
+    2;
+  for (const fraction of [0.1, 0.5, 0.9]) {
+    try {
+      const hit = view.posAtCoords({
+        left,
+        top: viewport.top + viewport.height * fraction,
+      });
+      if (hit) {
+        const visible = capture(hit.pos);
+        if (visible) return visible;
+      }
+    } catch {
+      // Transient WebKit layout gaps must not abort a selection transaction.
+    }
   }
   return null;
 }
