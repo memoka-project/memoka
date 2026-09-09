@@ -49,7 +49,8 @@ InsertからNormalへ戻ると、Insert caretの直前にある文字へNormal c
 - `u`でUndoし、`Ctrl-r`でRedoします。
 - `:help`を再実行すると、いつでもこのHelpを開けます。
 
-日本語IMEの変換中は、MemokaのcommandよりIME操作を優先します。NormalでIMEがONのままcommand keyを
+日本語IMEの変換中は、MemokaのcommandよりIME操作を優先します。変換終了後、`Esc`または`Ctrl-c`で
+InsertからNormalへ戻るとIMEをOFFにします。NormalでIMEがONのままcommand keyを
 押した場合は、IMEをOFFにしてから同じkeyをNormal commandとして処理します。
 
 ## Insert mode

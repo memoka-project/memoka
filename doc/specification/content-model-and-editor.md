@@ -246,6 +246,11 @@ Section title、空ListItem、空Paragraphを含むすべてのeditableで、com
 Normal modeでIMEがONのままcommand keyを入力した場合は、IMEをOFFにして同じ物理keyをNormal commandとして
 1回だけ再実行する。
 
+InsertからNormalへ戻るときもIME OFFを要求する。Windowsでは要求元Memokaがforegroundであることを確認し、
+focused WebView2 childのdefault IME windowへ`WM_IME_CONTROL`を送る。worker threadから別threadの
+input contextを直接変更しない。既にOFFなら変更通知を送らず、timeout・focus移動・変更拒否を成功と扱わない。
+他applicationのIMEには作用させない。
+
 Linux AppImageではhost desktop sessionのIME環境を利用する。変換候補windowの位置ずれは既知のplatform制約だが、
 入力欠落、composition非表示、二重確定は許容しない。
 

@@ -66,10 +66,33 @@ Windows 11 x64/WebView2/Microsoft IMEと、Ubuntu GNOME/Sway/fcitx5でnative確�
 - Enter確定でtitle/body間を移動しない。
 - textが欠落、重複、部分重複しない。
 - composition中のEsc/Ctrl-c/EnterをIMEへ優先する。
+- 変換終了後のEsc/Ctrl-cでInsertからNormalへ戻ると、WindowsのIMEがOFFになる。
+  Memokaと別application間のfocus移動時に、別applicationのIMEを切り替えない。
+- 空のParagraph・ListItem・Section title、装飾の境界で、最初の1文字が勝手に確定しない。
 - NormalでIMEがONのとき、OFF化後に最初のcommand keyを1回だけ実行する。
 - AppImageとsourceのdevelopment buildで意味上の入力結果が一致する。
 
 変換候補windowの位置ずれは別のplatform制約として記録し、入力dataの正しさと混同しない。
+
+### 5.1 実機でのみ再現するIME入力の診断
+
+Windowsでの早期確定など、合成eventのunit testだけでは原因を断定しない。OS・IMEの種類、使用したkey、
+発生するblockと位置を記録し、必要なら次の手順でnative eventとEditor更新の順序を採取する。
+
+1. MemokaのDevTools Consoleへ[`scripts/trace-editor-ime.js`](../../scripts/trace-editor-ime.js)全体を貼り付けて実行する。
+2. Editorへ戻り、問題が起こる入力を1回行う。
+3. Consoleで`copy(JSON.stringify(memokaImeTrace.stop(), null, 2))`を実行し、結果を保存する。
+   `copy`を使えない場合は`memokaImeTrace.stop()`の戻り値を取得する。
+
+これは手動で有効にしたときだけ動く診断であり、通常のEditorには組み込まない。記録はmemory内の直近800件に限定し、
+IME event種別・入力文字数・composition状態・selection位置・block種類・DOM置換件数・transaction情報・
+IME OFF結果を記録する。本文、入力文字そのもの、Note/Section ID、title、URLは記録しない。
+`stop()`でlistener/observerを解除する。自動送信やファイル保存は行わず、ログ取得のためにfocus/selectionを変更しない。
+
+`tests/ime-trace.test.ts`で非改変・本文非収集・件数上限・停止を検証する。Windows IME bridgeの制御フローは
+`cargo test -p memoka-desktop windows_ime --lib`、API型整合は
+`cargo check -p memoka-desktop --tests --features windows-clipboard-contract`で検証する。
+これらは実際のWebView2/Microsoft IMEによるON/OFF・変換継続の確認を代替しない。
 
 ## 6. Clipboard、Markdown、Attachment
 

@@ -34,6 +34,8 @@ pub mod restic;
 mod search_index;
 mod sibling_position;
 mod sidecar;
+#[cfg(any(target_os = "windows", test))]
+mod windows_ime;
 mod workspace_catalog;
 mod workspace_migration;
 pub mod workspace_owner;
@@ -94,7 +96,9 @@ fn set_normal_mode_ime_guard(
 }
 
 #[tauri::command]
-async fn deactivate_input_method() -> InputMethodDeactivation {
+async fn deactivate_input_method(window: tauri::WebviewWindow) -> InputMethodDeactivation {
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
     #[cfg(target_os = "linux")]
     {
         match tauri::async_runtime::spawn_blocking(linux_deactivate_input_method).await {
@@ -109,7 +113,17 @@ async fn deactivate_input_method() -> InputMethodDeactivation {
 
     #[cfg(target_os = "windows")]
     {
-        match tauri::async_runtime::spawn_blocking(windows_deactivate_input_method).await {
+        let owner = match window.hwnd() {
+            Ok(hwnd) => hwnd.0 as usize,
+            Err(error) => {
+                return InputMethodDeactivation {
+                    supported: true,
+                    inactive: false,
+                    detail: format!("windows-ime-window-unavailable:{error}"),
+                };
+            }
+        };
+        match tauri::async_runtime::spawn_blocking(move || windows_ime::deactivate(owner)).await {
             Ok(result) => result,
             Err(error) => InputMethodDeactivation {
                 supported: true,
@@ -126,71 +140,6 @@ async fn deactivate_input_method() -> InputMethodDeactivation {
             inactive: false,
             detail: "platform-adapter-not-implemented".to_owned(),
         }
-    }
-}
-
-#[cfg(any(
-    target_os = "windows",
-    all(test, feature = "windows-clipboard-contract")
-))]
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn windows_deactivate_input_method() -> InputMethodDeactivation {
-    use windows_sys::Win32::UI::Input::Ime::{
-        ImmGetContext, ImmGetOpenStatus, ImmReleaseContext, ImmSetOpenStatus,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId,
-    };
-
-    let window = unsafe { GetForegroundWindow() };
-    if window.is_null() {
-        return InputMethodDeactivation {
-            supported: true,
-            inactive: false,
-            detail: "windows-ime-no-foreground-window".to_owned(),
-        };
-    }
-    let thread_id = unsafe { GetWindowThreadProcessId(window, std::ptr::null_mut()) };
-    let mut gui_thread = GUITHREADINFO {
-        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
-        ..Default::default()
-    };
-    let input_window = if thread_id != 0
-        && unsafe { GetGUIThreadInfo(thread_id, &mut gui_thread) } != 0
-        && !gui_thread.hwndFocus.is_null()
-    {
-        // GetForegroundWindow returns Wry's top-level HWND, while the active
-        // IMM context normally belongs to the focused WebView2 child HWND.
-        gui_thread.hwndFocus
-    } else {
-        window
-    };
-    let context = unsafe { ImmGetContext(input_window) };
-    if context.is_null() {
-        return InputMethodDeactivation {
-            supported: false,
-            inactive: false,
-            detail: "windows-ime-no-imm-context".to_owned(),
-        };
-    }
-    let changed = unsafe { ImmSetOpenStatus(context, 0) } != 0;
-    let inactive = unsafe { ImmGetOpenStatus(context) } == 0;
-    unsafe {
-        ImmReleaseContext(input_window, context);
-    }
-    InputMethodDeactivation {
-        supported: true,
-        inactive,
-        detail: if inactive {
-            if changed {
-                "windows-ime-inactive"
-            } else {
-                "windows-ime-already-inactive"
-            }
-        } else {
-            "windows-ime-deactivation-refused"
-        }
-        .to_owned(),
     }
 }
 
