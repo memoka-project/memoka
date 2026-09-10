@@ -181,6 +181,9 @@ Sidebar focus中も利用できる。
 | `:backup`                                         | 保存barrier後にlocal captureと追加先copyを要求                                |
 | `:backup-settings`                                | 保存状態表示とWorkspace別間隔・複数追加先・有効状態・保持数・OS資格情報の設定 |
 | `:history`                                        | 現在resourceまたはWorkspaceのread-only履歴                                    |
+| `:recovery`                                       | 現在Noteの削除・型変更で保護されたSection・Blockの復旧                        |
+| `:sync`                                           | 自動同期の再接続・差分確認を要求                                              |
+| `:sync-settings`                                  | 端末一覧と追加・接続情報更新・一時停止・登録解除                              |
 | `:trash`                                          | deleted Note検索                                                              |
 | `:buffers` / `:ls`                                | load済みBuffer検索                                                            |
 | `:outline`                                        | active WindowのOutlineを開いてfocus                                           |
@@ -210,6 +213,11 @@ Sidebar focus中も利用できる。
 | `:line-break-segmentation [mode]` / `:line-break` | 日本語表示改行を表示/変更                                                     |
 | `:quit` / `:q` / `:qa`                            | 確定編集を保存し、バックアップを安全に中断して終了（完了は待たない）          |
 | `:help`                                           | 管理Help Noteを同期して開く                                                   |
+
+同期設定はWorkspaceコピーごとに`:sync-settings`で管理する。既定は無効で、有効化・参加操作前に待受けしない。
+端末一覧、接続・受信・反映・添付の工程、最終反映、待機件数と容量を中央floating modalへ表示する。
+追加・鍵を照合するアドレス更新・一時停止と再開・登録解除、復旧画面への入口を提供する。
+起動時のWorkspace選択には「別端末から受信」を置く。操作の詳細は[端末間同期](device-synchronization.md)を参照する。
 
 ## 8. live setting picker
 
@@ -249,7 +257,7 @@ validなmodeを指定すると即時反映して`config.toml`へ保存する。
 外部linkを対応するMemoka構造へ変換し、Help内の見出しanchor linkはInternal Section Linkへ変換する。
 
 SectionとblockにはNote ID、見出しpath、block位置から導出した安定IDを使う。同じ原稿を再同期してもidentityを
-維持し、Help Noteへの手動編集は次回`:help`で原稿の内容へ置き換える。原稿のH1不一致、重複見出しanchor、
+維持し、Help Noteへの手動編集は端末内に限り、次回`:help`で原稿の内容へ置き換える。原稿のH1不一致、重複見出しanchor、
 未解決anchor、未対応Markdown blockは同期errorとして扱い、不完全なHelpへ黙って置き換えない。
 
 Help Noteは利用者向け操作情報の正本表示であり、user-visibleなkey、command、設定、制約を変更した場合は

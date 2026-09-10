@@ -1,5 +1,7 @@
 # Memoka help
 
+同じ利用者の端末をLAN・VPN内で直接接続し、Workspaceを開いている間に自動同期できます。同期は既定で無効です。
+
 **Memoka**は、Markdown記法を意識せず、Vimの操作感でノートを書ける*ローカルファースト*のノートアプリです。
 編集内容は自動保存されるため、通常は保存操作を行う必要がありません。
 
@@ -21,6 +23,7 @@
 - [Leader shortcut](#leader-shortcut)
 - [Command-lineと設定](#command-lineと設定)
 - [Clipboard・添付・画像](#clipboard・添付・画像)
+- [端末間同期](#端末間同期)
 - [データと復旧](#データと復旧)
 - [このHelpについて](#このhelpについて)
 
@@ -514,43 +517,46 @@ NormalまたはSidebarなどのapplication surfaceで`:`を押すと、画面下
 `Enter`で実行し、`Esc`または`Ctrl-c`で取り消します。`<Leader>c`ではcommandを検索して選べます。
 MemokaのCommand-lineは完全なVim Ex parserではありません。
 
-| Command                                           | 動作                                                             |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| `:tree`                                           | Treeを開きます。                                                 |
-| `:group`                                          | 選択項目の子にグループを作ります。                               |
-| `:rename-group`                                   | Treeで選択したグループの名前を変更します。                       |
-| `:trash`                                          | Trash内のNoteやグループを検索します。                            |
-| `:buffers` / `:ls`                                | 読み込み済みBufferを検索します。                                 |
-| `:outline`                                        | 現在WindowのOutlineを開きます。                                  |
-| `:split` / `:sp`                                  | 現在Windowを上下に分割します。                                   |
-| `:vsplit` / `:vs`                                 | 現在Windowを左右に分割します。                                   |
-| `:close` / `:clo`                                 | 現在Windowを閉じます。                                           |
-| `:bdelete` / `:bd`                                | 現在Bufferを閉じ、Windowを空にします。                           |
-| `:tabnew`                                         | 空のTabを作ります。                                              |
-| `:tabclose` / `:tabc`                             | 現在Tabを閉じます。                                              |
-| `:tabnext` / `:tabn`                              | 次のTabへ移動します。                                            |
-| `:tabprevious` / `:tabp`                          | 前のTabへ移動します。                                            |
-| `:paste-markdown`                                 | ClipboardをMarkdownとして貼り付けます。                          |
-| `:paste-html`                                     | ClipboardをHTMLとして貼り付けます。                              |
-| `:attach`                                         | file pickerから現在位置へ添付します。                            |
-| `:image-width [10..100%]`                         | 現在画像の表示幅を確認、変更します。                             |
-| `:switch-workspace`                               | 別のWorkspaceデータ領域へ切り替えます。                          |
-| `:backup`                                         | 確定した編集の履歴を作り、追加保存先への転送を試みます。         |
-| `:backup-settings`                                | 保存状態を確認し、間隔・保存先・保持数・パスワードを設定します。 |
-| `:history`                                        | 過去のNote・SectionまたはWorkspaceを参照します。                 |
-| `:update`                                         | 署名済み更新を確認、適用します。                                 |
-| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。                    |
-| `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                            |
-| `:colorscheme [name]` / `:colo`                   | 収録テーマやカスタムテーマを選択、変更します。                   |
-| `:font`                                           | Application全体のfontを選択します。                              |
-| `:zoom [50..200]`                                 | Zoomを確認、変更します。                                         |
-| `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。                       |
-| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。                 |
-| `:indent-width [16..64]`                          | SectionとListに共通するindent幅を確認、変更します。              |
-| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を確認、変更します。                               |
-| `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行を確認、変更します。                         |
-| `:quit` / `:q` / `:qa`                            | 確定した編集の保存と必要な履歴作成を終えて終了します。           |
-| `:help`                                           | この管理Help Noteを同期して開きます。                            |
+| Command                                           | 動作                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `:tree`                                           | Treeを開きます。                                                   |
+| `:group`                                          | 選択項目の子にグループを作ります。                                 |
+| `:rename-group`                                   | Treeで選択したグループの名前を変更します。                         |
+| `:trash`                                          | Trash内のNoteやグループを検索します。                              |
+| `:buffers` / `:ls`                                | 読み込み済みBufferを検索します。                                   |
+| `:outline`                                        | 現在WindowのOutlineを開きます。                                    |
+| `:split` / `:sp`                                  | 現在Windowを上下に分割します。                                     |
+| `:vsplit` / `:vs`                                 | 現在Windowを左右に分割します。                                     |
+| `:close` / `:clo`                                 | 現在Windowを閉じます。                                             |
+| `:bdelete` / `:bd`                                | 現在Bufferを閉じ、Windowを空にします。                             |
+| `:tabnew`                                         | 空のTabを作ります。                                                |
+| `:tabclose` / `:tabc`                             | 現在Tabを閉じます。                                                |
+| `:tabnext` / `:tabn`                              | 次のTabへ移動します。                                              |
+| `:tabprevious` / `:tabp`                          | 前のTabへ移動します。                                              |
+| `:paste-markdown`                                 | ClipboardをMarkdownとして貼り付けます。                            |
+| `:paste-html`                                     | ClipboardをHTMLとして貼り付けます。                                |
+| `:attach`                                         | file pickerから現在位置へ添付します。                              |
+| `:image-width [10..100%]`                         | 現在画像の表示幅を確認、変更します。                               |
+| `:switch-workspace`                               | 別のWorkspaceデータ領域へ切り替えます。                            |
+| `:backup`                                         | 確定した編集の履歴を作り、追加保存先への転送を試みます。           |
+| `:backup-settings`                                | 保存状態を確認し、間隔・保存先・保持数・パスワードを設定します。   |
+| `:history`                                        | 過去のNote・SectionまたはWorkspaceを参照します。                   |
+| `:recovery`                                       | 現在のノートの保護されたSection・Block・本文を復旧します。         |
+| `:sync`                                           | 同期の再接続・差分確認を要求します。                               |
+| `:sync-settings`                                  | 端末一覧、追加、接続情報更新、一時停止・再開、登録解除を開きます。 |
+| `:update`                                         | 署名済み更新を確認、適用します。                                   |
+| `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。                      |
+| `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                              |
+| `:colorscheme [name]` / `:colo`                   | 収録テーマやカスタムテーマを選択、変更します。                     |
+| `:font`                                           | Application全体のfontを選択します。                                |
+| `:zoom [50..200]`                                 | Zoomを確認、変更します。                                           |
+| `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。                         |
+| `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。                   |
+| `:indent-width [16..64]`                          | SectionとListに共通するindent幅を確認、変更します。                |
+| `:word-segmentation [mode]` / `:word-segment`     | 日本語word分割を確認、変更します。                                 |
+| `:line-break-segmentation [mode]` / `:line-break` | 日本語の表示上の改行を確認、変更します。                           |
+| `:quit` / `:q` / `:qa`                            | 確定した編集の保存と必要な履歴作成を終えて終了します。             |
+| `:help`                                           | この管理Help Noteを同期して開きます。                              |
 
 ### `config.toml`
 
@@ -654,6 +660,51 @@ HTML、Memoka内部形式、Markdown、画像、file形式が同時にあって�
 `:image-width 50%`でもNote表示幅の50%にできます。画像上の`gf`は現在Window、`Ctrl-w gf`は新しいTabで
 画像を開きます。同じsession中は`Ctrl-o`で元のNote位置へ戻れます。Attachment上の`gx`は、安全な形式だけを
 OS既定applicationへ渡します。
+
+## 端末間同期
+
+同じ利用者の端末を、LANまたはVPNで直接接続できます。両方の端末でWorkspaceを開いている間は自動で同期し、
+切断中の編集も次の接続時に統合します。同期を有効にするまでは待受けしません。
+
+1. 元端末で`:sync-settings`を開き、端末名を入力して同期を有効にします。
+2. 端末追加で、この端末へ到達できるLAN・VPNのIPアドレスと、画面に表示されたUDP portを指定します。
+3. 作成した接続情報を参加端末へ渡します。接続情報の有効期限は10分で、一回限り使えます。
+4. 参加端末のWorkspace選択画面で「別端末から受信」を選び、端末名・接続情報・新しい空の保存先を入力します。
+5. 元端末の同期設定に現れる名前と鍵の識別情報を参加端末の表示と照合し、承認します。
+6. 参加端末で文書の受信後にWorkspaceを開きます。添付ファイルは引き続き取得されます。
+
+既存のWorkspaceコピーやバックアップ復旧先へ合流することはできません。初回受信を中断した場合は、
+「別端末から受信」で同じ保存先を選んで再開できます。保存した登録情報を使うため、接続情報の再入力は不要です。
+ネットワークが変わった場合は、同期設定の端末詳細から同じ公開鍵の接続先を更新します。
+自動探索・中継・ポート転送は行わないため、指定したアドレスとUDP portへ相互に到達できる環境が必要です。
+
+同期対象はノート、Section、Block、Tree、Trash、添付です。本文編集と移動が重なっても、移動先へ編集内容を統合します。
+削除と編集が重なった内容は保護し、ノートは`:trash`、Section・Blockは`:recovery`から復旧できます。
+Helpの配置とリンク先のNote IDは共有し、本文は各端末の同梱原稿から作ります。Helpの手動編集は他端末へ送りません。
+設定、Window配置、選択・折畳み、Undo履歴、検索索引、バックアップ世代・保存先・資格情報は同期しません。
+
+同期設定では接続・受信・反映・添付の工程と、待機件数・容量・最終反映を確認できます。
+「接続済み」だけでは反映完了を意味しません。未接続端末は、待機件数が0でも「未接続」と表示します。
+取得中の添付は本文に「別端末から取得待ち」と表示し、失敗した添付は同期詳細から再試行できます。
+通常は自動で再接続します。今すぐ確認する場合は`:sync`を使います。
+
+どの登録端末からも別端末を追加・解除できます。解除した鍵は再利用できず、参加し直す場合は新しい保存先へ複製します。
+解除前に相手へ渡したデータは消去できません。一時的に通信を止めるだけなら一時停止を使います。
+秘密鍵はOS資格情報ストアに保存し、Workspaceやバックアップには含めません。
+
+終了時はローカル保存だけを待ち、同期の完了は待ちません。未送信・未反映の処理は次回起動時に再開します。
+同期では削除も伝わるため、ローカル履歴と独立した追加バックアップも引き続き用意してください。
+未取得の添付がある間は、新しいバックアップ世代の作成を「同期データの取得待ち」として保留します。
+バックアップ復旧先は新しいReplicaとして同期無効で開き、以前の端末登録へ自動参加しません。
+
+CLIからは次のcommandで状態を読めます。
+
+```sh
+memoka-cli sync status --workspace <data-area> --format json
+```
+
+同期有効WorkspaceをCLIで編集するときは、その端末で取得した編集descriptorの`replica_id`をrequestへ含めます。
+別端末のdescriptor・requestは使い回せません。revisionと同じrequestの再送保証は同じReplica内で有効です。
 
 ## データと復旧
 
@@ -853,6 +904,14 @@ Driveでは新しい世代の**転送を優先**し、転送先の内容検証�
 
 `u`と`Ctrl-r`のUndo・Redoは起動中の編集用で、再起動後には引き継ぎません。過去の保存状態は`:history`で参照してください。
 
+### 保護された内容を復旧する
+
+`:recovery`は、削除や種類の変更によって表示できなくなり、保護されている内容を中央の画面に表示します。
+削除の取り消し、親の構造の復旧、本文を新しい段落へ複製する操作を選べます。装飾やリンクも保持します。
+復旧画面で確認した後に別の削除が届いた場合、その削除までは取り消しません。一覧に残る内容を再確認してください。
+本文の複製先はノート末尾です。保護された元の内容も残ります。
+ノート全体の削除は`:trash`から、過去の保存世代は`:history`から確認してください。
+
 ### 外部エージェントからノートを編集する
 
 更新した`memoka-cli`は、GUI起動中・未起動のどちらでもノートの作成・改名・並び替え、既存ノートの本文編集、同じノート内のSection構造の編集ができます。
@@ -955,7 +1014,7 @@ Workspace IDは復旧後も同じです。同じWorkspaceを復旧すればIDが
 一方、追加保存先の登録は復旧時に引き継ぎません。復旧先で登録し直すと新しい保存先IDと専用フォルダーを作り、元のフォルダーへのバックアップは再開しません。
 Memokaはこの端末のGoogle接続に残る保存先登録も確認し、登録のないフォルダーへのバックアップ・保持整理・ロック解除を拒否します。
 同じGoogleアカウントで複数PCを使う場合も、PCごとに新しい保存先を追加してください。元のフォルダーから読む・復旧することと、そこへ書き込むことは別です。
-端末間同期は未実装ですが、今後も追加保存先と端末側のGoogle接続の登録は同期しない方針です。
+端末間同期を有効にしても、追加保存先と端末側のGoogle接続の登録は同期しません。
 WorkspaceやOSユーザーの設定・資格情報を丸ごと複製し、同じ保存先を複数PCで書き込み共有する運用には対応しません。
 
 ```text

@@ -59,6 +59,9 @@ importers:
       jittered-fractional-indexing:
         specifier: 1.0.1
         version: 1.0.1
+      lib0:
+        specifier: 0.2.117
+        version: 0.2.117
       react:
         specifier: 19.2.8
         version: 19.2.8

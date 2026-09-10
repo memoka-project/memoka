@@ -2,6 +2,23 @@ import * as Y from "yjs";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { assertUuidV7, createUuidV7, isUuidV7 } from "./ids";
 import { yXmlTextVisibleText } from "./yxml-text";
+import type { EditorHistory } from "./editor-history";
+import { NOTE_RECOVERY_ORIGIN } from "./replicated-note-recovery";
+import {
+  ReplicatedNote,
+  REPLICATED_NOTE_SCHEMA_VERSION,
+  replicateSectionSnapshot,
+} from "./replicated-note";
+import {
+  applyReplicatedSectionSnapshot,
+  replaceReplicatedInline,
+} from "./replicated-note-edit";
+import {
+  REPLICATED_WORKSPACE_SCHEMA_VERSION,
+  normalizeNamespace,
+  replicatedNamespace,
+  type ReplicatedNamespace,
+} from "./replicated-namespace";
 import {
   createMainNamespace,
   listNamespaceEntries,
@@ -95,11 +112,12 @@ export interface NoteDocument extends BaseCrdtDocument {
   readonly kind: "note";
   readonly noteId: string;
   readonly meta: Y.Map<unknown>;
-  /** The sole root of the persisted NoteDoc. Its Section ID equals noteId. */
+  /** Legacy XML, or a read projection of the normalized Note. Never persist the projection. */
   readonly rootSection: Y.XmlElement;
   /** Compatibility handle, resolved on access after structural Undo. */
   readonly body: Y.XmlElement;
-  readonly undoManager: Y.UndoManager;
+  readonly undoManager: Y.UndoManager | EditorHistory;
+  readonly replicated?: ReplicatedNote;
 }
 
 export interface WorkspaceDocument extends BaseCrdtDocument {
@@ -107,6 +125,7 @@ export interface WorkspaceDocument extends BaseCrdtDocument {
   readonly workspaceId: string;
   readonly root: Y.Map<unknown>;
   readonly notes: Y.Map<Y.Map<unknown>>;
+  readonly replicated?: ReplicatedNamespace;
 }
 
 export type ProductDocument = NoteDocument | WorkspaceDocument;
@@ -262,6 +281,7 @@ export interface ListItemBlock {
 
 export const PERSISTENCE_LOAD_ORIGIN = "memoka:persistence-load";
 export const EXTERNAL_AGENT_EDIT_ORIGIN = "memoka:external-agent-edit";
+export const REPLICATED_PUBLICATION_ORIGIN = "memoka:replicated-publication";
 export const CORE_TRANSACTION_ORIGIN = "memoka:core-transaction";
 export const SECTION_DEPTH_SHIFT_ORIGIN = "memoka:section-depth-shift";
 export const SECTION_PARAGRAPH_CONVERSION_ORIGIN =
@@ -298,6 +318,7 @@ export function createNoteDocument(
   blocks: NoteBlock[] = [emptyParagraphBlock()],
   title = "",
   timestamps: { createdAt?: string; updatedAt?: string } = {},
+  replicaId?: string,
 ): NoteDocument {
   assertUuidV7(noteId, "noteId");
   const doc = new Y.Doc({ guid: noteId });
@@ -319,6 +340,18 @@ export function createNoteDocument(
     );
     fragment.insert(0, [rootSection]);
   }, BOOTSTRAP_ORIGIN);
+  if (replicaId) {
+    try {
+      return createReplicatedNoteDocumentFromSectionSnapshot(
+        noteId,
+        sectionSnapshot(rootSection),
+        replicaId,
+        timestamps,
+      );
+    } finally {
+      doc.destroy();
+    }
+  }
   return noteDocumentFromParts(noteId, doc, meta, rootSection);
 }
 
@@ -389,6 +422,41 @@ export function createWorkspaceDocumentFromMetadata(
   return workspace;
 }
 
+/** Conversion is isolated from the original document and preserves all product IDs. */
+export function createReplicatedWorkspaceDocument(
+  source: WorkspaceDocument,
+  replicaId: string,
+): WorkspaceDocument {
+  validateWorkspaceMetadata(source);
+  if (source.replicated) throw new Error("Workspace is already normalized");
+  const entries = listNamespaceEntries(source.root);
+  const doc = new Y.Doc({ guid: `workspace:${source.workspaceId}`, gc: false });
+  try {
+    Y.applyUpdate(
+      doc,
+      Y.encodeStateAsUpdate(source.doc),
+      PERSISTENCE_LOAD_ORIGIN,
+    );
+    normalizeNamespace(doc.getMap("workspace"), entries, replicaId);
+    const candidate = workspaceDocumentFromYDoc(
+      source.workspaceId,
+      doc,
+      replicaId,
+    );
+    if (
+      JSON.stringify(listNamespaceEntries(candidate.root)) !==
+        JSON.stringify(entries) ||
+      JSON.stringify(listNoteMetadata(candidate)) !==
+        JSON.stringify(listNoteMetadata(source))
+    )
+      throw new Error("Workspace conversion changed content or identity");
+    return candidate;
+  } catch (error) {
+    doc.destroy();
+    throw error;
+  }
+}
+
 export function createNoteDocumentFromSectionSnapshot(
   noteId: string,
   snapshot: SectionSnapshot,
@@ -418,17 +486,26 @@ export function loadProductDocument(
   documentId: string,
   snapshot: Uint8Array,
   updates: Uint8Array[] = [],
+  replicaId = localReplicaId,
 ): ProductDocument {
   const doc = new Y.Doc({
     guid: kind === "workspace" ? `workspace:${documentId}` : documentId,
+    gc: false,
   });
-  Y.applyUpdate(doc, snapshot, PERSISTENCE_LOAD_ORIGIN);
-  for (const update of updates) {
-    Y.applyUpdate(doc, update, PERSISTENCE_LOAD_ORIGIN);
+  try {
+    Y.applyUpdate(doc, snapshot, PERSISTENCE_LOAD_ORIGIN);
+    for (const update of updates) {
+      Y.applyUpdate(doc, update, PERSISTENCE_LOAD_ORIGIN);
+    }
+    if (doc.store.pendingStructs || doc.store.pendingDs)
+      throw new Error("Yjs update dependencies are missing");
+    return kind === "workspace"
+      ? workspaceDocumentFromYDoc(documentId, doc, replicaId)
+      : noteDocumentFromYDoc(documentId, doc, replicaId);
+  } catch (error) {
+    doc.destroy();
+    throw error;
   }
-  return kind === "workspace"
-    ? workspaceDocumentFromYDoc(documentId, doc)
-    : noteDocumentFromYDoc(documentId, doc);
 }
 
 /**
@@ -452,9 +529,10 @@ export function loadNoteDocumentWithSectionIdentityRecovery(
   noteId: string,
   snapshot: Uint8Array,
   updates: readonly Uint8Array[] = [],
+  replicaId = localReplicaId,
 ): RecoveredNoteDocumentLoad {
   assertUuidV7(noteId, "noteId");
-  const doc = new Y.Doc({ guid: noteId });
+  const doc = new Y.Doc({ guid: noteId, gc: false });
   const knownIds = new Map<Y.XmlElement, Set<string>>();
   const observeIdentities = (): void => {
     for (const { section, header } of rawSectionIdentityEntries(doc)) {
@@ -468,6 +546,17 @@ export function loadNoteDocumentWithSectionIdentityRecovery(
 
   try {
     Y.applyUpdate(doc, snapshot, PERSISTENCE_LOAD_ORIGIN);
+    if (
+      doc.getMap("meta").get("schema_version") ===
+      REPLICATED_NOTE_SCHEMA_VERSION
+    ) {
+      for (const update of updates)
+        Y.applyUpdate(doc, update, PERSISTENCE_LOAD_ORIGIN);
+      return {
+        document: replicatedDocumentFromYDoc(noteId, doc, replicaId),
+        repair: null,
+      };
+    }
     observeIdentities();
     for (const update of updates) {
       Y.applyUpdate(doc, update, PERSISTENCE_LOAD_ORIGIN);
@@ -673,6 +762,8 @@ export function cloneProductDocument(
     document.kind,
     document.id,
     Y.encodeStateAsUpdate(document.doc),
+    [],
+    document.replicated?.replicaId,
   );
 }
 
@@ -717,21 +808,26 @@ export function addNoteMetadata(
     throw new Error("Duplicate Namespace entry identity");
   if (input.title !== undefined) validateTitle(input.title);
   workspace.doc.transact(() => {
-    workspace.notes.set(input.noteId, metadataToYMap(input));
-    entries.set(
-      entryId,
-      namespaceEntryMap({
-        entryId,
-        parentEntryId,
-        position: notePosition,
-        target: { kind: "note", id: input.noteId },
-        name: null,
-        createdAt: input.createdAt,
-        updatedAt: input.updatedAt,
-        deletedAt: input.deletedAt,
-        trashOperationId: input.trashOperationId,
-      }),
+    workspace.notes.set(
+      input.noteId,
+      metadataToYMap(input, !!workspace.replicated),
     );
+    const entry = {
+      entryId,
+      parentEntryId,
+      position: notePosition,
+      target: { kind: "note" as const, id: input.noteId },
+      name: null,
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+      deletedAt: input.deletedAt,
+      trashOperationId: input.trashOperationId,
+    };
+    if (workspace.replicated) {
+      workspace.replicated.writeEntries([entry], new Set([entryId]));
+      return;
+    }
+    entries.set(entryId, namespaceEntryMap(entry));
   }, origin);
 }
 
@@ -814,8 +910,8 @@ function projectNoteMetadata(
     title: String(value.get("title_cache") ?? ""),
     createdAt: String(value.get("created_at")),
     updatedAt: String(value.get("updated_at")),
-    deletedAt: nullableString(value.get("deleted_at")),
-    trashOperationId: nullableString(value.get("trash_operation_id")),
+    deletedAt: entry.deletedAt,
+    trashOperationId: entry.trashOperationId,
     systemRole: systemRole === "help" ? "help" : undefined,
   };
 }
@@ -840,6 +936,7 @@ export function synchronizeNoteTitleCache(
 ): void {
   validateTitle(title);
   const value = requireMetadata(workspace, noteId);
+  if (workspace.replicated && value.get("system_role") === "help") return;
   workspace.doc.transact(() => {
     value.set("title_cache", title);
     value.set("updated_at", updatedAt);
@@ -884,6 +981,26 @@ export function updateNotePlacements(
     });
   }
   validateNoteMetadataTree([...current.values()]);
+  if (workspace.replicated) {
+    const noteEntries = namespaceNoteEntries(workspace.root);
+    const planned = updates.map((update) => ({
+      ...noteEntries.get(update.noteId)!,
+      parentEntryId:
+        update.parentNoteId === null
+          ? null
+          : noteEntries.get(update.parentNoteId)!.entryId,
+      position: update.notePosition,
+    }));
+    workspace.doc.transact(
+      () =>
+        workspace.replicated!.writeEntries(
+          planned,
+          new Set(planned.map((entry) => entry.entryId)),
+        ),
+      origin,
+    );
+    return;
+  }
   const values = updates.map((update) => ({
     value: readMainNamespace(workspace.root).entries.get(
       current.get(update.noteId)!.entryId!,
@@ -913,6 +1030,16 @@ export function moveNotesToTrash(
 ): void {
   if (noteIds.length === 0) {
     throw new Error("Moving notes to Trash requires at least one note");
+  }
+  if (workspace.replicated) {
+    updateReplicatedTrash(
+      workspace,
+      noteIds,
+      deletedAt,
+      trashOperationId,
+      origin,
+    );
+    return;
   }
   const values = noteIds.map((noteId) => {
     const value = requireMetadata(workspace, noteId);
@@ -944,6 +1071,10 @@ export function restoreNotesFromTrash(
   if (noteIds.length === 0) {
     throw new Error("Restoring from Trash requires at least one note");
   }
+  if (workspace.replicated) {
+    updateReplicatedTrash(workspace, noteIds, restoredAt, undefined, origin);
+    return;
+  }
   const values = noteIds.map((noteId) => {
     const value = requireMetadata(workspace, noteId);
     if (value.get("deleted_at") === null) {
@@ -965,6 +1096,35 @@ export function restoreNotesFromTrash(
   }, origin);
 }
 
+function updateReplicatedTrash(
+  workspace: WorkspaceDocument,
+  noteIds: readonly string[],
+  at: string,
+  deletionId: string | undefined,
+  origin: unknown,
+): void {
+  const entries = namespaceNoteEntries(workspace.root);
+  const planned = noteIds.map((id) => {
+    const entry = entries.get(id);
+    if (!entry || !!entry.deletedAt === !!deletionId)
+      throw new Error("Invalid Note Trash state");
+    return {
+      ...entry,
+      updatedAt: at,
+      deletedAt: deletionId ? at : undefined,
+      trashOperationId: deletionId,
+    };
+  });
+  workspace.doc.transact(() => {
+    workspace.replicated!.writeEntries(
+      planned,
+      new Set(planned.map((entry) => entry.entryId)),
+    );
+    for (const id of noteIds)
+      requireMetadata(workspace, id).set("updated_at", at);
+  }, origin);
+}
+
 export function synchronizeManagedNoteMetadata(
   workspace: WorkspaceDocument,
   noteId: string,
@@ -972,6 +1132,7 @@ export function synchronizeManagedNoteMetadata(
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
   const value = requireMetadata(workspace, noteId);
+  if (workspace.replicated && value.get("system_role") === "help") return;
   workspace.doc.transact(() => {
     value.set("title_cache", input.title);
     value.set("updated_at", input.updatedAt);
@@ -984,6 +1145,10 @@ export function replaceNoteBlocks(
   blocks: readonly NoteBlock[],
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      replaceNoteBlocks(projection, blocks, origin),
+    );
   if (blocks.length === 0) {
     throw new Error("Root Section body requires at least one block");
   }
@@ -1005,6 +1170,13 @@ export function replaceNoteSectionTree(
   updatedAt: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
+  if (note.replicated) {
+    note.replicated.transact(() => {
+      applyReplicatedSectionSnapshot(note.replicated!, snapshot, origin);
+      note.meta.set("updated_at", updatedAt);
+    }, origin);
+    return;
+  }
   if (snapshot.sectionId !== note.noteId) {
     throw new Error("Root Section ID must equal Note ID");
   }
@@ -1043,6 +1215,16 @@ export function applyNoteSectionDepthShift(
   updatedAt: string,
   origin: unknown = SECTION_DEPTH_SHIFT_ORIGIN,
 ): void {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      applyNoteSectionDepthShift(
+        projection,
+        boundarySectionId,
+        plan,
+        updatedAt,
+        origin,
+      ),
+    );
   if (!plan.changed) return;
   const boundary = findSectionById(note.rootSection, boundarySectionId);
   if (!boundary)
@@ -1072,6 +1254,16 @@ export function putNoteSectionSibling(
   direction: "after" | "before",
   origin: unknown = ySyncPluginKey,
 ): boolean {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      putNoteSectionSibling(
+        projection,
+        targetSectionId,
+        snapshot,
+        direction,
+        origin,
+      ),
+    );
   const target = findSectionById(note.rootSection, targetSectionId);
   const parent = target
     ? findParentSection(note.rootSection, targetSectionId)
@@ -1135,6 +1327,10 @@ export function createNoteSectionFromParagraph(
   },
   origin: unknown = SECTION_PARAGRAPH_CONVERSION_ORIGIN,
 ): NoteSectionFromParagraphResult {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      createNoteSectionFromParagraph(projection, request, origin),
+    );
   const boundary = findSectionById(note.rootSection, request.boundarySectionId);
   if (!boundary) {
     throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
@@ -1226,6 +1422,10 @@ export function replaceFirstTextBlock(
   text: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      replaceFirstTextBlock(projection, text, origin),
+    );
   const first = findFirstEditableTextBlock(note.rootSection);
   if (!first) throw new Error("NoteDoc has no editable text block");
   let yText = first
@@ -1242,11 +1442,16 @@ export function replaceFirstTextBlock(
 }
 
 export function readNoteTitle(note: NoteDocument): string {
+  if (note.replicated)
+    return note.replicated
+      .inlineContent(note.noteId)
+      .map((node) => node.text ?? "")
+      .join("");
   return sectionTitle(note.rootSection);
 }
 
 export function readNoteDisplayTitle(note: NoteDocument): string {
-  return noteDisplayTitle(sectionTitle(note.rootSection));
+  return noteDisplayTitle(readNoteTitle(note));
 }
 
 export function renameRootSection(
@@ -1255,6 +1460,17 @@ export function renameRootSection(
   updatedAt: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
+  if (note.replicated) {
+    validateTitle(title);
+    note.replicated.transact(() => {
+      replaceReplicatedInline(
+        note.replicated!.inline(note.noteId),
+        title ? [{ type: "text", text: title }] : [],
+      );
+      note.meta.set("updated_at", updatedAt);
+    }, origin);
+    return;
+  }
   note.doc.transact(() => {
     updateSectionTitle(note.rootSection, title);
     note.meta.set("updated_at", updatedAt);
@@ -1268,6 +1484,16 @@ export function setSectionProperties(
   updatedAt: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
 ): void {
+  if (note.replicated)
+    return editReplicatedProjection(note, origin, (projection) =>
+      setSectionProperties(
+        projection,
+        targetSectionId,
+        properties,
+        updatedAt,
+        origin,
+      ),
+    );
   const section = findSectionById(note.rootSection, targetSectionId);
   if (!section) throw new Error(`Unknown Section: ${targetSectionId}`);
   note.doc.transact(() => {
@@ -1392,13 +1618,19 @@ export function blockToYXml(block: NoteBlock): Y.XmlElement {
   return element;
 }
 
-function noteDocumentFromYDoc(noteId: string, doc: Y.Doc): NoteDocument {
+function noteDocumentFromYDoc(
+  noteId: string,
+  doc: Y.Doc,
+  replicaId = localReplicaId,
+): NoteDocument {
   assertUuidV7(noteId, "noteId");
   const meta = doc.getMap("meta");
   if (meta.get("note_id") !== noteId) {
     throw new Error("Persisted NoteDoc note_id does not match its key");
   }
   const schemaVersion = meta.get("schema_version");
+  if (schemaVersion === REPLICATED_NOTE_SCHEMA_VERSION)
+    return replicatedDocumentFromYDoc(noteId, doc, replicaId);
   if (schemaVersion === 2) {
     migrateNoteDocumentV2ToV3(noteId, doc, meta);
   } else if (
@@ -1502,16 +1734,132 @@ function noteDocumentFromParts(
   }) as NoteDocument;
 }
 
+// Until Workspace enrollment supplies its durable identity, unsynchronized
+// documents use one process-local replica. It is never an authentication key.
+const localReplicaId = createUuidV7();
+
+export function createReplicatedNoteDocumentFromSectionSnapshot(
+  noteId: string,
+  snapshot: SectionSnapshot,
+  replicaId: string,
+  timestamps: { createdAt?: string; updatedAt?: string } = {},
+): NoteDocument {
+  if (snapshot.sectionId !== noteId)
+    throw new Error("Root Section ID must equal Note ID");
+  const replicated = replicateSectionSnapshot(snapshot, replicaId);
+  replicated.doc.transact(() => {
+    replicated.meta.set("created_at", timestamps.createdAt ?? "");
+    replicated.meta.set(
+      "updated_at",
+      timestamps.updatedAt ?? timestamps.createdAt ?? "",
+    );
+  }, BOOTSTRAP_ORIGIN);
+  return replicatedDocumentFromModel(replicated);
+}
+
+function replicatedDocumentFromYDoc(
+  noteId: string,
+  doc: Y.Doc,
+  replicaId: string,
+): NoteDocument {
+  const replicated = new ReplicatedNote(noteId, replicaId, doc);
+  try {
+    replicated.validate();
+    return replicatedDocumentFromModel(replicated);
+  } catch (error) {
+    replicated.destroy();
+    throw error;
+  }
+}
+
+function replicatedDocumentFromModel(replicated: ReplicatedNote): NoteDocument {
+  const { noteId, doc, meta } = replicated;
+  for (const origin of [
+    ySyncPluginKey,
+    SECTION_DEPTH_SHIFT_ORIGIN,
+    SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+    NOTE_RECOVERY_ORIGIN,
+  ])
+    replicated.undoManager.trackedOrigins.add(origin);
+  let projection: NoteDocument | null = null;
+  const invalidate = () => {
+    projection?.doc.destroy();
+    projection = null;
+  };
+  replicated.subscribe(invalidate);
+  doc.on("destroy", invalidate);
+  const root = () => {
+    projection ??= createNoteDocumentFromSectionSnapshot(
+      noteId,
+      replicated.sectionSnapshot(),
+    );
+    return projection.rootSection;
+  };
+  return {
+    kind: "note",
+    id: noteId,
+    noteId,
+    schemaVersion: REPLICATED_NOTE_SCHEMA_VERSION,
+    doc,
+    meta,
+    replicated,
+    undoManager: replicated.history,
+    get rootSection() {
+      return root();
+    },
+    get body() {
+      return sectionBody(root());
+    },
+  };
+}
+
+/** Existing Core operations execute on a disposable view, then commit a validated ID diff. */
+function editReplicatedProjection<Result>(
+  note: NoteDocument,
+  origin: unknown,
+  edit: (projection: NoteDocument) => Result,
+): Result {
+  const replicated = note.replicated!;
+  const projection = createNoteDocumentFromSectionSnapshot(
+    note.noteId,
+    replicated.sectionSnapshot(),
+    {
+      createdAt: String(note.meta.get("created_at") ?? ""),
+      updatedAt: readNoteUpdatedAt(note),
+    },
+  );
+  try {
+    const result = edit(projection);
+    replicated.transact(() => {
+      applyReplicatedSectionSnapshot(
+        replicated,
+        sectionSnapshot(projection.rootSection),
+        origin,
+      );
+      if (readNoteUpdatedAt(projection) !== readNoteUpdatedAt(note))
+        note.meta.set("updated_at", readNoteUpdatedAt(projection));
+    }, origin);
+    return result;
+  } finally {
+    projection.doc.destroy();
+  }
+}
+
 function workspaceDocumentFromYDoc(
   workspaceId: string,
   doc: Y.Doc,
+  replicaId = localReplicaId,
 ): WorkspaceDocument {
   assertUuidV7(workspaceId, "workspaceId");
   const root = doc.getMap("workspace");
   if (root.get("workspace_id") !== workspaceId) {
     throw new Error("Persisted WorkspaceMetadataDoc id does not match its key");
   }
-  if (root.get("schema_version") !== WORKSPACE_DOC_SCHEMA_VERSION) {
+  const schemaVersion = root.get("schema_version");
+  if (
+    schemaVersion !== WORKSPACE_DOC_SCHEMA_VERSION &&
+    schemaVersion !== REPLICATED_WORKSPACE_SCHEMA_VERSION
+  ) {
     throw new Error("Unsupported WorkspaceMetadataDoc schema_version");
   }
   if (root.has("virtual_root_id")) {
@@ -1525,21 +1873,27 @@ function workspaceDocumentFromYDoc(
     kind: "workspace",
     id: workspaceId,
     workspaceId,
-    schemaVersion: WORKSPACE_DOC_SCHEMA_VERSION,
+    schemaVersion,
     doc,
     root,
     notes: notes as Y.Map<Y.Map<unknown>>,
+    replicated: replicatedNamespace(root, replicaId),
   };
   validateWorkspaceMetadata(workspace);
   return workspace;
 }
 
-function metadataToYMap(input: NoteMetadataInput): Y.Map<unknown> {
+function metadataToYMap(
+  input: NoteMetadataInput,
+  normalized = false,
+): Y.Map<unknown> {
   const value = new Y.Map<unknown>();
   value.set("created_at", input.createdAt);
   value.set("updated_at", input.updatedAt);
-  value.set("deleted_at", input.deletedAt ?? null);
-  value.set("trash_operation_id", input.trashOperationId ?? null);
+  if (!normalized) {
+    value.set("deleted_at", input.deletedAt ?? null);
+    value.set("trash_operation_id", input.trashOperationId ?? null);
+  }
   value.set("system_role", input.systemRole ?? null);
   value.set("title_cache", input.title ?? "");
   return value;
@@ -1547,14 +1901,24 @@ function metadataToYMap(input: NoteMetadataInput): Y.Map<unknown> {
 
 function validateWorkspaceMetadata(workspace: WorkspaceDocument): void {
   const entries = listNamespaceEntries(workspace.root);
+  const index = metadataPlacementIndex(workspace);
+  const byNote = new Map(
+    entries.flatMap((entry) =>
+      entry.target ? [[entry.target.id, entry] as const] : [],
+    ),
+  );
   validateNamespace(
     entries,
     new Map(
       [...workspace.notes].map(([id, value]) => [
         id,
         {
-          deletedAt: nullableString(value.get("deleted_at")),
-          trashOperationId: nullableString(value.get("trash_operation_id")),
+          deletedAt: workspace.replicated
+            ? byNote.get(id)?.deletedAt
+            : nullableString(value.get("deleted_at")),
+          trashOperationId: workspace.replicated
+            ? byNote.get(id)?.trashOperationId
+            : nullableString(value.get("trash_operation_id")),
         },
       ]),
     ),
@@ -1565,9 +1929,14 @@ function validateWorkspaceMetadata(workspace: WorkspaceDocument): void {
     if (!(value instanceof Y.Map)) {
       throw new Error(`Workspace Note metadata is invalid: ${noteId}`);
     }
-    if (value.has("parent_note_id") || value.has("note_position"))
+    if (
+      value.has("parent_note_id") ||
+      value.has("note_position") ||
+      (workspace.replicated &&
+        (value.has("deleted_at") || value.has("trash_operation_id")))
+    )
       throw new Error("Note placement must be stored in Namespace");
-    const note = readNoteMetadata(workspace, noteId)!;
+    const note = projectNoteMetadata(noteId, value, index);
     if (!isCanonicalSiblingPosition(note.notePosition)) {
       throw new Error(`Note ${noteId} has an invalid note_position`);
     }

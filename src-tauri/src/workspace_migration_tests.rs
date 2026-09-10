@@ -71,9 +71,33 @@ fn contents(path: &Path) -> BTreeMap<String, String> {
         })
         .collect()
 }
+
+// Optional empty PM attributes/children have the same content meaning when
+// omitted by the stable-entity projection. Keep every populated attribute,
+// mark, ID and child in the comparison.
+pub(crate) fn canonical_content(mut value: Value) -> Value {
+    match &mut value {
+        Value::Object(object) => {
+            object.retain(|key, value| {
+                !matches!(key.as_str(), "attrs" | "content" | "marks")
+                    || (value != &json!({}) && value != &json!([]))
+            });
+            for child in object.values_mut() {
+                *child = canonical_content(child.take());
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                *child = canonical_content(child.take());
+            }
+        }
+        _ => {}
+    }
+    value
+}
 #[test]
 fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
-    for version in [2, 3, 4] {
+    for version in [2, 3, 4, 5, 6] {
         let fixture = legacy_fixture();
         let path = fixture.path().join("memoka.sqlite3");
         {
@@ -95,9 +119,25 @@ fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
         drop(ProductStore::open(fixture.path()).unwrap());
         let migrated = Connection::open(&path).unwrap();
         let note = load_document(&migrated, "note", NOTE).unwrap();
-        assert_eq!(note.schema_version, 6);
+        assert_eq!(note.schema_version, 7);
         assert_eq!(note.revision, 8);
-        assert_eq!(read_note(&note, false).unwrap().root, expected.root);
+        let actual = read_note(&note, false).unwrap();
+        assert_eq!(
+            canonical_content(serde_json::to_value(&actual.root).unwrap()),
+            canonical_content(serde_json::to_value(&expected.root).unwrap())
+        );
+        assert_eq!(
+            crate::markdown_read::section_markdown(
+                &actual.root,
+                0,
+                "01a30000-0000-7000-8000-000000000001"
+            ),
+            crate::markdown_read::section_markdown(
+                &expected.root,
+                0,
+                "01a30000-0000-7000-8000-000000000001"
+            )
+        );
         let workspace = load_document(
             &migrated,
             "workspace",
@@ -121,7 +161,7 @@ fn legacy_migration_preserves_rich_content_identity_and_rollback_image() {
         let rollback = Connection::open(
             fixture
                 .path()
-                .join("migration-backups/before-schema-v6.sqlite3"),
+                .join("migration-backups/before-schema-v7.sqlite3"),
         )
         .unwrap();
         let rollback_note = load_document(&rollback, "note", NOTE).unwrap();

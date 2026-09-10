@@ -22,8 +22,10 @@ export type CommitFault =
   "before-commit" | "before-sql-commit" | "after-commit-response";
 
 export interface PersistenceManifest {
+  missingLocalHelpNoteIds?: string[];
   databaseSchemaVersion: number;
   activeWorkspaceId: string | null;
+  replicaId?: string;
 }
 
 export interface DocumentCommit {
@@ -539,8 +541,8 @@ function isSupportedDocumentSchema(
   schemaVersion: number,
 ): boolean {
   return kind === "workspace"
-    ? schemaVersion === 3
-    : [2, 3, 4, 5, NOTE_DOC_SCHEMA_VERSION].includes(schemaVersion);
+    ? schemaVersion === 3 || schemaVersion === 4
+    : [2, 3, 4, 5, NOTE_DOC_SCHEMA_VERSION, 7].includes(schemaVersion);
 }
 
 function documentKey(kind: DocumentKind, documentId: string): string {

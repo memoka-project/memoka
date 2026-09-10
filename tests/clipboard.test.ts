@@ -1839,6 +1839,96 @@ describe("Memoka structured Clipboard", () => {
     secondRoot.remove();
   });
 
+  it("recovers a filtered native TableRow before interpreting its HTML as cells", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const readPreferredClipboard = vi.fn();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      readPreferredClipboard,
+    });
+    try {
+      editor.commands.setContent(
+        "<table><tr><th>key</th><th>value</th></tr><tr><td>alpha</td><td>1</td></tr></table>",
+      );
+      await runtime.flush();
+      const table = editor.state.doc.firstChild!;
+      const row = table.child(1);
+      const position = 1 + table.child(0).nodeSize;
+      const formats = encodeVimClipboard(
+        {
+          kind: "structure",
+          text: row.textContent,
+          structureKind: "table-row",
+          nodeNames: ["tableRow", "tableCell", "paragraph"],
+          slice: editor.state.doc.slice(position, position + row.nodeSize),
+        },
+        editor.schema,
+      );
+      readPreferredClipboard.mockResolvedValue({
+        availableTypes: Object.keys(formats),
+        internal: formats[MEMOKA_CLIPBOARD_MIME],
+        markdown: formats[MARKDOWN_CLIPBOARD_MIME],
+        html: formats["text/html"],
+        plain: formats["text/plain"],
+      });
+      editor.commands.setTextSelection(position + 3);
+      editor.commands.focus();
+      const before = editor.state.doc;
+      const event = paste(editor, {
+        "text/html": formats["text/html"],
+        "text/plain": formats["text/plain"],
+      });
+      expect(event.defaultPrevented).toBe(true);
+      expect(adapter.vimSnapshot.action).toBe("clipboard:paste:reading");
+      await vi.waitFor(() => {
+        expect(adapter.vimSnapshot.action).toBe(
+          "clipboard:paste:structure:changed",
+        );
+      });
+      expect(readPreferredClipboard).toHaveBeenCalledOnce();
+      expect(
+        editor.state.doc.firstChild!.content.content.map(
+          (node) => node.textContent,
+        ),
+      ).toEqual(["keyvalue", "alpha1", "alpha1"]);
+      press(editor, "Escape");
+      press(editor, "u");
+      expect(editor.state.doc.eq(before)).toBe(true);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
+  it("retains event TSV when reading native formats fails", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      readPreferredClipboard: () => Promise.reject(new Error("unavailable")),
+    });
+    try {
+      editor.commands.setContent("<p></p>");
+      editor.commands.setTextSelection(1);
+      editor.commands.focus();
+      paste(editor, { [TSV_CLIPBOARD_MIME]: "a\tb\nc\td" });
+      await vi.waitFor(() => {
+        expect(editor.state.doc.firstChild?.type.name).toBe("table");
+      });
+      expect(
+        editor.state.doc.firstChild!.content.content.map(
+          (node) => node.textContent,
+        ),
+      ).toEqual(["", "ab", "cd"]);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
   it("recovers explicit Markdown after Wry normalizes its paste event to plain text", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     await addSecondWindow(runtime);

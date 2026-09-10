@@ -83,13 +83,10 @@ repositoryやartifactへ含めない。
 `release-draft.yml`完了後、assetを取得してSHA-256、Updater署名、AppImageの起動、CLIと両sidecarを確認する。
 `release-publish.yml`を対象versionで実行し、試験済みdraftをそのまま公開する。build失敗・asset不足は公開しない。
 
-Namespace対応前のWorkspaceはDB schema 5 / NoteDoc・WorkspaceMetadataDoc schema 3へ移行する。
-更新前にMemokaを閉じ、Workspace全体を外部へコピーする。移行後のWorkspaceを旧版で開かない。
+Workspaceは検証付きでDB/NoteDoc schema 7、WorkspaceMetadataDoc 4へ移行する。
+旧Namespace対応前の変換も含め、既存ID・内容・装飾・構造・添付hashを候補上で比較してから原子的に確定する。
+移行前のrollback copyを残す。更新前にはWorkspace全体を別媒体へコピーし、移行後のWorkspaceを旧版で開かない。
 H6超過・破損のpreflight拒否とrollback copyは外部バックアップの代わりではない。
-v0.2.2ではrich ListItem・Details対応によりNoteDocをschema 5へ移行する。既存のblock IDと内容を維持し、
-旧schema 3/4の読み込み時にmetadataを更新する。この移行後もWorkspaceを旧版で開かない。
-v0.2.3ではTask ListとCLI編集receiptに対応するDB／NoteDoc schema 6へ移行する。旧NoteDoc 3/4/5の本文・IDは
-再構築せず、metadataを更新する。移行前にWorkspace全体を外部へコピーし、以降はv0.2.2以前で開かない。
 常時Markdown mirrorは生成せず、既存mirrorは削除しない。旧mirrorから別の空Workspaceへの復旧CLIは維持する。
 
 ## 6. Updater
@@ -117,6 +114,10 @@ Google Driveを明示設定した場合は、認証と追加backupにGoogle OAut
 クラウド未設定・無効なら起動・通常編集・status取得でGoogleへ接続しない。Note/添付はRestic暗号文として転送するが、
 IP、API request、時刻、転送量、objectサイズ、専用folder表示名まで秘匿するものではない。
 独自の中継サーバーへtokenやパスワードを送らない。Google機能の実アカウント検証は未完了で、実験的な扱いとする。
+
+端末間同期を明示的に有効化・参加した場合は、登録したLAN/VPNの端末へiroh/QUICで直接接続する。
+探索・公開relay・自動ポート転送を無効にし、手動宛先と受信元への返信に限定する。署名付きの認可で鍵を検証する。
+同期用秘密鍵はOS資格情報に置き、Workspace・バックアップに含めない。復旧先は新しいReplicaとして同期無効で開く。
 
 ### 7.1 Google認証と秘密保存
 

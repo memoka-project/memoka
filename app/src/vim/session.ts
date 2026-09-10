@@ -25,7 +25,7 @@ import {
 import { CellSelection } from "@tiptap/pm/tables";
 import { windowShortcutKey } from "../core/window-shortcuts";
 import type { EditorView } from "@tiptap/pm/view";
-import type { UndoManager } from "yjs";
+import type { EditorHistory as UndoManager } from "../core/editor-history";
 import { sanitizeExternalHtml } from "../editor/html-paste";
 import { SectionDepthLimitError } from "../core/section-model";
 import {
@@ -371,6 +371,8 @@ function recordVimCursorHistory(
 interface PasteFallback {
   html: string;
   plain: string;
+  markdown?: string;
+  tsv?: string;
 }
 
 interface ChangeUndoCapture {
@@ -850,10 +852,22 @@ export class ProductVimSession {
     }
 
     const fallback = readPasteFallback(event.clipboardData);
+    // WebKit can omit the private MIME while retaining its HTML table. Read
+    // the native formats before interpreting that fallback as a cell matrix.
+    if (
+      this.options.onPasteRead &&
+      !markdown &&
+      shouldReadPreferredClipboard(event.clipboardData)
+    ) {
+      event.preventDefault();
+      this.beginPreferredClipboardPaste(view, fallback);
+      return true;
+    }
+
     const tabularRegister = registerFromTabularClipboard(
       {
         html: fallback.html,
-        tsv: event.clipboardData.getData(TSV_CLIPBOARD_MIME) || null,
+        tsv: fallback.tsv || null,
         markdown: markdown || null,
         plain: isDirectListParagraph(view.state.selection.$from)
           ? null
@@ -888,36 +902,35 @@ export class ProductVimSession {
     }
 
     if (
-      !this.options.onPasteRead ||
-      !shouldReadPreferredClipboard(event.clipboardData)
+      fallback.plain &&
+      this.pasteMarkdownNote(view, fallback.plain, "plain")
     ) {
-      if (
-        fallback.plain &&
-        this.pasteMarkdownNote(view, fallback.plain, "plain")
-      ) {
-        this.clipboardReadGeneration += 1;
-        event.preventDefault();
-        return true;
-      }
-      if (fallback.plain && isLargePlainTextPaste(fallback.plain)) {
-        event.preventDefault();
-        return this.beginLargePlainTextPaste(view, fallback.plain);
-      }
-      if (
-        !fallback.html &&
-        fallback.plain &&
-        this.pasteListPlainFallback(view, fallback.plain)
-      ) {
-        event.preventDefault();
-        return true;
-      }
-      return false;
+      this.clipboardReadGeneration += 1;
+      event.preventDefault();
+      return true;
     }
+    if (fallback.plain && isLargePlainTextPaste(fallback.plain)) {
+      event.preventDefault();
+      return this.beginLargePlainTextPaste(view, fallback.plain);
+    }
+    if (
+      !fallback.html &&
+      fallback.plain &&
+      this.pasteListPlainFallback(view, fallback.plain)
+    ) {
+      event.preventDefault();
+      return true;
+    }
+    return false;
+  }
 
+  private beginPreferredClipboardPaste(
+    view: EditorView,
+    fallback: PasteFallback,
+  ): void {
     const generation = ++this.clipboardReadGeneration;
     const document = view.state.doc;
     const selection = view.state.selection;
-    event.preventDefault();
     this.action = "clipboard:paste:reading";
     this.emit();
 
@@ -926,7 +939,7 @@ export class ProductVimSession {
       | null
       | Promise<PreferredClipboardFormats | null>;
     try {
-      pending = this.options.onPasteRead();
+      pending = this.options.onPasteRead?.() ?? null;
     } catch {
       this.finishPreferredClipboardPaste(
         generation,
@@ -936,7 +949,7 @@ export class ProductVimSession {
         fallback,
         null,
       );
-      return true;
+      return;
     }
     void Promise.resolve(pending).then(
       (formats) =>
@@ -958,7 +971,6 @@ export class ProductVimSession {
           null,
         ),
     );
-    return true;
   }
 
   private readPlainClipboardPaste(view: EditorView): void {
@@ -1059,10 +1071,12 @@ export class ProductVimSession {
     const resolvedFallback: PasteFallback = {
       html: formats?.html || fallback.html,
       plain: formats?.plain || fallback.plain,
+      markdown: formats?.markdown || fallback.markdown,
+      tsv: formats?.tsv || fallback.tsv,
     };
     if (
-      formats?.markdown &&
-      this.pasteMarkdownNote(view, formats.markdown, "markdown")
+      resolvedFallback.markdown &&
+      this.pasteMarkdownNote(view, resolvedFallback.markdown, "markdown")
     ) {
       return;
     }
@@ -1072,17 +1086,16 @@ export class ProductVimSession {
     ) {
       return;
     }
-    const tabularRegister = formats
-      ? registerFromTabularClipboard(
-          {
-            ...formats,
-            plain: isDirectListParagraph(view.state.selection.$from)
-              ? null
-              : resolvedFallback.plain,
-          },
-          view.state.schema,
-        )
-      : null;
+    const tabularRegister = registerFromTabularClipboard(
+      {
+        ...resolvedFallback,
+        markdown: resolvedFallback.markdown || null,
+        plain: isDirectListParagraph(view.state.selection.$from)
+          ? null
+          : resolvedFallback.plain,
+      },
+      view.state.schema,
+    );
     if (
       tabularRegister &&
       this.pasteClipboardRegister(view, tabularRegister, "internal")
@@ -1096,8 +1109,8 @@ export class ProductVimSession {
       return;
     }
 
-    const markdownRegister = formats?.markdown
-      ? registerFromMarkdown(formats.markdown, view.state.schema)
+    const markdownRegister = resolvedFallback.markdown
+      ? registerFromMarkdown(resolvedFallback.markdown, view.state.schema)
       : null;
     if (
       markdownRegister &&
@@ -3755,6 +3768,10 @@ function readPasteFallback(
   return {
     html: types.includes("text/html") ? data.getData("text/html") : "",
     plain: plainType ? data.getData(plainType) : "",
+    markdown: readMarkdownClipboardSource(data),
+    tsv: types.includes(TSV_CLIPBOARD_MIME)
+      ? data.getData(TSV_CLIPBOARD_MIME)
+      : "",
   };
 }
 

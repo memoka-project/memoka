@@ -2,11 +2,23 @@ import type { Editor } from "@tiptap/core";
 import { CellSelection } from "@tiptap/pm/tables";
 import * as Y from "yjs";
 import {
+  NOTE_RECOVERY_ORIGIN,
+  applyNoteRecovery,
+  readNoteRecovery,
+  type NoteRecoveryAction,
+  type NoteRecoveryPage,
+} from "./replicated-note-recovery";
+import {
   nativeAgentEdit,
   recoverAgentPublication,
   type AgentEditIdentity,
   type AgentDelivery,
 } from "./native-agent-edit";
+import {
+  decodeSyncUpdate,
+  recoverSyncCommit,
+  type SyncPublicationPort,
+} from "./native-sync";
 import {
   applyNamespacePlan,
   listNamespaceEntries,
@@ -31,6 +43,7 @@ import {
   NOTE_DOC_SCHEMA_VERSION,
   PERSISTENCE_LOAD_ORIGIN,
   EXTERNAL_AGENT_EDIT_ORIGIN,
+  REPLICATED_PUBLICATION_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
   addNoteMetadata,
@@ -38,6 +51,8 @@ import {
   createNoteDocument,
   createNoteSectionFromParagraph,
   createWorkspaceDocument,
+  createReplicatedWorkspaceDocument,
+  createReplicatedNoteDocumentFromSectionSnapshot,
   listNoteMetadata,
   loadNoteDocumentWithSectionIdentityRecovery,
   loadProductDocument,
@@ -47,6 +62,7 @@ import {
   readNoteMetadata,
   readNoteTitle,
   readNotePlainText,
+  readNoteUpdatedAt,
   renameRootSection,
   renameNoteMetadata,
   replaceNoteSectionTree,
@@ -61,6 +77,7 @@ import {
   type SectionIdentityRepair,
   type WorkspaceDocument,
 } from "./documents";
+import { REPLICATED_REMOTE_ORIGIN } from "./replicated-note";
 import {
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
@@ -70,7 +87,7 @@ import {
   sectionId,
   sectionTitle,
 } from "./section-model";
-import { createUuidV7 } from "./ids";
+import { assertUuidV7, createUuidV7 } from "./ids";
 import {
   type CommitFault,
   type LocalStateCommit,
@@ -497,14 +514,19 @@ export class CoreRuntime {
     options: CoreRuntimeOptions = {},
   ): Promise<CoreRuntime> {
     const manifest = await persistence.manifest();
-    if (manifest.databaseSchemaVersion !== 6) {
+    if (![6, 7].includes(manifest.databaseSchemaVersion)) {
       throw new Error(
         `Unsupported persistence schema ${manifest.databaseSchemaVersion}`,
       );
     }
+    if (manifest.databaseSchemaVersion === 7) {
+      if (!manifest.replicaId)
+        throw new Error("Workspace copy identity is missing");
+      assertUuidV7(manifest.replicaId, "replicaId");
+    }
 
     if (!manifest.activeWorkspaceId) {
-      return CoreRuntime.bootstrap(persistence, options);
+      return CoreRuntime.bootstrap(persistence, options, manifest.replicaId);
     }
 
     const persistedWorkspace = await persistence.loadDocument(
@@ -517,11 +539,15 @@ export class CoreRuntime {
         manifest.activeWorkspaceId,
         persistedWorkspace.snapshot,
         persistedWorkspace.updates.map(({ update }) => update),
+        manifest.replicaId,
       ),
       persistedWorkspace.revision,
     );
     const runtime = new CoreRuntime(persistence, workspace, options);
     try {
+      await runtime.generateMissingLocalHelp(
+        manifest.missingLocalHelpNoteIds ?? [],
+      );
       await runtime.loadExistingState();
       return runtime;
     } catch (error) {
@@ -533,13 +559,17 @@ export class CoreRuntime {
   private static async bootstrap(
     persistence: PersistencePort,
     options: CoreRuntimeOptions,
+    replicaId?: string,
   ): Promise<CoreRuntime> {
     const idFactory = options.idFactory ?? createUuidV7;
     const workspaceId = idFactory();
-    const workspace = new ManagedCrdtDocument<ProductDocument>(
-      createWorkspaceDocument(workspaceId),
-      0,
-    );
+    let document = createWorkspaceDocument(workspaceId);
+    if (replicaId) {
+      const normalized = createReplicatedWorkspaceDocument(document, replicaId);
+      document.doc.destroy();
+      document = normalized;
+    }
+    const workspace = new ManagedCrdtDocument<ProductDocument>(document, 0);
     const runtime = new CoreRuntime(persistence, workspace, {
       ...options,
       idFactory,
@@ -565,6 +595,42 @@ export class CoreRuntime {
       },
     });
     return runtime;
+  }
+
+  private async generateMissingLocalHelp(
+    ids: readonly string[],
+  ): Promise<void> {
+    for (const id of ids) {
+      const metadata = readNoteMetadata(this.workspaceDocument, id);
+      const replica = this.workspaceDocument.replicated?.replicaId;
+      if (metadata?.systemRole !== "help" || !replica)
+        throw new Error("Invalid local Help identity");
+      const note = createReplicatedNoteDocumentFromSectionSnapshot(
+        id,
+        createMemokaHelpSectionSnapshot(id),
+        replica,
+        { createdAt: metadata.createdAt, updatedAt: metadata.updatedAt },
+      );
+      const handle = new ManagedCrdtDocument<ProductDocument>(note, 0);
+      try {
+        await this.transactions.transact(
+          {
+            operationId: this.idFactory(),
+            scope: "note-doc",
+            documents: [handle],
+          },
+          () => undefined,
+        );
+        this.notes.set(id, handle);
+        this.notePersistence.set(
+          id,
+          this.createNotePersistenceSession(id, handle, 0, 0),
+        );
+      } catch (cause) {
+        note.doc.destroy();
+        throw cause;
+      }
+    }
   }
 
   get workspaceDocument(): WorkspaceDocument {
@@ -806,6 +872,236 @@ export class CoreRuntime {
     } finally {
       this.commandsInFlight--;
     }
+  }
+
+  /** Inbox validation runs without blocking input. Only the durable commit and
+   * live publication share the existing local save barrier. */
+  async applyNextSynchronization(
+    port: SyncPublicationPort,
+    isCurrent: () => boolean,
+  ): Promise<"idle" | "applied" | "deferred"> {
+    if (!isCurrent() || this.externalCommit || this.commandsInFlight)
+      return "deferred";
+    await this.flushDurableState();
+    const workspace = this.workspace.current;
+    const observed = new Map(
+      [...this.notes].map(([id, handle]) => [id, handle.current] as const),
+    );
+    observed.set(workspace.id, workspace);
+    const changed = new Set<string>();
+    const observers = [...observed].map(([id, doc]) => {
+      const observer = () => changed.add(id);
+      doc.doc.on("update", observer);
+      return () => doc.doc.off("update", observer);
+    });
+    let ticket: string | undefined;
+    let committed = false;
+    let release: (() => void) | undefined;
+    try {
+      const prepared = await port.prepare();
+      if (!prepared) return "idle";
+      ticket = prepared.id;
+      committed = prepared.delivery !== null;
+      const documents = prepared.delivery?.documents ?? prepared.documents;
+      const noteIds = [
+        ...new Set([
+          ...prepared.affectedNoteIds,
+          ...documents
+            .filter((doc) => doc.kind === "note")
+            .map((doc) => doc.documentId),
+        ]),
+      ].sort();
+      const affected = new Set(noteIds);
+      const composing = () =>
+        [...this.agentEditors].some(
+          ([adapter, noteId]) =>
+            affected.has(noteId) &&
+            !adapter.editor.isDestroyed &&
+            (adapter.editor.view.composing || adapter.vimSnapshot.composing),
+        );
+      const busy = () =>
+        !isCurrent() ||
+        this.workspace.current !== workspace ||
+        prepared.workspaceId !== this.workspaceDocument.workspaceId ||
+        this.commandsInFlight > 0 ||
+        this.externalCommit !== null ||
+        composing() ||
+        (!prepared.delivery && noteIds.some((id) => changed.has(id))) ||
+        (!prepared.delivery &&
+          prepared.documents.some((doc) => {
+            const target =
+              doc.kind === "workspace"
+                ? this.workspace
+                : this.notes.get(doc.documentId);
+            return (
+              changed.has(doc.documentId) ||
+              target?.current !== observed.get(doc.documentId) ||
+              (target !== undefined && target.revision !== doc.baseRevision)
+            );
+          }));
+      const apply = async (): Promise<"applied" | "deferred"> => {
+        if (busy()) return "deferred";
+        this.externalCommit = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const delivery =
+          prepared.delivery ?? (await recoverSyncCommit(port, prepared.id));
+        committed = true;
+        while (composing() && isCurrent())
+          await new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          );
+        if (!isCurrent()) return "deferred";
+        const hierarchyNotes = new Set<string>();
+        const observeMetadata = (
+          events: Y.YEvent<Y.AbstractType<unknown>>[],
+        ) => {
+          for (const event of events) {
+            if (event.path[0] !== "notes") continue;
+            if (typeof event.path[1] === "string")
+              hierarchyNotes.add(event.path[1]);
+            else for (const id of event.keys.keys()) hierarchyNotes.add(id);
+          }
+        };
+        const namespaceBefore =
+          this.workspaceDocument.replicated?.project().entries;
+        this.workspaceDocument.root.observeDeep(observeMetadata);
+        try {
+          const updates = delivery.documents.map((doc) => ({
+            ...doc,
+            bytes: decodeSyncUpdate(doc.update),
+          }));
+          const published = await recoverAgentPublication(() => {
+            if (composing()) throw new Error("IME_ACTIVE");
+            for (const doc of updates) {
+              const target =
+                doc.kind === "workspace"
+                  ? this.workspace
+                  : this.notes.get(doc.documentId);
+              if (!target) continue;
+              Y.applyUpdate(
+                target.current.doc,
+                doc.bytes,
+                REPLICATED_PUBLICATION_ORIGIN,
+              );
+              target.setRevision(Math.max(target.revision, doc.revision));
+            }
+          }, isCurrent);
+          if (!published) return "deferred";
+        } finally {
+          this.workspaceDocument.root.unobserveDeep(observeMetadata);
+        }
+        if (delivery.localHelpNoteIds.length) {
+          const missing =
+            (await this.persistence.manifest()).missingLocalHelpNoteIds ?? [];
+          await this.generateMissingLocalHelp(missing);
+        }
+        for (const doc of delivery.documents) {
+          if (doc.kind !== "note") continue;
+          this.changedNoteRevisions.set(
+            doc.documentId,
+            Math.max(
+              this.changedNoteRevisions.get(doc.documentId) ?? 0,
+              doc.revision,
+            ),
+          );
+          this.queueWorkspaceSearchIndexDocument(doc.documentId);
+          try {
+            await this.refreshExternalSectionCatalog(doc.documentId);
+          } catch (error) {
+            this.reportRecoverableLocalStateError(error);
+          }
+        }
+        const namespaceAfter =
+          this.workspaceDocument.replicated?.project().entries;
+        // Text/timestamp edits leave this cached projection intact. Structural
+        // changes compare Entries to include descendants affected by a move.
+        if (
+          namespaceBefore &&
+          namespaceAfter &&
+          namespaceBefore !== namespaceAfter
+        ) {
+          const before = new Map(
+            namespaceBefore.map((entry) => [entry.entryId, entry]),
+          );
+          for (const entry of namespaceAfter) {
+            const old = before.get(entry.entryId);
+            if (JSON.stringify(old) === JSON.stringify(entry)) continue;
+            this.pendingWorkspaceSearchNamespaceEntryIds.add(entry.entryId);
+            if (entry.target?.kind === "note")
+              hierarchyNotes.add(entry.target.id);
+          }
+        }
+        if (delivery.workspaceRevisionBefore !== null) {
+          this.queueWorkspaceSearchIndexHierarchyUpdate(
+            delivery.workspaceRevisionBefore,
+            hierarchyNotes,
+          );
+          this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
+        }
+        if (delivery.documents.length) {
+          this.reconcileSynchronizationTrash(affected);
+          this.noteContentRevision++;
+          this.sectionCatalogRevision++;
+          this.internalLinkLabelRevision++;
+          this.setReady();
+        }
+        await port.ack(prepared.id);
+        return "applied";
+      };
+      const lock = (index: number): Promise<"applied" | "deferred"> =>
+        index === noteIds.length
+          ? apply()
+          : this.runWithNotePersistenceLock(noteIds[index], () =>
+              lock(index + 1),
+            );
+      return await lock(0);
+    } finally {
+      for (const stop of observers) stop();
+      try {
+        if (ticket && !committed) await port.cancel(ticket);
+      } finally {
+        if (release) {
+          this.externalCommit = null;
+          release();
+        }
+      }
+    }
+  }
+
+  private reconcileSynchronizationTrash(affected: ReadonlySet<string>): void {
+    const removed = new Set(
+      [...affected].filter(
+        (id) => readNoteMetadata(this.workspaceDocument, id)?.deletedAt,
+      ),
+    );
+    if (!removed.size) return;
+    const state = this.requireApplicationWindowState();
+    const live = new Set(
+      Object.values(state.buffers).flatMap((buffer) => {
+        const id = this.contentBufferNoteId(buffer);
+        return id && !removed.has(id) ? [id] : [];
+      }),
+    );
+    for (const tab of state.tabs) {
+      const id = tab.rightSidebar.outline.noteId;
+      if (id && !removed.has(id)) live.add(id);
+    }
+    const repaired = this.repairApplicationWindowState(state, live);
+    if (!repaired.changed) return;
+    this.applicationWindowState = repaired.state;
+    this.syncActiveNoteFromApplicationWindow();
+    for (const [id, pending] of this.pendingNavigations)
+      if (removed.has(pending.destination.noteId))
+        this.pendingNavigations.delete(id);
+    this.localStateQueue = this.localStateQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.transactions.persistLocalStates(this.idFactory(), [
+          toApplicationLocalStateCommit(repaired.state),
+        ]);
+      })
+      .catch((error: unknown) => this.reportError(error));
   }
 
   /** Native preparation is private; publish only the acknowledged SQL update.
@@ -1224,6 +1520,27 @@ export class CoreRuntime {
     });
   }
 
+  async prepareSynchronization(): Promise<void> {
+    if (
+      listNoteMetadata(this.workspaceDocument).some(
+        (note) => note.systemRole === "help",
+      )
+    )
+      return;
+    const state = this.requireApplicationWindowState();
+    await this.executeCommand({
+      name: "note.open_help",
+      operationId: this.idFactory(),
+      source: "internal",
+      payload: {
+        windowId: activeEditorWindow(state).id,
+        newNoteId: this.idFactory(),
+        synchronizedAt: this.clock(),
+        activate: false,
+      },
+    });
+  }
+
   splitEditorWindow(
     targetWindowId: string,
     direction: SplitDirection,
@@ -1516,6 +1833,27 @@ export class CoreRuntime {
         direction,
         updatedAt: this.clock(),
       },
+    });
+  }
+
+  async noteRecovery(noteId: string, offset = 0): Promise<NoteRecoveryPage> {
+    const handle = await this.ensureNoteLoaded(noteId);
+    if (handle.current.kind !== "note")
+      throw new Error("Recovery requires a Note");
+    return handle.current.replicated
+      ? readNoteRecovery(handle.current.replicated, offset)
+      : { items: [], total: 0, offset: 0, depthCorrections: 0 };
+  }
+
+  recoverNoteContent(
+    action: NoteRecoveryAction,
+    fault?: CommitFault,
+  ): Promise<CoreCommandResults["note.recover"]> {
+    return this.executeCommand({
+      name: "note.recover",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: { action, updatedAt: this.clock(), fault },
     });
   }
 
@@ -2456,6 +2794,24 @@ export class CoreRuntime {
       openExternalLink: options.openExternalLink,
       attachmentRepository: options.attachmentRepository,
       onMessage: options.onMessage,
+      onFocusedSectionRemoved: (previousSectionId, sectionId, selection) =>
+        this.executeCommand({
+          name: "window.focus_section",
+          operationId: this.idFactory(),
+          source: "internal",
+          payload: {
+            windowId,
+            noteId: attachedNoteId,
+            sectionId,
+            expectedSectionId: previousSectionId,
+            preserveView: true,
+            selection,
+          },
+        })
+          .then(() => undefined)
+          .catch((error) => {
+            this.reportError(error);
+          }),
       onNoteSearchRepeat: (origin, direction, count) =>
         this.repeatNoteSearch(windowId, origin, direction, count),
       onCommandLine: options.onCommandLine,
@@ -2981,7 +3337,9 @@ export class CoreRuntime {
 
     this.commands.register("note.rename", async (envelope) => {
       const { noteId, title, updatedAt, fault } = envelope.payload;
-      this.requireLiveMetadata(noteId);
+      const localHelp =
+        !!this.workspaceDocument.replicated &&
+        this.requireLiveMetadata(noteId).systemRole === "help";
       const note = await this.ensureNoteLoaded(noteId);
       const workspaceBaseRevision = this.workspace.revision;
       this.setSaving();
@@ -2990,7 +3348,7 @@ export class CoreRuntime {
           {
             operationId: envelope.operationId,
             scope: "workspace-structure",
-            documents: [this.workspace, note],
+            documents: localHelp ? [note] : [this.workspace, note],
             fault,
           },
           () => {
@@ -3012,10 +3370,11 @@ export class CoreRuntime {
             );
           },
         );
-        this.queueWorkspaceSearchIndexHierarchyUpdate(
-          workspaceBaseRevision,
-          noteId,
-        );
+        if (!localHelp)
+          this.queueWorkspaceSearchIndexHierarchyUpdate(
+            workspaceBaseRevision,
+            noteId,
+          );
         this.sectionCatalogRevision += 1;
         this.internalLinkLabelRevision += 1;
         this.queueWorkspaceSearchIndexDocument(noteId);
@@ -3090,6 +3449,64 @@ export class CoreRuntime {
         this.reportError(error);
         throw error;
       }
+    });
+
+    this.commands.register("note.recover", async (envelope) => {
+      const { action, updatedAt, fault } = envelope.payload;
+      const noteId = action.noteId;
+      this.requireLiveMetadata(noteId);
+      const handle = await this.ensureNoteLoaded(noteId);
+      return this.runWithNotePersistenceLock(noteId, async () => {
+        if (handle.current.kind !== "note" || !handle.current.replicated)
+          throw new Error("Note has no protected content");
+        const baseRevision = this.workspace.revision;
+        let createdId: string | null = null;
+        this.setSaving();
+        try {
+          await this.transactions.transact(
+            {
+              operationId: envelope.operationId,
+              scope: "workspace-structure",
+              documents: [this.workspace, handle],
+              searchIndexMetadataOnlyNoteId: noteId,
+              fault,
+            },
+            () => {
+              if (handle.current.kind !== "note" || !handle.current.replicated)
+                throw new Error("Note has no protected content");
+              createdId = applyNoteRecovery(
+                handle.current.replicated,
+                action,
+                updatedAt,
+              );
+              renameNoteMetadata(
+                this.workspaceDocument,
+                noteId,
+                readNoteTitle(handle.current),
+                updatedAt,
+                CORE_TRANSACTION_ORIGIN,
+              );
+            },
+          );
+          await this.advanceWorkspaceSearchIndexMetadataRevision({
+            schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+            workspaceId: this.workspaceDocument.workspaceId,
+            baseRevision,
+            workspaceRevision: this.workspace.revision,
+            noteId,
+          });
+          this.changedNoteRevisions.set(noteId, handle.revision);
+          this.noteContentRevision += 1;
+          this.sectionCatalogRevision += 1;
+          this.internalLinkLabelRevision += 1;
+          this.queueWorkspaceSearchIndexDocument(noteId);
+          this.setReady();
+          return { noteId, createdId };
+        } catch (error) {
+          this.reportError(error);
+          throw error;
+        }
+      });
     });
 
     this.commands.register("section.shift_depth", async (envelope) => {
@@ -3339,19 +3756,30 @@ export class CoreRuntime {
 
     this.commands.register("note.commit_editor_update", async (envelope) => {
       const handle = this.getNoteHandle(envelope.payload.noteId);
-      const cachedTitle = this.requireLiveMetadata(
+      // Input queued just before remote Trash remains part of the protected
+      // Note. Its deletion history is unchanged and restoration keeps the edit.
+      const metadata = readNoteMetadata(
+        this.workspaceDocument,
         envelope.payload.noteId,
-      ).title;
+      );
+      if (!metadata)
+        throw new Error(`Unknown note: ${envelope.payload.noteId}`);
+      const cachedTitle = metadata.title;
+      const localHelp =
+        !!this.workspaceDocument.replicated && metadata.systemRole === "help";
       const currentTitle =
         handle.current.kind === "note" ? readNoteTitle(handle.current) : "";
       const titleChanged = cachedTitle !== currentTitle;
       this.setEditorPersistenceStatus("saving");
       try {
-        const updatedAt = this.clock();
+        const updatedAt =
+          envelope.payload.preserveUpdatedAt && handle.current.kind === "note"
+            ? readNoteUpdatedAt(handle.current)
+            : this.clock();
         const workspaceBaseRevision = this.workspace.revision;
         const response = await this.transactions.commitAppliedUpdateTransaction(
           handle,
-          [this.workspace],
+          localHelp ? [] : [this.workspace],
           envelope.operationId,
           envelope.payload.update,
           () => {
@@ -3366,9 +3794,11 @@ export class CoreRuntime {
               CORE_TRANSACTION_ORIGIN,
             );
           },
-          titleChanged ? undefined : envelope.payload.noteId,
+          localHelp || titleChanged ? undefined : envelope.payload.noteId,
         );
-        if (titleChanged) {
+        if (localHelp) {
+          // The shared Help identity and placement stay unchanged.
+        } else if (titleChanged) {
           this.queueWorkspaceSearchIndexHierarchyUpdate(
             workspaceBaseRevision,
             envelope.payload.noteId,
@@ -3909,6 +4339,8 @@ export class CoreRuntime {
         noteId,
         sectionId: targetId,
         selection,
+        expectedSectionId,
+        preserveView,
         fault,
       } = envelope.payload;
       const handle = await this.ensureNoteLoaded(noteId);
@@ -3928,6 +4360,22 @@ export class CoreRuntime {
             initialWindow?.bufferId === undefined
               ? null
               : current.buffers[initialWindow.bufferId];
+          if (
+            expectedSectionId &&
+            (initialBuffer?.kind !== "note" ||
+              initialBuffer.noteId !== noteId ||
+              (initialWindow.view.focusedSectionId ?? noteId) !==
+                expectedSectionId)
+          ) {
+            return {
+              state: current,
+              changed: false,
+              result: {
+                windowId,
+                sectionId: initialWindow?.view.focusedSectionId ?? noteId,
+              },
+            };
+          }
           const opened =
             initialBuffer?.kind === "note" && initialBuffer.noteId === noteId
               ? current
@@ -3948,8 +4396,9 @@ export class CoreRuntime {
           const next = structuredClone(opened);
           next.windows[windowId].view.focusedSectionId =
             targetId === noteId ? null : targetId;
-          next.windows[windowId].view.selection = selection ?? null;
-          next.windows[windowId].view.scrollTop = 0;
+          next.windows[windowId].view.selection =
+            selection ?? (preserveView ? window.view.selection : null);
+          if (!preserveView) next.windows[windowId].view.scrollTop = 0;
           return {
             state: next,
             changed: true,
@@ -4091,10 +4540,16 @@ export class CoreRuntime {
     const prepared = created
       ? {
           handle: new ManagedCrdtDocument<ProductDocument>(
-            createNoteDocument(noteId, undefined, MEMOKA_HELP_TITLE, {
-              createdAt: synchronizedAt,
-              updatedAt: synchronizedAt,
-            }),
+            createNoteDocument(
+              noteId,
+              undefined,
+              MEMOKA_HELP_TITLE,
+              {
+                createdAt: synchronizedAt,
+                updatedAt: synchronizedAt,
+              },
+              this.workspaceDocument.replicated?.replicaId,
+            ),
             0,
           ),
           attachAfterCommit: true,
@@ -4123,12 +4578,15 @@ export class CoreRuntime {
           ),
         )
       : null;
-    const nextApplicationState = openBufferInWindow(
-      currentApplicationState,
-      windowId,
-      createNoteBuffer(noteId),
-      { mode: "normal" },
-    );
+    const nextApplicationState =
+      envelope.payload.activate === false
+        ? currentApplicationState
+        : openBufferInWindow(
+            currentApplicationState,
+            windowId,
+            createNoteBuffer(noteId),
+            { mode: "normal" },
+          );
     // Parse and validate the bundled Markdown before entering the persistence
     // transaction. An invalid Help resource must not partially mutate either
     // the managed NoteDoc or Workspace metadata.
@@ -4269,6 +4727,7 @@ export class CoreRuntime {
       persisted.documentId,
       persisted.snapshot,
       persisted.updates.map(({ update }) => update),
+      this.workspaceDocument.replicated?.replicaId,
     );
     const handle = new ManagedCrdtDocument<ProductDocument>(
       loaded.document,
@@ -4375,10 +4834,16 @@ export class CoreRuntime {
       ),
     );
     const note = new ManagedCrdtDocument<ProductDocument>(
-      createNoteDocument(noteId, undefined, title, {
-        createdAt,
-        updatedAt: createdAt,
-      }),
+      createNoteDocument(
+        noteId,
+        undefined,
+        title,
+        {
+          createdAt,
+          updatedAt: createdAt,
+        },
+        this.workspaceDocument.replicated?.replicaId,
+      ),
       0,
     );
     const nextApplicationState = this.creationApplicationWindowState(
@@ -4417,11 +4882,32 @@ export class CoreRuntime {
             CORE_TRANSACTION_ORIGIN,
           );
           if (insertion.reindexedSiblings.length > 0) {
-            const entries = readMainNamespace(
-              this.workspaceDocument.root,
-            ).entries;
-            for (const update of insertion.reindexedSiblings)
-              entries.get(update.noteId)!.set("position", update.notePosition);
+            if (this.workspaceDocument.replicated) {
+              const positions = new Map(
+                insertion.reindexedSiblings.map((update) => [
+                  update.noteId,
+                  update.notePosition,
+                ]),
+              );
+              const entries = listNamespaceEntries(this.workspaceDocument.root)
+                .filter((entry) => positions.has(entry.entryId))
+                .map((entry) => ({
+                  ...entry,
+                  position: positions.get(entry.entryId)!,
+                }));
+              this.workspaceDocument.replicated.writeEntries(
+                entries,
+                new Set(positions.keys()),
+              );
+            } else {
+              const entries = readMainNamespace(
+                this.workspaceDocument.root,
+              ).entries;
+              for (const update of insertion.reindexedSiblings)
+                entries
+                  .get(update.noteId)!
+                  .set("position", update.notePosition);
+            }
           }
         },
       );
@@ -4528,6 +5014,7 @@ export class CoreRuntime {
   }
 
   private workspaceSearchNamespaceProjection(ids?: ReadonlySet<string>) {
+    if (ids?.size === 0) return [];
     return listNamespaceEntries(this.workspaceDocument.root)
       .filter((entry) => !entry.deletedAt && (!ids || ids.has(entry.entryId)))
       .map((entry) => ({
@@ -4661,10 +5148,8 @@ export class CoreRuntime {
     const noteIds = [...this.pendingWorkspaceSearchIndexHierarchyNoteIds];
     this.pendingWorkspaceSearchIndexHierarchyNoteIds.clear();
     this.pendingWorkspaceSearchIndexHierarchyBaseRevision = null;
-    const metadata = listNoteMetadata(this.workspaceDocument);
-    const byId = new Map(metadata.map((note) => [note.noteId, note]));
     const entries = noteIds
-      .map((noteId) => byId.get(noteId))
+      .map((noteId) => readNoteMetadata(this.workspaceDocument, noteId))
       .filter((note): note is NoteMetadata => Boolean(note && !note.deletedAt))
       .map((note) => {
         const title = noteDisplayTitle(note.title);
@@ -5244,17 +5729,23 @@ export class CoreRuntime {
   ): NotePersistenceSession {
     return new NotePersistenceSession({
       handle,
+      clock: this.clock,
       idFactory: this.idFactory,
       initialUpdatesSinceSnapshot: updatesSinceSnapshot,
       initialUpdateBytesSinceSnapshot: updateBytesSinceSnapshot,
       compactionThreshold: this.snapshotCompactionThreshold,
       compactionByteThreshold: this.snapshotCompactionByteThreshold,
-      persistUpdate: (operationId, update, sectionCatalogChanged) =>
+      persistUpdate: (
+        operationId,
+        update,
+        sectionCatalogChanged,
+        preserveUpdatedAt,
+      ) =>
         this.executeCommand({
           name: "note.commit_editor_update",
           operationId,
           source: "editor",
-          payload: { noteId, update, sectionCatalogChanged },
+          payload: { noteId, update, sectionCatalogChanged, preserveUpdatedAt },
         }),
       compactSnapshot: (operationId, expectedRevision) =>
         this.executeCommand({
@@ -5471,6 +5962,7 @@ function transactionChangesSectionCatalog(transaction: Y.Transaction): boolean {
 
 interface NotePersistenceSessionOptions {
   handle: ManagedCrdtDocument<ProductDocument>;
+  clock: () => string;
   idFactory: () => string;
   initialUpdatesSinceSnapshot: number;
   initialUpdateBytesSinceSnapshot: number;
@@ -5480,6 +5972,7 @@ interface NotePersistenceSessionOptions {
     operationId: string,
     update: Uint8Array,
     sectionCatalogChanged: boolean,
+    preserveUpdatedAt: boolean,
   ) => Promise<{ revision: number }>;
   compactSnapshot: (
     operationId: string,
@@ -5569,6 +6062,9 @@ class NotePersistenceSession {
   }
 
   private attach(doc: Y.Doc): void {
+    const current = this.options.handle.current;
+    if (current.kind === "note" && current.replicated)
+      current.replicated.clock = this.options.clock;
     if (this.observedDoc) {
       this.observedDoc.off("update", this.handleUpdate);
     }
@@ -5587,8 +6083,10 @@ class NotePersistenceSession {
       origin === SECTION_DEPTH_SHIFT_ORIGIN ||
       origin === SECTION_PARAGRAPH_CONVERSION_ORIGIN ||
       origin === NOTE_TIMESTAMP_ORIGIN ||
+      origin === NOTE_RECOVERY_ORIGIN ||
       origin === PERSISTENCE_LOAD_ORIGIN ||
       origin === EXTERNAL_AGENT_EDIT_ORIGIN ||
+      origin === REPLICATED_PUBLICATION_ORIGIN ||
       origin === BOOTSTRAP_ORIGIN
     ) {
       return;
@@ -5597,7 +6095,11 @@ class NotePersistenceSession {
     this.options.onContentChanged?.();
     const operationId = this.options.idFactory();
     const ownedUpdate = update.slice();
-    const sectionCatalogChanged = transactionChangesSectionCatalog(transaction);
+    const current = this.options.handle.current;
+    const sectionCatalogChanged =
+      current.kind === "note" && current.replicated
+        ? current.replicated.changesSectionCatalog(transaction)
+        : transactionChangesSectionCatalog(transaction);
     this.updateOrdinal += 1;
     this.updateBytesSinceSnapshot += ownedUpdate.byteLength;
     const shouldCompact =
@@ -5619,6 +6121,7 @@ class NotePersistenceSession {
             operationId,
             ownedUpdate,
             sectionCatalogChanged,
+            origin === REPLICATED_REMOTE_ORIGIN,
           );
           this.lastError = null;
           if (compactionOperationId) {

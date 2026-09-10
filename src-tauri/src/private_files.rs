@@ -147,6 +147,13 @@ pub(crate) fn atomic_json(path: &Path, value: &impl serde::Serialize) -> Result<
 pub(crate) struct Lease {
     _file: File,
 }
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // A concurrently spawned process can briefly inherit the open-file
+        // description. Unlock explicitly so its lifetime cannot extend ours.
+        let _ = fs2::FileExt::unlock(&self._file);
+    }
+}
 impl Lease {
     pub fn acquire(path: PathBuf) -> Result<Self, ReadError> {
         directory(path.parent().ok_or_else(unsafe_path)?)?;
@@ -202,6 +209,19 @@ mod tests {
         assert!(Lease::acquire(path.clone()).is_err());
         drop(lease);
         assert!(Lease::acquire(path).is_ok());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn dropping_lease_unlocks_a_file_description_inherited_during_process_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("leases/spawn.lock");
+        let lease = Lease::acquire(path.clone()).unwrap();
+        // fork shares the open-file description until exec closes CLOEXEC
+        // descriptors; dup models that interval without forking the test runner.
+        let inherited = lease._file.try_clone().unwrap();
+        drop(lease);
+        assert!(Lease::acquire(path).is_ok());
+        drop(inherited);
     }
     #[cfg(unix)]
     #[test]

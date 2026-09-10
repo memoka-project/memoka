@@ -1,4 +1,5 @@
 import { Editor, Extension } from "@tiptap/core";
+import { replicatedNotePluginKey } from "../core/replicated-editor-binding";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   NodeSelection,
@@ -197,6 +198,11 @@ export interface TiptapEditorAdapterOptions {
   openExternalLink?: (href: string) => void | Promise<void>;
   attachmentRepository?: AttachmentRepository;
   onMessage?: (message: string) => void;
+  onFocusedSectionRemoved?: (
+    previousSectionId: string,
+    sectionId: string,
+    selection: { anchor: number; head: number },
+  ) => Promise<void>;
   onNoteSearchRepeat?: (
     origin: NoteSearchOrigin,
     direction: NoteSearchDirection,
@@ -317,6 +323,8 @@ export class TiptapEditorAdapter {
   private readonly viewportResizeObserver: ResizeObserver | null;
   private suppressSelectionUpdate = false;
   private observedDocument: ProductDocument | null = null;
+  private pendingSectionRecovery: string | null = null;
+  private previousDepthCorrections: readonly string[] | null = null;
   private boundSection: Y.XmlElement | null = null;
   private structuralRebindQueued = false;
 
@@ -575,10 +583,72 @@ export class TiptapEditorAdapter {
       this.observeDocument(document);
       this.recreateEditor();
     });
+    queueMicrotask(() => this.projectReplicatedView());
   }
 
   get editor(): Editor {
     return this.currentEditor;
+  }
+
+  syncFocusedSection(sectionId: string): boolean {
+    const binding = replicatedNotePluginKey.getState(
+      this.currentEditor.state,
+    )?.adapter;
+    if (!binding || !binding.setSectionId(sectionId)) return false;
+    this.currentEditor.view.dom.dataset.sectionId = binding.sectionId;
+    this.currentEditor.commands.setTextSelection(1);
+    this.restoreWindowState(this.currentEditor);
+    this.projectReplicatedView();
+    return true;
+  }
+
+  private projectReplicatedView(): void {
+    if (this.currentEditor.isDestroyed) return;
+    const binding = replicatedNotePluginKey.getState(
+      this.currentEditor.state,
+    )?.adapter;
+    if (!binding) return;
+    const tree = binding.note.project();
+    this.currentEditor.view.dom.dataset.sectionId = binding.sectionId;
+    let depth = 0,
+      parent = tree.parents.get(binding.sectionId)?.parentId;
+    while (parent) {
+      depth++;
+      parent = tree.parents.get(parent)?.parentId;
+    }
+    applyEditorSectionHeadingDepth(this.currentEditor.view.dom, depth);
+    const previous =
+      this.options.getWindowState?.().focusedSectionId ?? binding.note.noteId;
+    if (
+      previous !== binding.sectionId &&
+      (!tree.visible.has(previous) ||
+        binding.note.type(previous) !== "section") &&
+      !this.pendingSectionRecovery &&
+      this.options.onFocusedSectionRemoved
+    ) {
+      this.pendingSectionRecovery = previous;
+      this.options.onMessage?.(
+        "表示中のSectionが削除されたため、近い祖先を表示しています。保護された内容は:recoveryで確認できます。",
+      );
+      const selection = this.currentEditor.state.selection;
+      void this.options
+        .onFocusedSectionRemoved(previous, binding.sectionId, {
+          anchor: selection.anchor,
+          head: selection.head,
+        })
+        .finally(() => {
+          this.pendingSectionRecovery = null;
+        });
+    }
+    if (this.previousDepthCorrections !== tree.depthCorrections) {
+      const previous = new Set(this.previousDepthCorrections);
+      const added = tree.depthCorrections.filter((id) => !previous.has(id));
+      this.previousDepthCorrections = tree.depthCorrections;
+      if (added.length)
+        this.options.onMessage?.(
+          `${added.length}件のSectionをH6以内の祖先へ表示しています。内容は保持されています。`,
+        );
+    }
   }
 
   get vimSnapshot(): VimSessionSnapshot {
@@ -1248,8 +1318,11 @@ export class TiptapEditorAdapter {
     if (document.kind !== "note") {
       throw new Error("TipTap adapter can only bind a NoteDoc");
     }
-    const focusedSectionId =
+    const requestedSectionId =
       this.options.getWindowState?.().focusedSectionId ?? document.noteId;
+    const focusedSectionId =
+      document.replicated?.visibleSectionAncestor(requestedSectionId) ??
+      requestedSectionId;
     this.boundSection =
       findSectionWithDepth(document.rootSection, focusedSectionId)?.element ??
       null;
@@ -1446,6 +1519,19 @@ export class TiptapEditorAdapter {
     transaction: Y.Transaction,
   ): void => {
     this.holdSectionDepthScrollPosition();
+    const bound = this.handle.current;
+    if (bound.kind === "note" && bound.replicated) {
+      // A normalized Section retains its binding while its placement changes.
+      // Heading depth and the command's caret intent are view-only updates.
+      queueMicrotask(() => {
+        if (this.currentEditor.isDestroyed || this.handle.current !== bound)
+          return;
+        this.projectReplicatedView();
+        if (this.pendingSectionDepthShift)
+          this.applyPendingSectionDepthShift(this.pendingSectionDepthShift);
+      });
+      return;
+    }
     const pendingDepthShift =
       transaction.origin === SECTION_DEPTH_SHIFT_ORIGIN
         ? this.pendingSectionDepthShift

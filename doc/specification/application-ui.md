@@ -237,6 +237,11 @@ localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別
 閉じるbuttonまたはEsc/Ctrl-cで元の操作領域へfocusを戻す。背景clickでは閉じず、設定保存中は閉じる操作を受け付けない。
 設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
 
+`:sync-settings`も同じ中央modalとfocus制御を使い、端末一覧・工程・最終反映・待機件数/容量、
+追加・鍵を確認する接続情報更新・一時停止/再開・登録解除を扱う。詳細から現在Noteの`:recovery`を開ける。
+起動時のWorkspace選択では「別端末から受信」を提供し、承認待ち・文書受信・反映・再試行を表示する。
+同期設定を開くだけでは有効化しない。本文の取得後にWorkspaceを開き、添付の取得は引き続き行う。
+
 GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。過去のeventは`(5m ago)`などを併記する。
 単位はs/m/h/d/mo/y、月は30日・年は365日換算で端数を切り捨てる。未来日時にagoを付けず、不正日時は`—`とする。
 日時部品のみが表示中に共通の1秒clockを購読し、Editor/preview本文全体を再描画しない。永続データ・CLI JSON・利用者のNote本文は変換しない。
@@ -251,6 +256,7 @@ debug lineには機密contentを含めず、次の診断情報を表示できる
 
 - focus owner、mode、保存revisionの短い状態
 - FTSのidle/waiting/running/error
+- 同期の無効/一時停止、接続端末数、文書反映待ち、添付取得待ち
 - backupのcapturing/copying/maintaining/idle、世代保存時刻、追加先保護時刻、pending/expired、error
 - keydownから対応する可視inputまたは次のDOM更新frameまでの直近値、p95、最大値、sample数、slow件数
 

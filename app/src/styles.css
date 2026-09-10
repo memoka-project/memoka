@@ -2093,6 +2093,22 @@ textarea {
   margin-top: 20px;
 }
 
+.note-recovery-dialog {
+  width: min(48rem, calc(100vw - 3rem));
+}
+.note-recovery-items {
+  max-height: 50vh;
+  overflow: auto;
+  padding-inline: 2rem 1rem;
+}
+.note-recovery-items li {
+  padding-block: 0.75rem;
+}
+.note-recovery-items pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .workspace-search-overlay {
   position: fixed;
   z-index: 2147483644;
@@ -3112,4 +3128,29 @@ textarea {
   color: var(--memoka-color-danger-text);
   background: var(--memoka-color-danger-surface);
   box-shadow: 0 12px 30px var(--memoka-color-shadow);
+}
+.sync-settings-dialog {
+  width: min(54rem, calc(100vw - 2rem));
+}
+.sync-settings-dialog label {
+  display: grid;
+  gap: 0.4rem;
+  margin-block: 0.75rem;
+}
+.sync-settings-dialog input,
+.sync-settings-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+.sync-settings-dialog code {
+  overflow-wrap: anywhere;
+}
+.sync-device-list {
+  max-height: 35vh;
+  overflow: auto;
+}
+.sync-device-list article,
+.sync-review {
+  border-block-start: 1px solid var(--memoka-color-border);
+  padding-block: 0.75rem;
 }

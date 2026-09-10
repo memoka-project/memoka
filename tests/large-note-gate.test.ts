@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
-import { NOTE_DOC_SCHEMA_VERSION } from "../app/src/core/documents";
+import {
+  NOTE_DOC_SCHEMA_VERSION,
+  addNoteMetadata,
+  createWorkspaceDocument,
+  createReplicatedNoteDocumentFromSectionSnapshot,
+  encodeProductDocument,
+} from "../app/src/core/documents";
+import { createUuidV7 } from "../app/src/core/ids";
 import { noteSearchLocationAtPosition } from "../app/src/core/note-search";
 import { saveStableEditorPosition } from "../app/src/core/stable-position";
 import {
@@ -44,9 +51,66 @@ describe("Memoka opt-in 10 MiB / 100k-line gate", () => {
     "keeps paste, mounted DOM, ordinary input, search and restart bounded",
     async () => {
       const persistence = new MemoryPersistencePort();
+      const replicated = process.env.MEMOKA_LARGE_NOTE_SCHEMA === "7";
+      let replicatedNoteId: string | undefined;
+      if (replicated) {
+        replicatedNoteId = createUuidV7();
+        const source = createReplicatedNoteDocumentFromSectionSnapshot(
+          replicatedNoteId,
+          {
+            sectionId: replicatedNoteId,
+            title: "Huge note gate",
+            tags: [],
+            children: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [],
+              },
+            ],
+          },
+          createUuidV7(),
+        );
+        const workspace = createWorkspaceDocument(createUuidV7());
+        addNoteMetadata(workspace, {
+          noteId: source.noteId,
+          notePosition: "a0",
+          createdAt: "",
+          updatedAt: "",
+          title: "Huge note gate",
+        });
+        await persistence.commit({
+          operationId: createUuidV7(),
+          scope: "bootstrap",
+          localStates: [],
+          documents: [workspace, source].map((doc) => ({
+            kind: doc.kind,
+            documentId: doc.id,
+            schemaVersion: doc.schemaVersion,
+            baseRevision: 0,
+            snapshot: encodeProductDocument(doc),
+            update: null,
+          })),
+        });
+        source.doc.destroy();
+        workspace.doc.destroy();
+      }
       const runtime = await CoreRuntime.open(persistence, {
         initialTitle: "Huge note gate",
+        onError: (error) => {
+          throw error;
+        },
       });
+      if (replicatedNoteId) {
+        await runtime.openNote("window-1", replicatedNoteId);
+        await runtime.executeCommand({
+          name: "window.update_view",
+          operationId: createUuidV7(),
+          source: "internal",
+          payload: { windowId: "window-1", update: { mode: "insert" } },
+        });
+      }
       const root = document.createElement("div");
       document.body.append(root);
       const messages: string[] = [];
@@ -82,9 +146,10 @@ describe("Memoka opt-in 10 MiB / 100k-line gate", () => {
         pasteLimit,
       );
       const pasteElapsed = performance.now() - pasteStarted;
-      expect(attached.adapter.vimSnapshot.action).toBe(
-        "clipboard:paste:large:changed",
-      );
+      expect(
+        attached.adapter.vimSnapshot.action,
+        JSON.stringify(messages),
+      ).toBe("clipboard:paste:large:changed");
       expect(pasteElapsed).toBeLessThanOrEqual(pasteLimit);
       expect(runtime.noteDocument.undoManager.undoStack).toHaveLength(1);
 
@@ -196,7 +261,9 @@ describe("Memoka opt-in 10 MiB / 100k-line gate", () => {
       runtime.destroy();
       root.remove();
       const reopened = await CoreRuntime.open(persistence);
-      expect(reopened.noteDocument.schemaVersion).toBe(NOTE_DOC_SCHEMA_VERSION);
+      expect(reopened.noteDocument.schemaVersion).toBe(
+        replicated ? 7 : NOTE_DOC_SCHEMA_VERSION,
+      );
       reopened.destroy();
     },
     120_000,

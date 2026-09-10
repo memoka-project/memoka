@@ -13,6 +13,9 @@ pub struct NoteRequest {
     #[schemars(range(min = 1, max = 1))]
     pub schema_version: u32,
     pub workspace_id: String,
+    /// Copy identity from source.replica_id. Required while synchronization is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<String>,
     /// source.workspace_metadata_revision from a current tree/read response.
     #[schemars(range(min = 1, max = 9_007_199_254_740_991_i64))]
     pub expected_workspace_revision: i64,
@@ -65,6 +68,9 @@ impl NoteAction {
 }
 impl NoteRequest {
     pub fn validate(&self) -> Result<(), ReadError> {
+        if let Some(id) = &self.replica_id {
+            validate_id(id)?;
+        }
         validate_id(&self.workspace_id)?;
         if self.schema_version != 1
             || !(1..=9_007_199_254_740_991).contains(&self.expected_workspace_revision)
@@ -175,7 +181,12 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
             .with_details(json!({"expected_revision":request.expected_workspace_revision,"current_revision":reader.workspace_revision})));
     }
     let stored = load_document(&reader.connection, "workspace", &reader.workspace_id)?;
-    let doc = decode_document(&stored)?;
+    let normalized = stored.schema_version == crate::replicated_namespace::SCHEMA_VERSION;
+    let doc = if normalized {
+        crate::replicated_namespace::legacy_projection(&stored)?
+    } else {
+        decode_document(&stored)?
+    };
     let vector = doc.transact().state_vector();
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut documents = vec![];
@@ -243,21 +254,27 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
                 entry.insert(&mut txn, "deleted_at", yrs::Any::Null);
                 entry.insert(&mut txn, "trash_operation_id", yrs::Any::Null);
                 repair_positions(&mut txn, &entries, &repaired)?;
-                let snapshot = note
+                let mut snapshot = note
                     .transact()
                     .encode_state_as_update_v1(&StateVector::default());
-                let parsed = read_note(
-                    &PersistedDocument {
-                        kind: "note".into(),
-                        document_id: note_id.clone(),
-                        schema_version: 6,
-                        revision: 1,
-                        snapshot_revision: 1,
-                        snapshot: snapshot.clone(),
-                        updates: vec![],
-                    },
-                    false,
-                )?;
+                let mut created = PersistedDocument {
+                    kind: "note".into(),
+                    document_id: note_id.clone(),
+                    schema_version: 6,
+                    revision: 1,
+                    snapshot_revision: 1,
+                    snapshot: snapshot.clone(),
+                    updates: vec![],
+                };
+                if normalized {
+                    snapshot = crate::replicated_note::edit::migrate(
+                        &created,
+                        &local_replica_id(&reader)?,
+                    )?;
+                    created.snapshot = snapshot.clone();
+                    created.schema_version = crate::replicated_note::SCHEMA_VERSION;
+                }
+                let parsed = read_note(&created, false)?;
                 let mut created_ids = vec![];
                 collect_ids(&blocks, &mut created_ids);
                 result["created_block_ids"] = json!(created_ids);
@@ -269,7 +286,7 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
                 documents.push(DocumentCommitInput {
                     kind: "note".into(),
                     document_id: note_id,
-                    schema_version: 6,
+                    schema_version: created.schema_version,
                     base_revision: 0,
                     snapshot: Some(snapshot),
                     update: None,
@@ -282,7 +299,7 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
             } => {
                 live_note(&reader, note_id)?;
                 let stored = load_document(&reader.connection, "note", note_id)?;
-                if stored.schema_version != 6 {
+                if ![6, 7].contains(&stored.schema_version) {
                     return Err(ReadError::new(
                         "MIGRATION_REQUIRED",
                         "Open the Note in the updated GUI first",
@@ -300,7 +317,7 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
                     json!([])
                 };
                 if changed {
-                    let note = decode_document(&stored)?;
+                    let note = editable_note_document(&stored)?;
                     let vector = note.transact().state_vector();
                     rename_title(&note, title, &now)?;
                     let meta = entry_map(&txn, &notes, note_id)?;
@@ -309,10 +326,10 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
                     documents.push(DocumentCommitInput {
                         kind: "note".into(),
                         document_id: note_id.clone(),
-                        schema_version: 6,
+                        schema_version: stored.schema_version,
                         base_revision: stored.revision,
                         snapshot: None,
-                        update: Some(note.transact().encode_state_as_update_v1(&vector)),
+                        update: Some(edited_note_update(&stored, &note, &vector, &reader, &now)?),
                     });
                 }
             }
@@ -362,19 +379,25 @@ pub(super) fn prepare(workspace: &Path, request: NoteRequest) -> Result<Prepared
         let snapshot = doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
-        crate::namespace::read_namespace(&PersistedDocument {
+        let desired = crate::namespace::read_namespace(&PersistedDocument {
             snapshot,
+            schema_version: if normalized { 3 } else { stored.schema_version },
             updates: vec![],
             snapshot_revision: stored.revision,
             ..stored.clone()
         })?;
+        let update = if normalized {
+            crate::replicated_namespace::reconcile(&stored, &desired, &local_replica_id(&reader)?)?
+        } else {
+            doc.transact().encode_state_as_update_v1(&vector)
+        };
         documents.push(DocumentCommitInput {
             kind: "workspace".into(),
             document_id: reader.workspace_id,
             schema_version: stored.schema_version,
             base_revision: stored.revision,
             snapshot: None,
-            update: Some(doc.transact().encode_state_as_update_v1(&vector)),
+            update: Some(update),
         });
     }
     result["revision_after"] =

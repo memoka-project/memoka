@@ -16,7 +16,7 @@ use crate::search_index::{
     SearchIndexRebuildRequest, SearchIndexReplaceRequest,
 };
 
-const DATABASE_SCHEMA_VERSION: i64 = 6;
+const DATABASE_SCHEMA_VERSION: i64 = crate::workspace_migration::DATABASE_SCHEMA;
 const WORKSPACE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 const LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 2;
 const NOTE_DOCUMENT_SCHEMA_VERSION: i64 = 6;
@@ -94,6 +94,8 @@ pub struct PersistenceCommitResponse {
 pub struct PersistenceManifest {
     pub database_schema_version: i64,
     pub active_workspace_id: Option<String>,
+    pub replica_id: String,
+    pub missing_local_help_note_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -346,7 +348,7 @@ impl ProductStore {
                 PersistenceError::InvalidInput(format!("invalid database_schema_version: {error}"))
             })?;
         match stored_schema_version {
-            DATABASE_SCHEMA_VERSION | 2..=5 => {
+            DATABASE_SCHEMA_VERSION | 2..=6 => {
                 ensure_attachment_schema(&connection)?;
                 ensure_document_schema_backup_tables(&connection)?;
             }
@@ -360,6 +362,18 @@ impl ProductStore {
             crate::workspace_migration::apply(&connection, &prepared)
                 .map_err(crate::workspace_migration::persistence_error)?;
         }
+        crate::replication::ensure_schema(&connection)
+            .map_err(crate::workspace_migration::persistence_error)?;
+        connection.execute(
+            "INSERT INTO settings(key,value) VALUES('replica_id',?1) ON CONFLICT(key) DO NOTHING",
+            [uuid::Uuid::now_v7().to_string()],
+        )?;
+        let replica_id: String = connection.query_row(
+            "SELECT value FROM settings WHERE key='replica_id'",
+            [],
+            |row| row.get(0),
+        )?;
+        crate::attachment::validate_uuid_v7(&replica_id, "replicaId")?;
         let mut store = Self {
             connection,
             root: root.to_path_buf(),
@@ -385,6 +399,11 @@ impl ProductStore {
         Ok(PersistenceManifest {
             database_schema_version,
             active_workspace_id: self.setting("active_workspace_id")?,
+            missing_local_help_note_ids: self.connection.prepare("SELECT document_id FROM sync_local_documents l WHERE NOT EXISTS(SELECT 1 FROM documents d WHERE d.kind='note' AND d.document_id=l.document_id) ORDER BY document_id")?
+                .query_map([], |r| r.get(0))?.collect::<Result<Vec<_>,_>>()?,
+            replica_id: self.setting("replica_id")?.ok_or_else(|| {
+                PersistenceError::InvalidInput("Workspace copy identity is missing".into())
+            })?,
         })
     }
 
@@ -456,6 +475,7 @@ impl ProductStore {
             let canonical_before =
                 crate::workspace_migration::canonical_workspace_before(&transaction, request)?;
             let revisions = commit_documents(&transaction, request)?;
+            crate::replication::journal_local_commit(&transaction, request)?;
             crate::workspace_migration::advance_content_epoch(
                 &transaction,
                 request,
@@ -514,6 +534,8 @@ impl ProductStore {
         let canonical_before =
             crate::workspace_migration::canonical_workspace_before(&transaction, request)?;
         let revisions = commit_documents(&transaction, request)?;
+        crate::replication::journal_local_commit(&transaction, request)
+            .map_err(crate::workspace_migration::persistence_error)?;
         crate::workspace_migration::advance_content_epoch(&transaction, request, canonical_before)?;
         commit_local_states(&transaction, request)?;
         advance_search_index_metadata_revision(&transaction, request, &revisions)?;
@@ -764,6 +786,13 @@ fn open_owned_data_area(
     // The lock is acquired before preflight/migration and held for the entire
     // store lifetime, including outstanding IPC readers during retirement.
     let store = crate::data_area::open_data_area(&lease.workspace)?;
+    if store.connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key IN ('replication_join','replication_join_preparing'))",
+        [],
+        |r| r.get::<_, bool>(0),
+    )? {
+        return Err(PersistenceError::InvalidInput("SYNC_JOIN_PENDING: 別端末からの受信途中です。「別端末から受信」で同じ保存先を選んで再開してください".into()));
+    }
     let service = std::sync::Arc::new(crate::native_service::NativeService::owned(lease.clone()));
     let server = crate::workspace_owner::Server::start(
         lease.clone(),
@@ -818,6 +847,10 @@ impl ProductPersistenceState {
                 "EDIT_BUSY: Wait for the external edit before switching Workspace".into(),
             ));
         }
+        let publications = app.state::<crate::replication::bridge::SyncPublications>();
+        let _publication_guard = publications.workspace_switch().map_err(|failure| {
+            PersistenceError::InvalidInput(format!("{}: {}", failure.code, failure.message))
+        })?;
         let canonical = crate::data_area::prepare_data_area(&path)?;
         let mut guard = self.inner.lock().map_err(|_| {
             PersistenceError::InvalidInput("product persistence lock is poisoned".to_owned())
@@ -981,13 +1014,17 @@ fn ensure_document_schema_backup_tables(connection: &Connection) -> Result<(), P
 
 fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
     match kind {
-        "workspace" => schema_version == WORKSPACE_DOCUMENT_SCHEMA_VERSION,
+        "workspace" => {
+            schema_version == WORKSPACE_DOCUMENT_SCHEMA_VERSION
+                || schema_version == crate::replicated_namespace::SCHEMA_VERSION
+        }
         "note" => {
             schema_version == LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION
                 || schema_version == 3
                 || schema_version == 4
                 || schema_version == 5
                 || schema_version == NOTE_DOCUMENT_SCHEMA_VERSION
+                || schema_version == crate::replicated_note::SCHEMA_VERSION
         }
         _ => false,
     }
@@ -1029,7 +1066,7 @@ pub(crate) fn backup_document_before_schema_migration(
     Ok(())
 }
 
-fn commit_documents(
+pub(crate) fn commit_documents(
     transaction: &Transaction<'_>,
     request: &PersistenceCommitRequest,
 ) -> Result<Vec<DocumentRevision>, PersistenceError> {

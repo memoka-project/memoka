@@ -6,7 +6,10 @@ import {
 export type ApplicationCommandId =
   | "workspace.backup"
   | "workspace.backup_settings"
+  | "workspace.sync"
+  | "workspace.sync_settings"
   | "workspace.history"
+  | "note.recovery"
   | "namespace.group"
   | "namespace.rename_group"
   | "utility.tree"
@@ -50,6 +53,20 @@ export interface ApplicationCommandDefinition {
 
 export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
   {
+    id: "workspace.sync",
+    name: "sync",
+    aliases: [],
+    description: "登録端末へ再接続して差分の同期を確認する",
+    argument: "none",
+  },
+  {
+    id: "workspace.sync_settings",
+    name: "sync-settings",
+    aliases: [],
+    description: "端末間同期の状態を確認し端末を追加・解除する",
+    argument: "none",
+  },
+  {
     id: "workspace.backup",
     name: "backup",
     aliases: [],
@@ -69,6 +86,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "history",
     aliases: [],
     description: "現在のノートまたはWorkspaceの履歴を読み取り専用で参照する",
+    argument: "none",
+  },
+  {
+    id: "note.recovery",
+    name: "recovery",
+    aliases: [],
+    description: "現在のノートの保護されたSection・Block・本文を復旧する",
     argument: "none",
   },
   {

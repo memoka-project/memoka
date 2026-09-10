@@ -15,6 +15,7 @@ export interface AttachmentMetadata {
   readonly createdAt: string;
   readonly available: boolean;
   readonly previewable: boolean;
+  readonly synchronization?: "pending" | "error" | null;
 }
 
 export interface AttachmentBatchItemInput {
@@ -437,6 +438,31 @@ export class AttachmentRepository {
     }
   }
 
+  private synchronizationRefresh: Promise<void> | null = null;
+  private synchronizationOffset = 0;
+  refreshSynchronization(): Promise<void> {
+    if (this.synchronizationRefresh) return this.synchronizationRefresh;
+    const pending = [...this.metadata.values()]
+      .filter((metadata) => metadata.synchronization)
+      .map((metadata) => metadata.attachmentId);
+    if (!pending.length) return Promise.resolve();
+    if (this.synchronizationOffset >= pending.length)
+      this.synchronizationOffset = 0;
+    const ids = pending.slice(
+      this.synchronizationOffset,
+      this.synchronizationOffset + 64,
+    );
+    this.synchronizationOffset += ids.length;
+    const refresh = this.port
+      .resolve(ids)
+      .then((entries) => this.remember(entries));
+    this.synchronizationRefresh = refresh;
+    return refresh.finally(() => {
+      if (this.synchronizationRefresh === refresh)
+        this.synchronizationRefresh = null;
+    });
+  }
+
   async importFiles(
     files: readonly File[],
   ): Promise<readonly AttachmentMetadata[]> {
@@ -551,6 +577,11 @@ export class AttachmentRepository {
   }
 
   private remember(entries: readonly AttachmentMetadata[]): void {
+    entries = entries.filter(
+      (entry) =>
+        JSON.stringify(this.metadata.get(entry.attachmentId)) !==
+        JSON.stringify(entry),
+    );
     if (entries.length === 0) return;
     for (const entry of entries) {
       this.missing.delete(entry.attachmentId);

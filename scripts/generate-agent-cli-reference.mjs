@@ -47,6 +47,8 @@ const markdown = await format(
     "",
     "## Editing contract",
     "",
+    "Read device synchronization with `memoka-cli sync status --workspace PATH --format json`. Read operations never start networking. Revision and edit receipts are local to a Workspace copy. In synchronization-enabled Workspaces, include the `replica_id` from this copy’s edit descriptor in every edit, Note or Section request. Requests from another Replica are rejected before receipt lookup; retry the identical request only on its original Replica. A restored backup opens with a new Replica and synchronization disabled.",
+    "",
     "The machine-readable contract is [edit-schema.json](edit-schema.json). The installed CLI can return it with `memoka-cli edit-schema --format json`.",
     "",
     "```json",

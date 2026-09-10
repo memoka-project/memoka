@@ -1,8 +1,7 @@
-//! Same-Note Section structure edits. Only the moved subtree is cloned;
-//! unrelated Yjs types and every retained logical identity stay intact.
+//! Same-Note Section structure edits. Normalized Notes reconcile the prepared
+//! result into placement operations without cloning persisted content.
 use super::*;
 use crate::document_model::{MAX_SECTION_DEPTH, Note, Section, clone_xml_at};
-use crate::persistence::PersistedDocument;
 use yrs::types::ToJson;
 use yrs::{Doc, Text, Xml, XmlElementPrelim, XmlElementRef, XmlFragment, XmlOut, XmlTextPrelim};
 
@@ -14,6 +13,9 @@ pub struct SectionRequest {
     #[schemars(range(min = 1, max = 1))]
     pub schema_version: u32,
     pub workspace_id: String,
+    /// Copy identity from the edit view. Required while synchronization is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<String>,
     pub note_id: String,
     /// Note-wide revision from a fresh read --for-edit, not Workspace revision.
     #[schemars(range(min = 1, max = 9_007_199_254_740_991_i64))]
@@ -76,6 +78,9 @@ pub enum SectionAction {
 
 impl SectionRequest {
     pub fn validate(&self) -> Result<(), ReadError> {
+        if let Some(id) = &self.replica_id {
+            validate_id(id)?;
+        }
         validate_note_envelope(
             self.schema_version,
             &self.workspace_id,
@@ -421,7 +426,7 @@ pub(super) fn prepare(
     }
     live_note(&reader, &request.note_id)?;
     let stored = load_document(&reader.connection, "note", &request.note_id)?;
-    if stored.schema_version != 6 {
+    if ![6, 7].contains(&stored.schema_version) {
         return Err(ReadError::new(
             "MIGRATION_REQUIRED",
             "Open the Note in the updated GUI first",
@@ -429,7 +434,7 @@ pub(super) fn prepare(
     }
     check_revision(request.expected_revision, stored.revision)?;
     let before = read_note(&stored, false)?;
-    let doc = decode_document(&stored)?;
+    let doc = editable_note_document(&stored)?;
     let vector = doc.transact().state_vector();
     let tree = Tree::new(&doc, &before)?;
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -641,24 +646,14 @@ pub(super) fn prepare(
     }
     let mut documents = vec![];
     if changed {
-        read_note(
-            &PersistedDocument {
-                snapshot: doc
-                    .transact()
-                    .encode_state_as_update_v1(&StateVector::default()),
-                snapshot_revision: stored.revision,
-                updates: vec![],
-                ..stored.clone()
-            },
-            false,
-        )?;
+        edited_note_view(&stored, &doc)?;
         documents.push(DocumentCommitInput {
             kind: "note".into(),
             document_id: request.note_id.clone(),
-            schema_version: 6,
+            schema_version: stored.schema_version,
             base_revision: stored.revision,
             snapshot: None,
-            update: Some(doc.transact().encode_state_as_update_v1(&vector)),
+            update: Some(edited_note_update(&stored, &doc, &vector, &reader, &now)?),
         });
         let workspace = load_document(&reader.connection, "workspace", &reader.workspace_id)?;
         let metadata = decode_document(&workspace)?;

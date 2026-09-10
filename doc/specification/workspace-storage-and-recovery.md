@@ -39,23 +39,23 @@ GUIは確定済みCore transactionの保存barrierを通した後で読み出す
 focusやcaretを移さない。IPC timeoutや保存失敗時にlive DBへfallbackしてはならない。
 
 GUIが所有していないときはCLIがleaseを取得し、read-only SQLite transactionとnative Yjs readerで読む。
-current readはmigration、Help同期、Restic初期化を行わない。読み取りは既知のDB schema 5/6を受け入れ、
-それ以前のschemaはGUIでの移行を要求する。[CLI編集](agent-editing.md)はDB/Note schema 6を必要とする。
+current readはmigration、Help同期、Restic初期化を行わない。読み取りは既知のDB schema 5/6/7を受け入れ、
+それ以前のschemaはGUIでの移行を要求する。[CLI編集](agent-editing.md)はDB/Note schema 6・7に対応し、同期有効WorkspaceではReplica IDも検証する。
 CLI実行時にNode、DOM、GTK、WebKit、WebViewを起動しない。
 
 ## 3. 移行前検査
 
-database schema 2〜5から6への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
-WorkspaceMetadataDoc 2をNamespace付きschema 3へ、NoteDoc 2をBodyChunk、複数block ListItem、Details、タスクに対応するschema 6へ変換する。
-NoteDoc 3/4/5は本文・IDを再構築せずmetadataだけschema 6へ移行する。旧世代のNoteDoc 3/4/5も引き続き読み取れる。
-既存のNamespaceと旧ID対応表は変更しない。外部編集receipt用tableを追加する。
+database schema 2〜6から7への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
+旧Namespace変換を経てWorkspaceMetadataDoc 4へ、NoteDocは安定IDごとに内容と配置を分離するschema 7へ変換する。
+独立した候補でMarkdown・装飾・構造・Note/Section/Block/Entry ID・添付hashを比較し、不一致なら元DBを変更しない。
+既存のNamespaceと旧ID対応表を維持し、同期journal等のtableとコピー固有のReplica IDを追加する。
 
 - 元DBに書き込む前にID、Namespace、Root identity、H6上限、添付catalogを検証する。
 - WALが残る場合はDBとWALのprivate copyを検査し、WALにある確定更新を無視しない。
 - H6超過などの不整合では元DB、添付、旧mirrorを変更せず、対象documentと理由を返す。
 - 成功後にSQLite Online Backupで移行直前のrollback copyを残し、schemaとdocument変更をatomicに確定する。
 - 以前の移行試行のrollback copyを上書きせず、再試行時にもその時点の原本を保護する。
-- Note/Section/Block IDと旧Tree表示順を維持し、Entry IDだけを独立して割り当てる。
+- Note/Section/Block/既存Entry IDと旧Tree表示順を維持する。Namespace対応前のschemaだけはEntry IDを独立して割り当てる。
 - local Tree選択/foldをNote IDからEntry IDへ移す。Buffer/Jump Listのresource参照はNote IDのままである。
 - schema 2〜4からの移行前に欠けていたCAS objectは`known_missing`として記録する。5以降の新たな欠損を再認定しない。検査不能、破損、symlinkは欠損扱いで隠さない。
 
@@ -89,8 +89,8 @@ migrationで記録したknown missingはdescriptorへ明示する。新たな欠
 generation IDはMemokaのUUIDv7で、Restic snapshot IDとは分離する。
 descriptorはcapture時刻とtimezone、Workspace ID、epoch、document revisions、Section所有者、
 DB/添付hash・size・schemaを持つ。Restic exit 0だけでなくsnapshotのfile集合・型・sizeも検証して受理する。
-descriptorのdatabase/note schemaはcaptureした実DBに合わせる。現行はDB/Note schema 6で、
-読取・復旧はDB schema 5と旧世代のNoteDoc 3/4/5も受け入れる。未対応schemaは拒否する。
+descriptorのdatabase/note schemaはcaptureした実DBに合わせる。現行はDB/Note schema 7で、
+読取・復旧はDB schema 5/6と旧世代のNoteDoc 3/4/5/6も受け入れる。未対応schemaは拒否する。
 exit 3、不明file、未知schema、path traversal、symlinkは正常世代にしない。
 
 正本保存用に1 GiBとDB copy等の必要量をreserveする。容量不足や途中失敗でも最後の正常世代を保持する。
@@ -439,3 +439,11 @@ Yjsの最終状態、Namespaceへの移行可能性、H6上限を検査する。
 復旧元は変更せず、検証済みrecovery documentを現行schemaへ変換する。
 旧mirror復旧に限りrevision 1のfresh baselineを作る。Restic復旧のrevision維持契約とは区別する。
 旧update log、Undo、FTS、local UIは復元しない。
+
+## 端末間同期との境界
+
+同期のjournal・inbox・checkpointはローカル保存の耐久性に従うが、終了時はネットワークの完了を待たない。
+未取得添付・未生成のローカルHelpを含む新しいcaptureは「同期データの取得待ち」とし、取得後に再開する。
+未取得を`known_missing`として正常世代へ取り込まない。既存の正常世代はその間も保持する。
+復旧先から同期の認可・招待・配送・古いReplica ID・編集receiptを除き、新しいReplicaとして同期無効で開く。
+[端末間同期](device-synchronization.md)の初回参加は新しい保存先への複製だけを許可し、復旧済みWorkspaceの合流は行わない。

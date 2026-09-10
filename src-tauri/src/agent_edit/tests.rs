@@ -41,8 +41,144 @@ fn fixture(blocks: Vec<Value>) -> tempfile::TempDir {
     store.connection.execute("UPDATE documents SET schema_version=6,snapshot=?1 WHERE kind='note' AND document_id=?2",params![doc.transact().encode_state_as_update_v1(&StateVector::default()),NOTE]).unwrap();
     temp
 }
+
+#[test]
+fn edits_normalized_notes_through_existing_descriptors_owner_commits_and_receipts() {
+    let temp = fixture(vec![p("placeholder")]);
+    let store = ProductStore::open(temp.path().join(".memoka")).unwrap();
+    let fixtures: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/replicated-note-contract.json"
+    ))
+    .unwrap();
+    let snapshot: Vec<u8> = serde_json::from_value(fixtures[0]["snapshot"].clone()).unwrap();
+    store.connection.execute("UPDATE documents SET schema_version=7,snapshot=?1 WHERE kind='note' AND document_id=?2", params![snapshot,NOTE]).unwrap();
+    let metadata = load_document(&store.connection, "workspace", WORKSPACE).unwrap();
+    let snapshot =
+        crate::replicated_namespace::migrate(&metadata, &uuid::Uuid::now_v7().to_string()).unwrap();
+    store.connection.execute("UPDATE documents SET schema_version=4,snapshot=?1 WHERE kind='workspace' AND document_id=?2", params![snapshot,WORKSPACE]).unwrap();
+    drop(store);
+    let before = current_note(&temp);
+    let mut change = request(vec![replace("日本語", "日本語を編集")]);
+    change.expected_revision = view(&temp)["revision"].as_i64().unwrap();
+    let result = run(&temp, change.clone());
+    assert_eq!(result["applied_edits"], 1);
+    assert_eq!(run(&temp, change)["replayed"], true);
+    let after = current_note(&temp);
+    assert_eq!(
+        after.root.body[0]["content"][0]["marks"],
+        before.root.body[0]["content"][0]["marks"]
+    );
+    assert_eq!(
+        after.root.body[0]["attrs"]["blockId"],
+        before.root.body[0]["attrs"]["blockId"]
+    );
+    assert!(
+        after.root.body[0]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("日本語を編集")
+    );
+    let child = before.root.children[0].section_id.clone();
+    let destination = create_section(&temp, NOTE, "Destination");
+    run(
+        &temp,
+        section_request(
+            &temp,
+            json!({"op":"move","section_id":child,"parent_section_id":destination,"placement":{"kind":"last"}}),
+        ),
+    );
+    let moved = current_note(&temp);
+    assert_eq!(
+        moved.root.children.last().unwrap().children[0].section_id,
+        child
+    );
+    let result = run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"rename","note_id":NOTE,"expected_revision":moved.revision,"title":"新しい題名"}),
+        ),
+    );
+    assert_eq!(result["applied_edits"], 1);
+    assert_eq!(current_note(&temp).root.title, "新しい題名");
+    let created = run(
+        &temp,
+        note_request(&temp, create_action("New normalized Note", None)),
+    );
+    let note_id = created["note_id"].as_str().unwrap();
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    let stored = load_document(&reader.connection, "note", note_id).unwrap();
+    assert_eq!(stored.schema_version, 7);
+    let parent = reader.namespace.note_entry(NOTE).unwrap().entry_id.clone();
+    let entry_id = created["entry_id"].as_str().unwrap();
+    drop(reader);
+    run(
+        &temp,
+        note_request(
+            &temp,
+            json!({"op":"move","entry_id":entry_id,"parent_entry_id":parent,"placement":{"kind":"last"}}),
+        ),
+    );
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    assert_eq!(
+        reader.namespace.entries[entry_id]
+            .parent_entry_id
+            .as_deref(),
+        Some(parent.as_str())
+    );
+    assert_eq!(
+        load_document(&reader.connection, "workspace", WORKSPACE)
+            .unwrap()
+            .schema_version,
+        4
+    );
+}
 fn request(edits: Vec<Value>) -> EditRequest {
     parse_request(&serde_json::to_vec(&json!({"schema_version":1,"workspace_id":WORKSPACE,"note_id":NOTE,"expected_revision":1,"request_id":uuid::Uuid::now_v7().to_string(),"edits":edits})).unwrap()).unwrap()
+}
+
+#[test]
+fn edit_descriptors_and_receipts_are_bound_to_the_workspace_copy() {
+    let temp = fixture(vec![p("original")]);
+    let replica = view(&temp)["replica_id"].as_str().unwrap().to_owned();
+    let reader = WorkspaceReader::open(temp.path()).unwrap();
+    assert_eq!(reader.replica_id.as_deref(), Some(replica.as_str()));
+    drop(reader);
+    let mut edit = request(vec![replace("original", "updated")]);
+    edit.replica_id = Some(replica.clone());
+    run(&temp, edit.clone());
+    assert_eq!(run(&temp, edit.clone())["replayed"], true);
+    // Check the copy before consulting an already successful receipt.
+    let store = ProductStore::open(temp.path().join(".memoka")).unwrap();
+    store
+        .connection
+        .execute(
+            "UPDATE settings SET value=?1 WHERE key='replica_id'",
+            [uuid::Uuid::now_v7().to_string()],
+        )
+        .unwrap();
+    assert_eq!(
+        receipt(&store.connection, edit.clone()).unwrap_err().code,
+        "EDIT_REPLICA_MISMATCH"
+    );
+    store
+        .connection
+        .execute(
+            "UPDATE settings SET value=?1 WHERE key='replica_id'",
+            [&replica],
+        )
+        .unwrap();
+    // Enrollment requires an explicitly bound request, including old receipts
+    // created by a client that omitted the optional pre-enrollment field.
+    store
+        .connection
+        .execute("INSERT INTO settings VALUES('replication_config','{}')", [])
+        .unwrap();
+    edit.replica_id = None;
+    assert_eq!(
+        receipt(&store.connection, edit).unwrap_err().code,
+        "EDIT_REPLICA_REQUIRED"
+    );
 }
 fn replace(old: &str, new: &str) -> Value {
     json!({"op":"replace_text","section_id":NOTE,"scope":"body","old_text":old,"new_text":new})

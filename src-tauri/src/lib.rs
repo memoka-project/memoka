@@ -30,6 +30,10 @@ pub mod portable_mirror;
 mod private_files;
 mod rclone;
 pub mod read_service;
+pub mod replicated_namespace;
+pub mod replicated_note;
+mod replicated_tree;
+pub mod replication;
 pub mod restic;
 mod search_index;
 mod sibling_position;
@@ -409,6 +413,9 @@ pub fn run() {
         .manage(persistence::ProductPersistenceState::default())
         .manage(native_service::SaveBarriers::default())
         .manage(agent_edit::bridge::AgentEdits::default())
+        .manage(replication::bridge::SyncPublications::default())
+        .manage(replication::controller::SyncRuntime::default())
+        .manage(replication::join::JoinRuntime::default())
         .register_asynchronous_uri_scheme_protocol(
             "memoka-history-attachment",
             |context, request, responder| {
@@ -433,6 +440,17 @@ pub fn run() {
         agent_edit::bridge::agent_edit_commit,
         agent_edit::bridge::agent_edit_test_fault,
         agent_edit::bridge::agent_edit_ack,
+        replication::bridge::sync_prepare,
+        replication::bridge::sync_commit,
+        replication::bridge::sync_cancel,
+        replication::bridge::sync_ack,
+        replication::controller::sync_status,
+        replication::controller::sync_action,
+        replication::controller::sync_start,
+        replication::controller::sync_stop,
+        replication::join::sync_join_start,
+        replication::join::sync_join_status,
+        replication::join::sync_join_stop,
         native_service::workspace_native_query,
         native_service::workspace_backup_cancel,
         native_service::workspace_backup_resume,

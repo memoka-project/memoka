@@ -155,6 +155,10 @@
         "minimum": 1,
         "type": "integer"
       },
+      "replica_id": {
+        "description": "Copy identity from source.replica_id. Required while synchronization is enabled.",
+        "type": ["string", "null"]
+      },
       "request_id": {
         "type": "string"
       },
@@ -313,6 +317,10 @@
       "note_id": {
         "description": "Lowercase UUIDv7 of the Note (also its Root Section ID).",
         "type": "string"
+      },
+      "replica_id": {
+        "description": "Copy identity from the edit view. Required while synchronization is enabled.",
+        "type": ["string", "null"]
       },
       "request_id": {
         "description": "Canonical lowercase UUIDv4 or UUIDv7. Reuse with identical content after an unknown outcome.",
@@ -544,6 +552,10 @@
       },
       "note_id": {
         "type": "string"
+      },
+      "replica_id": {
+        "description": "Copy identity from the edit view. Required while synchronization is enabled.",
+        "type": ["string", "null"]
       },
       "request_id": {
         "type": "string"

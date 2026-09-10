@@ -79,13 +79,15 @@ fn restores_old_mirror_into_current_namespace_and_h6_validated_baseline() {
     let note = store
         .load_document("note", &manifest.notes[0].note_id)
         .unwrap();
-    assert_eq!(note.schema_version, 6);
+    assert_eq!(note.schema_version, 7);
     assert_eq!(note.revision, 1);
     assert_eq!(note.snapshot_revision, 1);
     assert!(note.updates.is_empty());
     assert_eq!(
-        serde_json::to_value(read_note(&note, false).unwrap().root).unwrap(),
-        expected
+        crate::workspace_migration::tests::canonical_content(
+            serde_json::to_value(read_note(&note, false).unwrap().root).unwrap()
+        ),
+        crate::workspace_migration::tests::canonical_content(expected)
     );
     let workspace = store
         .load_document("workspace", &manifest.workspace_id)

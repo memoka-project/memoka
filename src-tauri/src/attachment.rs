@@ -70,6 +70,8 @@ pub(crate) struct AttachmentMetadata {
     pub created_at: String,
     pub available: bool,
     pub previewable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synchronization: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -545,6 +547,22 @@ pub(crate) fn attachment_batch_commit_store(
         deduplicated: false,
         attachments: metadata,
     };
+    crate::replication::journal_local_attachments(
+        &transaction,
+        response
+            .attachments
+            .iter()
+            .map(|item| crate::replication::protocol::AttachmentReference {
+                attachment_id: item.attachment_id.clone(),
+                sha256: item.sha256.clone(),
+                size: item.size,
+                original_filename: item.original_filename.clone(),
+                mime_type: item.mime_type.clone(),
+                created_at: item.created_at.clone(),
+            })
+            .collect(),
+    )
+    .map_err(crate::workspace_migration::persistence_error)?;
     transaction.execute(
         "UPDATE attachment_operations
          SET state = 'completed', response_json = ?2, updated_at = ?3
@@ -1322,6 +1340,11 @@ fn query_attachment_metadata(
             !metadata.file_type().is_symlink() && metadata.is_file() && metadata.len() == size
         })
         .unwrap_or(false);
+    let synchronization = if available {
+        None
+    } else {
+        connection.query_row("SELECT CASE WHEN error IS NULL THEN 'pending' ELSE 'error' END FROM sync_attachment_transfers WHERE sha256=?1 AND complete=0", [&sha256], |r| r.get(0)).optional()?
+    };
     Ok(Some(AttachmentMetadata {
         attachment_id,
         sha256,
@@ -1331,6 +1354,7 @@ fn query_attachment_metadata(
         mime_type,
         created_at,
         available,
+        synchronization,
     }))
 }
 
@@ -1705,6 +1729,7 @@ mod tests {
     #[test]
     fn refuses_executable_and_active_document_attachments() {
         let base = AttachmentMetadata {
+            synchronization: None,
             attachment_id: uuid(10),
             sha256: "a".repeat(64),
             size: 4,

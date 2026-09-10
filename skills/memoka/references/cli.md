@@ -20,6 +20,7 @@ memoka-cli edit --input FILE|- [--workspace DIR] [--dry-run] --format json
 memoka-cli note-edit --input FILE|- [--workspace DIR] [--dry-run] --format json
 memoka-cli section-edit --input FILE|- [--workspace DIR] [--dry-run] --format json
 memoka-cli edit-schema --format json
+memoka-cli sync status [--workspace DIR] --format json
 memoka-cli attachment get --id ID --output NEW-FILE [--workspace DIR] [--generation ID] [--include-trash]
 memoka-cli history [--id ID] [--workspace DIR] --format json
 memoka-cli backup run|status|list|copy [--workspace DIR]
@@ -40,6 +41,8 @@ Reading never migrates a Workspace. Open an old Workspace in Memoka first.
 ```
 
 ## Editing contract
+
+Read device synchronization with `memoka-cli sync status --workspace PATH --format json`. Read operations never start networking. Revision and edit receipts are local to a Workspace copy. In synchronization-enabled Workspaces, include the `replica_id` from this copy’s edit descriptor in every edit, Note or Section request. Requests from another Replica are rejected before receipt lookup; retry the identical request only on its original Replica. A restored backup opens with a new Replica and synchronization disabled.
 
 The machine-readable contract is [edit-schema.json](edit-schema.json). The installed CLI can return it with `memoka-cli edit-schema --format json`.
 
@@ -201,6 +204,10 @@ The machine-readable contract is [edit-schema.json](edit-schema.json). The insta
         "minimum": 1,
         "type": "integer"
       },
+      "replica_id": {
+        "description": "Copy identity from source.replica_id. Required while synchronization is enabled.",
+        "type": ["string", "null"]
+      },
       "request_id": {
         "type": "string"
       },
@@ -359,6 +366,10 @@ The machine-readable contract is [edit-schema.json](edit-schema.json). The insta
       "note_id": {
         "description": "Lowercase UUIDv7 of the Note (also its Root Section ID).",
         "type": "string"
+      },
+      "replica_id": {
+        "description": "Copy identity from the edit view. Required while synchronization is enabled.",
+        "type": ["string", "null"]
       },
       "request_id": {
         "description": "Canonical lowercase UUIDv4 or UUIDv7. Reuse with identical content after an unknown outcome.",
@@ -590,6 +601,10 @@ The machine-readable contract is [edit-schema.json](edit-schema.json). The insta
       },
       "note_id": {
         "type": "string"
+      },
+      "replica_id": {
+        "description": "Copy identity from the edit view. Required while synchronization is enabled.",
+        "type": ["string", "null"]
       },
       "request_id": {
         "type": "string"

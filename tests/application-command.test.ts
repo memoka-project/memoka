@@ -132,7 +132,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: backup-status",
     });
     expect(applicationCommandHelp()).toBe(
-      ":backup · :backup-settings · :history · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

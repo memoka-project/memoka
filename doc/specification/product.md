@@ -51,14 +51,15 @@ Vimとの互換性は目的ではなく手段である。WYSIWYGの構造を安�
 Section、Table Cell、atomic node操作を定義する。互換操作と差異は
 [Vim操作](vim-operations.md)に明記する。
 
-## 5. ローカルファーストと同期可能性
+## 5. ローカルファーストと端末間同期
 
-通常操作ではWorkspaceの内容をnetworkへ送信しない。現行製品は外部同期serviceを提供しないが、
-NoteDocがYjs updateで表現され、永続化とUIがCore transaction境界を共有するため、将来のtransportを
-追加できる構造を保つ。
+通常の編集はローカルで完結する。同期を明示的に有効にしたWorkspaceだけ、LAN・VPN内の登録端末へ
+直接接続し、Workspaceを開いている間に本文・構造・添付を自動統合する。オフライン編集も再接続時に引き継ぐ。
+専用アカウントや固定の管理端末は不要で、任意の登録端末から追加・解除を行える。
 
-CRDTであることは無条件のmergeを意味しない。永続化revisionの競合、invalidなID、壊れたtree、
-古いUI intentは検出して拒否し、データ欠落を避ける。
+CRDTであることは無条件のmergeを意味しない。並行した移動・削除は決定的に投影し、削除と編集が重なった
+内容は復旧可能に保護する。不正ID、未知schema、破損update、端末内revisionの競合は検出して拒否する。
+対象・直接通信・認証・移行と復旧の境界は[端末間同期](device-synchronization.md)を参照する。
 
 ## 6. 現行製品に含めないもの
 
@@ -67,7 +68,7 @@ CRDTであることは無条件のmergeを意味しない。永続化revisionの
 - Note境界をまたぐmotion、selection、operator、Undo
 - Markdown directoryを正本として通常起動時に双方向同期する仕組み、旧mirrorの新規自動出力
 - Treeのdrag-and-drop、inline rename
-- realtime外部同期serviceとuser account
+- 接続仲介・relay・保存型同期サーバーとuser account
 - plugin実行基盤
 - Vimscript、Ex、register、macro、mapping全般の完全互換
 - Attachmentの参照数0一覧、Trash、永続削除、CAS garbage collection

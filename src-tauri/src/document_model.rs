@@ -110,7 +110,13 @@ pub fn register_section_owners(
 }
 
 pub fn decode_document(document: &PersistedDocument) -> Result<Doc, ReadError> {
-    let doc = Doc::new();
+    let doc = Doc::with_options(yrs::Options {
+        skip_gc: (document.kind == "note"
+            && document.schema_version == crate::replicated_note::SCHEMA_VERSION)
+            || (document.kind == "workspace"
+                && document.schema_version == crate::replicated_namespace::SCHEMA_VERSION),
+        ..Default::default()
+    });
     {
         let mut txn = doc.transact_mut();
         let mut apply = |bytes: &[u8]| -> Result<(), ReadError> {
@@ -165,6 +171,14 @@ pub fn workspace_json(document: &PersistedDocument) -> Result<Value, ReadError> 
 }
 
 pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Note, ReadError> {
+    if document.kind == "note" && document.schema_version == crate::replicated_note::SCHEMA_VERSION
+    {
+        return Ok(Note {
+            note_id: document.document_id.clone(),
+            revision: document.revision,
+            root: crate::replicated_note::read(document)?.root,
+        });
+    }
     if document.kind != "note"
         || !(matches!(document.schema_version, 3..=6)
             || (allow_legacy && document.schema_version == 2))
@@ -227,6 +241,12 @@ pub fn read_note(document: &PersistedDocument, allow_legacy: bool) -> Result<Not
 /// Upgrade only a private replay document. The original stream is retained
 /// until the enclosing, preflighted SQL migration commits atomically.
 pub fn migrate_note(document: &PersistedDocument) -> Result<Option<Vec<u8>>, ReadError> {
+    if document.schema_version == crate::replicated_note::SCHEMA_VERSION {
+        return Err(ReadError::new(
+            "UNSUPPORTED_SCHEMA",
+            "Workspace migration for replicated Notes is not enabled",
+        ));
+    }
     read_note(document, true)?;
     if document.schema_version == 6 {
         return Ok(None);

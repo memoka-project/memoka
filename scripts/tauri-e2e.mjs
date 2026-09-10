@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { cpus, release, totalmem } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -498,6 +498,19 @@ async function waitFor(sessionId, script, predicate, timeoutMs = 15_000) {
     value = await execute(sessionId, script);
     if (predicate(value)) return value;
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const page = await execute(
+    sessionId,
+    "return { text: document.body.innerText.slice(0, 65536), html: document.body.innerHTML.slice(0, 65536) }",
+  ).catch(() => null);
+  writeFileSync(
+    `${evidenceDirectory}/timeout-state.json`,
+    JSON.stringify({ script, value, page }, null, 2),
+  );
+  if (e2eWorkspace) {
+    cpSync(e2eWorkspace, `${evidenceDirectory}/failed-workspace`, {
+      recursive: true,
+    });
   }
   throw new Error(
     `Timed out waiting for ${script}; last value: ${JSON.stringify(value)}`,
@@ -1243,6 +1256,11 @@ async function runOsClipboardPasteProbes(
   ) ?? null;
   const selectedRect = selected?.getBoundingClientRect() ?? null;
   const selectedStyle = selected ? getComputedStyle(selected) : null;
+  const colorProbe = document.createElement('span');
+  colorProbe.style.backgroundColor = selectedStyle?.getPropertyValue('--memoka-color-selection') ?? '';
+  document.body.append(colorProbe);
+  const expectedBackground = getComputedStyle(colorProbe).backgroundColor;
+  colorProbe.remove();
   const nativeSelection = window.getSelection();
   return {
     mode:
@@ -1259,6 +1277,7 @@ async function runOsClipboardPasteProbes(
     blockId: selected?.dataset.blockId ?? null,
     text: selected?.textContent ?? '',
     backgroundColor: selectedStyle?.backgroundColor ?? null,
+    expectedBackground,
     boxShadow: selectedStyle?.boxShadow ?? null,
     width: selectedRect?.width ?? null,
     height: selectedRect?.height ?? null,
@@ -1288,7 +1307,8 @@ async function runOsClipboardPasteProbes(
         value.kind === kind &&
         value.text.includes(text) &&
         (!excludedText || !value.text.includes(excludedText)) &&
-        value.backgroundColor === "rgb(41, 61, 84)" &&
+        value.backgroundColor === value.expectedBackground &&
+        value.backgroundColor !== "rgba(0, 0, 0, 0)" &&
         value.boxShadow !== "none" &&
         value.width > 100 &&
         value.height > 0 &&
@@ -1628,7 +1648,7 @@ async function runOsClipboardPasteProbes(
   const tableMarkdown =
     tableClipboard.content["text/markdown"]?.replace(/\r\n/gu, "\n") ?? "";
   if (
-    tablePayload.schemaVersion !== 6 ||
+    tablePayload.schemaVersion !== 7 ||
     tablePayload.structureKind !== "table-row" ||
     !tableClipboard.content["text/html"]?.startsWith("<table><tbody><tr") ||
     !tableMarkdown.includes("| alpha | 1 |") ||
@@ -1973,7 +1993,7 @@ async function runHighLoadPerformance(sessionId) {
      Object.defineProperty(event, 'clipboardData', {
        value: {
          types: ['text/markdown', 'text/plain'],
-         getData: (type) => type === 'text/markdown' ? markdown : markdown
+         getData: (type) => ['text/markdown', 'text/plain'].includes(type) ? markdown : ''
        }
      });
      editor.dispatchEvent(event);
@@ -3126,6 +3146,49 @@ async function runSidebarFocusNavigation(sessionId) {
   };
 }
 
+async function runSynchronizationSettings(sessionId) {
+  await execute(
+    sessionId,
+    `window.__syncEditorBefore = document.querySelector('.memoka-editor.ProseMirror-focused'); return true`,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  await sendActiveKey(sessionId, ":");
+  const input = await waitForElement(
+    sessionId,
+    'input[aria-label="Memoka Command"]',
+  );
+  await sendKeys(sessionId, input, `sync-settings${ENTER}`);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('.sync-settings-dialog'); return Boolean(dialog?.textContent.includes('同期を有効にする') && dialog.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  const status = await invokeTauriCommand(
+    sessionId,
+    "SYNC_DISABLED",
+    "sync_status",
+    {},
+  );
+  if (
+    status.local.enabled ||
+    status.listening !== null ||
+    status.config !== null
+  )
+    throw new Error("Opening synchronization settings started networking");
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `return !document.querySelector('.sync-settings-dialog') && document.querySelector('.memoka-editor.ProseMirror-focused') === window.__syncEditorBefore`,
+    (value) => value === true,
+  );
+  return {
+    result: "TAURI_SYNC_SETTINGS_PASS",
+    enabled: status.local.enabled,
+    listening: status.listening,
+    editorPreserved: true,
+  };
+}
+
 async function runManagedHelpChrome(sessionId) {
   const openHelp = async () => {
     const editor = await findElement(
@@ -3220,6 +3283,7 @@ async function runManagedHelpChrome(sessionId) {
 }
 
 async function runUtilityNavigationBenchmark(sessionId, initialNoteId) {
+  const synchronizationSettings = await runSynchronizationSettings(sessionId);
   const sidebarFocusNavigation = await runSidebarFocusNavigation(sessionId);
   const windowNotesBefore = await execute(
     sessionId,
@@ -3629,6 +3693,7 @@ async function runUtilityNavigationBenchmark(sessionId, initialNoteId) {
     },
     warmup,
     warmBufferSwitch: measured,
+    synchronizationSettings,
     sidebarFocusNavigation,
     jumpBack,
     sectionOutline: {
@@ -3921,6 +3986,20 @@ await waitFor(
     .vimMode?.replace('-', ' ').toUpperCase() ?? ''`,
   (value) => value === "NORMAL",
 );
+
+if (process.env.MEMOKA_E2E_SYNC_ONLY === "1") {
+  try {
+    const result = await runSynchronizationSettings(firstSession);
+    writeFileSync(
+      `${evidenceDirectory}/sync-settings-tauri.json`,
+      JSON.stringify(result, null, 2),
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
 
 if (process.env.MEMOKA_E2E_VIEWPORT_CARET_ONLY === "1") {
   try {
@@ -4597,6 +4676,23 @@ if (fcitxRemote.expected && imeOff.statuses[0] !== "inactive") {
     })}`,
   );
 }
+// This fixture asserts Unicode script-run boundaries. The product's default
+// fine/BudouX mode has different, intentional Japanese phrase boundaries.
+await sendKeys(secondSession, restoredEditor, ":");
+const wordModeInput = await waitForElement(
+  secondSession,
+  'input[aria-label="Memoka Command"]',
+);
+await sendKeys(
+  secondSession,
+  wordModeInput,
+  `word-segmentation unicode${ENTER}`,
+);
+await waitFor(
+  secondSession,
+  `return !document.querySelector('input[aria-label="Memoka Command"]') && Boolean(document.querySelector('.memoka-editor.ProseMirror-focused'))`,
+  (value) => value === true,
+);
 const wordCursorProbe = `const editor = document.querySelector(
     '.editor-window:first-child .memoka-editor'
   );

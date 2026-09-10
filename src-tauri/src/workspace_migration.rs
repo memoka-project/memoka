@@ -6,20 +6,21 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Value, json};
 
-use crate::document_model::{ReadError, migrate_note};
+use crate::document_model::ReadError;
 use crate::namespace::{WORKSPACE_SCHEMA, migrate_workspace, read_namespace};
 use crate::persistence::{PersistedDocument, PersistedUpdate, PersistenceError};
 
-pub const DATABASE_SCHEMA: i64 = 6;
+pub const DATABASE_SCHEMA: i64 = 7;
 
 #[cfg(test)]
 #[path = "workspace_migration_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 pub struct PreparedMigration {
     pub documents: Vec<(PersistedDocument, Vec<u8>)>,
     pub entry_ids: BTreeMap<String, String>,
     pub known_missing: Vec<String>,
+    pub replica_id: String,
 }
 
 pub fn load_document(
@@ -110,7 +111,7 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
     if version == DATABASE_SCHEMA {
         return Ok(None);
     }
-    if !(2..=5).contains(&version) {
+    if !(2..=6).contains(&version) {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
             "Unsupported database migration",
@@ -123,24 +124,53 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut failures = Vec::new();
+    let replica_id: String = connection
+        .query_row(
+            "SELECT value FROM settings WHERE key='replica_id'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    crate::attachment::validate_uuid_v7(&replica_id, "replicaId")?;
     let mut prepared = PreparedMigration {
         documents: Vec::new(),
         entry_ids: BTreeMap::new(),
         known_missing: Vec::new(),
+        replica_id,
     };
     let mut actual_notes = std::collections::BTreeSet::new();
     let mut expected_notes = std::collections::BTreeSet::new();
     let mut section_owners = BTreeMap::new();
     for (kind, id) in ids {
         let document = load_document(&connection, &kind, &id)?;
-        let result = if kind == "workspace" && document.schema_version == WORKSPACE_SCHEMA {
+        let result = if kind == "workspace"
+            && document.schema_version == crate::replicated_namespace::SCHEMA_VERSION
+        {
             read_namespace(&document).map(|namespace| {
                 expected_notes.extend(namespace.notes.keys().cloned());
             })
         } else if kind == "workspace" {
-            migrate_workspace(&document).and_then(|(snapshot, mapping)| {
+            let legacy = if document.schema_version == WORKSPACE_SCHEMA {
+                Ok((document.clone(), BTreeMap::new()))
+            } else {
+                migrate_workspace(&document).map(|(snapshot, mapping)| {
+                    (
+                        PersistedDocument {
+                            schema_version: WORKSPACE_SCHEMA,
+                            snapshot,
+                            snapshot_revision: document.revision,
+                            updates: Vec::new(),
+                            ..document.clone()
+                        },
+                        mapping,
+                    )
+                })
+            };
+            legacy.and_then(|(legacy, mapping)| {
+                let snapshot = crate::replicated_namespace::migrate(&legacy, &prepared.replica_id)?;
                 let migrated = PersistedDocument {
-                    schema_version: WORKSPACE_SCHEMA,
+                    schema_version: crate::replicated_namespace::SCHEMA_VERSION,
                     snapshot: snapshot.clone(),
                     snapshot_revision: document.revision,
                     updates: Vec::new(),
@@ -156,11 +186,12 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
             actual_notes.insert(id.clone());
             crate::document_model::read_note(&document, true).and_then(|note| {
                 crate::document_model::register_section_owners(&note, &mut section_owners)?;
-                migrate_note(&document).map(|snapshot| {
-                    if let Some(snapshot) = snapshot {
-                        prepared.documents.push((document, snapshot));
-                    }
-                })
+                if document.schema_version != crate::replicated_note::SCHEMA_VERSION {
+                    let snapshot =
+                        crate::replicated_note::edit::migrate(&document, &prepared.replica_id)?;
+                    prepared.documents.push((document, snapshot));
+                }
+                Ok(())
             })
         } else {
             Err(ReadError::new(
@@ -189,18 +220,27 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
         [],
         |row| row.get(0),
     )?;
-    if has_attachments && version < 5 {
+    if has_attachments {
+        let has_known_missing: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('attachments') WHERE name='known_missing')", [], |row| row.get(0),
+        )?;
+        let missing_column = if has_known_missing {
+            "known_missing"
+        } else {
+            "0"
+        };
         let records = connection
-            .prepare("SELECT attachment_id,sha256,size FROM attachments ORDER BY attachment_id")?
+            .prepare(&format!("SELECT attachment_id,sha256,size,{missing_column} FROM attachments ORDER BY attachment_id"))?
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
+                    row.get::<_, bool>(3)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        for (id, hash, size) in records {
+        for (id, hash, size, known_missing) in records {
             crate::attachment::validate_uuid_v7(&id, "attachmentId")?;
             if hash.len() != 64
                 || !hash
@@ -252,7 +292,15 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
                 }
             }
             if missing {
-                prepared.known_missing.push(id);
+                if version < 5 || known_missing {
+                    prepared.known_missing.push(id);
+                } else {
+                    return Err(ReadError::new(
+                        "ATTACHMENT_MISSING",
+                        "Migration attachment is missing",
+                    )
+                    .with_details(json!({"attachment_id":id})));
+                }
             }
         }
     }
@@ -263,13 +311,13 @@ pub fn migration_rollback_copy(root: &Path, source: &Connection) -> Result<(), R
     let directory = root.join("migration-backups");
     fs::create_dir_all(&directory)?;
     crate::read_service::checked_directory(&directory)?;
-    let first = directory.join("before-schema-v6.sqlite3");
+    let first = directory.join("before-schema-v7.sqlite3");
     let final_path = match fs::symlink_metadata(&first) {
         // A previous attempt may predate further edits made in the old app.
         // Keep that rollback copy, but always capture this attempt's state.
         Ok(_) => {
             crate::read_service::plain_file(&first)?;
-            directory.join(format!("before-schema-v6-{}.sqlite3", uuid::Uuid::now_v7()))
+            directory.join(format!("before-schema-v7-{}.sqlite3", uuid::Uuid::now_v7()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => first,
         Err(error) => return Err(error.into()),
@@ -307,9 +355,9 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
     }
     for (before, snapshot) in &prepared.documents {
         let target_schema = if before.kind == "note" {
-            6
+            crate::replicated_note::SCHEMA_VERSION
         } else {
-            WORKSPACE_SCHEMA
+            crate::replicated_namespace::SCHEMA_VERSION
         };
         crate::persistence::backup_document_before_schema_migration(
             &transaction,
@@ -358,6 +406,11 @@ pub fn apply(connection: &Connection, prepared: &PreparedMigration) -> Result<()
         "INSERT OR REPLACE INTO settings(key,value) VALUES('database_schema_version',?1)",
         [DATABASE_SCHEMA.to_string()],
     )?;
+    transaction.execute(
+        "INSERT OR REPLACE INTO settings(key,value) VALUES('replica_id',?1)",
+        [&prepared.replica_id],
+    )?;
+    transaction.execute("DELETE FROM settings WHERE key='local_replica_id'", [])?;
     transaction.execute(
         "INSERT INTO settings(key,value) VALUES('content_epoch','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1",
         [],
