@@ -48,11 +48,13 @@ CLI実行時にNode、DOM、GTK、WebKit、WebViewを起動しない。
 database schema 2〜6から7への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
 旧Namespace変換を経てWorkspaceMetadataDoc 4へ、NoteDocは安定IDごとに内容と配置を分離するschema 7へ変換する。
 独立した候補でMarkdown・装飾・構造・Note/Section/Block/Entry ID・添付hashを比較し、不一致なら元DBを変更しない。
+内容比較では未設定属性の`null`と省略、および同一装飾の隣接text nodeの分割・結合を同等と扱う。本文、装飾、設定済み属性（`false`・`0`・空文字を含む）、ID、構造の違いは許容しない。
 既存のNamespaceと旧ID対応表を維持し、同期journal等のtableとコピー固有のReplica IDを追加する。
 
 - 元DBに書き込む前にID、Namespace、Root identity、H6上限、添付catalogを検証する。
 - WALが残る場合はDBとWALのprivate copyを検査し、WALにある確定更新を無視しない。
 - H6超過などの不整合では元DB、添付、旧mirrorを変更せず、対象documentと理由を返す。
+- 移行失敗は対象document ID・種別・エラーコード・具体的な理由・詳細を保持する。起動画面では説明と対象を表示し、JSONの技術詳細は開閉できる。長文は折り返し、画面内でスクロールできるようにする。移行実装の不具合もあり得るため、原因未確定で旧版でのデータ修正を求めない。
 - 成功後にSQLite Online Backupで移行直前のrollback copyを残し、schemaとdocument変更をatomicに確定する。
 - 以前の移行試行のrollback copyを上書きせず、再試行時にもその時点の原本を保護する。
 - Note/Section/Block/既存Entry IDと旧Tree表示順を維持する。Namespace対応前のschemaだけはEntry IDを独立して割り当てる。

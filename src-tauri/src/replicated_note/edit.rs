@@ -619,16 +619,47 @@ fn writable_content(
         _ => Err(invalid("Invalid stable entity content")),
     }
 }
+// Compare content semantics, not the storage shape of legacy XML. Unset PM
+// attributes can be null or absent, and adjacent text nodes with identical
+// formatting can share one Y.Text run. Populated attributes, marks, identities,
+// text and structural boundaries must still match exactly.
 fn normalized(mut value: Value) -> Value {
     match &mut value {
         Value::Object(object) => {
+            for child in object.values_mut() {
+                *child = normalized(child.take());
+            }
+            if let Some(Value::Object(attrs)) = object.get_mut("attrs") {
+                attrs.retain(|_, value| !value.is_null());
+            }
             object.retain(|key, value| {
                 !matches!(key.as_str(), "attrs" | "content" | "marks")
                     || !(value.as_array().is_some_and(Vec::is_empty)
                         || value.as_object().is_some_and(serde_json::Map::is_empty))
             });
-            for child in object.values_mut() {
-                *child = normalized(child.take());
+            if let Some(Value::Array(content)) = object.get_mut("content") {
+                let mut merged: Vec<Value> = Vec::with_capacity(content.len());
+                for node in std::mem::take(content) {
+                    if let (Some(Value::Object(previous)), Value::Object(next)) =
+                        (merged.last_mut(), &node)
+                    {
+                        if next.get("type").and_then(Value::as_str) == Some("text")
+                            && previous.len() == next.len()
+                            && next.iter().all(|(key, value)| {
+                                key == "text" || previous.get(key) == Some(value)
+                            })
+                        {
+                            if let (Some(Value::String(text)), Some(Value::String(suffix))) =
+                                (previous.get_mut("text"), next.get("text"))
+                            {
+                                text.push_str(suffix);
+                                continue;
+                            }
+                        }
+                    }
+                    merged.push(node);
+                }
+                *content = merged;
             }
         }
         Value::Array(items) => {
@@ -1009,6 +1040,121 @@ mod tests {
             normalized(serde_json::to_value(expected).unwrap())
         );
     }
+
+    #[test]
+    fn migrates_editor_defaults_and_split_identically_marked_xml_text() {
+        fn add_defaults(node: &mut Value) {
+            let defaults: &[&str] = match node["type"].as_str().unwrap_or("") {
+                "listItem" => &["checked"],
+                "orderedList" => &["type"],
+                "blockquote" => &["alertTitle", "alertFold"],
+                "tableCell" | "tableHeader" => &["colwidth", "align"],
+                _ => &[],
+            };
+            for key in defaults {
+                node["attrs"]
+                    .as_object_mut()
+                    .unwrap()
+                    .entry(*key)
+                    .or_insert(Value::Null);
+            }
+            if let Some(children) = node["content"].as_array_mut() {
+                for child in children {
+                    add_defaults(child);
+                }
+            }
+        }
+        let source = fixture();
+        let mut note = crate::document_model::read_note(&source, false).unwrap();
+        for block in &mut note.root.body {
+            add_defaults(block);
+        }
+        let legacy = legacy_projection(&note).unwrap();
+        {
+            let mut txn = legacy.transact_mut();
+            let mut element = txn.get_xml_fragment("body").unwrap();
+            // Root Section -> SectionBody -> BodyChunk -> first paragraph.
+            for index in [0, 1, 0, 0] {
+                let XmlOut::Element(child) = element.get(&txn, index).unwrap() else {
+                    panic!("missing fixture element");
+                };
+                let fragment: &XmlFragmentRef = child.as_ref();
+                element = fragment.clone();
+            }
+            let count = element.len(&txn);
+            element.remove_range(&mut txn, 0, count);
+            for (value, bold) in [("日本", true), ("語🙂", true), (" plain", false)] {
+                let text = element.push_back(&mut txn, XmlTextPrelim::new(""));
+                let mut marks = Attrs::new();
+                if bold {
+                    marks.insert("bold".into(), any(&json!({})).unwrap());
+                }
+                text.insert_with_attributes(&mut txn, 0, value, marks);
+            }
+        }
+        let legacy = PersistedDocument {
+            schema_version: 6,
+            snapshot: legacy
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default()),
+            ..source
+        };
+        let before = legacy.snapshot.clone();
+        let expected = crate::document_model::read_note(&legacy, true).unwrap();
+        assert_eq!(
+            expected.root.body[0]["content"].as_array().unwrap().len(),
+            3
+        );
+        let migrated = PersistedDocument {
+            schema_version: 7,
+            snapshot: migrate(&legacy, &uuid::Uuid::now_v7().to_string()).unwrap(),
+            ..legacy.clone()
+        };
+        let actual = read(&migrated).unwrap();
+        assert_eq!(
+            actual.root.body[0]["content"],
+            json!([
+                {"type":"text", "text":"日本語🙂", "marks":[{"type":"bold"}]},
+                {"type":"text", "text":" plain"},
+            ])
+        );
+        assert_eq!(
+            normalized(serde_json::to_value(&actual.root).unwrap()),
+            normalized(serde_json::to_value(&expected.root).unwrap())
+        );
+        assert_eq!(legacy.snapshot, before);
+    }
+
+    #[test]
+    fn content_comparison_rejects_changes_to_values_marks_ids_and_structure() {
+        let node = json!({"type":"paragraph", "attrs":{"blockId":"stable"}, "content":[{"type":"text", "text":"日本語🙂", "marks":[{"type":"bold"}]}]});
+        for value in [json!(false), json!(0), json!(""), json!([120])] {
+            let mut changed = node.clone();
+            changed["attrs"]["setting"] = value;
+            assert_ne!(normalized(changed), normalized(node.clone()));
+        }
+        for (path, replacement) in [
+            ("/attrs/blockId", json!("other")),
+            ("/content/0/text", json!("日本語")),
+            ("/content/0/marks", json!([])),
+            ("/type", json!("codeBlock")),
+        ] {
+            let mut changed = node.clone();
+            *changed.pointer_mut(path).unwrap() = replacement;
+            assert_ne!(normalized(changed), normalized(node.clone()));
+        }
+        let mut broken = node.clone();
+        broken["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"type":"hardBreak"}));
+        assert_ne!(normalized(broken), normalized(node.clone()));
+        assert_ne!(
+            normalized(json!({"content":[node.clone(), node]})),
+            normalized(json!({"content":[]}))
+        );
+    }
+
     fn apply(source: &PersistedDocument, updates: &[Vec<u8>]) -> PersistedDocument {
         let doc = decode_document(source).unwrap();
         for update in updates {

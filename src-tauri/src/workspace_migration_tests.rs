@@ -206,7 +206,16 @@ fn duplicate_section_owners_are_rejected_before_migration_writes() {
     let before = contents(directory.path());
     let error = preflight(directory.path()).err().unwrap();
     assert_eq!(error.code, "MIGRATION_PREFLIGHT_FAILED");
-    assert!(error.details.to_string().contains("DUPLICATE_SECTION_ID"));
+    let failure = error.details["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|failure| failure["code"] == "DUPLICATE_SECTION_ID")
+        .unwrap();
+    assert_eq!(failure["document_id"], second_id);
+    assert_eq!(failure["kind"], "note");
+    assert_eq!(failure["message"], "Section identity has multiple owners");
+    assert!(failure["details"]["section_id"].is_string());
     assert_eq!(contents(directory.path()), before);
 }
 

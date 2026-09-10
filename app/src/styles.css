@@ -66,8 +66,19 @@ textarea {
 
 .startup-panel {
   display: grid;
-  place-content: center;
-  padding: 48px;
+  grid-template-columns: minmax(0, 640px);
+  grid-auto-rows: max-content;
+  justify-content: center;
+  align-content: safe center;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: clamp(16px, 5vw, 48px);
+}
+
+.startup-panel > * {
+  min-width: 0;
 }
 
 .startup-panel h1 {
@@ -93,6 +104,36 @@ textarea {
 
 .startup-panel__action:hover {
   background: var(--memoka-color-surface-hover);
+}
+
+.startup-error__documents {
+  padding-left: 24px;
+}
+
+.startup-error__documents p {
+  margin: 6px 0;
+}
+
+.startup-error__documents li + li {
+  margin-top: 16px;
+}
+
+.startup-error__details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.startup-error__raw {
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 4px;
+  background: var(--memoka-color-surface-inset);
+  font-family: var(--memoka-font-monospace);
+  font-size: 13px;
 }
 
 .eyebrow {

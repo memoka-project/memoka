@@ -14,6 +14,7 @@ import { installNativeSaveBarrier } from "./core/native-save-barrier";
 import { installNativeAgentEditing } from "./core/native-agent-edit";
 import { installNativeSynchronization } from "./core/native-sync";
 import { SyncJoinDialog } from "./components/SyncJoinDialog";
+import { StartupErrorDetails } from "./components/StartupErrorDetails";
 import {
   nativeSynchronization,
   synchronizationAvailable,
@@ -1975,7 +1976,7 @@ export function App({
         <section className="startup-panel" role="alert">
           <p className="eyebrow">Memoka</p>
           <h1>ワークスペースを開けませんでした</h1>
-          <pre>{startupError}</pre>
+          <StartupErrorDetails error={startupError} />
           <button
             className="startup-panel__action"
             type="button"

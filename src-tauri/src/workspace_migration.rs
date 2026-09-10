@@ -200,7 +200,13 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
             ))
         };
         if let Err(error) = result {
-            failures.push(json!({"document_id":id, "code":error.code,"details":error.details}));
+            failures.push(json!({
+                "document_id": id,
+                "kind": kind,
+                "code": error.code,
+                "message": error.message,
+                "details": error.details,
+            }));
         }
     }
     if actual_notes != expected_notes {
@@ -209,7 +215,7 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
     if !failures.is_empty() {
         return Err(ReadError::new(
             "MIGRATION_PREFLIGHT_FAILED",
-            "移行前検査に失敗しました。元のWorkspaceを旧版で修正してから再試行してください。",
+            "移行前検査に失敗したため、移行を中止しました。元のWorkspaceは変更していません。詳細の対象と理由を確認してください。",
         )
         .with_details(json!({"documents":failures})));
     }
