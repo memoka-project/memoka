@@ -259,6 +259,10 @@ export function SyncSettingsDialog({
     close();
   };
   const configured = view?.config;
+  const localDevice = view?.devices.find(
+    (device) => device.member.origin.deviceId === configured?.origin.deviceId,
+  );
+  const selfRevoked = !!(configured && localDevice?.member.revoked);
   const invitationAddress = selectedAddress || manualAddress.trim();
   const screenDevice =
     screen?.kind === "peer-address" || screen?.kind === "revoke"
@@ -642,7 +646,28 @@ export function SyncSettingsDialog({
             hidden={tab !== "status"}
             data-modal-scroll
           >
-            {configured ? (
+            {selfRevoked ? (
+              <>
+                <dl className="sync-status-facts">
+                  <div>
+                    <dt>状態</dt>
+                    <dd>登録解除済み</dd>
+                  </div>
+                </dl>
+                <p>
+                  この端末は同期グループから解除されています。接続も配送も行われません。
+                </p>
+                <div className="application-modal-actions">
+                  <button
+                    disabled={busy}
+                    onClick={() => void act({ action: "reset" })}
+                    type="button"
+                  >
+                    同期を未設定に戻す
+                  </button>
+                </div>
+              </>
+            ) : configured ? (
               <>
                 <h3>同期の操作</h3>
                 <div className="application-modal-actions">
@@ -812,7 +837,11 @@ export function SyncSettingsDialog({
             hidden={tab !== "devices"}
             data-modal-scroll
           >
-            {configured ? (
+            {selfRevoked ? (
+              <p>
+                この端末は同期グループから解除されているため、他端末を管理できません。
+              </p>
+            ) : configured ? (
               <>
                 <div className="application-modal-actions">
                   <button

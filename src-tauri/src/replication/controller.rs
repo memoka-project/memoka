@@ -19,13 +19,14 @@ use super::{
     exchange::{self, ExchangeState, PeerProgress},
     identity::{self, SyncCredentials},
     invitation::{self, PendingDevice},
-    journal,
+    clear_group_state, journal,
     owner::{AppOwner, ReplicationOwner},
     protocol::*,
     reconnect_schedule::ReconnectSchedule,
     rpc::RpcBudget,
 };
 use crate::{
+    credentials::Credentials,
     document_model::ReadError,
     persistence::{ProductPersistenceState, ProductStore},
 };
@@ -668,6 +669,7 @@ pub enum SyncAction {
         bind: SocketAddr,
     },
     Reconnect,
+    Reset,
     RetryAttachment {
         sha256: String,
     },
@@ -789,8 +791,9 @@ pub async fn sync_action(
     let reconnect = matches!(action, SyncAction::Reconnect | SyncAction::Addresses { .. });
     let restart = matches!(
         action,
-        SyncAction::Listen { .. } | SyncAction::Pause { paused: true }
+        SyncAction::Listen { .. } | SyncAction::Pause { paused: true } | SyncAction::Reset
     );
+    let reset = matches!(action, SyncAction::Reset);
     let write_app = app.clone();
     let selected_workspace = workspace_id.clone();
     let value = tokio::task::spawn_blocking(move || write_app.state::<ProductPersistenceState>().with_store(&write_app, |store| Ok((|| {
@@ -819,6 +822,11 @@ pub async fn sync_action(
                 let key = identity::load(&SyncCredentials, &config.group_id, &local)?;
                 let self_revoked = device_id == config.origin.device_id;
                 engine.authorize(AuthorityAction::Revoke { device_id }, &key)?;
+                if self_revoked {
+                    let credential = identity::credential_id(&config.group_id, &local)?;
+                    clear_group_state(&engine.store.connection)?;
+                    SyncCredentials.remove(&credential);
+                }
                 Ok(serde_json::json!({"selfRevoked":self_revoked}))
             }
             SyncAction::Addresses { device_id, expected_public_key, addresses } => { engine.update_addresses(&device_id, &expected_public_key, &addresses)?; Ok(serde_json::Value::Null) }
@@ -828,6 +836,14 @@ pub async fn sync_action(
                 Ok(serde_json::Value::Null)
             }
             SyncAction::Reconnect => { journal::required_config(&engine.store.connection)?; Ok(serde_json::Value::Null) },
+            SyncAction::Reset => {
+                let config = journal::required_config(&engine.store.connection)?;
+                let local = journal::member(&engine.store.connection, &config.origin, true)?;
+                let credential = identity::credential_id(&config.group_id, &local)?;
+                clear_group_state(&engine.store.connection)?;
+                SyncCredentials.remove(&credential);
+                Ok(serde_json::Value::Null)
+            }
             SyncAction::RetryAttachment { sha256 } => Ok(serde_json::to_value(engine.retry_attachment(&sha256)?)?),
         }
     })()))).await.map_err(|_| error("SYNC_OWNER", "Device action failed"))???;
@@ -836,7 +852,7 @@ pub async fn sync_action(
             .stop(Some(&selected_workspace))
             .await;
     }
-    if value["selfRevoked"] == true {
+    if value["selfRevoked"] == true || reset {
         return Ok(value);
     } else {
         app.state::<SyncRuntime>()

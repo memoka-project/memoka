@@ -94,6 +94,7 @@ export type SyncAction =
     }
   | { action: "listen"; bind: string }
   | { action: "reconnect" }
+  | { action: "reset" }
   | { action: "retryAttachment"; sha256: string };
 export interface SynchronizationPort {
   status(): Promise<SyncView>;

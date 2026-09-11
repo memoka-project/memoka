@@ -32,7 +32,11 @@ afterEach(() => {
 const factText = (label: string) =>
   screen.getAllByText(label)[0]!.closest("div")?.textContent ?? "";
 
-function view(enabled = true, diagnostics = false): SyncView {
+function view(
+  enabled = true,
+  diagnostics = false,
+  selfRevoked = false,
+): SyncView {
   const member = {
     origin: { deviceId: "local", replicaId: "copy" },
     publicKey: "a".repeat(64),
@@ -69,6 +73,24 @@ function view(enabled = true, diagnostics = false): SyncView {
       lastAppliedAt: null,
     },
     devices: [
+      {
+        member: { ...member, revoked: selfRevoked },
+        addresses: [],
+        connection: {
+          connected: false,
+          exchanging: false,
+          checkpoint: false,
+          attachments: false,
+          lastContactAt: null,
+          frontier: { received: {}, applied: {} },
+          error: null,
+        },
+        pendingReceivedCount: 0,
+        pendingAppliedCount: 0,
+        pendingBytes: 0,
+        checkpointRequired: false,
+        lastAppliedAt: null,
+      },
       {
         member: {
           ...member,
@@ -109,6 +131,7 @@ function view(enabled = true, diagnostics = false): SyncView {
 function fixture({
   enabled = true,
   diagnostics = false,
+  selfRevoked = false,
   candidates = [
     { interfaceName: "Wi-Fi", address: "192.168.1.5:1234" },
     { interfaceName: "VPN", address: "10.8.0.2:1234" },
@@ -116,7 +139,7 @@ function fixture({
   action = vi.fn(async (): Promise<SyncActionResult | null> => null),
   invitation = null as SyncInvitation | null,
 } = {}) {
-  const currentView = view(enabled, diagnostics);
+  const currentView = view(enabled, diagnostics, selfRevoked);
   const port = {
     status: vi.fn(async () => currentView),
     action,
@@ -269,6 +292,29 @@ it("confirms self revocation in a sub-screen with a red action", async () => {
       action: "revoke",
       deviceId: "local",
       expectedPublicKey: "a".repeat(64),
+    }),
+  );
+});
+
+it("shows a revoked state and returns the workspace to unconfigured sync", async () => {
+  const { port } = fixture({ selfRevoked: true });
+  expect(await screen.findByText("登録解除済み")).toBeTruthy();
+  expect(
+    screen.getByText(/この端末は同期グループから解除されています。/),
+  ).toBeTruthy();
+  expect(screen.queryByText("一時停止")).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "他端末" }));
+  expect(
+    screen.getByText(
+      /この端末は同期グループから解除されているため、他端末を管理できません。/,
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "端末を追加" })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "状態" }));
+  fireEvent.click(screen.getByRole("button", { name: "同期を未設定に戻す" }));
+  await waitFor(() =>
+    expect(port.action).toHaveBeenCalledWith("workspace", {
+      action: "reset",
     }),
   );
 });
