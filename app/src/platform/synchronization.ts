@@ -70,6 +70,15 @@ export interface SyncView {
   listening: string | null;
   error: SyncFailure | null;
 }
+export interface SyncAddressCandidate {
+  interfaceName: string;
+  address: string;
+}
+export interface SyncActionResult {
+  connectionInfo?: string;
+  invitationId?: string;
+  expiresAt?: number;
+}
 export type SyncAction =
   | { action: "enable"; name: string; bind: string }
   | { action: "pause"; paused: boolean }
@@ -90,15 +99,15 @@ export interface SynchronizationPort {
   status(): Promise<SyncView>;
   start(workspaceId: string): Promise<void>;
   stop(workspaceId: string): Promise<void>;
-  action(
-    workspaceId: string,
-    action: SyncAction,
-  ): Promise<{ connectionInfo?: string }>;
+  addressCandidates(workspaceId: string): Promise<SyncAddressCandidate[]>;
+  action(workspaceId: string, action: SyncAction): Promise<SyncActionResult>;
 }
 export const nativeSynchronization: SynchronizationPort = {
   status: () => invoke("sync_status"),
   start: (workspaceId) => invoke("sync_start", { workspaceId }),
   stop: (workspaceId) => invoke("sync_stop", { workspaceId }),
+  addressCandidates: (workspaceId) =>
+    invoke("sync_address_candidates", { workspaceId }),
   action: (workspaceId, action) =>
     invoke("sync_action", { workspaceId, action }),
 };

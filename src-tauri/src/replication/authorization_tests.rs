@@ -285,10 +285,13 @@ fn invitation_requires_explicit_matching_approval_and_survives_restarts_and_retr
     let credentials = MemoryCredentials::default();
     let mut inviter = enable_peer(&credentials);
     let now = 1_788_998_400;
-    let info = inviter
+    let created = inviter
         .engine()
         .create_invitation(vec!["127.0.0.1:4242".parse().unwrap()], &credentials, now)
         .unwrap();
+    assert_eq!(created.expires_at, now + 600);
+    assert!(!created.invitation_id.is_empty());
+    let info = created.connection_info;
     let (invitation, signed) = invitation::parse(&info, now).unwrap();
     let candidate =
         identity::create(&credentials, &invitation.group_id, &id(), "Joining device").unwrap();
@@ -405,7 +408,8 @@ fn private_keys_and_invitation_secrets_never_enter_workspace_storage() {
     let info = peer
         .engine()
         .create_invitation(vec!["127.0.0.1:4242".parse().unwrap()], &credentials, now)
-        .unwrap();
+        .unwrap()
+        .connection_info;
     let (invitation, _) = invitation::parse(&info, now).unwrap();
     let settings: Vec<String> = peer
         .store
@@ -458,7 +462,8 @@ fn expired_tampered_and_rejected_invitations_and_changed_address_keys_are_refuse
     let info = peer
         .engine()
         .create_invitation(vec!["127.0.0.1:4242".parse().unwrap()], &credentials, now)
-        .unwrap();
+        .unwrap()
+        .connection_info;
     assert_eq!(
         invitation::parse(&info, now + 600).unwrap_err().code,
         "SYNC_INVITE_EXPIRED"

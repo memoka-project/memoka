@@ -3063,6 +3063,7 @@ dependencies = [
  "libc",
  "log",
  "n0-watcher",
+ "netdev 0.46.2",
  "noq-udp",
  "oauth2",
  "process-wrap",

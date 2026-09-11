@@ -13,7 +13,7 @@ async fn fresh_receive_requires_reviewed_approval_resumes_its_identity_and_opens
     let endpoint = DirectEndpoint::bind(&peer.key, "127.0.0.1:0".parse().unwrap(), &[])
         .await
         .unwrap();
-    let info = peer
+    let created = peer
         .engine()
         .create_invitation(
             vec![endpoint.bound_address()],
@@ -21,6 +21,7 @@ async fn fresh_receive_requires_reviewed_approval_resumes_its_identity_and_opens
             chrono::Utc::now().timestamp(),
         )
         .unwrap();
+    let info = created.connection_info;
     let key = peer.key.clone();
     peer.engine().create_checkpoint(&key, false).unwrap();
     let expected = peer.projection();

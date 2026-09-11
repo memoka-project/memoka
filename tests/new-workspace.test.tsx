@@ -69,23 +69,24 @@ async function openNewWorkspace(
 async function prepareReceive() {
   fireEvent.click(screen.getByRole("button", { name: "別端末から受信" }));
   await screen.findByRole("dialog", { name: "別端末から受信" });
+  fireEvent.click(screen.getByRole("button", { name: "初めて受信" }));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.change(screen.getByLabelText("接続情報"), {
+  fireEvent.change(screen.getByLabelText("招待コード"), {
     target: { value: "invitation" },
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "新しい保存先・再開する保存先を選択" }),
+    screen.getByRole("button", { name: "新しい空の保存先を選択" }),
   );
   await waitFor(() =>
     expect(
       screen
-        .getByRole("button", { name: "受信・再開" })
+        .getByRole("button", { name: "受信を開始" })
         .hasAttribute("disabled"),
     ).toBe(false),
   );
-  fireEvent.click(screen.getByRole("button", { name: "受信・再開" }));
+  fireEvent.click(screen.getByRole("button", { name: "受信を開始" }));
   await screen.findByRole("button", { name: "Workspaceを開く" });
 }
 

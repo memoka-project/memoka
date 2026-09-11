@@ -228,6 +228,9 @@ Core保存失敗を無視する操作は用意しない。切替・更新のバ�
 待機中も旧Editorをmountしたまま保つが、modalがfocusを所有し、背後へのキー入力・pointer操作を遮断する。
 Tab/Shift-Tabは有効なcontrol間を循環し、controlがないstageでもdialogへfocusを保持する。
 更新確認ではEnterまたは確認buttonで進め、取り消しbutton上のEnterは更新を実行しない。Esc/Ctrl-cは取り消し可能なstageだけ受け付ける。
+共通modalのinput・textarea・編集可能領域では、Ctrl-cを閉じる操作より標準の選択範囲copyとして優先する。
+読み取り専用欄も対象とし、選択がなくても閉じない。欄の外のCtrl-c、Esc、Tab循環、IME中のkey処理は既存の規則を維持する。
+招待code欄の隣には常にcopy buttonを置き、成功時は「コピーしました」、失敗時は手動選択とCtrl-cによる方法を案内する。
 Command-line入力とNote内`/`検索入力、通常の通知messageは引き続き下部に表示する。
 
 バックアップ設定と状態表示は`:backup-settings`へ統合し、Application Window中央のfloating modal dialogで表示する。
@@ -237,8 +240,8 @@ localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別
 閉じるbuttonまたはEsc/Ctrl-cで元の操作領域へfocusを戻す。背景clickでは閉じず、設定保存中は閉じる操作を受け付けない。
 設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
 
-`:sync-settings`も同じ中央modalとfocus制御を使い、端末一覧・工程・最終反映・待機件数/容量、
-追加・鍵を確認する接続情報更新・一時停止/再開・登録解除を扱う。詳細から現在Noteの`:recovery`を開ける。
+`:sync-settings`も同じ中央modalとfocus制御を使い、同期状態・登録端末・承認待ち・工程・最終反映・待機件数/容量、
+端末追加・鍵を確認する接続先アドレス更新・一時停止/再開・登録解除を扱う。詳細から現在Noteの`:recovery`を開ける。
 `:new-workspace`は中央modalで「空のWorkspaceを作成」と「別端末から受信」を提供する。
 空Workspaceは既存のWorkspaceを含む非空の保存先を拒否する。受信は開いているWorkspaceと独立した保存先で進める。
 起動時のWorkspace選択からも「別端末から受信」を開ける。承認待ち・文書受信・反映・再試行を表示する。

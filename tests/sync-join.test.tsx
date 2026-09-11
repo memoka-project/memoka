@@ -16,7 +16,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-it("receives into the selected fresh directory and waits for reviewed approval before opening it", async () => {
+it("starts a first receive as a distinct operation and waits for reviewed approval", async () => {
   native.invoke.mockImplementation(async (command: string) =>
     command === "sync_join_start"
       ? {
@@ -37,15 +37,16 @@ it("receives into the selected fresh directory and waits for reviewed approval b
       onClose={onClose}
     />,
   );
+  fireEvent.click(screen.getByText("初めて受信"));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.change(screen.getByLabelText("接続情報"), {
+  fireEvent.change(screen.getByLabelText("招待コード"), {
     target: { value: "private invitation" },
   });
-  fireEvent.click(screen.getByText("新しい保存先・再開する保存先を選択"));
+  fireEvent.click(screen.getByText("新しい空の保存先を選択"));
   await screen.findByText("/fresh");
-  fireEvent.click(screen.getByText("受信・再開"));
+  fireEvent.click(screen.getByText("受信を開始"));
   await screen.findByText("招待側の承認待ち");
   expect(native.invoke).toHaveBeenCalledWith("sync_join_start", {
     path: "/fresh",
@@ -58,6 +59,39 @@ it("receives into the selected fresh directory and waits for reviewed approval b
   fireEvent.click(screen.getByText("中断して閉じる"));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   expect(native.invoke).toHaveBeenCalledWith("sync_join_stop");
+});
+
+it("resumes an interrupted receive with only the saved destination", async () => {
+  native.invoke.mockImplementation(async (command: string) =>
+    command === "sync_join_start"
+      ? {
+          path: "/resumed",
+          phase: "receiving",
+          name: "Saved Laptop",
+          fingerprint: "saved key",
+          error: null,
+        }
+      : null,
+  );
+  render(
+    <SyncJoinDialog
+      dataArea={new MemoryDataAreaPort(false, "/resumed")}
+      onReady={vi.fn(async () => {})}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByText("中断した受信を再開"));
+  expect(screen.queryByLabelText("招待コード")).toBeNull();
+  expect(screen.queryByLabelText("この端末の名前")).toBeNull();
+  fireEvent.click(screen.getByText("再開する保存先を選択"));
+  await screen.findByText("/resumed");
+  fireEvent.click(screen.getByText("受信を再開"));
+  await screen.findByText("文書を受信中");
+  expect(native.invoke).toHaveBeenCalledWith("sync_join_start", {
+    path: "/resumed",
+    connectionInfo: "",
+    name: "",
+  });
 });
 
 it("opens a durably completed receive without requiring the invitation again", async () => {
@@ -82,4 +116,32 @@ it("opens a durably completed receive without requiring the invitation again", a
     "sync_join_start",
     expect.anything(),
   );
+});
+
+it("explains an expired invitation in Japanese and keeps the raw code in details", async () => {
+  native.invoke.mockRejectedValue({
+    code: "SYNC_INVITE_EXPIRED",
+    message: "Invitation expired",
+  });
+  render(
+    <SyncJoinDialog
+      dataArea={new MemoryDataAreaPort(false, "/fresh")}
+      onReady={vi.fn(async () => {})}
+      onClose={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByText("初めて受信"));
+  fireEvent.change(screen.getByLabelText("この端末の名前"), {
+    target: { value: "Laptop" },
+  });
+  fireEvent.change(screen.getByLabelText("招待コード"), {
+    target: { value: "expired invitation" },
+  });
+  fireEvent.click(screen.getByText("新しい空の保存先を選択"));
+  await screen.findByText("/fresh");
+  fireEvent.click(screen.getByText("受信を開始"));
+  await screen.findByText("招待コードの有効期限が切れています。");
+  expect(screen.getByText("Invitation expired")).toBeTruthy();
+  fireEvent.click(screen.getByText("エラーの詳細"));
+  expect(screen.getByText("SYNC_INVITE_EXPIRED")).toBeTruthy();
 });

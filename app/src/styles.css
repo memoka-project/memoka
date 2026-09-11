@@ -3195,3 +3195,48 @@ textarea {
   border-block-start: 1px solid var(--memoka-color-border);
   padding-block: 0.75rem;
 }
+.sync-add-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.sync-add-steps li {
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 999px;
+  color: var(--memoka-color-text-muted);
+}
+.sync-add-steps li[data-current="true"] {
+  border-color: var(--memoka-color-text-strong);
+  color: var(--memoka-color-text-strong);
+  background: var(--memoka-color-surface-hover);
+}
+.sync-settings-dialog fieldset {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 6px;
+}
+.sync-address {
+  display: grid !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.5rem !important;
+  margin: 0 !important;
+}
+.sync-invitation textarea {
+  min-height: 7.5rem;
+  resize: none;
+  font-family: var(--memoka-font-monospace);
+  white-space: pre;
+}
+.sync-join-error {
+  padding: 0.75rem;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 6px;
+}

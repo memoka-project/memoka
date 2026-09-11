@@ -26,6 +26,7 @@ import {
 } from "./platform/synchronization";
 import {
   SyncSettingsDialog,
+  type SyncInvitation,
   type SyncSettingsSession,
 } from "./components/SyncSettingsDialog";
 import {
@@ -345,6 +346,9 @@ export function App({
     null,
   );
   const [syncSettings, setSyncSettings] = useState<SyncSettingsSession | null>(
+    null,
+  );
+  const [syncInvitation, setSyncInvitation] = useState<SyncInvitation | null>(
     null,
   );
   const [syncView, setSyncView] = useState<SyncView | null>(null);
@@ -1380,6 +1384,11 @@ export function App({
     runtimeRef.current = next;
     setRuntime(next);
     setSnapshot(next.snapshot());
+    setSyncInvitation((current) =>
+      current && current.workspaceId === next.workspaceDocument.workspaceId
+        ? current
+        : null,
+    );
     if (previous && previous !== next) previous.destroy();
   }, []);
 
@@ -3500,6 +3509,12 @@ export function App({
           prepare={() => runtime.prepareSynchronization()}
           session={syncSettings}
           onClose={() => setSyncSettings(null)}
+          onReceive={() => {
+            setSyncSettings(null);
+            setSyncJoining(true);
+          }}
+          invitation={syncInvitation}
+          onInvitation={setSyncInvitation}
           onRecovery={() => {
             const target = runtime
               .snapshot()

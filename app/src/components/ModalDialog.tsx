@@ -59,6 +59,14 @@ function revealControl(dialog: HTMLElement, control: HTMLElement): void {
   else if (rect.bottom > bottom) dialog.scrollTop += rect.bottom - bottom;
 }
 
+function isTextEntry(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 export function ModalDialog({
   ariaLabel,
   focusSurface,
@@ -167,6 +175,14 @@ export function ModalDialog({
             const target = available[next] ?? event.currentTarget;
             target.focus({ preventScroll: true });
             revealControl(event.currentTarget, target);
+          } else if (
+            event.ctrlKey &&
+            event.key.toLowerCase() === "c" &&
+            isTextEntry(event.target)
+          ) {
+            // Selection copy inside every text control, including readonly
+            // invitation fields, takes precedence over the modal close key.
+            // Keep the dialog open even when nothing is selected.
           } else if (
             event.key === "Escape" ||
             (event.ctrlKey && event.key.toLowerCase() === "c")

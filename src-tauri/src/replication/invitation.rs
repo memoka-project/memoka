@@ -52,6 +52,14 @@ pub struct JoinClaim {
     pub request: SignedContent,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedInvitation {
+    pub connection_info: String,
+    pub invitation_id: String,
+    pub expires_at: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingDevice {
@@ -171,7 +179,7 @@ impl ReplicationEngine<'_> {
         addresses: Vec<SocketAddr>,
         credentials: &dyn Credentials,
         now: i64,
-    ) -> Result<String, ReadError> {
+    ) -> Result<CreatedInvitation, ReadError> {
         validate_addresses(&addresses)?;
         let config = journal::required_config(&self.store.connection)?;
         let member = journal::member(&self.store.connection, &config.origin, false)?;
@@ -228,7 +236,11 @@ impl ReplicationEngine<'_> {
         tx.execute("INSERT INTO sync_invitations(invitation_id,token_hash,invitation_digest,expires_at,state) VALUES(?1,?2,?3,?4,'open')",
             params![invitation.invitation_id, digest(&nonce), digest(&signed.content), invitation.expires_at])?;
         tx.commit()?;
-        Ok(info)
+        Ok(CreatedInvitation {
+            connection_info: info,
+            invitation_id: invitation.invitation_id,
+            expires_at: invitation.expires_at,
+        })
     }
 
     /// The transport's authenticated public key must be the candidate's key.

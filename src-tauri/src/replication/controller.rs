@@ -32,6 +32,64 @@ use crate::{
 
 const MAX_CONNECTIONS: usize = 8;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncAddressCandidate {
+    pub interface_name: String,
+    pub address: SocketAddr,
+}
+
+fn usable_interface_ip(ip: std::net::IpAddr) -> bool {
+    !ip.is_loopback()
+        && !ip.is_unspecified()
+        && !ip.is_multicast()
+        && !matches!(ip, std::net::IpAddr::V4(address) if address.is_broadcast())
+        && !matches!(ip, std::net::IpAddr::V6(address) if (address.segments()[0] & 0xffc0) == 0xfe80)
+}
+
+/// Interface IPs which the current UDP listener can actually serve. Reading
+/// the interface table performs no discovery traffic of its own.
+pub(super) fn interface_address_candidates(
+    interfaces: &[netdev::Interface],
+    listening: SocketAddr,
+) -> Vec<SyncAddressCandidate> {
+    if listening.port() == 0 {
+        return vec![];
+    }
+    let bound = listening.ip();
+    let mut candidates = Vec::new();
+    for interface in interfaces {
+        let interface_name = interface
+            .friendly_name
+            .clone()
+            .or_else(|| interface.description.clone())
+            .unwrap_or_else(|| interface.name.clone());
+        let addresses = interface
+            .ipv4
+            .iter()
+            .map(|network| std::net::IpAddr::V4(network.addr()))
+            .chain(
+                interface
+                    .ipv6
+                    .iter()
+                    .map(|network| std::net::IpAddr::V6(network.addr())),
+            );
+        for ip in addresses {
+            if !usable_interface_ip(ip)
+                || bound.is_ipv4() != ip.is_ipv4()
+                || (!bound.is_unspecified() && bound != ip)
+            {
+                continue;
+            }
+            candidates.push(SyncAddressCandidate {
+                interface_name: interface_name.clone(),
+                address: SocketAddr::new(ip, listening.port()),
+            });
+        }
+    }
+    candidates
+}
+
 #[derive(Clone)]
 struct Route {
     public_key: String,
@@ -615,6 +673,114 @@ pub enum SyncAction {
     },
 }
 #[tauri::command]
+pub async fn sync_address_candidates(
+    app: tauri::AppHandle,
+    workspace_id: String,
+) -> Result<Vec<SyncAddressCandidate>, ReadError> {
+    let check_app = app.clone();
+    let selected_workspace = workspace_id.clone();
+    let active_workspace = tokio::task::spawn_blocking(move || {
+        check_app
+            .state::<ProductPersistenceState>()
+            .with_store(&check_app, |store| {
+                Ok(store.manifest()?.active_workspace_id)
+            })
+    })
+    .await
+    .map_err(|_| error("SYNC_OWNER", "Cannot read synchronization settings"))??;
+    if active_workspace.as_deref() != Some(selected_workspace.as_str()) {
+        return Err(error(
+            "SYNC_WORKSPACE_CHANGED",
+            "The selected Workspace changed",
+        ));
+    }
+    let listening = {
+        let runtime = app.state::<SyncRuntime>();
+        let running = runtime.running.lock().await;
+        running
+            .as_ref()
+            .filter(|running| {
+                running.config.workspace_id == selected_workspace && !running.task.is_finished()
+            })
+            .map(|running| running.endpoint.bound_address())
+    };
+    let Some(listening) = listening else {
+        return Ok(vec![]);
+    };
+    let interfaces = tokio::task::spawn_blocking(netdev::get_interfaces)
+        .await
+        .map_err(|_| error("SYNC_ADDRESS", "Cannot read network interfaces"))?;
+    Ok(interface_address_candidates(&interfaces, listening))
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    fn interface(
+        name: &str,
+        friendly_name: Option<&str>,
+        ipv4: &[&str],
+        ipv6: &[&str],
+    ) -> netdev::Interface {
+        let mut interface = netdev::Interface::dummy();
+        interface.name = name.to_owned();
+        interface.friendly_name = friendly_name.map(str::to_owned);
+        interface.ipv4 = ipv4.iter().map(|value| value.parse().unwrap()).collect();
+        interface.ipv6 = ipv6.iter().map(|value| value.parse().unwrap()).collect();
+        interface
+    }
+
+    #[test]
+    fn filters_unusable_addresses_and_combines_the_actual_listen_port() {
+        let interfaces = vec![
+            interface("lo", None, &["127.0.0.1/8"], &["::1/128"]),
+            interface(
+                "eth0",
+                Some("Ethernet"),
+                &[
+                    "0.0.0.0/0",
+                    "192.168.1.5/24",
+                    "224.0.0.1/24",
+                    "255.255.255.255/32",
+                ],
+                &[],
+            ),
+            interface("wg0", Some("VPN"), &["10.8.0.2/24"], &[]),
+            interface("en1", Some("Wi-Fi"), &[], &["fe80::1/64", "fd00::2/64"]),
+        ];
+        assert_eq!(
+            interface_address_candidates(&interfaces, "0.0.0.0:4242".parse().unwrap()),
+            vec![
+                SyncAddressCandidate {
+                    interface_name: "Ethernet".into(),
+                    address: "192.168.1.5:4242".parse().unwrap(),
+                },
+                SyncAddressCandidate {
+                    interface_name: "VPN".into(),
+                    address: "10.8.0.2:4242".parse().unwrap(),
+                },
+            ]
+        );
+        assert_eq!(
+            interface_address_candidates(&interfaces, "192.168.1.5:4242".parse().unwrap()),
+            vec![SyncAddressCandidate {
+                interface_name: "Ethernet".into(),
+                address: "192.168.1.5:4242".parse().unwrap(),
+            }]
+        );
+        assert_eq!(
+            interface_address_candidates(&interfaces, "[::]:4242".parse().unwrap()),
+            vec![SyncAddressCandidate {
+                interface_name: "Wi-Fi".into(),
+                address: "[fd00::2]:4242".parse().unwrap(),
+            }]
+        );
+        assert!(interface_address_candidates(&interfaces, "0.0.0.0:0".parse().unwrap()).is_empty());
+    }
+}
+
+#[tauri::command]
 pub async fn sync_action(
     app: tauri::AppHandle,
     workspace_id: String,
@@ -642,7 +808,7 @@ pub async fn sync_action(
                 Ok(serde_json::to_value(config)?)
             }
             SyncAction::Pause { paused } => { engine.set_paused(paused)?; Ok(serde_json::Value::Null) }
-            SyncAction::Invite { addresses } => Ok(serde_json::json!({"connectionInfo":engine.create_invitation(addresses, &SyncCredentials, chrono::Utc::now().timestamp())?})),
+            SyncAction::Invite { addresses } => Ok(serde_json::to_value(engine.create_invitation(addresses, &SyncCredentials, chrono::Utc::now().timestamp())?)?),
             SyncAction::Approve { invitation_id, expected_public_key } => Ok(serde_json::to_value(engine.approve_invitation(&invitation_id, &expected_public_key, &SyncCredentials, chrono::Utc::now().timestamp())?)?),
             SyncAction::Reject { invitation_id } => { engine.reject_invitation(&invitation_id)?; Ok(serde_json::Value::Null) }
             SyncAction::Revoke { device_id, expected_public_key } => {
