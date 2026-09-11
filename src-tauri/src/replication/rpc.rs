@@ -132,10 +132,16 @@ impl<O: ReplicationOwner> RpcSession<O> {
 
     pub async fn serve(self: Arc<Self>, connection: DirectConnection) -> Result<(), ReadError> {
         let mut tasks = tokio::task::JoinSet::new();
+        // accept_request also reads the header after accepting a stream. Keep
+        // that future alive when another handler finishes, otherwise select!
+        // drops the partially read stream and resets a valid peer request.
+        let accepting = connection.accept_request();
+        tokio::pin!(accepting);
         loop {
             tokio::select! {
-                frame = connection.accept_request(), if tasks.len() < 8 => {
+                frame = &mut accepting, if tasks.len() < 8 => {
                     let frame = frame?;
+                    accepting.set(connection.accept_request());
                     let session = self.clone();
                     tasks.spawn(async move { session.respond(frame).await });
                 }

@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
 use super::*;
@@ -13,6 +13,7 @@ use crate::replication::{
 struct MemoryOwner {
     peer: Arc<Mutex<Peer>>,
     received: AtomicUsize,
+    dispatch_delay_ms: AtomicU64,
 }
 #[path = "exchange_tests.rs"]
 mod exchange_tests;
@@ -24,7 +25,11 @@ impl ReplicationOwner for MemoryOwner {
         action: impl FnOnce(&mut ProductStore) -> Result<T, ReadError> + Send + 'static,
     ) -> OwnerFuture<T> {
         let peer = self.peer.clone();
+        let delay = self.dispatch_delay_ms.load(Ordering::Relaxed);
         Box::pin(async move {
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
             tokio::task::spawn_blocking(move || action(&mut peer.lock().unwrap().store))
                 .await
                 .unwrap()
@@ -39,6 +44,7 @@ impl MemoryOwner {
         Arc::new(Self {
             peer: Arc::new(Mutex::new(peer)),
             received: AtomicUsize::new(0),
+            dispatch_delay_ms: AtomicU64::new(0),
         })
     }
     fn config(&self) -> ReplicaConfig {
@@ -138,6 +144,59 @@ impl Network {
         let _ = self.service.await;
         tokio::join!(self.client.close(), self.server.close());
     }
+}
+
+#[tokio::test]
+async fn finishing_a_response_preserves_the_next_partially_received_request() {
+    use crate::replication::direct::DeliveryEnvelope;
+    use std::time::Duration;
+
+    let network = Network::new(true).await;
+    // Hold the first handler while another QUIC stream delivers only part of
+    // its header. Completing the handler must not cancel that accepted stream.
+    network.b.dispatch_delay_ms.store(150, Ordering::Relaxed);
+    let connection = network.connection.clone();
+    let config = network.a.config();
+    let first = tokio::spawn(async move {
+        rpc::request_json(
+            &connection,
+            &config,
+            FrameKind::Frontier,
+            &ReplicaFrontier::default(),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    let config = network.a.config();
+    let content = serde_json::to_vec(&ReplicaFrontier::default()).unwrap();
+    let header = DeliveryEnvelope::new(
+        &config.group_id,
+        &config.workspace_id,
+        FrameKind::Frontier,
+        &content,
+        None,
+    );
+    let encoded = serde_json::to_vec(&header).unwrap();
+    let length = (encoded.len() as u32).to_be_bytes();
+    let (mut send, mut recv) = network.connection.raw_for_test().open_bi().await.unwrap();
+    send.write_all(&length[..2]).await.unwrap();
+    assert_eq!(first.await.unwrap().unwrap().kind, FrameKind::Frontier);
+    network.b.dispatch_delay_ms.store(0, Ordering::Relaxed);
+    // Allow the first response's ACK and JoinSet completion to reach serve().
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    send.write_all(&length[2..]).await.unwrap();
+    send.write_all(&encoded).await.unwrap();
+    send.write_all(&content).await.unwrap();
+    send.finish().unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), recv.read_to_end(128 * 1024))
+        .await
+        .unwrap()
+        .unwrap();
+    let length = u32::from_be_bytes(response[..4].try_into().unwrap()) as usize;
+    let reply: DeliveryEnvelope = serde_json::from_slice(&response[4..4 + length]).unwrap();
+    assert_eq!(reply.kind, FrameKind::Frontier);
+    assert!(!network.service.is_finished());
+    network.close().await;
 }
 
 #[tokio::test]

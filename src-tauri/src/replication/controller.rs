@@ -22,6 +22,7 @@ use super::{
     journal,
     owner::{AppOwner, ReplicationOwner},
     protocol::*,
+    reconnect_schedule::ReconnectSchedule,
     rpc::RpcBudget,
 };
 use crate::{
@@ -320,7 +321,7 @@ pub(super) async fn run<O: ReplicationOwner>(
     let budget = Arc::new(RpcBudget::default());
     let mut connections = tokio::task::JoinSet::new();
     let mut active = BTreeMap::<String, usize>::new();
-    let mut retry = BTreeMap::<String, (tokio::time::Instant, u32)>::new();
+    let mut retry = ReconnectSchedule::default();
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let accepting = endpoint.accept();
@@ -329,6 +330,9 @@ pub(super) async fn run<O: ReplicationOwner>(
         tokio::select! {
             result = &mut signing => return result,
             _ = tick.tick() => {
+                for (key, peer) in state.snapshot() {
+                    if peer.connected { retry.connected(&key); }
+                }
                 let routes = owner.dispatch(|store| routes(store)).await?;
                 let addresses: Vec<_> = routes.iter().flat_map(|route| route.addresses.iter().copied()).collect::<BTreeSet<_>>().into_iter().collect();
                 endpoint.set_addresses(&addresses)?;
@@ -337,7 +341,7 @@ pub(super) async fn run<O: ReplicationOwner>(
                     let key = &route.public_key;
                     state.admit(key);
                     if key == &config.public_key || active.contains_key(key) { continue; }
-                    if retry.get(key).is_some_and(|(at, _)| *at > tokio::time::Instant::now()) { continue; }
+                    if retry.waiting(key, tokio::time::Instant::now()) { continue; }
                     *active.entry(key.clone()).or_default() += 1;
                     let endpoint = endpoint.clone(); let owner = owner.clone(); let config = config.clone(); let budget = budget.clone(); let state = state.clone();
                     connections.spawn(async move {
@@ -379,9 +383,12 @@ pub(super) async fn run<O: ReplicationOwner>(
                     Err(_) => return Err(error("SYNC_PROTOCOL", "Connection task failed")),
                 };
                 if let Some(count) = active.get_mut(&key) { *count -= 1; if *count == 0 { active.remove(&key); } }
-                let attempts = retry.get(&key).map_or(0, |(_, attempts)| *attempts).saturating_add(1).min(6);
-                let delay = if result.as_ref().err().is_some_and(|e| e.code == "SYNC_RECONNECT") { 1 } else { (1_u64 << attempts).min(30) };
-                retry.insert(key, (tokio::time::Instant::now() + Duration::from_secs(delay), attempts));
+                let refresh = result.as_ref().err().is_some_and(|e| e.code == "SYNC_RECONNECT");
+                let delay = retry.ended(key.clone(), tokio::time::Instant::now(), refresh);
+                if !refresh {
+                    log::warn!(target: "memoka::sync", "event=connection-retry peer={} code={} delay_ms={}",
+                        &key[..12], result.as_ref().err().map_or("SYNC_DISCONNECTED", |e| e.code.as_str()), delay.as_millis());
+                }
             }
             _ = state.reconnect.notified() => {
                 connections.abort_all();

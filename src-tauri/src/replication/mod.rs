@@ -18,6 +18,7 @@ mod journal;
 pub mod owner;
 pub mod protocol;
 mod publication;
+mod reconnect_schedule;
 pub mod rpc;
 mod send_schedule;
 mod settings;

@@ -269,6 +269,11 @@ impl Drop for DirectEndpoint {
 #[derive(Clone)]
 pub struct DirectConnection(Connection);
 impl DirectConnection {
+    #[cfg(test)]
+    pub(super) fn raw_for_test(&self) -> &Connection {
+        &self.0
+    }
+
     pub fn public_key(&self) -> String {
         hex(self.0.remote_id().as_bytes())
     }
