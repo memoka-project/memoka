@@ -34,6 +34,10 @@ describe("Memoka Application Command-line", () => {
       kind: "command",
       command: { id: "editor.attach" },
     });
+    expect(parseApplicationCommand("new-workspace")).toMatchObject({
+      kind: "command",
+      command: { id: "workspace.new" },
+    });
     expect(parseApplicationCommand("switch-workspace")).toMatchObject({
       kind: "command",
       command: { id: "workspace.switch" },
@@ -132,7 +136,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: backup-status",
     });
     expect(applicationCommandHelp()).toBe(
-      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

@@ -28,6 +28,7 @@ export type ApplicationCommandId =
   | "editor.paste_html"
   | "editor.attach"
   | "editor.image_width"
+  | "workspace.new"
   | "workspace.switch"
   | "application.update"
   | "application.version"
@@ -220,6 +221,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     aliases: [],
     description: "現在の画像の表示幅を10〜100%で表示・変更する",
     argument: "optional",
+  },
+  {
+    id: "workspace.new",
+    name: "new-workspace",
+    aliases: [],
+    description: "空のWorkspaceを作成するか別端末から受信する",
+    argument: "none",
   },
   {
     id: "workspace.switch",

@@ -8,12 +8,14 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { CoreRuntime, type RuntimeSnapshot } from "./core/runtime";
 import { createDefaultPersistencePort } from "./core/persistence";
 import { installNativeSaveBarrier } from "./core/native-save-barrier";
 import { installNativeAgentEditing } from "./core/native-agent-edit";
 import { installNativeSynchronization } from "./core/native-sync";
 import { SyncJoinDialog } from "./components/SyncJoinDialog";
+import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
 import { StartupErrorDetails } from "./components/StartupErrorDetails";
 import {
   nativeSynchronization,
@@ -312,6 +314,9 @@ export function App({
   const [dataAreaRequired, setDataAreaRequired] = useState(false);
   const [dataAreaBusy, setDataAreaBusy] = useState(false);
   const [syncJoining, setSyncJoining] = useState(false);
+  const [newWorkspace, setNewWorkspace] = useState<{
+    restoreFocus: () => void;
+  } | null>(null);
   const [focusRequests, setFocusRequests] = useState<Record<string, number>>(
     {},
   );
@@ -375,11 +380,15 @@ export function App({
       ? "update"
       : backupDialog
         ? "backup"
-        : syncSettings
-          ? "sync-settings"
-          : noteRecovery
-            ? "note-recovery"
-            : null;
+        : syncJoining
+          ? "sync-join"
+          : newWorkspace
+            ? "new-workspace"
+            : syncSettings
+              ? "sync-settings"
+              : noteRecovery
+                ? "note-recovery"
+                : null;
   const [departure] = useState(
     () => new ApplicationDeparture(setShutdownProgress, nextBrowserPaint),
   );
@@ -1453,58 +1462,77 @@ export function App({
     [],
   );
 
+  const openDataArea = useCallback(
+    async (selected: string): Promise<boolean> => {
+      if (departure.active) return false;
+      const previousStatus = await dataArea.status().catch(() => null);
+      const current = runtimeRef.current;
+      let activated = false;
+      setStartupError(null);
+      const activate = async (): Promise<void> => {
+        try {
+          await dataArea.activate(selected);
+          activated = true;
+          const next = await openSelectedDataArea();
+          replaceRuntime(next);
+          setDataAreaRequired(false);
+        } catch (error) {
+          if (
+            activated &&
+            current &&
+            previousStatus?.selected &&
+            previousStatus.path
+          ) {
+            await dataArea.activate(previousStatus.path);
+            activated = false;
+          }
+          throw error;
+        }
+      };
+      if (current) {
+        // Keep the editors mounted while the modal owns focus: unmounting before
+        // the Core barrier could discard their pending confirmed edits.
+        return departure.start({
+          kind: "switch-workspace",
+          save: () => current.flushDurableState(),
+          backup,
+          controller: backupController.current,
+          complete: activate,
+        });
+      }
+      setDataAreaBusy(true);
+      try {
+        await activate();
+        return true;
+      } catch (error) {
+        setStartupError(nativeErrorMessage(error));
+        setDataAreaRequired(true);
+        return false;
+      } finally {
+        setDataAreaStatusChecked(true);
+        setDataAreaBusy(false);
+      }
+    },
+    [backup, dataArea, departure, openSelectedDataArea, replaceRuntime],
+  );
+
   const chooseAndOpenDataArea = useCallback(async (): Promise<boolean> => {
     if (departure.active) return false;
     const selected = await dataArea.chooseDirectory();
-    if (!selected) return false;
-    const previousStatus = await dataArea.status().catch(() => null);
-    const current = runtimeRef.current;
-    let activated = false;
-    setStartupError(null);
-    const activate = async (): Promise<void> => {
-      try {
-        await dataArea.activate(selected);
-        activated = true;
-        const next = await openSelectedDataArea();
-        replaceRuntime(next);
-        setDataAreaRequired(false);
-      } catch (error) {
-        if (
-          activated &&
-          current &&
-          previousStatus?.selected &&
-          previousStatus.path
-        ) {
-          await dataArea.activate(previousStatus.path);
-          activated = false;
-        }
-        throw error;
+    return selected ? openDataArea(selected) : false;
+  }, [dataArea, departure, openDataArea]);
+
+  const openReceivedDataArea = useCallback(
+    async (path: string): Promise<void> => {
+      if (await openDataArea(path)) {
+        await invoke("sync_join_stop");
+        setStartupError(null);
+        setSyncJoining(false);
+        setNewWorkspace(null);
       }
-    };
-    if (current) {
-      // Keep the editors mounted while the modal owns focus: unmounting before
-      // the Core barrier could discard their pending confirmed edits.
-      return departure.start({
-        kind: "switch-workspace",
-        save: () => current.flushDurableState(),
-        backup,
-        controller: backupController.current,
-        complete: activate,
-      });
-    }
-    setDataAreaBusy(true);
-    try {
-      await activate();
-      return true;
-    } catch (error) {
-      setStartupError(nativeErrorMessage(error));
-      setDataAreaRequired(true);
-      return false;
-    } finally {
-      setDataAreaStatusChecked(true);
-      setDataAreaBusy(false);
-    }
-  }, [backup, dataArea, departure, openSelectedDataArea, replaceRuntime]);
+    },
+    [openDataArea],
+  );
 
   const requestApplicationShutdown = useCallback(async (): Promise<void> => {
     if (departure.active) return;
@@ -1997,14 +2025,7 @@ export function App({
           <SyncJoinDialog
             dataArea={dataArea}
             onClose={() => setSyncJoining(false)}
-            onReady={async (path) => {
-              await dataArea.activate(path);
-              const next = await openSelectedDataArea();
-              replaceRuntime(next);
-              setDataAreaRequired(false);
-              setStartupError(null);
-              setSyncJoining(false);
-            }}
+            onReady={openReceivedDataArea}
           />
         )}
       </main>
@@ -2067,14 +2088,7 @@ export function App({
           <SyncJoinDialog
             dataArea={dataArea}
             onClose={() => setSyncJoining(false)}
-            onReady={async (path) => {
-              await dataArea.activate(path);
-              const next = await openSelectedDataArea();
-              replaceRuntime(next);
-              setDataAreaRequired(false);
-              setStartupError(null);
-              setSyncJoining(false);
-            }}
+            onReady={openReceivedDataArea}
           />
         )}
       </main>
@@ -2778,6 +2792,14 @@ export function App({
         queueMicrotask(restoreFocus);
         return;
       }
+      case "workspace.new":
+        clearEditorFocusRequests();
+        setNewWorkspace({
+          restoreFocus:
+            session?.restoreFocus ??
+            (() => requestEditorFocus(effectiveTargetWindowId)),
+        });
+        return;
       case "workspace.switch":
         void chooseAndOpenDataArea().then((changed) => {
           if (changed) setCommandMessage(":switch-workspace · 切り替えました");
@@ -3435,6 +3457,32 @@ export function App({
               .catch((error) =>
                 setCommandMessage(`backup · ${nativeErrorMessage(error)}`),
               );
+          }}
+        />
+      ) : syncJoining ? (
+        <SyncJoinDialog
+          dataArea={dataArea}
+          onClose={() => setSyncJoining(false)}
+          onReady={openReceivedDataArea}
+        />
+      ) : newWorkspace ? (
+        <NewWorkspaceDialog
+          onCreate={async () => {
+            const selected = await dataArea.chooseDirectory();
+            if (!selected) return;
+            const prepared = await dataArea.prepareNew(selected);
+            if (await openDataArea(prepared)) {
+              setNewWorkspace(null);
+              setCommandMessage(":new-workspace · 作成しました");
+            }
+          }}
+          onReceive={
+            synchronizationAvailable() ? () => setSyncJoining(true) : undefined
+          }
+          onClose={() => {
+            const restoreFocus = newWorkspace.restoreFocus;
+            setNewWorkspace(null);
+            queueMicrotask(restoreFocus);
           }}
         />
       ) : syncSettings ? (

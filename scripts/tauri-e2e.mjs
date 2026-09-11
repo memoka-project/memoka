@@ -3181,11 +3181,54 @@ async function runSynchronizationSettings(sessionId) {
     `return !document.querySelector('.sync-settings-dialog') && document.querySelector('.memoka-editor.ProseMirror-focused') === window.__syncEditorBefore`,
     (value) => value === true,
   );
+  await sendActiveKey(sessionId, ":");
+  const newWorkspaceCommand = await waitForElement(
+    sessionId,
+    'input[aria-label="Memoka Command"]',
+  );
+  await sendKeys(sessionId, newWorkspaceCommand, `new-workspace${ENTER}`);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="新しいWorkspace"]'); return Boolean(dialog?.textContent.includes('空のWorkspaceを作成') && dialog.textContent.includes('別端末から受信') && dialog.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  const receiveButton = await findElement(
+    sessionId,
+    '[role="dialog"][aria-label="新しいWorkspace"] .application-modal-actions button:nth-child(2)',
+  );
+  await clickElement(sessionId, receiveButton);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="別端末から受信"]'); return Boolean(dialog?.querySelector('textarea') && dialog.contains(document.activeElement) && window.__syncEditorBefore.isConnected)`,
+    (value) => value === true,
+  );
+  const join = await invokeTauriCommand(
+    sessionId,
+    "JOIN_NOT_STARTED",
+    "sync_join_status",
+    {},
+  );
+  if (join !== null)
+    throw new Error("Opening receive started initial replication");
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="新しいWorkspace"]'); return Boolean(dialog?.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `return !document.querySelector('[role="dialog"]') && document.activeElement === window.__syncEditorBefore`,
+    (value) => value === true,
+  );
   return {
     result: "TAURI_SYNC_SETTINGS_PASS",
     enabled: status.local.enabled,
     listening: status.listening,
     editorPreserved: true,
+    newWorkspaceReceive: true,
+    newWorkspaceFocusRestored: true,
   };
 }
 

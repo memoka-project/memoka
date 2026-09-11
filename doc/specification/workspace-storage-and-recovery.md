@@ -345,6 +345,7 @@ Windowsの非console childでは自然終了を同じ上限まで待つ。正常
 
 ローカル成功/追加先のみ失敗は別表示し、追加先未完了を自動的に無視して切替・更新へ進まない。
 `:switch-workspace`では旧EditorをCore保存とバックアップの完了までmountしたまま保ち、旧controllerは切替後に再開しない。
+`:new-workspace`で作成・受信した保存先へ移る場合も同じ切替処理を使う。作成用の保存先の準備は現在の選択を変更せず、既存Workspaceへの上書き作成を拒否する。
 新領域のvalidation/lock/load失敗で元Workspaceを捨てない。
 旧`shutdown.wait_for_mirror`設定は既知の廃止keyとして無視し、残っていても他のkeymapをリセットしない。
 

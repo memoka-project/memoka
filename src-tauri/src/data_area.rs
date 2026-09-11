@@ -34,6 +34,14 @@ pub(crate) struct DataAreaStatus {
 }
 
 pub(crate) fn prepare_data_area(path: &Path) -> Result<PathBuf, PersistenceError> {
+    prepare_directory(path, true)
+}
+
+fn prepare_new_data_area(path: &Path) -> Result<PathBuf, PersistenceError> {
+    prepare_directory(path, false)
+}
+
+fn prepare_directory(path: &Path, allow_existing: bool) -> Result<PathBuf, PersistenceError> {
     if path.as_os_str().is_empty() {
         return Err(PersistenceError::InvalidInput(
             "Workspace data area path is empty".to_owned(),
@@ -50,6 +58,11 @@ pub(crate) fn prepare_data_area(path: &Path) -> Result<PathBuf, PersistenceError
     let internal = canonical.join(INTERNAL_DIRECTORY);
     let marker_path = internal.join(DATA_AREA_MARKER);
     if marker_path.exists() {
+        if !allow_existing {
+            return Err(PersistenceError::InvalidInput(
+                "新しいWorkspaceには空のディレクトリを選択してください。既存のWorkspaceを開く場合は:switch-workspaceを使います。".to_owned(),
+            ));
+        }
         validate_marker(&marker_path)?;
         return Ok(canonical);
     }
@@ -176,6 +189,14 @@ pub(crate) fn data_area_status(
 }
 
 #[tauri::command]
+pub(crate) async fn data_area_prepare_new(path: PathBuf) -> Result<PathBuf, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_new_data_area(&path))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn data_area_activate(
     app: AppHandle,
     state: State<'_, ProductPersistenceState>,
@@ -192,7 +213,10 @@ pub(crate) fn data_area_activate(
 
 #[cfg(test)]
 mod tests {
-    use super::{DATA_AREA_MARKER, INTERNAL_DIRECTORY, open_data_area, prepare_data_area};
+    use super::{
+        DATA_AREA_MARKER, INTERNAL_DIRECTORY, open_data_area, prepare_data_area,
+        prepare_new_data_area,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -219,6 +243,38 @@ mod tests {
         assert!(error.to_string().contains("must be an empty directory"));
         assert_eq!(
             fs::read_to_string(temporary.path().join("owned.txt")).unwrap(),
+            "keep"
+        );
+    }
+
+    #[test]
+    fn new_workspace_requires_an_empty_destination_even_for_a_recognized_workspace() {
+        let temporary = tempdir().unwrap();
+        let path = temporary.path().join("new-workspace");
+        let prepared = prepare_new_data_area(&path).unwrap();
+        assert!(
+            !prepared
+                .join(INTERNAL_DIRECTORY)
+                .join("memoka.sqlite3")
+                .exists()
+        );
+        let marker = prepared.join(INTERNAL_DIRECTORY).join(DATA_AREA_MARKER);
+        let before = fs::read(&marker).unwrap();
+        assert!(
+            prepare_new_data_area(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("空のディレクトリ")
+        );
+        assert_eq!(fs::read(marker).unwrap(), before);
+        assert_eq!(prepare_data_area(&path).unwrap(), prepared);
+        let occupied = temporary.path().join("occupied");
+        fs::create_dir(&occupied).unwrap();
+        fs::write(occupied.join("keep.txt"), "keep").unwrap();
+        assert!(prepare_new_data_area(&occupied).is_err());
+        assert!(!occupied.join(INTERNAL_DIRECTORY).exists());
+        assert_eq!(
+            fs::read_to_string(occupied.join("keep.txt")).unwrap(),
             "keep"
         );
     }

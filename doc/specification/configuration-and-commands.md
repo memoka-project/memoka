@@ -199,6 +199,7 @@ Sidebar focus中も利用できる。
 | `:paste-html`                                     | ClipboardをHTMLとして現在位置へpaste                                          |
 | `:attach`                                         | file pickerから現在位置へ添付                                                 |
 | `:image-width [10..100%]`                         | 現在画像の幅を表示/変更                                                       |
+| `:new-workspace`                                  | 空Workspaceの作成または別端末からの受信を選択                                 |
 | `:switch-workspace`                               | 別Workspaceデータ領域へ切替                                                   |
 | `:update`                                         | signed updateを確認/適用                                                      |
 | `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示                                         |

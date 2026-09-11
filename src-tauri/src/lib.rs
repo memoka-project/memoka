@@ -475,6 +475,7 @@ pub fn run() {
         clipboard::clipboard_read_explicit,
         data_area::data_area_status,
         data_area::data_area_activate,
+        data_area::data_area_prepare_new,
         diagnostics::application_diagnostics_info,
         diagnostics::application_diagnostics_record,
         attachment::attachment_batch_begin,

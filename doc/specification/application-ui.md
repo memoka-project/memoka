@@ -239,7 +239,11 @@ localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別
 
 `:sync-settings`も同じ中央modalとfocus制御を使い、端末一覧・工程・最終反映・待機件数/容量、
 追加・鍵を確認する接続情報更新・一時停止/再開・登録解除を扱う。詳細から現在Noteの`:recovery`を開ける。
-起動時のWorkspace選択では「別端末から受信」を提供し、承認待ち・文書受信・反映・再試行を表示する。
+`:new-workspace`は中央modalで「空のWorkspaceを作成」と「別端末から受信」を提供する。
+空Workspaceは既存のWorkspaceを含む非空の保存先を拒否する。受信は開いているWorkspaceと独立した保存先で進める。
+起動時のWorkspace選択からも「別端末から受信」を開ける。承認待ち・文書受信・反映・再試行を表示する。
+作成・受信後の切替は既存の保存barrierとバックアップ待ちを通り、完了まで旧Editorをmountしたまま保つ。
+閉じる・中断・切替の取消で現在のWorkspaceを継続でき、modal間の移動や閉じた後もfocusを復元する。
 同期設定を開くだけでは有効化しない。本文の取得後にWorkspaceを開き、添付の取得は引き続き行う。
 
 GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。過去のeventは`(5m ago)`などを併記する。

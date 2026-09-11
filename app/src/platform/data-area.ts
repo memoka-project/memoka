@@ -9,11 +9,13 @@ export interface DataAreaStatus {
 export interface DataAreaPort {
   status(): Promise<DataAreaStatus>;
   chooseDirectory(): Promise<string | null>;
+  prepareNew(path: string): Promise<string>;
   activate(path: string): Promise<DataAreaStatus>;
 }
 
 export class MemoryDataAreaPort implements DataAreaPort {
   private current: DataAreaStatus;
+  private readonly existing = new Set<string>();
 
   constructor(
     selected = true,
@@ -23,6 +25,7 @@ export class MemoryDataAreaPort implements DataAreaPort {
       selected,
       path: selected ? "memory://workspace" : null,
     };
+    if (this.current.path) this.existing.add(this.current.path);
   }
 
   async status(): Promise<DataAreaStatus> {
@@ -39,7 +42,15 @@ export class MemoryDataAreaPort implements DataAreaPort {
       selected: true,
       path,
     };
+    this.existing.add(path);
     return { ...this.current };
+  }
+
+  async prepareNew(path: string): Promise<string> {
+    if (!path || this.existing.has(path))
+      throw new Error("新しいWorkspaceには空のディレクトリを選択してください");
+    this.existing.add(path);
+    return path;
   }
 
   setNextSelection(path: string | null): void {
@@ -63,6 +74,10 @@ class TauriDataAreaPort implements DataAreaPort {
 
   activate(path: string): Promise<DataAreaStatus> {
     return invoke("data_area_activate", { path });
+  }
+
+  prepareNew(path: string): Promise<string> {
+    return invoke("data_area_prepare_new", { path });
   }
 }
 
