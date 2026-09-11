@@ -3,6 +3,7 @@
 mod apply;
 mod attachments;
 pub mod authorization;
+mod batch_group;
 pub mod bridge;
 mod checkpoint;
 pub mod controller;
@@ -18,6 +19,7 @@ pub mod owner;
 pub mod protocol;
 mod publication;
 pub mod rpc;
+mod send_schedule;
 mod settings;
 mod signing;
 

@@ -1494,7 +1494,10 @@ export function App({
         // the Core barrier could discard their pending confirmed edits.
         return departure.start({
           kind: "switch-workspace",
-          save: () => current.flushDurableState(),
+          save: async () => {
+            await current.prepareInputDeparture();
+            await current.flushDurableState();
+          },
           backup,
           controller: backupController.current,
           complete: activate,
@@ -1542,7 +1545,10 @@ export function App({
     }
     await departure.start({
       kind: "quit",
-      save: () => runtime.flushDurableState(),
+      save: async () => {
+        await runtime.prepareInputDeparture();
+        await runtime.flushDurableState();
+      },
       backup,
       controller: backupController.current,
       complete: () => desktopWindow.forceClose!(),
@@ -2500,7 +2506,10 @@ export function App({
     recordDiagnostic("update-install-started");
     const completed = await departure.start({
       kind: "update",
-      save: () => runtime.flushDurableState(),
+      save: async () => {
+        await runtime.prepareInputDeparture();
+        await runtime.flushDurableState();
+      },
       backup,
       controller: backupController.current,
       complete: async () => {

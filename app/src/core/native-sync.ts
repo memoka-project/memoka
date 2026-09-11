@@ -84,10 +84,9 @@ export function decodeSyncUpdate(value: string): Uint8Array {
 /** Events and retries share one pump. A composition only postpones publication;
  * received bytes are already safe in the native inbox. No network wait is part
  * of this loop or the local shutdown durability barrier. */
-export async function installNativeSynchronization(
-  currentRuntime: () => CoreRuntime | null,
-): Promise<() => void> {
-  if (!isTauri()) return () => undefined;
+export function createSynchronizationPump(
+  apply: () => Promise<"idle" | "applied" | "deferred">,
+): { request(): void; stop(): void } {
   let stopped = false;
   let running = false;
   let requested = false;
@@ -98,21 +97,20 @@ export async function installNativeSynchronization(
     timer = setTimeout(() => {
       timer = null;
       void pump();
-    }, 0);
+    }, 100);
   };
   const pump = async () => {
     if (stopped || running) return;
-    const runtime = currentRuntime();
-    if (!runtime) return;
     running = true;
     requested = false;
     let retry = false;
+    let delay = 250;
     try {
-      const result = await runtime.applyNextSynchronization(
-        nativeSyncPublication,
-        () => currentRuntime() === runtime,
-      );
+      const result = await apply();
       retry = result !== "idle";
+      // Yield to input/paint between bounded publications, without replaying
+      // each historical keystroke at a fixed four updates per second.
+      delay = result === "applied" ? 0 : result === "idle" ? 100 : 250;
     } catch (error) {
       // Durable errors appear in synchronization status. Transient owner/IPC
       // failures retry without dismissing or refocusing the current Editor.
@@ -125,15 +123,36 @@ export async function installNativeSynchronization(
         timer = setTimeout(() => {
           timer = null;
           void pump();
-        }, 250);
+        }, delay);
       }
     }
   };
-  const unlisten = await listen("memoka-sync-pending", request);
-  request();
+  return {
+    request,
+    stop() {
+      stopped = true;
+      if (timer !== null) clearTimeout(timer);
+    },
+  };
+}
+
+export async function installNativeSynchronization(
+  currentRuntime: () => CoreRuntime | null,
+): Promise<() => void> {
+  if (!isTauri()) return () => undefined;
+  const pump = createSynchronizationPump(async () => {
+    const runtime = currentRuntime();
+    return runtime
+      ? runtime.applyNextSynchronization(
+          nativeSyncPublication,
+          () => currentRuntime() === runtime,
+        )
+      : "idle";
+  });
+  const unlisten = await listen("memoka-sync-pending", pump.request);
+  pump.request();
   return () => {
-    stopped = true;
     unlisten();
-    if (timer !== null) clearTimeout(timer);
+    pump.stop();
   };
 }

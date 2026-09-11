@@ -202,6 +202,38 @@ async function fixture() {
 }
 
 describe("durable synchronization publication", () => {
+  it("durably saves only confirmed IME text and discards unfinished input on departure", async () => {
+    const { core, persistence, adapter, noteId } = await fixture();
+    const before = await persistence.loadDocument("note", noteId);
+    const compose = (type: string) =>
+      adapter.editor.view.dom.dispatchEvent(
+        new CompositionEvent(type, { bubbles: true }),
+      );
+    compose("compositionstart");
+    adapter.editor.commands.insertContent("にほん");
+    await core.flushDurableState();
+    expect(await persistence.loadDocument("note", noteId)).toEqual(before);
+    expect(readNotePlainText(core.noteDocument)).toBe("abc");
+    adapter.editor.commands.deleteRange({
+      from: adapter.editor.state.selection.from - 3,
+      to: adapter.editor.state.selection.from,
+    });
+    adapter.editor.commands.insertContent("日本");
+    compose("compositionend");
+    await core.flushDurableState();
+    expect(readNotePlainText(core.noteDocument)).toBe("日本abc");
+    const confirmed = await persistence.loadDocument("note", noteId);
+    expect(confirmed.revision).toBe(before.revision + 1);
+    compose("compositionstart");
+    adapter.editor.commands.insertContent("破棄");
+    await core.prepareInputDeparture();
+    await core.flushDurableState();
+    expect(await persistence.loadDocument("note", noteId)).toEqual(confirmed);
+    expect(adapter.editor.state.doc.textContent).toBe("Shared日本abc");
+    expect(adapter.editor.view.composing).toBe(false);
+    expect(adapter.vimSnapshot.composing).toBe(false);
+  });
+
   it("defers a Workspace-only Trash update during IME and preserves input queued after its SQL commit for restoration", async () => {
     const { core, persistence, adapter, trash, noteId } = await fixture();
     const note = core.noteDocument;

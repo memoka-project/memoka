@@ -61,6 +61,11 @@ export class ReplicatedNoteAdapter {
     head: Cursor | null;
   } | null = null;
   private endComposition: (() => void) | null = null;
+  private compositionBefore: ProseMirrorNode | null = null;
+  private compositionHistory: ((action: () => void) => void) | null = null;
+  private compositionEnding = false;
+  private compositionTimer: ReturnType<typeof setTimeout> | null = null;
+  private compositionGeneration = 0;
   private unsubscribe: (() => void) | null = null;
   private readonly pendingTransactions: Transaction[] = [];
   private readonly childOffsets = new WeakMap<
@@ -98,15 +103,31 @@ export class ReplicatedNoteAdapter {
       props: {
         handleDOMEvents: {
           compositionstart: () => {
-            this.endComposition ??= this.note.beginComposition();
+            this.startComposition();
+            return false;
+          },
+          compositionupdate: () => {
+            this.startComposition();
+            return false;
+          },
+          beforeinput: (_view, event) => {
+            const input = event as InputEvent;
+            if (
+              !this.compositionEnding &&
+              (input.isComposing ||
+                input.inputType === "insertCompositionText" ||
+                input.inputType === "deleteCompositionText")
+            )
+              this.startComposition();
             return false;
           },
           compositionend: () => {
-            // Let ProseMirror flush the committed DOM text before draining inbox changes.
-            setTimeout(() => {
-              const end = this.endComposition;
-              this.endComposition = null;
-              end?.();
+            if (!this.compositionBefore) return false;
+            this.compositionEnding = true;
+            const generation = this.compositionGeneration;
+            this.compositionTimer = setTimeout(() => {
+              if (generation === this.compositionGeneration)
+                this.flushConfirmedComposition();
             }, 0);
             return false;
           },
@@ -133,7 +154,7 @@ export class ReplicatedNoteAdapter {
             const pending = this.pendingTransactions.splice(0);
             // Identity/chunk plugins append repairs to the same PM dispatch.
             // Only its final, validated document may cross the CRDT boundary.
-            if (pending.length)
+            if (pending.length && !this.compositionBefore)
               this.writeChanges(pending[0]!.before, view.state.doc);
           },
           destroy: () => this.destroy(),
@@ -152,15 +173,86 @@ export class ReplicatedNoteAdapter {
 
   destroy(): void {
     if (this.destroyed) return;
+    this.flushConfirmedComposition();
     this.destroyed = true;
+    this.discardComposition();
     this.unsubscribe?.();
     this.note.doc.off("beforeAllTransactions", this.captureSelection);
     this.note.doc.off("afterAllTransactions", this.finishReceiving);
     this.view = null;
-    this.endComposition?.();
-    this.endComposition = null;
     this.inlineBindings.clear();
     this.paths.clear();
+  }
+
+  get compositionPending(): boolean {
+    return this.compositionBefore !== null;
+  }
+
+  private startComposition(): void {
+    this.flushConfirmedComposition();
+    if (this.compositionBefore || !this.view) return;
+    this.compositionGeneration++;
+    this.compositionBefore = this.view.state.doc;
+    this.compositionHistory = this.note.captureCompositionHistory();
+    this.endComposition = this.note.beginComposition();
+  }
+
+  /** Only an observed compositionend can publish provisional text. The DOM
+   * observer can still have the final input queued when a save/teardown runs. */
+  flushConfirmedComposition(): void {
+    const view = this.view;
+    if (!this.compositionEnding || !this.compositionBefore || !view) return;
+    this.compositionEnding = false;
+    this.flushCompositionDom();
+    const before = this.compositionBefore;
+    const history = this.compositionHistory!;
+    const end = this.clearComposition();
+    try {
+      history(() => this.writeChanges(before, view.state.doc));
+    } finally {
+      end?.();
+    }
+  }
+
+  /** Departure may discard a composition that the OS did not end. */
+  discardComposition(): void {
+    this.flushConfirmedComposition();
+    if (!this.compositionBefore) return;
+    if (!this.destroyed && this.view && !this.view.isDestroyed) {
+      // Cancel the Editor's composition bookkeeping as well as our buffer.
+      // Keep the CRDT barrier while its DOM observer consumes pending preedit.
+      this.view.dom.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true, data: "" }),
+      );
+      this.flushCompositionDom();
+    }
+    const end = this.clearComposition();
+    try {
+      if (!this.destroyed && this.view && !this.view.isDestroyed)
+        this.receiveChanges(new Set(), true);
+    } finally {
+      end?.();
+    }
+  }
+
+  private flushCompositionDom(): void {
+    // ProseMirror's observer is internal; isolate it at this boundary. Flushing
+    // runs the usual schema/identity plugins before we inspect the final state.
+    (
+      this.view as unknown as { domObserver: { flush(): void } } | null
+    )?.domObserver.flush();
+  }
+
+  private clearComposition(): (() => void) | null {
+    if (this.compositionTimer !== null) clearTimeout(this.compositionTimer);
+    this.compositionTimer = null;
+    this.compositionGeneration++;
+    this.compositionEnding = false;
+    this.compositionBefore = null;
+    this.compositionHistory = null;
+    const end = this.endComposition;
+    this.endComposition = null;
+    return end;
   }
 
   renderDocument(): ProseMirrorNode {
@@ -173,6 +265,7 @@ export class ReplicatedNoteAdapter {
   setSectionId(id: string): boolean {
     assertUuidV7(id, "focusedSectionId");
     if (this.sectionId === id) return false;
+    this.discardComposition();
     this.sectionId = id;
     if (this.view) this.receiveChanges(new Set(), true);
     return true;
@@ -307,7 +400,7 @@ export class ReplicatedNoteAdapter {
   }
 
   cursor(position: number): Cursor | null {
-    if (!this.view) return null;
+    if (!this.view || this.compositionBefore) return null;
     const resolved = this.view.state.doc.resolve(position);
     const node = resolved.parent;
     const id = identity(node);
@@ -358,7 +451,14 @@ export class ReplicatedNoteAdapter {
     structural: boolean,
   ): void => {
     const view = this.view;
-    if (!view || this.writing || this.rendering || this.destroyed) return;
+    if (
+      !view ||
+      this.writing ||
+      this.rendering ||
+      this.destroyed ||
+      this.compositionBefore
+    )
+      return;
     this.rendering = true;
     try {
       this.refresh(view, ids, structural);

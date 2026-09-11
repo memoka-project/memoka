@@ -590,6 +590,30 @@ export class TiptapEditorAdapter {
     return this.currentEditor;
   }
 
+  get compositionPending(): boolean {
+    return (
+      replicatedNotePluginKey.getState(this.currentEditor.state)?.adapter
+        .compositionPending ?? false
+    );
+  }
+
+  flushConfirmedComposition(): void {
+    if (!this.currentEditor.isDestroyed)
+      replicatedNotePluginKey
+        .getState(this.currentEditor.state)
+        ?.adapter.flushConfirmedComposition();
+  }
+
+  async prepareInputDeparture(): Promise<void> {
+    if (this.currentEditor.isDestroyed || !this.compositionPending) return;
+    this.currentEditor.view.dom.blur();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (!this.currentEditor.isDestroyed)
+      replicatedNotePluginKey
+        .getState(this.currentEditor.state)
+        ?.adapter.discardComposition();
+  }
+
   syncFocusedSection(sectionId: string): boolean {
     const binding = replicatedNotePluginKey.getState(
       this.currentEditor.state,

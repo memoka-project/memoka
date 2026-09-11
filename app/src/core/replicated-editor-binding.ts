@@ -26,6 +26,9 @@ export const replicatedNotePluginKey = new PluginKey<{
   readonly adapter: {
     readonly note: ReplicatedNote;
     readonly sectionId: string;
+    readonly compositionPending: boolean;
+    flushConfirmedComposition(): void;
+    discardComposition(): void;
     setSectionId(id: string): boolean;
     cursor(position: number): ReplicatedCursor | null;
     resolveCursor(cursor: ReplicatedCursor | null, doc: Node): number | null;

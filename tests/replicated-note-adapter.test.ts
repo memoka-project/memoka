@@ -73,6 +73,191 @@ function content(note: ReplicatedNote, id: string): string {
 }
 
 describe("replicated per-entity Editor adapter", () => {
+  it("flushes final native DOM input after compositionend without recording the pending preedit", async () => {
+    const note = fresh(),
+      id = paragraph(note);
+    const { view, adapter } = editor(note);
+    const before = note.snapshot();
+    const updates: Uint8Array[] = [];
+    note.doc.on("update", (update: Uint8Array) => updates.push(update));
+    view.dom.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    const paragraphDom = view.nodeDOM(position(view, id) - 1)! as HTMLElement;
+    paragraphDom.textContent = "abcにほん";
+    paragraphDom.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        isComposing: true,
+        inputType: "insertCompositionText",
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(note.snapshot()).toEqual(before);
+    view.dom.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true, data: "日本" }),
+    );
+    paragraphDom.textContent = "abc日本";
+    paragraphDom.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        inputType: "insertFromComposition",
+      }),
+    );
+    adapter.flushConfirmedComposition();
+    expect(content(note, id)).toBe("abc日本");
+    expect(updates).toHaveLength(1);
+  });
+
+  it("holds preedit for titles, ordinary paragraphs, list items and table cells", () => {
+    const block = (type: string, content: unknown[] = []) => ({
+      type,
+      attrs: { blockId: createUuidV7() },
+      content,
+    });
+    const text = () => block("paragraph", [{ type: "text", text: "abc" }]);
+    const body = text(),
+      list = text(),
+      cell = text();
+    const note = replicateSectionSnapshot(
+      {
+        sectionId: createUuidV7(),
+        title: "Title",
+        tags: [],
+        children: [],
+        body: [
+          body,
+          block("bulletList", [block("listItem", [list])]),
+          block("table", [block("tableRow", [block("tableCell", [cell])])]),
+        ],
+      },
+      createUuidV7(),
+    );
+    notes.push(note);
+    const { view, adapter } = editor(note);
+    for (const id of [
+      note.noteId,
+      body.attrs.blockId,
+      list.attrs.blockId,
+      cell.attrs.blockId,
+    ]) {
+      const before = note.snapshot();
+      view.dom.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true }),
+      );
+      view.dispatch(view.state.tr.insertText("仮", position(view, id)));
+      expect(note.snapshot()).toEqual(before);
+      view.dispatch(
+        view.state.tr.insertText(
+          "確定",
+          position(view, id),
+          position(view, id) + 1,
+        ),
+      );
+      view.dom.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true }),
+      );
+      adapter.flushConfirmedComposition();
+      expect(content(note, id)).toMatch(/^確定/);
+    }
+  });
+
+  it("keeps every preedit out of Yjs and other views, then publishes just the confirmed difference", async () => {
+    const note = fresh(),
+      id = paragraph(note);
+    note.history.clear();
+    const a = editor(note),
+      b = editor(note);
+    const snapshot = note.snapshot();
+    const updates: Uint8Array[] = [];
+    note.doc.on("update", (update: Uint8Array) => updates.push(update));
+    a.view.dom.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    let length = 0;
+    for (const text of ["に", "にほん", "日本"]) {
+      const start = position(a.view, id) + 3;
+      a.view.dispatch(a.view.state.tr.insertText(text, start, start + length));
+      length = text.length;
+      expect(note.snapshot()).toEqual(snapshot);
+      expect(b.view.state.doc.textContent).toBe("Titleabc");
+      expect(updates).toHaveLength(0);
+    }
+    a.view.dom.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true, data: "日本" }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(updates).toHaveLength(1);
+    expect(content(note, id)).toBe("abc日本");
+    expect(a.view.state.doc.eq(b.view.state.doc)).toBe(true);
+    const peer = ReplicatedNote.load(note.noteId, createUuidV7(), snapshot);
+    notes.push(peer);
+    peer.applyUpdate(updates[0]!);
+    expect(content(peer, id)).toBe("abc日本");
+    note.undo();
+    expect(content(note, id)).toBe("abc");
+    note.redo();
+    expect(content(note, id)).toBe("abc日本");
+  });
+
+  it("records no change for cancelled reconversion and discards unresolved preedit on departure", async () => {
+    const note = fresh(),
+      id = paragraph(note);
+    const { view, adapter } = editor(note);
+    const before = note.snapshot();
+    const compose = (type: string) =>
+      view.dom.dispatchEvent(new CompositionEvent(type, { bubbles: true }));
+    compose("compositionstart");
+    view.dispatch(
+      view.state.tr.insertText(
+        "仮",
+        position(view, id),
+        position(view, id) + 3,
+      ),
+    );
+    view.dispatch(
+      view.state.tr.insertText(
+        "abc",
+        position(view, id),
+        position(view, id) + 1,
+      ),
+    );
+    compose("compositionend");
+    adapter.flushConfirmedComposition();
+    expect(note.snapshot()).toEqual(before);
+    compose("compositionstart");
+    view.dispatch(view.state.tr.insertText("未確定", position(view, id)));
+    adapter.discardComposition();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(note.snapshot()).toEqual(before);
+    expect(view.state.doc.textContent).toBe("Titleabc");
+    expect(view.composing).toBe(false);
+    expect(adapter.compositionPending).toBe(false);
+  });
+
+  it("flushes a just-ended composition before a new session and ignores its old timer", async () => {
+    const note = fresh(),
+      id = paragraph(note);
+    const { view, adapter } = editor(note);
+    const compose = (type: string) =>
+      view.dom.dispatchEvent(new CompositionEvent(type, { bubbles: true }));
+    compose("compositionstart");
+    view.dispatch(view.state.tr.insertText("確定", position(view, id)));
+    compose("compositionend");
+    compose("compositionstart");
+    view.dispatch(view.state.tr.insertText("仮", position(view, id)));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(content(note, id)).toBe("確定abc");
+    expect(adapter.compositionPending).toBe(true);
+    adapter.discardComposition();
+    expect(content(note, id)).toBe("確定abc");
+    compose("compositionstart");
+    view.dispatch(view.state.tr.insertText("保存", position(view, id)));
+    compose("compositionend");
+    adapter.destroy();
+    expect(content(note, id)).toBe("保存確定abc");
+  });
+
   it("does not rewrite shared content or placement when BodyChunks are repartitioned", () => {
     const note = fresh();
     paragraph(note);

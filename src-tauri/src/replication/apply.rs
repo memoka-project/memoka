@@ -15,7 +15,6 @@ pub struct PreparedApplication {
     pub(super) batch: ChangeBatch,
     pub(super) content_hash: String,
     pub(super) documents: Vec<DocumentCommitInput>,
-    pub(super) affected_note_ids: Vec<String>,
     pub(super) local_help_note_ids: Vec<String>,
 }
 
@@ -34,10 +33,6 @@ impl ReplicationEngine<'_> {
     /// live-document or SQLite document change and may run off the GUI thread.
     pub fn prepare_next(&mut self) -> Result<Option<PreparedApplication>, ReadError> {
         self.prepare_next_inner(true)
-    }
-
-    pub(super) fn prepare_next_readonly(&self) -> Result<Option<PreparedApplication>, ReadError> {
-        self.prepare_next_inner(false)
     }
 
     fn prepare_next_inner(
@@ -75,14 +70,13 @@ impl ReplicationEngine<'_> {
                 // A later revocation cannot undo a previously accepted edit.
                 let member = member(&self.store.connection, &batch.origin, true)?;
                 signed.verify("batch", &member.public_key, MAX_BATCH_BYTES)?;
-                let (documents, affected_note_ids, local_help_note_ids) =
+                let (documents, _, local_help_note_ids) =
                     prepare_documents(&self.store.connection, &batch.documents)?;
                 validate_attachment_identity(&self.store.connection, &batch.attachments)?;
                 Ok(PreparedApplication {
                     batch,
                     content_hash: digest(&signed.content),
                     documents,
-                    affected_note_ids,
                     local_help_note_ids,
                 })
             };
@@ -245,6 +239,20 @@ pub(super) fn prepare_documents(
     connection: &Connection,
     updates: &[DocumentUpdate],
 ) -> Result<(Vec<DocumentCommitInput>, Vec<String>, Vec<String>), ReadError> {
+    prepare_documents_overlaid(
+        connection,
+        updates,
+        &mut Default::default(),
+        &Default::default(),
+    )
+}
+
+pub(super) fn prepare_documents_overlaid(
+    connection: &Connection,
+    updates: &[DocumentUpdate],
+    overlay: &mut std::collections::BTreeMap<(String, String), PersistedDocument>,
+    local_help: &std::collections::BTreeSet<String>,
+) -> Result<(Vec<DocumentCommitInput>, Vec<String>, Vec<String>), ReadError> {
     let mut result = Vec::with_capacity(updates.len());
     let mut affected = std::collections::BTreeSet::new();
     let mut help = std::collections::BTreeSet::new();
@@ -259,18 +267,22 @@ pub(super) fn prepare_documents(
             [&update.document_id],
             |r| r.get(0),
         )?;
-        if local {
+        if local || local_help.contains(&update.document_id) {
             return Err(error(
                 "SYNC_LOCAL_DOCUMENT",
                 "Managed Help content is local to each device",
             ));
         }
-        let existing: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM documents WHERE kind=?1 AND document_id=?2)",
-            params![update.kind, update.document_id],
-            |r| r.get(0),
-        )?;
-        let mut document = if existing {
+        let key = (update.kind.clone(), update.document_id.clone());
+        let existing: bool = overlay.contains_key(&key)
+            || connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE kind=?1 AND document_id=?2)",
+                params![update.kind, update.document_id],
+                |r| r.get(0),
+            )?;
+        let mut document = if let Some(document) = overlay.remove(&key) {
+            document
+        } else if existing {
             crate::workspace_migration::load_document(
                 connection,
                 &update.kind,
@@ -341,7 +353,7 @@ pub(super) fn prepare_documents(
                         && !incoming_notes.contains(id.as_str())
                     {
                         let present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM documents WHERE kind='note' AND document_id=?1)", [id], |r| r.get(0))?;
-                        if !present {
+                        if !present && !overlay.contains_key(&("note".into(), id.clone())) {
                             return Err(error(
                                 "SYNC_DEPENDENCY",
                                 "A new Note placement requires its document in the same batch",
@@ -368,6 +380,7 @@ pub(super) fn prepare_documents(
             snapshot: (!existing).then(|| update.update.clone()),
             update: existing.then(|| update.update.clone()),
         });
+        overlay.insert(key, document);
     }
     if updates
         .iter()

@@ -211,6 +211,7 @@ export class ReplicatedNote {
   private readonly redoFrames: UndoFrame[] = [];
   private readonly undoGroups: UndoGroup[] = [];
   private readonly redoGroups: UndoGroup[] = [];
+  private historyBoundary = 0;
 
   constructor(
     readonly noteId: string,
@@ -245,8 +246,9 @@ export class ReplicatedNote {
       redoStack: this.redoGroups,
       captureTimeout: 500,
       lastChange: 0,
-      stopCapturing() {
-        this.lastChange = 0;
+      stopCapturing: () => {
+        this.historyBoundary++;
+        this.history.lastChange = 0;
       },
       clear: () => this.clearUndo(),
       destroy: () => this.clearUndo(),
@@ -434,6 +436,37 @@ export class ReplicatedNote {
       if (local) this.undoManager.stopCapturing();
       this.creationUndoIds = null;
     }
+  }
+
+  /** Keep a buffered Editor change in its original history unit even when Esc
+   * closes that unit before the final composition DOM input is flushed. */
+  captureCompositionHistory(): (action: () => void) => void {
+    const group = this.undoGroups.at(-1);
+    const frames = this.undoFrames.length;
+    const boundary = this.historyBoundary;
+    const merge =
+      group !== undefined &&
+      Date.now() - this.history.lastChange < this.history.captureTimeout;
+    return (action) => {
+      // An intervening edit/undo from another view takes precedence. Never
+      // insert a late frame into the middle of the chronological undo stack.
+      if (
+        group !== this.undoGroups.at(-1) ||
+        frames !== this.undoFrames.length
+      ) {
+        action();
+        return;
+      }
+      const timeout = this.history.captureTimeout;
+      const closed = boundary !== this.historyBoundary;
+      this.history.captureTimeout = merge ? Number.POSITIVE_INFINITY : 0;
+      try {
+        action();
+      } finally {
+        this.history.captureTimeout = timeout;
+        if (closed) this.history.stopCapturing();
+      }
+    };
   }
 
   /** Session-local undo stores inverse intent, never deletes stable shared entities. */

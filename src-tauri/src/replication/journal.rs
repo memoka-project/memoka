@@ -640,6 +640,15 @@ impl<'a> ReplicationEngine<'a> {
         received: &Frontier,
         byte_budget: usize,
     ) -> Result<Vec<SignedContent>, ReadError> {
+        self.outgoing_released(received, byte_budget, MAX_COUNTER)
+    }
+
+    pub(super) fn outgoing_released(
+        &self,
+        received: &Frontier,
+        byte_budget: usize,
+        local_sequence: i64,
+    ) -> Result<Vec<SignedContent>, ReadError> {
         validate_frontier(received)?;
         if byte_budget == 0 || byte_budget > MAX_BATCH_BYTES {
             return Err(error("SYNC_LIMIT", "Invalid outgoing byte budget"));
@@ -648,8 +657,8 @@ impl<'a> ReplicationEngine<'a> {
         if config.paused {
             return Ok(vec![]);
         }
-        let rows = self.store.connection.prepare("SELECT b.replica_id,b.sequence,length(b.content) FROM sync_members m LEFT JOIN json_each(?1) peer ON peer.key=m.replica_id JOIN sync_batches b ON b.replica_id=m.replica_id AND b.sequence>COALESCE(CAST(peer.value AS INTEGER),0) WHERE m.revoked=0 AND b.signature IS NOT NULL AND b.error IS NULL ORDER BY b.sequence,b.replica_id LIMIT 64")?
-            .query_map([serde_json::to_string(received)?], |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?,read_size(r,2)? as usize)))?.collect::<Result<Vec<_>,_>>()?;
+        let rows = self.store.connection.prepare("SELECT b.replica_id,b.sequence,length(b.content) FROM sync_members m LEFT JOIN json_each(?1) peer ON peer.key=m.replica_id JOIN sync_batches b ON b.replica_id=m.replica_id AND b.sequence>COALESCE(CAST(peer.value AS INTEGER),0) WHERE m.revoked=0 AND b.signature IS NOT NULL AND b.error IS NULL AND (b.replica_id<>?2 OR b.sequence<=?3) ORDER BY b.sequence,b.replica_id LIMIT 64")?
+            .query_map(params![serde_json::to_string(received)?,config.origin.replica_id,local_sequence], |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?,read_size(r,2)? as usize)))?.collect::<Result<Vec<_>,_>>()?;
         let mut result = Vec::new();
         let mut used = 0;
         for (replica, sequence, size) in rows {

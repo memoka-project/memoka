@@ -458,6 +458,41 @@ describe("normalized Note in the product Editor and Core", () => {
     await core.flushDurableState();
   });
 
+  it("keeps IME confirmation followed immediately by Esc in the same Vim change", async () => {
+    const { core } = await runtime(note());
+    const attached = core.editorForTesting("window-1", element(), {
+      directBodyOnly: false,
+    });
+    cleanup.push(() => attached.adapter.destroy());
+    const { editor } = attached;
+    editor.commands.setTextSelection(position(editor));
+    press(editor, "Escape");
+    press(editor, "c");
+    press(editor, "w");
+    editor.commands.insertContent("X");
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionstart", { bubbles: true }),
+    );
+    editor.commands.insertContent("日本語");
+    editor.view.dom.dispatchEvent(
+      new CompositionEvent("compositionend", { bubbles: true }),
+    );
+    press(editor, "Escape");
+    await vi.waitFor(() =>
+      expect(readNotePlainText(core.noteDocument)).toBe("X日本語"),
+    );
+    press(editor, "i");
+    editor.commands.insertContent("Z");
+    press(editor, "Escape");
+    expect(readNotePlainText(core.noteDocument)).toContain("Z");
+    press(editor, "u");
+    expect(readNotePlainText(core.noteDocument)).toBe("X日本語");
+    press(editor, "u");
+    expect(readNotePlainText(core.noteDocument)).toBe("abc");
+    press(editor, "r", { ctrlKey: true });
+    expect(readNotePlainText(core.noteDocument)).toBe("X日本語");
+  });
+
   it("defers incoming changes until composition is committed in the normal Editor", async () => {
     const source = note(),
       peer = fork(source),

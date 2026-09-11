@@ -237,13 +237,19 @@ async fn sign_and_checkpoint<O: ReplicationOwner>(
     let mut checkpoint_retry_at = tokio::time::Instant::now();
     loop {
         let signer = key.clone();
-        let pending = owner
+        let (sequence, pending) = owner
             .dispatch(move |store| {
                 let config = journal::required_config(&store.connection)?;
                 let pending: bool = store.connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_batches WHERE replica_id=?1 AND local=1 AND signature IS NULL)", [&config.origin.replica_id], |r| r.get(0))?;
-                Ok(pending.then(|| (store.root.clone(), config)))
+                let sequence = journal::frontiers(&store.connection)?.applied.get(&config.origin.replica_id).copied().unwrap_or(0);
+                Ok((sequence, pending.then(|| (store.root.clone(), config))))
             })
             .await?;
+        state
+            .send_schedule
+            .lock()
+            .map_err(|_| error("SYNC_OWNER", "Delivery schedule is unavailable"))?
+            .observe(tokio::time::Instant::now(), sequence);
         if let Some((root, config)) = pending {
             let signature = tokio::task::spawn_blocking(move || {
                 super::signing::PreparedSignature::prepare(&root, &config, &signer)
@@ -263,6 +269,11 @@ async fn sign_and_checkpoint<O: ReplicationOwner>(
         if let Some((root, config)) =
             checkpoint.filter(|_| tokio::time::Instant::now() >= checkpoint_retry_at)
         {
+            state
+                .send_schedule
+                .lock()
+                .map_err(|_| error("SYNC_OWNER", "Delivery schedule is unavailable"))?
+                .release_all();
             let signer = key.clone();
             let result: Result<(), ReadError> = async {
                 let prepared = tokio::task::spawn_blocking(move || {

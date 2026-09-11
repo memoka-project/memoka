@@ -79,6 +79,7 @@ impl Default for RpcBudget {
 }
 
 pub struct RpcSession<O: ReplicationOwner> {
+    send_schedule: Option<Arc<Mutex<super::send_schedule::SendSchedule>>>,
     owner: Arc<O>,
     config: ReplicaConfig,
     public_key: String,
@@ -95,6 +96,7 @@ impl<O: ReplicationOwner> RpcSession<O> {
         budget: Arc<RpcBudget>,
     ) -> Self {
         Self {
+            send_schedule: None,
             owner,
             config,
             public_key,
@@ -103,6 +105,14 @@ impl<O: ReplicationOwner> RpcSession<O> {
             advertised_authority: Arc::new(AtomicI64::new(0)),
             budget,
         }
+    }
+
+    pub(super) fn with_send_schedule(
+        mut self,
+        schedule: Arc<Mutex<super::send_schedule::SendSchedule>>,
+    ) -> Self {
+        self.send_schedule = Some(schedule);
+        self
     }
 
     pub async fn authenticated_peer(&self) -> Result<Origin, ReadError> {
@@ -289,6 +299,7 @@ impl<O: ReplicationOwner> RpcSession<O> {
             self.owner.received();
             return RpcReply::json(FrameKind::Frontier, &frontier);
         }
+        let send_schedule = self.send_schedule.clone();
         let reply = self
             .owner
             .dispatch(move |store| {
@@ -313,9 +324,26 @@ impl<O: ReplicationOwner> RpcSession<O> {
                     FrameKind::Frontier | FrameKind::ChangesRequest => {
                         let frontier: ReplicaFrontier = decode(&content, kind.limit())?;
                         observe_frontier(&mut engine, &peer, &frontier)?;
+                        let local = journal::frontiers(&engine.store.connection)?
+                            .applied
+                            .get(&config.origin.replica_id)
+                            .copied()
+                            .unwrap_or(0);
+                        let released = if let Some(schedule) = &send_schedule {
+                            schedule
+                                .lock()
+                                .map_err(|_| {
+                                    error("SYNC_OWNER", "Delivery schedule is unavailable")
+                                })?
+                                .observe(tokio::time::Instant::now(), local)
+                        } else {
+                            MAX_COUNTER
+                        };
                         if kind == FrameKind::ChangesRequest
-                            && let Some(signed) =
-                                engine.outgoing(&frontier.received, 1)?.into_iter().next()
+                            && let Some(signed) = engine
+                                .outgoing_released(&frontier.received, 1, released)?
+                                .into_iter()
+                                .next()
                         {
                             return Ok(RpcReply::signed(FrameKind::Batch, signed));
                         }
@@ -330,7 +358,17 @@ impl<O: ReplicationOwner> RpcSession<O> {
                             engine.checkpoint_for(&request.received)?
                         };
                         match checkpoint {
-                            Some(signed) => Ok(RpcReply::signed(FrameKind::Checkpoint, signed)),
+                            Some(signed) => {
+                                if let Some(schedule) = &send_schedule {
+                                    schedule
+                                        .lock()
+                                        .map_err(|_| {
+                                            error("SYNC_OWNER", "Delivery schedule is unavailable")
+                                        })?
+                                        .release_all();
+                                }
+                                Ok(RpcReply::signed(FrameKind::Checkpoint, signed))
+                            }
                             None => RpcReply::json(FrameKind::Frontier, &engine.status()?.frontier),
                         }
                     }

@@ -34,6 +34,7 @@ pub struct PeerProgress {
 }
 
 pub struct ExchangeState {
+    pub(super) send_schedule: Arc<Mutex<super::send_schedule::SendSchedule>>,
     pub(crate) background_error: Mutex<Option<ReadError>>,
     peers: Mutex<BTreeMap<String, PeerProgress>>,
     live: Mutex<BTreeMap<String, usize>>,
@@ -46,6 +47,7 @@ pub struct ExchangeState {
 impl Default for ExchangeState {
     fn default() -> Self {
         Self {
+            send_schedule: Arc::new(Mutex::new(Default::default())),
             background_error: Mutex::new(None),
             peers: Mutex::new(BTreeMap::new()),
             live: Mutex::new(BTreeMap::new()),
@@ -405,12 +407,10 @@ pub async fn run<O: ReplicationOwner>(
         state: state.clone(),
         authenticated: authenticated.clone(),
     };
-    let session = Arc::new(RpcSession::new(
-        owner.clone(),
-        config.clone(),
-        key.clone(),
-        budget,
-    ));
+    let session = Arc::new(
+        RpcSession::new(owner.clone(), config.clone(), key.clone(), budget)
+            .with_send_schedule(state.send_schedule.clone()),
+    );
     let exchange = async {
         if !outgoing {
             tokio::time::timeout(Duration::from_secs(600), session.authenticated_peer())
@@ -430,6 +430,11 @@ pub async fn run<O: ReplicationOwner>(
             .await?;
         state.admit(&key);
         state.connected(&key, true);
+        state
+            .send_schedule
+            .lock()
+            .map_err(|_| error("SYNC_OWNER", "Delivery schedule is unavailable"))?
+            .release_all();
         authenticated.store(true, Ordering::Release);
         state.update(&key, |p| {
             p.error = None;

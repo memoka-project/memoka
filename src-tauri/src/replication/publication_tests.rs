@@ -1,5 +1,240 @@
 use super::*;
+use crate::replication::batch_group::PreparedBatchGroup;
 use crate::replication::publication::{self, PreparedPublication};
+
+fn deliver_all(a: &mut Peer, b: &mut Peer) {
+    let key = a.key.clone();
+    while a.engine().sign_next(&key).unwrap() {}
+    loop {
+        let frontier = b.engine().status().unwrap().frontier.received;
+        let outgoing = a.engine().outgoing(&frontier, MAX_BATCH_BYTES).unwrap();
+        if outgoing.is_empty() {
+            break;
+        }
+        b.receive(&outgoing);
+    }
+}
+
+#[test]
+fn one_hundred_edits_publish_once_without_rewriting_individual_receipts() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    for _ in 0..100 {
+        a.store.commit(&a.edit("x", false)).unwrap();
+    }
+    deliver_all(&mut a, &mut b);
+    let before = b.note();
+    let prepared = PreparedPublication::prepare(b.root.path(), &b.config)
+        .unwrap()
+        .unwrap();
+    assert_eq!(prepared.documents().len(), 1);
+    let delivery = prepared.commit(&mut b.store, &b.config).unwrap();
+    assert_eq!(delivery.documents.len(), 1);
+    assert_eq!(b.note().revision, before.revision + 1);
+    assert_eq!(a.projection(), b.projection());
+    assert_eq!(delivery.frontier.applied[&a.config.origin.replica_id], 100);
+    let count: i64 = b
+        .store
+        .connection
+        .query_row(
+            "SELECT COUNT(*) FROM sync_receipts WHERE result IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 100);
+    assert!(
+        PreparedPublication::prepare(b.root.path(), &b.config)
+            .unwrap()
+            .is_none()
+    );
+    let again = prepared.commit(&mut b.store, &b.config).unwrap();
+    assert_eq!(
+        serde_json::to_value(delivery).unwrap(),
+        serde_json::to_value(again).unwrap()
+    );
+}
+
+#[test]
+fn publication_is_bounded_and_atomic_across_restart_and_lost_responses() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    for _ in 0..129 {
+        a.store.commit(&a.edit("x", false)).unwrap();
+    }
+    deliver_all(&mut a, &mut b);
+    let before = b.note();
+    let group = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    assert!(
+        group
+            .commit(&mut b.store, Some(CommitFault::BeforeSqlCommit))
+            .is_err()
+    );
+    assert_eq!(before, b.note());
+    assert_eq!(
+        b.engine()
+            .status()
+            .unwrap()
+            .frontier
+            .applied
+            .get(&a.config.origin.replica_id),
+        None
+    );
+    b = b.reopen();
+    assert_eq!(
+        group
+            .commit(&mut b.store, Some(CommitFault::AfterCommitResponse))
+            .unwrap_err()
+            .code,
+        "SYNC_RESPONSE_LOST"
+    );
+    b = b.reopen();
+    let (_, frontier) = group.commit(&mut b.store, None).unwrap();
+    assert_eq!(frontier.applied[&a.config.origin.replica_id], 128);
+    assert_eq!(b.note().revision, before.revision + 1);
+    let remaining = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    remaining.commit(&mut b.store, None).unwrap();
+    assert_eq!(b.note().revision, before.revision + 2);
+    assert_eq!(b.projection(), a.projection());
+}
+
+#[test]
+fn grouped_publication_respects_cross_replica_dependencies_and_keeps_local_edits() {
+    let mut peers = peers();
+    let mut c = peers.pop().unwrap();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    a.store.commit(&a.edit("A", false)).unwrap();
+    deliver_all(&mut a, &mut b);
+    b.apply();
+    b.store.commit(&b.edit("B", true)).unwrap();
+    // B forwards A's signed original, so C can build a causally ordered group.
+    deliver_all(&mut b, &mut c);
+    let stale = PreparedPublication::prepare(c.root.path(), &c.config)
+        .unwrap()
+        .unwrap();
+    c.store.commit(&c.edit("C", false)).unwrap();
+    assert!(stale.commit(&mut c.store, &c.config).is_err());
+    let fresh = PreparedPublication::prepare(c.root.path(), &c.config)
+        .unwrap()
+        .unwrap();
+    fresh.commit(&mut c.store, &c.config).unwrap();
+    deliver_all(&mut c, &mut a);
+    a.apply();
+    deliver_all(&mut a, &mut b);
+    b.apply();
+    assert_eq!(c.projection(), a.projection());
+    assert_eq!(c.projection(), b.projection());
+}
+
+#[test]
+fn damaged_middle_batch_does_not_publish_a_partial_group_and_is_quarantined_individually() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    for _ in 0..3 {
+        a.store.commit(&a.edit("x", false)).unwrap();
+    }
+    let mut outgoing = a.outgoing();
+    let mut damaged: ChangeBatch = decode(&outgoing[1].content, MAX_BATCH_BYTES).unwrap();
+    damaged.documents[0].update = vec![255];
+    outgoing[1] = SignedContent::sign(serde_json::to_vec(&damaged).unwrap(), "batch", &a.key);
+    b.receive(&outgoing);
+    let before = b.note();
+    let failure = match PreparedPublication::prepare(b.root.path(), &b.config) {
+        Err(failure) => failure,
+        _ => panic!("damaged update must be rejected"),
+    };
+    assert_eq!(failure.details["syncInbox"]["sequence"], 2);
+    assert_eq!(b.note(), before);
+    publication::quarantine(&mut b.store, &b.config, &failure).unwrap();
+    let prefix = PreparedPublication::prepare(b.root.path(), &b.config)
+        .unwrap()
+        .unwrap();
+    let delivery = prefix.commit(&mut b.store, &b.config).unwrap();
+    assert_eq!(delivery.frontier.applied[&a.config.origin.replica_id], 1);
+    assert!(
+        PreparedPublication::prepare(b.root.path(), &b.config)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn pacing_withholds_only_local_batches_and_never_rewrites_signed_payloads() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    a.store.commit(&a.edit("A", false)).unwrap();
+    deliver_all(&mut a, &mut b);
+    b.apply();
+    b.store.commit(&b.edit("B", false)).unwrap();
+    let all = b.outgoing();
+    let forwarded = b
+        .engine()
+        .outgoing_released(&Frontier::new(), MAX_BATCH_BYTES, 0)
+        .unwrap();
+    assert_eq!(forwarded.len(), 1);
+    assert_eq!(forwarded[0], a.outgoing()[0]);
+    assert_eq!(
+        b.engine()
+            .outgoing_released(&Frontier::new(), MAX_BATCH_BYTES, 1)
+            .unwrap(),
+        all
+    );
+}
+
+#[test]
+fn publication_reprepares_the_remaining_suffix_after_a_checkpoint_covers_its_prefix() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    a.store.commit(&a.edit("A", false)).unwrap();
+    let key = a.key.clone();
+    let checkpoint = a.engine().create_checkpoint(&key, false).unwrap();
+    a.store.commit(&a.edit("B", false)).unwrap();
+    deliver_all(&mut a, &mut b);
+    let group = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    let checkpoint = b.engine().prepare_checkpoint(&checkpoint).unwrap();
+    b.engine().commit_checkpoint(&checkpoint, None).unwrap();
+    let after_checkpoint = b.note();
+    assert_eq!(
+        group.commit(&mut b.store, None).unwrap_err().code,
+        "SYNC_DEPENDENCY"
+    );
+    assert_eq!(b.note(), after_checkpoint);
+    let suffix = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    let (_, frontier) = suffix.commit(&mut b.store, None).unwrap();
+    assert_eq!(frontier.applied[&a.config.origin.replica_id], 2);
+    assert_eq!(b.projection(), a.projection());
+}
+
+#[test]
+fn byte_budget_splits_publications_and_accepts_one_larger_valid_batch() {
+    let mut peers = peers();
+    let mut b = peers.pop().unwrap();
+    let mut a = peers.pop().unwrap();
+    let text = "x".repeat(2 * 1024 * 1024);
+    for _ in 0..2 {
+        a.store.commit(&a.edit(&text, false)).unwrap();
+    }
+    deliver_all(&mut a, &mut b);
+    let first = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    let (_, frontier) = first.commit(&mut b.store, None).unwrap();
+    assert_eq!(frontier.applied[&a.config.origin.replica_id], 1);
+    let second = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    second.commit(&mut b.store, None).unwrap();
+    a.store
+        .commit(&a.edit(&"y".repeat(4 * 1024 * 1024), false))
+        .unwrap();
+    deliver_all(&mut a, &mut b);
+    let oversized = PreparedBatchGroup::prepare(&b.store).unwrap().unwrap();
+    let (_, frontier) = oversized.commit(&mut b.store, None).unwrap();
+    assert_eq!(frontier.applied[&a.config.origin.replica_id], 3);
+    assert_eq!(b.projection(), a.projection());
+}
 
 #[test]
 fn workspace_only_trash_publication_identifies_notes_whose_composition_must_finish() {

@@ -3147,6 +3147,7 @@ async function runSidebarFocusNavigation(sessionId) {
 }
 
 async function runSynchronizationSettings(sessionId) {
+  const ime = await runSynchronizationImeBoundary(sessionId);
   await execute(
     sessionId,
     `window.__syncEditorBefore = document.querySelector('.memoka-editor.ProseMirror-focused'); return true`,
@@ -3229,6 +3230,92 @@ async function runSynchronizationSettings(sessionId) {
     editorPreserved: true,
     newWorkspaceReceive: true,
     newWorkspaceFocusRestored: true,
+    ime,
+  };
+}
+
+async function runSynchronizationImeBoundary(sessionId) {
+  await sendActiveKey(sessionId, ESCAPE);
+  await sendActiveKey(sessionId, "i");
+  const noteId = await execute(
+    sessionId,
+    `
+    const root = document.querySelector('.memoka-editor.ProseMirror-focused');
+    const editor = root.editor;
+    const adapter = editor.storage.memokaReplication?.adapter;
+    if (!adapter) throw new Error('Replicated Editor binding is missing');
+    let at = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (at === null && node.type.name === 'paragraph') at = pos + 1;
+    });
+    if (at === null) throw new Error('IME fixture paragraph is missing');
+    editor.commands.setTextSelection(at);
+    adapter.note.history.stopCapturing();
+    window.__syncIme = { root, editor, adapter, at, before: Array.from(adapter.note.snapshot()).join(',') };
+    return adapter.note.noteId;
+  `,
+  );
+  const before = await invokeTauriCommand(
+    sessionId,
+    "IME_BEFORE",
+    "persistence_load_document",
+    { kind: "note", documentId: noteId },
+  );
+  const unchanged = await execute(
+    sessionId,
+    `
+    const { root, editor, adapter, before, at } = window.__syncIme;
+    root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    for (const text of ['に', 'にほん', '日本']) {
+      const length = window.__syncIme.length ?? 0;
+      editor.commands.insertContentAt({ from: at, to: at + length }, text);
+      window.__syncIme.length = text.length;
+      if (Array.from(adapter.note.snapshot()).join(',') !== before) return false;
+    }
+    return true;
+  `,
+  );
+  if (!unchanged) throw new Error("Unconfirmed IME text entered Yjs");
+  const during = await invokeTauriCommand(
+    sessionId,
+    "IME_DURING",
+    "persistence_load_document",
+    { kind: "note", documentId: noteId },
+  );
+  if (during.revision !== before.revision)
+    throw new Error("Unconfirmed IME text was persisted");
+  await execute(
+    sessionId,
+    `window.__syncIme.root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '日本' })); return true;`,
+  );
+  await waitFor(
+    sessionId,
+    `return !window.__syncIme.adapter.compositionPending && Array.from(window.__syncIme.adapter.note.snapshot()).join(',') !== window.__syncIme.before`,
+    (value) => value === true,
+  );
+  let confirmed;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    confirmed = await invokeTauriCommand(
+      sessionId,
+      "IME_CONFIRMED",
+      "persistence_load_document",
+      { kind: "note", documentId: noteId },
+    );
+    if (confirmed.revision > before.revision) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (confirmed.revision !== before.revision + 1)
+    throw new Error("IME confirmation was not persisted as one edit");
+  await execute(
+    sessionId,
+    `window.__syncIme.editor.commands.undo(); return true;`,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  return {
+    syntheticComposition: true,
+    preeditExcludedFromYjs: true,
+    preeditExcludedFromPersistence: true,
+    confirmationCommits: 1,
   };
 }
 

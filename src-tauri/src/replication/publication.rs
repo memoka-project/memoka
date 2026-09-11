@@ -6,7 +6,8 @@ use rusqlite::{Connection, OpenFlags, params};
 use serde::Serialize;
 
 use super::{
-    PreparedApplication, PreparedCheckpoint, ReplicaConfig, ReplicationEngine, journal, protocol::*,
+    PreparedCheckpoint, ReplicaConfig, ReplicationEngine, batch_group::PreparedBatchGroup, journal,
+    protocol::*,
 };
 use crate::{
     document_model::ReadError,
@@ -14,7 +15,7 @@ use crate::{
 };
 
 pub(super) enum PreparedPublication {
-    Batch(PreparedApplication),
+    Batch(PreparedBatchGroup),
     Checkpoint(PreparedCheckpoint),
 }
 
@@ -79,10 +80,10 @@ impl PreparedPublication {
     }
     pub fn prepare(root: &Path, config: &ReplicaConfig) -> Result<Option<Self>, ReadError> {
         let mut reader = read_snapshot(root, config)?;
-        let engine = ReplicationEngine::new(&mut reader);
-        if let Some(batch) = engine.prepare_next_readonly()? {
+        if let Some(batch) = PreparedBatchGroup::prepare(&reader)? {
             return Ok(Some(Self::Batch(batch)));
         }
+        let engine = ReplicationEngine::new(&mut reader);
         Ok(engine.prepare_checkpoint_readonly()?.map(Self::Checkpoint))
     }
     pub fn commit(
@@ -115,10 +116,7 @@ impl PreparedPublication {
             .collect::<Result<Vec<_>, ReadError>>()?;
         let mut engine = ReplicationEngine::new(store);
         let (revisions, frontier) = match self {
-            Self::Batch(batch) => {
-                let result = engine.commit_prepared(batch, None)?;
-                (result.documents, result.frontier)
-            }
+            Self::Batch(batch) => batch.commit(engine.store, None)?,
             Self::Checkpoint(checkpoint) => {
                 let frontier = engine.commit_checkpoint(checkpoint, None)?;
                 let revisions = checkpoint

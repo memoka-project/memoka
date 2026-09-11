@@ -865,6 +865,19 @@ export class CoreRuntime {
   async executeCommand<Name extends CoreCommandName>(
     envelope: CoreCommandEnvelope<Name>,
   ): Promise<CoreCommandResults[Name]> {
+    if (
+      envelope.name === "note.open" ||
+      envelope.name === "note.open_help" ||
+      envelope.name === "buffer.close" ||
+      (envelope.source === "ui" &&
+        (envelope.name.startsWith("note.") ||
+          envelope.name.startsWith("section.") ||
+          envelope.name === "namespace.edit")) ||
+      envelope.name.startsWith("tab.") ||
+      (envelope.name.startsWith("window.") &&
+        envelope.name !== "window.update_view")
+    )
+      await this.prepareInputDeparture();
     if (this.externalCommit) await this.externalCommit;
     this.commandsInFlight++;
     try {
@@ -917,7 +930,9 @@ export class CoreRuntime {
           ([adapter, noteId]) =>
             affected.has(noteId) &&
             !adapter.editor.isDestroyed &&
-            (adapter.editor.view.composing || adapter.vimSnapshot.composing),
+            (adapter.compositionPending ||
+              adapter.editor.view.composing ||
+              adapter.vimSnapshot.composing),
         );
       const busy = () =>
         !isCurrent() ||
@@ -1126,7 +1141,9 @@ export class CoreRuntime {
         }
         if (
           (request.note_id === null || noteId === request.note_id) &&
-          (adapter.editor.view.composing || adapter.vimSnapshot.composing)
+          (adapter.compositionPending ||
+            adapter.editor.view.composing ||
+            adapter.vimSnapshot.composing)
         )
           active = true;
       }
@@ -2928,6 +2945,8 @@ export class CoreRuntime {
    */
   async flushDurableState(): Promise<void> {
     if (this.externalCommit) await this.externalCommit;
+    for (const adapter of this.agentEditors.keys())
+      adapter.flushConfirmedComposition();
     this.flushPendingWindowViewUpdates();
     await Promise.all(
       [...this.notePersistence.values()].map((session) => session.flush()),
@@ -2935,6 +2954,14 @@ export class CoreRuntime {
     await this.localStateQueue;
     this.flushEditorPersistenceNotification();
     if (this.lastError) throw new Error(this.lastError);
+  }
+
+  async prepareInputDeparture(): Promise<void> {
+    await Promise.all(
+      [...this.agentEditors.keys()].map((adapter) =>
+        adapter.prepareInputDeparture(),
+      ),
+    );
   }
 
   async flush(): Promise<void> {
