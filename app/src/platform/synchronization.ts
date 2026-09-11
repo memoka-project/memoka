@@ -100,7 +100,10 @@ export interface SynchronizationPort {
   start(workspaceId: string): Promise<void>;
   stop(workspaceId: string): Promise<void>;
   addressCandidates(workspaceId: string): Promise<SyncAddressCandidate[]>;
-  action(workspaceId: string, action: SyncAction): Promise<SyncActionResult>;
+  action(
+    workspaceId: string,
+    action: SyncAction,
+  ): Promise<SyncActionResult | null>;
 }
 export const nativeSynchronization: SynchronizationPort = {
   status: () => invoke("sync_status"),

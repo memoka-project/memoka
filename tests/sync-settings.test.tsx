@@ -13,6 +13,7 @@ import {
 } from "../app/src/components/SyncSettingsDialog";
 import {
   devicePhase,
+  type SyncActionResult,
   type SyncView,
   type SynchronizationPort,
 } from "../app/src/platform/synchronization";
@@ -28,7 +29,10 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-function view(enabled = true): SyncView {
+const factText = (label: string) =>
+  screen.getAllByText(label)[0]!.closest("div")?.textContent ?? "";
+
+function view(enabled = true, diagnostics = false): SyncView {
   const member = {
     origin: { deviceId: "local", replicaId: "copy" },
     publicKey: "a".repeat(64),
@@ -37,8 +41,18 @@ function view(enabled = true): SyncView {
   };
   return {
     workspaceId: "workspace",
-    attachmentTransfers: [],
-    failures: [],
+    attachmentTransfers: diagnostics
+      ? [
+          {
+            sha256: "c".repeat(64),
+            size: 20,
+            received: 10,
+            complete: false,
+            error: "transfer failed",
+          },
+        ]
+      : [],
+    failures: diagnostics ? [["d".repeat(64), "invalid signature"]] : [],
     config: enabled
       ? { ...member, workspaceId: "workspace", groupId: "group", paused: false }
       : null,
@@ -51,7 +65,7 @@ function view(enabled = true): SyncView {
       pendingSignatureCount: 3,
       pendingAttachmentCount: 1,
       pendingAttachmentBytes: 100,
-      quarantinedCount: 0,
+      quarantinedCount: diagnostics ? 1 : 0,
       lastAppliedAt: null,
     },
     devices: [
@@ -94,14 +108,15 @@ function view(enabled = true): SyncView {
 
 function fixture({
   enabled = true,
+  diagnostics = false,
   candidates = [
     { interfaceName: "Wi-Fi", address: "192.168.1.5:1234" },
     { interfaceName: "VPN", address: "10.8.0.2:1234" },
   ],
-  action = vi.fn(async () => ({})),
+  action = vi.fn(async (): Promise<SyncActionResult | null> => null),
   invitation = null as SyncInvitation | null,
 } = {}) {
-  const currentView = view(enabled);
+  const currentView = view(enabled, diagnostics);
   const port = {
     status: vi.fn(async () => currentView),
     action,
@@ -111,7 +126,6 @@ function fixture({
   } satisfies SynchronizationPort;
   const restoreFocus = vi.fn(),
     onClose = vi.fn(),
-    onReceive = vi.fn(),
     onInvitation = vi.fn();
   const initialInvitation = invitation;
   function Harness() {
@@ -123,8 +137,6 @@ function fixture({
         workspaceId="workspace"
         session={{ restoreFocus }}
         onClose={onClose}
-        onRecovery={() => {}}
-        onReceive={onReceive}
         invitation={current}
         onInvitation={(next) => {
           onInvitation(next);
@@ -140,28 +152,62 @@ function fixture({
     view: currentView,
     restoreFocus,
     onClose,
-    onReceive,
     onInvitation,
   };
 }
 
-it("opens the settings commands and enables networking through the guided first step", async () => {
+it("separates status and other-device tabs without extra entries", async () => {
+  fixture();
+  const tabs = await screen.findByRole("tablist", {
+    name: "同期設定の画面",
+  });
+  expect(tabs.querySelectorAll("[aria-selected='true']")).toHaveLength(1);
+  expect(
+    screen.getByRole("tab", { name: "状態", selected: true }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("tab", { name: "他端末", selected: false }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("tab", { name: "設定" })).toBeNull();
+  expect(screen.queryByText("別端末から受信")).toBeNull();
+  expect(screen.queryByText("保護された内容を復旧")).toBeNull();
+  expect(screen.queryByText(/同じユーザーの端末を/)).toBeNull();
+});
+
+it("shows self status, operations, and always-visible diagnostics on the status tab", async () => {
+  const { port } = fixture({ diagnostics: true });
+  await screen.findByRole("tab", { name: "状態", selected: true });
+  expect(screen.getAllByText("待受中").length).toBeGreaterThan(0);
+  expect(factText("待ち受けアドレス")).toContain("0.0.0.0:1234");
+  expect(factText("反映待ち")).toContain("2件");
+  expect(factText("添付取得待ち")).toContain("1件");
+  expect(factText("検証失敗")).toContain("1件");
+  expect(screen.getByText("送信待ち 3件")).toBeTruthy();
+  expect(screen.getByText("検証失敗の詳細（先頭50件）")).toBeTruthy();
+  expect(screen.getByText(/invalid signature/)).toBeTruthy();
+  expect(screen.getByText("添付取得の詳細（先頭64件）")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "一時停止" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "今すぐ同期" }));
+  await waitFor(() =>
+    expect(port.action).toHaveBeenCalledWith("workspace", {
+      action: "reconnect",
+    }),
+  );
+});
+
+it("starts synchronization from the unconfigured status tab", async () => {
   expect(parseApplicationCommand(":sync-settings")).toMatchObject({
     kind: "command",
     command: { id: "workspace.sync_settings" },
   });
-  expect(parseApplicationCommand(":sync")).toMatchObject({
-    kind: "command",
-    command: { id: "workspace.sync" },
-  });
   const { port } = fixture({ enabled: false });
-  fireEvent.click(await screen.findByText("端末を追加"));
-  const name = screen.getByLabelText("この端末の名前");
-  expect(port.action).not.toHaveBeenCalled();
-  expect(port.start).not.toHaveBeenCalled();
-  fireEvent.change(name, { target: { value: "Laptop" } });
+  expect(await screen.findByText("同期未設定")).toBeTruthy();
+  fireEvent.click(screen.getByText("元端末として同期を始める"));
+  fireEvent.change(screen.getByLabelText("この端末の名前"), {
+    target: { value: "Laptop" },
+  });
   fireEvent.click(screen.getByText("同期を有効にして次へ"));
-  await screen.findByText("元端末で招待");
+  await screen.findByRole("heading", { name: "元端末で招待" });
   await waitFor(() =>
     expect(port.action).toHaveBeenCalledWith("workspace", {
       action: "enable",
@@ -171,43 +217,90 @@ it("opens the settings commands and enables networking through the guided first 
   );
 });
 
-it("labels queue direction, shows offline state, and binds approval and address changes to the reviewed key", async () => {
-  const { port, view, onClose, restoreFocus } = fixture();
-  await screen.findByText("未接続");
-  expect(screen.getByText(/この端末で反映待ち 2件/)).toBeTruthy();
-  expect(screen.getByText(/相手への送信待ち 3件/)).toBeTruthy();
-  expect(screen.getByText(/相手で未反映（未受信分を含む） 4件/)).toBeTruthy();
-  expect(devicePhase(view.devices[0], false)).toBe("未接続");
-  const connected = {
-    ...view.devices[0],
-    connection: {
-      ...view.devices[0].connection,
-      connected: true,
-      frontier: { received: { other: 2 }, applied: { other: 2 } },
-    },
-  };
-  expect(devicePhase(connected, false, { received: {}, applied: {} })).toBe(
-    "受信待ち",
-  );
+it("edits the listen address in a sub-screen and returns without closing", async () => {
+  const { port, onClose } = fixture();
+  fireEvent.click(await screen.findByRole("button", { name: "変更" }));
   expect(
-    devicePhase(connected, false, { received: { other: 2 }, applied: {} }),
-  ).toBe("受信済み・反映待ち");
-  fireEvent.click(screen.getByText("この端末を承認"));
+    (screen.getByLabelText("IPアドレスとUDPポート") as HTMLInputElement).value,
+  ).toBe("0.0.0.0:1234");
+  fireEvent.click(screen.getByRole("button", { name: "自動" }));
+  expect(
+    (screen.getByLabelText("IPアドレスとUDPポート") as HTMLInputElement).value,
+  ).toBe("0.0.0.0:0");
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await screen.findByRole("tablist", { name: "同期設定の画面" });
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "変更" }));
+  fireEvent.change(screen.getByLabelText("IPアドレスとUDPポート"), {
+    target: { value: "0.0.0.0:4242" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "変更" }));
   await waitFor(() =>
     expect(port.action).toHaveBeenCalledWith("workspace", {
-      action: "approve",
-      invitationId: "invite",
+      action: "listen",
+      bind: "0.0.0.0:4242",
+    }),
+  );
+  await screen.findByRole("tablist", { name: "同期設定の画面" });
+});
+
+it("confirms self revocation in a sub-screen with a red action", async () => {
+  const { port, onClose } = fixture();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "この端末の登録を解除…" }),
+  );
+  expect(screen.getByText(/この端末を同期から削除します。/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "キャンセル" }));
+  await screen.findByRole("tablist", { name: "同期設定の画面" });
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "この端末の登録を解除…" }),
+  );
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await screen.findByRole("tablist", { name: "同期設定の画面" });
+  fireEvent.click(
+    screen.getByRole("button", { name: "この端末の登録を解除…" }),
+  );
+  const confirm = screen.getByRole("button", { name: "解除" });
+  expect(confirm.classList.contains("sync-danger-button")).toBe(true);
+  fireEvent.click(confirm);
+  await waitFor(() =>
+    expect(port.action).toHaveBeenCalledWith("workspace", {
+      action: "revoke",
+      deviceId: "local",
       expectedPublicKey: "a".repeat(64),
     }),
   );
-  await waitFor(() =>
-    expect(screen.getByText("閉じる").hasAttribute("disabled")).toBe(false),
+});
+
+it("lists other devices inline and edits their reviewed address", async () => {
+  const { port, view, onClose } = fixture();
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
+  expect(await screen.findByText("Windows")).toBeTruthy();
+  expect(devicePhase(view.devices[0], false)).toBe("未接続");
+  expect(screen.getByText(/相手で未反映（未受信分を含む） 4件/)).toBeTruthy();
+  expect(screen.getAllByText(/192\.168\.1\.3:1234/).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: "変更" }));
+  fireEvent.change(
+    screen.getByLabelText("接続先アドレス（複数は改行区切り）"),
+    {
+      target: { value: "10.0.0.2:1234" },
+    },
   );
-  fireEvent.click(screen.getByText("端末の詳細"));
-  fireEvent.change(screen.getByLabelText("接続先アドレスを更新"), {
-    target: { value: "10.0.0.2:1234" },
+  fireEvent.keyDown(screen.getByRole("dialog"), {
+    key: "c",
+    ctrlKey: true,
   });
-  fireEvent.click(screen.getByText("同じ鍵の接続先アドレスを保存"));
+  await screen.findByRole("button", { name: "端末を追加" });
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByRole("button", { name: "変更" })[0]!);
+  fireEvent.change(
+    screen.getByLabelText("接続先アドレス（複数は改行区切り）"),
+    {
+      target: { value: "10.0.0.2:1234" },
+    },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() =>
     expect(port.action).toHaveBeenCalledWith("workspace", {
       action: "addresses",
@@ -216,12 +309,31 @@ it("labels queue direction, shows offline state, and binds approval and address 
       addresses: ["10.0.0.2:1234"],
     }),
   );
+  await screen.findByRole("button", { name: "端末を追加" });
+});
+
+it("keeps approvals and peer revocation on the other-device tab", async () => {
+  const { port } = fixture();
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
+  fireEvent.click(screen.getByText("この端末を承認"));
   await waitFor(() =>
-    expect(screen.getByText("閉じる").hasAttribute("disabled")).toBe(false),
+    expect(port.action).toHaveBeenCalledWith("workspace", {
+      action: "approve",
+      invitationId: "invite",
+      expectedPublicKey: "a".repeat(64),
+    }),
   );
-  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-  expect(onClose).toHaveBeenCalledOnce();
-  await waitFor(() => expect(restoreFocus).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole("button", { name: "登録解除…" }));
+  expect(screen.getByText(/「Windows」を同期から削除します。/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "解除" }));
+  await waitFor(() =>
+    expect(port.action).toHaveBeenCalledWith("workspace", {
+      action: "revoke",
+      deviceId: "peer",
+      expectedPublicKey: "a".repeat(64),
+    }),
+  );
+  await screen.findByRole("button", { name: "端末を追加" });
 });
 
 it("offers interface candidates, creates an invitation, and copies the whole code", async () => {
@@ -232,9 +344,9 @@ it("offers interface candidates, creates an invitation, and copies the whole cod
     expiresAt: 4_102_444_800,
   }));
   const { port, onInvitation } = fixture({ action });
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
   await screen.findByText("192.168.1.5:1234（Wi-Fi）");
-  expect(screen.getByText("10.8.0.2:1234（VPN）")).toBeTruthy();
   await waitFor(() =>
     expect(port.addressCandidates).toHaveBeenCalledWith("workspace"),
   );
@@ -265,10 +377,8 @@ it("keeps manual entry available and reports copy failures without closing", asy
     invitationId: "manual-invite",
     expiresAt: 4_102_444_800,
   }));
-  const { onClose } = fixture({
-    candidates: [],
-    action,
-  });
+  const { onClose } = fixture({ candidates: [], action });
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
   await screen.findByText(/候補が見つかりませんでした。/);
   fireEvent.change(screen.getByLabelText("または手入力"), {
@@ -276,38 +386,20 @@ it("keeps manual entry available and reports copy failures without closing", asy
   });
   fireEvent.click(screen.getByText("招待コードを作成"));
   await screen.findByText("memoka-sync:manual");
-  await waitFor(() =>
-    expect(action).toHaveBeenCalledWith("workspace", {
-      action: "invite",
-      addresses: ["172.16.0.8:4242"],
-    }),
-  );
   fireEvent.click(screen.getByText("招待コードをコピー"));
   await screen.findByText(/コピーできませんでした。/);
   expect(onClose).not.toHaveBeenCalled();
 });
 
-it("redisplays a still-valid in-memory invitation and opens receive from settings", async () => {
-  clipboard.writeText.mockResolvedValue(true);
-  const invitation: SyncInvitation = {
-    workspaceId: "workspace",
-    invitationId: "kept",
-    expiresAt: Math.floor(Date.now() / 1000) + 600,
-    code: "memoka-sync:kept",
-  };
-  const { onReceive, onInvitation, port } = fixture({
-    invitation,
-    action: vi.fn(async () => ({})),
-  });
+it("returns from the add flow with Esc and closes from the base view", async () => {
+  const { onClose, restoreFocus } = fixture();
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByText("memoka-sync:kept");
-  expect(port.action).not.toHaveBeenCalledWith(
-    "workspace",
-    expect.objectContaining({ action: "invite" }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "戻る" }));
-  fireEvent.click(screen.getByText("通常の画面に戻る"));
-  fireEvent.click(screen.getByText("別端末から受信"));
-  expect(onReceive).toHaveBeenCalledOnce();
-  expect(onInvitation).not.toHaveBeenCalledWith(null);
+  await screen.findByRole("heading", { name: "元端末で招待" });
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await screen.findByRole("tablist", { name: "同期設定の画面" });
+  expect(onClose).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(onClose).toHaveBeenCalledOnce();
+  await waitFor(() => expect(restoreFocus).toHaveBeenCalledOnce());
 });

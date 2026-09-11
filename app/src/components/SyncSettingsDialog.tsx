@@ -25,6 +25,17 @@ export interface SyncInvitation {
   code: string;
 }
 
+const tabs = [
+  { id: "status", label: "状態" },
+  { id: "devices", label: "他端末" },
+] as const;
+type SyncTab = (typeof tabs)[number]["id"];
+const tabOrder: SyncTab[] = ["status", "devices"];
+type SubScreen =
+  | { kind: "listen-edit" }
+  | { kind: "peer-address"; deviceId: string }
+  | { kind: "revoke"; deviceId: string };
+
 const bytes = (value: number) =>
   value < 1024
     ? `${value} B`
@@ -43,8 +54,6 @@ export function SyncSettingsDialog({
   workspaceId,
   session,
   onClose,
-  onRecovery,
-  onReceive,
   invitation,
   onInvitation,
   prepare,
@@ -53,8 +62,6 @@ export function SyncSettingsDialog({
   workspaceId: string;
   session: SyncSettingsSession;
   onClose: () => void;
-  onRecovery: () => void;
-  onReceive: () => void;
   invitation: SyncInvitation | null;
   onInvitation: (invitation: SyncInvitation | null) => void;
   prepare?: () => Promise<void>;
@@ -64,7 +71,9 @@ export function SyncSettingsDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
-  const [bind, setBind] = useState("0.0.0.0:0");
+  const bind = "0.0.0.0:0";
+  const [tab, setTab] = useState<SyncTab>("status");
+  const [screen, setScreen] = useState<SubScreen | null>(null);
   const [addStep, setAddStep] = useState<1 | 2 | 3 | 4 | null>(null);
   const [candidates, setCandidates] = useState<SyncAddressCandidate[] | null>(
     null,
@@ -79,6 +88,10 @@ export function SyncSettingsDialog({
   const active = useRef(true);
   const saving = useRef(false);
   const invitationClaimed = useRef(false);
+  const tabRefs = useRef<Record<SyncTab, HTMLButtonElement | null>>({
+    status: null,
+    devices: null,
+  });
 
   useEffect(() => {
     active.current = true;
@@ -119,6 +132,24 @@ export function SyncSettingsDialog({
   const openInviteStep = () => {
     setAddStep(2);
     void refreshCandidates();
+  };
+
+  const selectTab = (next: SyncTab, focus = false) => {
+    setTab(next);
+    if (focus) tabRefs.current[next]?.focus();
+  };
+  const moveTab = (current: SyncTab, key: string) => {
+    const index = tabOrder.indexOf(current);
+    const next =
+      key === "Home"
+        ? tabOrder[0]
+        : key === "End"
+          ? tabOrder[tabOrder.length - 1]
+          : tabOrder[
+              (index + (key === "ArrowLeft" ? -1 : 1) + tabOrder.length) %
+                tabOrder.length
+            ];
+    selectTab(next, true);
   };
 
   const activeInvitation =
@@ -176,9 +207,9 @@ export function SyncSettingsDialog({
       const result = await port.action(workspaceId, action);
       if (active.current) {
         if (
-          result.connectionInfo &&
-          result.invitationId !== undefined &&
-          result.expiresAt !== undefined
+          result?.connectionInfo &&
+          result?.invitationId !== undefined &&
+          result?.expiresAt !== undefined
         ) {
           invitationClaimed.current = false;
           setCopyState("idle");
@@ -214,8 +245,27 @@ export function SyncSettingsDialog({
       queueMicrotask(session.restoreFocus);
     }
   };
+  // Sub-screens own Esc/Ctrl-C: backing out of them returns to the tabs.
+  const requestClose = () => {
+    if (saving.current) return;
+    if (addStep !== null) {
+      setAddStep(null);
+      return;
+    }
+    if (screen !== null) {
+      setScreen(null);
+      return;
+    }
+    close();
+  };
   const configured = view?.config;
   const invitationAddress = selectedAddress || manualAddress.trim();
+  const screenDevice =
+    screen?.kind === "peer-address" || screen?.kind === "revoke"
+      ? view?.devices.find(
+          (device) => device.member.origin.deviceId === screen.deviceId,
+        )
+      : undefined;
 
   const invitationPanel = (
     <>
@@ -257,18 +307,64 @@ export function SyncSettingsDialog({
       focusSurface="sync-settings"
       className="sync-settings-dialog"
       busy={busy}
-      onClose={close}
+      onClose={requestClose}
     >
       <h2>端末間同期</h2>
-      <p>
-        同じユーザーの端末をLAN・VPN内で接続します。Workspaceを開いている間は自動で同期し、切断中の編集は次の接続時に統合します。
-      </p>
-      <p>削除も他の端末へ伝わります。履歴とバックアップは引き続き必要です。</p>
       {(error || view?.error) && (
         <p role="alert">{error ?? view?.error?.message}</p>
       )}
       {!view ? (
         <p>読み込み中…</p>
+      ) : screen?.kind === "listen-edit" ? (
+        configured ? (
+          <ListenEditor
+            initial={view.listening ?? bind}
+            busy={busy}
+            onCancel={() => setScreen(null)}
+            onApply={async (value) => {
+              const succeeded = await act({ action: "listen", bind: value });
+              if (succeeded && active.current) setScreen(null);
+            }}
+          />
+        ) : null
+      ) : screen?.kind === "peer-address" && screenDevice ? (
+        <PeerAddressEditor
+          device={screenDevice}
+          busy={busy}
+          onCancel={() => setScreen(null)}
+          onSave={async (value) => {
+            const succeeded = await act({
+              action: "addresses",
+              deviceId: screenDevice.member.origin.deviceId,
+              expectedPublicKey: screenDevice.member.publicKey,
+              addresses: addresses(value),
+            });
+            if (succeeded && active.current) setScreen(null);
+          }}
+        />
+      ) : screen?.kind === "revoke" ? (
+        <RevokeConfirm
+          name={
+            screen.deviceId === configured?.origin.deviceId
+              ? "この端末"
+              : `「${screenDevice?.member.name ?? "不明な端末"}」`
+          }
+          busy={busy}
+          onCancel={() => setScreen(null)}
+          onConfirm={async () => {
+            const self = screen.deviceId === configured?.origin.deviceId;
+            const expectedPublicKey = self
+              ? configured?.publicKey
+              : screenDevice?.member.publicKey;
+            if (!expectedPublicKey) return;
+            const succeeded = await act({
+              action: "revoke",
+              deviceId: screen.deviceId,
+              expectedPublicKey,
+            });
+            if (succeeded && active.current) setScreen(null);
+          }}
+        />
       ) : addStep !== null ? (
         <section aria-label="端末を追加" data-modal-scroll>
           <h3>端末を追加</h3>
@@ -322,7 +418,7 @@ export function SyncSettingsDialog({
                     />
                   </label>
                   <p>
-                    待受設定は既定値（0.0.0.0:0で空きUDPポート）を使います。変更は通常画面の詳細から行います。
+                    待受設定は既定値（0.0.0.0:0で空きUDPポート）を使います。変更は状態タブから行います。
                   </p>
                   <button disabled={busy || !name.trim()} type="submit">
                     同期を有効にして次へ
@@ -504,323 +600,520 @@ export function SyncSettingsDialog({
             </section>
           )}
         </section>
-      ) : !configured ? (
-        <section aria-label="このWorkspaceの同期状態">
-          <p>
-            このWorkspaceでは端末間同期が無効です。端末を追加すると準備から始まります。
-          </p>
-          <div className="application-modal-actions">
-            <button disabled={busy} onClick={() => setAddStep(1)} type="button">
-              端末を追加
-            </button>
-            <button disabled={busy} onClick={onReceive} type="button">
-              別端末から受信
-            </button>
-          </div>
-        </section>
       ) : (
         <>
-          {view.pending
-            .filter((pending) => !pending.approved)
-            .map((pending) => (
-              <section key={pending.invitationId} className="sync-review">
-                <h3>参加承認待ち: {pending.member.name}</h3>
-                <p>
-                  参加側に表示された名前と鍵の識別情報が一致することを確認してください。
-                </p>
-                <code>{pending.fingerprint}</code>
-                <p>
-                  期限{" "}
-                  {formatEventDateTime(
-                    new Date(pending.expiresAt * 1000).toISOString(),
-                  )}
-                </p>
+          <div
+            className="sync-settings-tabs"
+            role="tablist"
+            aria-label="同期設定の画面"
+          >
+            {tabs.map(({ id, label }) => (
+              <button
+                type="button"
+                key={id}
+                ref={(element) => {
+                  tabRefs.current[id] = element;
+                }}
+                role="tab"
+                id={`sync-tab-${id}`}
+                aria-controls={`sync-panel-${id}`}
+                aria-selected={tab === id}
+                tabIndex={tab === id ? 0 : -1}
+                onClick={() => selectTab(id)}
+                onKeyDown={(event) => {
+                  if (
+                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  ) {
+                    event.preventDefault();
+                    moveTab(id, event.key);
+                  }
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <section
+            role="tabpanel"
+            id="sync-panel-status"
+            aria-labelledby="sync-tab-status"
+            hidden={tab !== "status"}
+            data-modal-scroll
+          >
+            {configured ? (
+              <>
+                <h3>同期の操作</h3>
                 <div className="application-modal-actions">
                   <button
                     disabled={busy}
                     onClick={() =>
-                      void act({
-                        action: "approve",
-                        invitationId: pending.invitationId,
-                        expectedPublicKey: pending.member.publicKey,
-                      })
+                      void act({ action: "pause", paused: !configured.paused })
                     }
                     type="button"
                   >
-                    この端末を承認
+                    {configured.paused ? "再開" : "一時停止"}
                   </button>
                   <button
+                    disabled={busy || configured.paused}
+                    onClick={() => void act({ action: "reconnect" })}
+                    type="button"
+                  >
+                    今すぐ同期
+                  </button>
+                </div>
+                <h3>自端末の状態</h3>
+                <dl className="sync-status-facts">
+                  <div>
+                    <dt>状態</dt>
+                    <dd>
+                      {configured.paused
+                        ? "一時停止中"
+                        : view.listening
+                          ? "待受中"
+                          : "接続準備中"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>公開鍵の識別情報</dt>
+                    <dd>
+                      <code>{fingerprint(configured.publicKey)}</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>待ち受けアドレス</dt>
+                    <dd>
+                      {view.listening ?? "未構成"}{" "}
+                      <button
+                        disabled={busy}
+                        onClick={() => setScreen({ kind: "listen-edit" })}
+                        type="button"
+                      >
+                        変更
+                      </button>
+                    </dd>
+                  </div>
+                </dl>
+                <h3>受信</h3>
+                <dl className="sync-status-facts">
+                  <div>
+                    <dt>最終反映</dt>
+                    <dd>
+                      {view.local.lastAppliedAt
+                        ? formatEventDateTime(view.local.lastAppliedAt)
+                        : "未確認"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>反映待ち</dt>
+                    <dd>
+                      {view.local.pendingApplyCount}件 (
+                      {bytes(view.local.pendingApplyBytes)})
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>添付取得待ち</dt>
+                    <dd>
+                      {view.local.pendingAttachmentCount}件 (
+                      {bytes(view.local.pendingAttachmentBytes)})
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>検証失敗</dt>
+                    <dd>{view.local.quarantinedCount}件</dd>
+                  </div>
+                </dl>
+                {!!view.failures.length && (
+                  <section aria-label="検証失敗の詳細">
+                    <h4>検証失敗の詳細（先頭50件）</h4>
+                    <ul>
+                      {view.failures.map(([hash, reason]) => (
+                        <li key={`${hash}:${reason}`}>
+                          <p>{reason}</p>
+                          <code>{hash}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                {!!view.attachmentTransfers.length && (
+                  <section aria-label="添付取得の詳細">
+                    <h4>添付取得の詳細（先頭64件）</h4>
+                    <ul>
+                      {view.attachmentTransfers.map((transfer) => (
+                        <li key={transfer.sha256}>
+                          <p>
+                            {bytes(transfer.received)} / {bytes(transfer.size)}{" "}
+                            · {transfer.error ?? "取得待ち"}
+                          </p>
+                          <code>{transfer.sha256}</code>
+                          {transfer.error && (
+                            <button
+                              disabled={busy}
+                              onClick={() =>
+                                void act({
+                                  action: "retryAttachment",
+                                  sha256: transfer.sha256,
+                                })
+                              }
+                              type="button"
+                            >
+                              この添付を再取得
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                <h3>送信</h3>
+                <p>送信待ち {view.local.pendingSignatureCount}件</p>
+                <div className="application-modal-actions">
+                  <button
+                    className="sync-danger-button"
                     disabled={busy}
                     onClick={() =>
-                      void act({
-                        action: "reject",
-                        invitationId: pending.invitationId,
+                      setScreen({
+                        kind: "revoke",
+                        deviceId: configured.origin.deviceId,
                       })
                     }
                     type="button"
                   >
-                    拒否
+                    この端末の登録を解除…
                   </button>
                 </div>
-              </section>
-            ))}
-          <div className="application-modal-actions">
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act({ action: "pause", paused: !configured.paused })
-              }
-              type="button"
-            >
-              {configured.paused ? "再開" : "一時停止"}
-            </button>
-            <button
-              disabled={busy || configured.paused}
-              onClick={() => void act({ action: "reconnect" })}
-              type="button"
-            >
-              今すぐ同期
-            </button>
-            <button disabled={busy} onClick={openInviteStep} type="button">
-              端末を追加
-            </button>
-            <button disabled={busy} onClick={onReceive} type="button">
-              別端末から受信
-            </button>
-          </div>
-          <p role="status">
-            {configured.paused
-              ? "一時停止中"
-              : view.listening
-                ? `待受中 ${view.listening}`
-                : "接続準備中"}
-          </p>
-          <p>
-            この端末で反映待ち {view.local.pendingApplyCount}件 (
-            {bytes(view.local.pendingApplyBytes)}) · 相手への送信待ち{" "}
-            {view.local.pendingSignatureCount}件 · 添付取得待ち{" "}
-            {view.local.pendingAttachmentCount}件 (
-            {bytes(view.local.pendingAttachmentBytes)})
-          </p>
-          <p>
-            最終反映{" "}
-            {view.local.lastAppliedAt
-              ? formatEventDateTime(view.local.lastAppliedAt)
-              : "未確認"}
-          </p>
-          {view.local.quarantinedCount > 0 && (
-            <p role="alert">
-              検証に失敗したデータ {view.local.quarantinedCount}
-              件を隔離しました。
-            </p>
-          )}
-          <section
-            aria-label="登録端末"
-            className="sync-device-list"
-            data-modal-scroll
-          >
-            {view.devices.map((device) => (
-              <Device
-                key={device.member.origin.deviceId}
-                device={device}
-                frontier={view.local.frontier}
-                local={
-                  device.member.origin.deviceId === configured.origin.deviceId
-                }
-                paused={configured.paused}
-                busy={busy}
-                act={act}
-              />
-            ))}
-          </section>
-          <details>
-            <summary>同期の詳細</summary>
-            {!!view.failures.length && (
+              </>
+            ) : (
               <>
-                <h4>隔離したデータの失敗理由（先頭50件）</h4>
-                <ul>
-                  {view.failures.map(([hash, reason]) => (
-                    <li key={`${hash}:${reason}`}>
-                      <p>{reason}</p>
-                      <code>{hash}</code>
-                    </li>
-                  ))}
-                </ul>
+                <dl className="sync-status-facts">
+                  <div>
+                    <dt>状態</dt>
+                    <dd>同期未設定</dd>
+                  </div>
+                </dl>
+                <div className="application-modal-actions">
+                  <button
+                    disabled={busy}
+                    onClick={() => setAddStep(1)}
+                    type="button"
+                  >
+                    元端末として同期を始める
+                  </button>
+                </div>
               </>
             )}
-            {!!view.attachmentTransfers.length && (
+          </section>
+          <section
+            role="tabpanel"
+            id="sync-panel-devices"
+            aria-labelledby="sync-tab-devices"
+            hidden={tab !== "devices"}
+            data-modal-scroll
+          >
+            {configured ? (
               <>
-                <h4>添付取得の詳細（先頭64件）</h4>
-                <ul>
-                  {view.attachmentTransfers.map((transfer) => (
-                    <li key={transfer.sha256}>
+                <div className="application-modal-actions">
+                  <button
+                    disabled={busy}
+                    onClick={openInviteStep}
+                    type="button"
+                  >
+                    端末を追加
+                  </button>
+                </div>
+                {view.pending
+                  .filter((pending) => !pending.approved)
+                  .map((pending) => (
+                    <section key={pending.invitationId} className="sync-review">
+                      <h3>参加承認待ち: {pending.member.name}</h3>
                       <p>
-                        {bytes(transfer.received)} / {bytes(transfer.size)} ·{" "}
-                        {transfer.error ?? "取得待ち"}
+                        参加側に表示された名前と鍵の識別情報が一致することを確認してください。
                       </p>
-                      <code>{transfer.sha256}</code>
-                      {transfer.error && (
+                      <code>{pending.fingerprint}</code>
+                      <p>
+                        期限{" "}
+                        {formatEventDateTime(
+                          new Date(pending.expiresAt * 1000).toISOString(),
+                        )}
+                      </p>
+                      <div className="application-modal-actions">
                         <button
                           disabled={busy}
                           onClick={() =>
                             void act({
-                              action: "retryAttachment",
-                              sha256: transfer.sha256,
+                              action: "approve",
+                              invitationId: pending.invitationId,
+                              expectedPublicKey: pending.member.publicKey,
                             })
                           }
                           type="button"
                         >
-                          この添付を再取得
+                          この端末を承認
                         </button>
-                      )}
-                    </li>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            void act({
+                              action: "reject",
+                              invitationId: pending.invitationId,
+                            })
+                          }
+                          type="button"
+                        >
+                          拒否
+                        </button>
+                      </div>
+                    </section>
                   ))}
-                </ul>
+                <section aria-label="他端末" className="sync-device-list">
+                  {view.devices
+                    .filter(
+                      (device) =>
+                        device.member.origin.deviceId !==
+                        configured.origin.deviceId,
+                    )
+                    .map((device) => (
+                      <PeerDevice
+                        key={device.member.origin.deviceId}
+                        device={device}
+                        frontier={view.local.frontier}
+                        paused={configured.paused}
+                        busy={busy}
+                        onEditAddress={() =>
+                          setScreen({
+                            kind: "peer-address",
+                            deviceId: device.member.origin.deviceId,
+                          })
+                        }
+                        onRevoke={() =>
+                          setScreen({
+                            kind: "revoke",
+                            deviceId: device.member.origin.deviceId,
+                          })
+                        }
+                      />
+                    ))}
+                </section>
               </>
+            ) : (
+              <p>
+                同期を有効にすると、参加している他端末がここに一覧表示されます。
+              </p>
             )}
-            {!view.failures.length && !view.attachmentTransfers.length && (
-              <p>隔離データと取得中の添付はありません。</p>
-            )}
-          </details>
-          <details>
-            <summary>待受設定を変更</summary>
-            <label>
-              IPアドレスとUDPポート
-              <input
-                value={bind}
-                onChange={(event) => setBind(event.target.value)}
-              />
-            </label>
-            <button
-              disabled={busy}
-              onClick={() => void act({ action: "listen", bind })}
-              type="button"
-            >
-              変更して再接続
-            </button>
-          </details>
+          </section>
         </>
       )}
-      <div className="application-modal-actions">
-        <button disabled={busy} onClick={onRecovery} type="button">
-          保護された内容を復旧
-        </button>
-        <button disabled={busy} onClick={close} type="button">
-          閉じる
-        </button>
-      </div>
+      {screen === null && (
+        <div className="application-modal-actions">
+          <button disabled={busy} onClick={close} type="button">
+            閉じる
+          </button>
+        </div>
+      )}
     </ModalDialog>
   );
 }
 
-function Device({
+function ListenEditor({
+  initial,
+  busy,
+  onCancel,
+  onApply,
+}: {
+  initial: string;
+  busy: boolean;
+  onCancel: () => void;
+  onApply: (value: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState(initial);
+  return (
+    <section aria-label="待ち受けアドレスを変更" data-modal-scroll>
+      <h3>待ち受けアドレスを変更</h3>
+      <p>
+        通常は待ち受けアドレスを変更する必要はありません。他のアプリケーションとポートが衝突して利用できないときに変更します。変更した場合は、他の端末側で接続先アドレスの更新が必要です。
+      </p>
+      <label>
+        IPアドレスとUDPポート
+        <input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+      </label>
+      <div className="application-modal-actions">
+        <button
+          disabled={busy}
+          onClick={() => setValue("0.0.0.0:0")}
+          type="button"
+        >
+          自動
+        </button>
+        <button disabled={busy} onClick={onCancel} type="button">
+          キャンセル
+        </button>
+        <button
+          disabled={busy || !value.trim()}
+          onClick={() => void onApply(value)}
+          type="button"
+        >
+          変更
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PeerAddressEditor({
+  device,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  device: SyncDevice;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState(device.addresses.join("\n"));
+  return (
+    <section aria-label="接続先アドレスを変更" data-modal-scroll>
+      <h3>接続先アドレスを変更: {device.member.name}</h3>
+      <p>
+        この端末が接続しに行くアドレスです。相手端末のIPアドレスが変わったときに更新します。公開鍵の識別情報と一致する端末にのみ保存されます。
+      </p>
+      <label>
+        接続先アドレス（複数は改行区切り）
+        <textarea
+          rows={3}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+      </label>
+      <div className="application-modal-actions">
+        <button disabled={busy} onClick={onCancel} type="button">
+          キャンセル
+        </button>
+        <button
+          disabled={busy || !value.trim()}
+          onClick={() => void onSave(value)}
+          type="button"
+        >
+          保存
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RevokeConfirm({
+  name,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  return (
+    <section aria-label="登録解除の確認" data-modal-scroll>
+      <h3>登録解除の確認</h3>
+      <p>
+        {name}
+        を同期から削除します。登録を解除すると元に戻すことはできません。渡したデータは相手の端末に残ります。
+      </p>
+      <div className="application-modal-actions">
+        <button disabled={busy} onClick={onCancel} type="button">
+          キャンセル
+        </button>
+        <button
+          className="sync-danger-button"
+          disabled={busy}
+          onClick={() => void onConfirm()}
+          type="button"
+        >
+          解除
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PeerDevice({
   device,
   frontier,
-  local,
   paused,
   busy,
-  act,
+  onEditAddress,
+  onRevoke,
 }: {
   device: SyncDevice;
   frontier: SyncView["local"]["frontier"];
-  local: boolean;
   paused: boolean;
   busy: boolean;
-  act: (action: SyncAction) => Promise<boolean>;
+  onEditAddress: () => void;
+  onRevoke: () => void;
 }) {
-  const [address, setAddress] = useState(device.addresses.join("\n"));
-  const [review, setReview] = useState(false);
   const member = device.member;
   return (
-    <article>
-      <h3>
-        {member.name}
-        {local ? "（この端末）" : ""}
-      </h3>
-      <p>
-        {local
-          ? member.revoked
-            ? "登録解除済み"
-            : "ローカル保存"
-          : devicePhase(device, paused, frontier)}
-      </p>
-      {!local && (
-        <p>
-          相手で未反映（未受信分を含む） {device.pendingAppliedCount}件 ·{" "}
-          {bytes(device.pendingBytes)}
-          {device.checkpointRequired ? " ＋文書チェックポイント" : ""}
-        </p>
-      )}
-      {!local && (
-        <p>
-          最終反映{" "}
-          {device.lastAppliedAt
-            ? formatEventDateTime(device.lastAppliedAt)
-            : "未確認"}
-        </p>
-      )}
+    <article className="sync-peer">
+      <h3>{member.name}</h3>
+      <dl className="sync-status-facts">
+        <div>
+          <dt>接続状態</dt>
+          <dd>{devicePhase(device, paused, frontier)}</dd>
+        </div>
+        <div>
+          <dt>公開鍵の識別情報</dt>
+          <dd>
+            <code>{fingerprint(member.publicKey)}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>アドレス</dt>
+          <dd>
+            {device.addresses.length ? device.addresses.join("、") : "未登録"}{" "}
+            {!member.revoked && (
+              <button disabled={busy} onClick={onEditAddress} type="button">
+                変更
+              </button>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>反映待ち</dt>
+          <dd>
+            相手で未反映（未受信分を含む） {device.pendingAppliedCount}件 ·{" "}
+            {bytes(device.pendingBytes)}
+            {device.checkpointRequired ? " ＋文書チェックポイント" : ""}
+          </dd>
+        </div>
+        <div>
+          <dt>最終反映</dt>
+          <dd>
+            {device.lastAppliedAt
+              ? formatEventDateTime(device.lastAppliedAt)
+              : "未確認"}
+          </dd>
+        </div>
+      </dl>
       {device.connection.error && (
         <p role="alert">{device.connection.error.message}</p>
       )}
-      <details>
-        <summary>端末の詳細</summary>
-        <code>{fingerprint(member.publicKey)}</code>
-        {!local && !member.revoked && (
-          <>
-            <label>
-              接続先アドレスを更新
-              <textarea
-                rows={2}
-                value={address}
-                onChange={(event) => setAddress(event.target.value)}
-              />
-            </label>
-            <button
-              disabled={busy || !address.trim()}
-              onClick={() =>
-                void act({
-                  action: "addresses",
-                  deviceId: member.origin.deviceId,
-                  expectedPublicKey: member.publicKey,
-                  addresses: addresses(address),
-                })
-              }
-              type="button"
-            >
-              同じ鍵の接続先アドレスを保存
-            </button>
-          </>
-        )}
-        {!member.revoked &&
-          (review ? (
-            <>
-              <p>
-                {member.name}
-                の登録を解除すると、この鍵は再利用できません。渡したデータは相手の端末に残ります。
-              </p>
-              <button
-                disabled={busy}
-                onClick={() =>
-                  void act({
-                    action: "revoke",
-                    deviceId: member.origin.deviceId,
-                    expectedPublicKey: member.publicKey,
-                  })
-                }
-                type="button"
-              >
-                登録解除を確定
-              </button>
-              <button disabled={busy} onClick={() => setReview(false)}>
-                戻る
-              </button>
-            </>
-          ) : (
-            <button disabled={busy} onClick={() => setReview(true)}>
-              登録解除…
-            </button>
-          ))}
-      </details>
+      {!member.revoked && (
+        <div className="application-modal-actions">
+          <button
+            className="sync-danger-button"
+            disabled={busy}
+            onClick={onRevoke}
+            type="button"
+          >
+            登録解除…
+          </button>
+        </div>
+      )}
     </article>
   );
 }

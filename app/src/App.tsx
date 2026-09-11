@@ -3509,28 +3509,8 @@ export function App({
           prepare={() => runtime.prepareSynchronization()}
           session={syncSettings}
           onClose={() => setSyncSettings(null)}
-          onReceive={() => {
-            setSyncSettings(null);
-            setSyncJoining(true);
-          }}
           invitation={syncInvitation}
           onInvitation={setSyncInvitation}
-          onRecovery={() => {
-            const target = runtime
-              .snapshot()
-              .windows.find(
-                (window) => window.windowId === effectiveTargetWindowId,
-              );
-            if (!target?.noteId) {
-              setCommandMessage("復旧するノートを開いてください");
-              return;
-            }
-            setNoteRecovery({
-              noteId: target.noteId,
-              restoreFocus: syncSettings.restoreFocus,
-            });
-            setSyncSettings(null);
-          }}
         />
       ) : noteRecovery ? (
         <NoteRecoveryDialog
