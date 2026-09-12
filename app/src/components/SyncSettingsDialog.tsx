@@ -433,7 +433,36 @@ export function SyncSettingsDialog({
                 新しい端末で<code>:new-workspace</code>
                 を開き、「別端末から受信」を選びます。招待コード・端末名・新しい空の保存先を指定します。
               </p>
+              <dl className="sync-status-facts">
+                <div>
+                  <dt>待ち受けアドレス</dt>
+                  <dd>{view.listening ?? "未構成"}</dd>
+                </div>
+                {activeInvitation && (
+                  <div>
+                    <dt>有効期限</dt>
+                    <dd>
+                      {formatEventDateTime(
+                        new Date(
+                          activeInvitation.expiresAt * 1000,
+                        ).toISOString(),
+                      )}
+                    </dd>
+                  </div>
+                )}
+              </dl>
               {invitationPanel}
+              {configured && !configured.paused && (
+                <div className="application-modal-actions">
+                  <button
+                    disabled={busy}
+                    onClick={() => void autoInvite()}
+                    type="button"
+                  >
+                    招待コードを再生成
+                  </button>
+                </div>
+              )}
               <p>
                 受信の初回と中断後の再開は、新しい端末で別の操作として案内されます。
               </p>

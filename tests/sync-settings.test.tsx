@@ -464,6 +464,10 @@ it("advances from receiving instructions to the approval step", async () => {
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
   await screen.findByRole("heading", { name: "新しい端末で受信" });
+  expect(screen.getByText("0.0.0.0:1234")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "招待コードを再生成" }),
+  ).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "次へ" }));
   await screen.findByRole("heading", { name: "元端末で承認" });
   fireEvent.click(screen.getByRole("button", { name: "戻る" }));
