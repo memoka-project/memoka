@@ -294,6 +294,12 @@ pub(super) async fn receive(
     let endpoint = DirectEndpoint::bind(&key, bind.parse().unwrap(), &receipt.addresses).await?;
     let result = async {
         phase(&view, "connecting");
+        log::info!(
+            target: "memoka::sync",
+            "event=join-connect addresses={:?} inviter_key={}",
+            receipt.addresses,
+            &receipt.inviter_key[..12.min(receipt.inviter_key.len())]
+        );
         let connection = endpoint.connect(&receipt.inviter_key, &receipt.addresses).await?;
         if let Some(claim) = claim {
             phase(&view, "approval");

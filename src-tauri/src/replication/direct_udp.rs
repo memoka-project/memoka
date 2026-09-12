@@ -193,6 +193,11 @@ impl CustomSender for Sender {
             )));
         };
         if !self.destinations.allow(dst) {
+            log::warn!(
+                target: "memoka::sync",
+                "event=udp-send-denied destination={dst} manual_count={}",
+                self.destinations.manual.read().map(|m| m.len()).unwrap_or(0)
+            );
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Destination was not manually configured",
