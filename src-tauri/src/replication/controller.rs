@@ -49,6 +49,16 @@ fn usable_interface_ip(ip: std::net::IpAddr) -> bool {
         && !matches!(ip, std::net::IpAddr::V6(address) if (address.segments()[0] & 0xffc0) == 0xfe80)
 }
 
+/// Virtual bridges and tunnels host private subnets that peers on the
+/// physical LAN or VPN cannot reach. Advertising them in invitations only
+/// produces unreachable connection candidates.
+fn is_virtual_interface(name: &str) -> bool {
+    const VIRTUAL_PREFIXES: [&str; 8] = [
+        "virbr", "docker", "br-", "veth", "vnet", "tun", "tap", "zt",
+    ];
+    VIRTUAL_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
 /// Interface IPs which the current UDP listener can actually serve. Reading
 /// the interface table performs no discovery traffic of its own.
 pub(super) fn interface_address_candidates(
@@ -61,6 +71,9 @@ pub(super) fn interface_address_candidates(
     let bound = listening.ip();
     let mut candidates = Vec::new();
     for interface in interfaces {
+        if is_virtual_interface(&interface.name) {
+            continue;
+        }
         let interface_name = interface
             .friendly_name
             .clone()
@@ -738,6 +751,8 @@ mod candidate_tests {
     fn filters_unusable_addresses_and_combines_the_actual_listen_port() {
         let interfaces = vec![
             interface("lo", None, &["127.0.0.1/8"], &["::1/128"]),
+            interface("virbr0", Some("NAT"), &["192.168.122.1/24"], &[]),
+            interface("docker0", Some("Docker"), &["172.17.0.1/16"], &[]),
             interface(
                 "eth0",
                 Some("Ethernet"),
