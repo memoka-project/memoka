@@ -11,6 +11,15 @@ import { MemoryDataAreaPort } from "../app/src/platform/data-area";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
+
+function encodeInvitation(addresses: string[], expiresAt: number): string {
+  const invitation = { addresses, expiresAt };
+  const content = Array.from(
+    new TextEncoder().encode(JSON.stringify(invitation)),
+  );
+  const signed = JSON.stringify({ content, signature: "00" });
+  return `memoka-sync:${btoa(signed).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
+}
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -119,4 +128,28 @@ it("explains an expired invitation in Japanese and keeps the raw code in details
   expect(screen.getByText("Invitation expired")).toBeTruthy();
   fireEvent.click(screen.getByText("エラーの詳細"));
   expect(screen.getByText("SYNC_INVITE_EXPIRED")).toBeTruthy();
+});
+
+it("shows the inviter address and expiry while editing the code", async () => {
+  native.invoke.mockResolvedValue(null);
+  render(
+    <SyncJoinDialog
+      dataArea={new MemoryDataAreaPort(false)}
+      onReady={vi.fn(async () => {})}
+      onClose={() => {}}
+    />,
+  );
+  const code = encodeInvitation(
+    ["192.168.1.5:34722", "10.8.0.2:34722"],
+    Math.floor(Date.now() / 1000) + 600,
+  );
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    { target: { value: code } },
+  );
+  expect(screen.getByText("192.168.1.5:34722、10.8.0.2:34722")).toBeTruthy();
+  expect(screen.getByText(/有効期限/)).toBeTruthy();
+  expect(screen.queryByText("（期限切れ）")).toBeNull();
 });

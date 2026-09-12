@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ModalDialog } from "./ModalDialog";
+import { formatEventDateTime } from "../core/display-datetime";
 import type { DataAreaPort } from "../platform/data-area";
 import {
   synchronizationError,
@@ -64,6 +65,43 @@ function receiveErrorGuide(code: string | null): {
         title: "元端末へ接続できませんでした。",
         next: "両方の端末が同じLAN・VPNに接続していることと、招待コードの有効期限を確認して、もう一度試してください。",
       };
+  }
+}
+
+interface InvitationPreview {
+  addresses: string[];
+  expiresAt: number;
+}
+
+function previewInvitation(code: string): InvitationPreview | null {
+  const encoded = code.trim().replace(/^memoka-sync:/, "");
+  if (!encoded) return null;
+  try {
+    const standard = encoded.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = standard.padEnd(
+      standard.length + ((4 - (standard.length % 4)) % 4),
+      "=",
+    );
+    const decoded = atob(padded);
+    const bytes = new Uint8Array(decoded.length);
+    for (let index = 0; index < decoded.length; index++)
+      bytes[index] = decoded.charCodeAt(index);
+    const signed = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(signed.content)) return null;
+    const content = new Uint8Array(signed.content);
+    const invitation = JSON.parse(new TextDecoder().decode(content));
+    if (
+      !Array.isArray(invitation.addresses) ||
+      !invitation.addresses.every((a: unknown) => typeof a === "string") ||
+      typeof invitation.expiresAt !== "number"
+    )
+      return null;
+    return {
+      addresses: invitation.addresses,
+      expiresAt: invitation.expiresAt,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -199,6 +237,26 @@ export function SyncJoinDialog({
               onChange={(event) => setInfo(event.target.value)}
             />
           </label>
+          {(() => {
+            const preview = previewInvitation(info);
+            if (!preview) return null;
+            return (
+              <dl className="sync-status-facts">
+                <div>
+                  <dt>同期元のアドレス</dt>
+                  <dd>{preview.addresses.join("、")}</dd>
+                </div>
+                <div>
+                  <dt>有効期限</dt>
+                  <dd>
+                    {formatEventDateTime(
+                      new Date(preview.expiresAt * 1000).toISOString(),
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            );
+          })()}
           <button
             disabled={busy}
             onClick={() =>
