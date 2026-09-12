@@ -255,25 +255,28 @@ export function SyncJoinDialog({
           </label>
           {preview === "invalid" ? (
             <p role="alert">有効な招待コードではありません</p>
-          ) : preview?.expired ? (
-            <p role="alert" className="sync-expired-notice">
-              有効期限が切れています
-            </p>
           ) : preview ? (
-            <dl className="sync-status-facts">
-              <div>
-                <dt>同期元のアドレス</dt>
-                <dd>{preview.addresses.join("、")}</dd>
-              </div>
-              <div>
-                <dt>有効期限</dt>
-                <dd>
-                  {formatEventDateTime(
-                    new Date(preview.expiresAt * 1000).toISOString(),
-                  )}
-                </dd>
-              </div>
-            </dl>
+            <>
+              {preview.expired && (
+                <p role="alert" className="sync-expired-notice">
+                  有効期限が切れています
+                </p>
+              )}
+              <dl className="sync-status-facts">
+                <div>
+                  <dt>同期元のアドレス</dt>
+                  <dd>{preview.addresses.join("、")}</dd>
+                </div>
+                <div>
+                  <dt>有効期限</dt>
+                  <dd>
+                    {formatEventDateTime(
+                      new Date(preview.expiresAt * 1000).toISOString(),
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </>
           ) : null}
           <button
             disabled={busy}

@@ -199,4 +199,6 @@ it("shows a red expiry warning for an expired invitation", async () => {
   );
   const warning = screen.getByText("有効期限が切れています");
   expect(warning.classList.contains("sync-expired-notice")).toBe(true);
+  expect(screen.getByText("192.168.1.5:34722")).toBeTruthy();
+  expect(screen.getAllByText("有効期限").length).toBeGreaterThan(0);
 });
