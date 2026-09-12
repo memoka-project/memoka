@@ -198,6 +198,16 @@ export function SyncJoinDialog({
       await invoke("sync_join_stop");
       onClose();
     });
+  const cancelReceive = () =>
+    void act(async () => {
+      await invoke("sync_join_stop");
+      if (active.current) {
+        setView(null);
+        setError(null);
+        setErrorCode(null);
+        setPath(null);
+      }
+    });
   const failed = view?.phase === "error";
   const guide = receiveErrorGuide(errorCode ?? view?.error?.code ?? null);
 
@@ -207,7 +217,7 @@ export function SyncJoinDialog({
       focusSurface="sync-join"
       className="sync-settings-dialog"
       busy={busy}
-      onClose={close}
+      onClose={receiving ? cancelReceive : close}
     >
       <h2>別端末から受信</h2>
       {(error || view?.error) && (
@@ -322,9 +332,15 @@ export function SyncJoinDialog({
         </>
       )}
       <div className="application-modal-actions">
-        <button disabled={busy} onClick={close} type="button">
-          {receiving ? "中断して閉じる" : "閉じる"}
-        </button>
+        {receiving ? (
+          <button disabled={busy} onClick={cancelReceive} type="button">
+            キャンセル
+          </button>
+        ) : (
+          <button disabled={busy} onClick={close} type="button">
+            閉じる
+          </button>
+        )}
       </div>
     </ModalDialog>
   );

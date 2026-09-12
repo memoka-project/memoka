@@ -67,8 +67,15 @@ it("starts a first receive as a distinct operation and waits for reviewed approv
   expect(screen.getByText("review this key")).toBeTruthy();
   expect(onReady).not.toHaveBeenCalled();
   expect(screen.queryByText("Workspaceを開く")).toBeNull();
-  fireEvent.click(screen.getByText("中断して閉じる"));
-  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByText("キャンセル"));
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText(
+        "ここに同期元で作成した招待コードを貼り付けてください",
+      ),
+    ).toBeTruthy(),
+  );
+  expect(onClose).not.toHaveBeenCalled();
   expect(native.invoke).toHaveBeenCalledWith("sync_join_stop");
 });
 
