@@ -446,6 +446,7 @@ pub fn run() {
         replication::bridge::sync_ack,
         replication::controller::sync_status,
         replication::controller::sync_action,
+        replication::controller::sync_default_device_name,
         replication::controller::sync_address_candidates,
         replication::controller::sync_start,
         replication::controller::sync_stop,

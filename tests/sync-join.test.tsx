@@ -37,13 +37,17 @@ it("starts a first receive as a distinct operation and waits for reviewed approv
       onClose={onClose}
     />,
   );
-  fireEvent.click(screen.getByText("初めて受信"));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.change(screen.getByLabelText("招待コード"), {
-    target: { value: "private invitation" },
-  });
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    {
+      target: { value: "private invitation" },
+    },
+  );
   fireEvent.click(screen.getByText("新しい空の保存先を選択"));
   await screen.findByText("/fresh");
   fireEvent.click(screen.getByText("受信を開始"));
@@ -59,39 +63,6 @@ it("starts a first receive as a distinct operation and waits for reviewed approv
   fireEvent.click(screen.getByText("中断して閉じる"));
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
   expect(native.invoke).toHaveBeenCalledWith("sync_join_stop");
-});
-
-it("resumes an interrupted receive with only the saved destination", async () => {
-  native.invoke.mockImplementation(async (command: string) =>
-    command === "sync_join_start"
-      ? {
-          path: "/resumed",
-          phase: "receiving",
-          name: "Saved Laptop",
-          fingerprint: "saved key",
-          error: null,
-        }
-      : null,
-  );
-  render(
-    <SyncJoinDialog
-      dataArea={new MemoryDataAreaPort(false, "/resumed")}
-      onReady={vi.fn(async () => {})}
-      onClose={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByText("中断した受信を再開"));
-  expect(screen.queryByLabelText("招待コード")).toBeNull();
-  expect(screen.queryByLabelText("この端末の名前")).toBeNull();
-  fireEvent.click(screen.getByText("再開する保存先を選択"));
-  await screen.findByText("/resumed");
-  fireEvent.click(screen.getByText("受信を再開"));
-  await screen.findByText("文書を受信中");
-  expect(native.invoke).toHaveBeenCalledWith("sync_join_start", {
-    path: "/resumed",
-    connectionInfo: "",
-    name: "",
-  });
 });
 
 it("opens a durably completed receive without requiring the invitation again", async () => {
@@ -130,13 +101,17 @@ it("explains an expired invitation in Japanese and keeps the raw code in details
       onClose={() => {}}
     />,
   );
-  fireEvent.click(screen.getByText("初めて受信"));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.change(screen.getByLabelText("招待コード"), {
-    target: { value: "expired invitation" },
-  });
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    {
+      target: { value: "expired invitation" },
+    },
+  );
   fireEvent.click(screen.getByText("新しい空の保存先を選択"));
   await screen.findByText("/fresh");
   fireEvent.click(screen.getByText("受信を開始"));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ModalDialog } from "./ModalDialog";
 import { formatEventDateTime } from "../core/display-datetime";
 import { writeClipboardText } from "../platform/clipboard";
@@ -7,7 +7,6 @@ import {
   nativeSynchronization,
   synchronizationError,
   type SyncAction,
-  type SyncAddressCandidate,
   type SyncDevice,
   type SyncView,
   type SynchronizationPort,
@@ -74,14 +73,7 @@ export function SyncSettingsDialog({
   const bind = "0.0.0.0:0";
   const [tab, setTab] = useState<SyncTab>("status");
   const [screen, setScreen] = useState<SubScreen | null>(null);
-  const [addStep, setAddStep] = useState<1 | 2 | 3 | 4 | null>(null);
-  const [candidates, setCandidates] = useState<SyncAddressCandidate[] | null>(
-    null,
-  );
-  const [candidateError, setCandidateError] = useState<string | null>(null);
-  const [refreshingCandidates, setRefreshingCandidates] = useState(false);
-  const [selectedAddress, setSelectedAddress] = useState("");
-  const [manualAddress, setManualAddress] = useState("");
+  const [addStep, setAddStep] = useState<1 | 2 | 3 | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -113,25 +105,25 @@ export function SyncSettingsDialog({
     };
   }, [port]);
 
-  const refreshCandidates = useCallback(async () => {
-    setRefreshingCandidates(true);
-    setCandidateError(null);
-    try {
-      const next = await port.addressCandidates(workspaceId);
-      if (active.current) {
-        setCandidates(next);
-        setSelectedAddress("");
-      }
-    } catch (cause) {
-      if (active.current) setCandidateError(synchronizationError(cause));
-    } finally {
-      if (active.current) setRefreshingCandidates(false);
-    }
-  }, [port, workspaceId]);
+  useEffect(() => {
+    let cancelled = false;
+    void port.defaultDeviceName().then((suggested) => {
+      if (!cancelled && suggested) setName((current) => current || suggested);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [port]);
 
-  const openInviteStep = () => {
-    setAddStep(2);
-    void refreshCandidates();
+  const autoInvite = async () => {
+    try {
+      const candidates = await port.addressCandidates(workspaceId);
+      if (candidates.length > 0) {
+        await act({ action: "invite", addresses: [candidates[0]!.address] });
+      }
+    } catch {
+      // The next step explains that no invitation is available.
+    }
   };
 
   const selectTab = (next: SyncTab, focus = false) => {
@@ -263,7 +255,6 @@ export function SyncSettingsDialog({
     (device) => device.member.origin.deviceId === configured?.origin.deviceId,
   );
   const selfRevoked = !!(configured && localDevice?.member.revoked);
-  const invitationAddress = selectedAddress || manualAddress.trim();
   const screenDevice =
     screen?.kind === "peer-address" || screen?.kind === "revoke"
       ? view?.devices.find(
@@ -373,14 +364,12 @@ export function SyncSettingsDialog({
         <section aria-label="端末を追加" data-modal-scroll>
           <h3>端末を追加</h3>
           <ol className="sync-add-steps">
-            <li data-current={addStep === 1}>元端末で準備</li>
-            <li data-current={addStep === 2}>元端末で招待</li>
-            <li data-current={addStep === 3}>新しい端末で受信</li>
-            <li data-current={addStep === 4}>元端末で承認</li>
+            <li data-current={addStep === 1}>この端末に名前を付ける</li>
+            <li data-current={addStep === 2}>新しい端末で受信</li>
+            <li data-current={addStep === 3}>元端末で承認</li>
           </ol>
           {addStep === 1 && (
             <section>
-              <h4>元端末で準備</h4>
               {configured ? (
                 <>
                   <p>この端末は準備済みです。待受は既定値を使います。</p>
@@ -394,7 +383,9 @@ export function SyncSettingsDialog({
                     </button>
                     <button
                       disabled={busy}
-                      onClick={openInviteStep}
+                      onClick={() => {
+                        setAddStep(2);
+                      }}
                       type="button"
                     >
                       次へ
@@ -407,7 +398,11 @@ export function SyncSettingsDialog({
                     event.preventDefault();
                     void act({ action: "enable", name, bind }).then(
                       (succeeded) => {
-                        if (succeeded && active.current) openInviteStep();
+                        if (succeeded && active.current) {
+                          void autoInvite().then(() => {
+                            if (active.current) setAddStep(2);
+                          });
+                        }
                       },
                     );
                   }}
@@ -421,91 +416,14 @@ export function SyncSettingsDialog({
                       onChange={(event) => setName(event.target.value)}
                     />
                   </label>
-                  <p>
-                    待受設定は既定値（0.0.0.0:0で空きUDPポート）を使います。変更は状態タブから行います。
-                  </p>
                   <button disabled={busy || !name.trim()} type="submit">
-                    同期を有効にして次へ
+                    次へ
                   </button>
                 </form>
               )}
             </section>
           )}
           {addStep === 2 && (
-            <section>
-              <h4>元端末で招待</h4>
-              <fieldset>
-                <legend>この端末のLAN・VPNアドレス</legend>
-                {candidateError && <p role="alert">{candidateError}</p>}
-                {refreshingCandidates && <p role="status">候補を取得中…</p>}
-                {candidates?.length
-                  ? candidates.map((candidate) => (
-                      <label key={candidate.address} className="sync-address">
-                        <input
-                          checked={selectedAddress === candidate.address}
-                          name="sync-address-candidate"
-                          type="radio"
-                          value={candidate.address}
-                          onChange={() => setSelectedAddress(candidate.address)}
-                        />
-                        {candidate.address}（{candidate.interfaceName}）
-                      </label>
-                    ))
-                  : !refreshingCandidates && (
-                      <p>
-                        候補が見つかりませんでした。下の欄へ手入力できます。
-                      </p>
-                    )}
-                <button
-                  disabled={busy || refreshingCandidates}
-                  onClick={() => void refreshCandidates()}
-                  type="button"
-                >
-                  候補を更新
-                </button>
-              </fieldset>
-              <label>
-                または手入力
-                <input
-                  placeholder="192.168.1.10:12345"
-                  value={manualAddress}
-                  onChange={(event) => setManualAddress(event.target.value)}
-                />
-              </label>
-              <button
-                disabled={
-                  busy || !configured || configured.paused || !invitationAddress
-                }
-                onClick={() =>
-                  void act({
-                    action: "invite",
-                    addresses: [invitationAddress],
-                  })
-                }
-                type="button"
-              >
-                招待コードを作成
-              </button>
-              {invitationPanel}
-              <div className="application-modal-actions">
-                <button
-                  disabled={busy}
-                  onClick={() => setAddStep(1)}
-                  type="button"
-                >
-                  戻る
-                </button>
-                <button
-                  disabled={busy || !activeInvitation}
-                  onClick={() => setAddStep(3)}
-                  type="button"
-                >
-                  次へ
-                </button>
-              </div>
-            </section>
-          )}
-          {addStep === 3 && (
             <section>
               <h4>新しい端末で受信</h4>
               <p>
@@ -519,14 +437,14 @@ export function SyncSettingsDialog({
               <div className="application-modal-actions">
                 <button
                   disabled={busy}
-                  onClick={() => setAddStep(2)}
+                  onClick={() => setAddStep(1)}
                   type="button"
                 >
                   戻る
                 </button>
                 <button
                   disabled={busy}
-                  onClick={() => setAddStep(4)}
+                  onClick={() => setAddStep(2)}
                   type="button"
                 >
                   次へ
@@ -534,7 +452,7 @@ export function SyncSettingsDialog({
               </div>
             </section>
           )}
-          {addStep === 4 && (
+          {addStep === 3 && (
             <section>
               <h4>元端末で承認</h4>
               <p>
@@ -824,7 +742,7 @@ export function SyncSettingsDialog({
                     onClick={() => setAddStep(1)}
                     type="button"
                   >
-                    元端末として同期を始める
+                    このワークスペースを他の端末へ同期する
                   </button>
                 </div>
               </>
@@ -846,7 +764,10 @@ export function SyncSettingsDialog({
                 <div className="application-modal-actions">
                   <button
                     disabled={busy}
-                    onClick={openInviteStep}
+                    onClick={() => {
+                      setAddStep(2);
+                      void autoInvite();
+                    }}
                     type="button"
                   >
                     端末を追加

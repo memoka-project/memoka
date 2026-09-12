@@ -15,11 +15,12 @@ use tauri::Manager;
 use super::{
     ReplicaConfig, ReplicaMember, ReplicationEngine, SyncStatus,
     authorization::AuthorityAction,
+    clear_group_state,
     direct::DirectEndpoint,
     exchange::{self, ExchangeState, PeerProgress},
     identity::{self, SyncCredentials},
     invitation::{self, PendingDevice},
-    clear_group_state, journal,
+    journal,
     owner::{AppOwner, ReplicationOwner},
     protocol::*,
     reconnect_schedule::ReconnectSchedule,
@@ -825,6 +826,10 @@ pub async fn sync_action(
                 if self_revoked {
                     let credential = identity::credential_id(&config.group_id, &local)?;
                     clear_group_state(&engine.store.connection)?;
+                    engine.store.connection.execute(
+                        "INSERT INTO settings(key,value) VALUES('replica_id',?1)",
+                        [uuid::Uuid::now_v7().to_string()],
+                    )?;
                     SyncCredentials.remove(&credential);
                 }
                 Ok(serde_json::json!({"selfRevoked":self_revoked}))
@@ -841,6 +846,10 @@ pub async fn sync_action(
                 let local = journal::member(&engine.store.connection, &config.origin, true)?;
                 let credential = identity::credential_id(&config.group_id, &local)?;
                 clear_group_state(&engine.store.connection)?;
+                engine.store.connection.execute(
+                    "INSERT INTO settings(key,value) VALUES('replica_id',?1)",
+                    [uuid::Uuid::now_v7().to_string()],
+                )?;
                 SyncCredentials.remove(&credential);
                 Ok(serde_json::Value::Null)
             }
@@ -865,4 +874,13 @@ pub async fn sync_action(
         }
     }
     Ok(value)
+}
+
+#[tauri::command]
+pub fn sync_default_device_name() -> Option<String> {
+    hostname::get()
+        .ok()
+        .and_then(|name| name.into_string().ok())
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty() && name.len() <= 256 && !name.chars().any(char::is_control))
 }

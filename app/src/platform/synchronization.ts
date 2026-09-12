@@ -101,6 +101,7 @@ export interface SynchronizationPort {
   start(workspaceId: string): Promise<void>;
   stop(workspaceId: string): Promise<void>;
   addressCandidates(workspaceId: string): Promise<SyncAddressCandidate[]>;
+  defaultDeviceName(): Promise<string | null>;
   action(
     workspaceId: string,
     action: SyncAction,
@@ -112,6 +113,7 @@ export const nativeSynchronization: SynchronizationPort = {
   stop: (workspaceId) => invoke("sync_stop", { workspaceId }),
   addressCandidates: (workspaceId) =>
     invoke("sync_address_candidates", { workspaceId }),
+  defaultDeviceName: () => invoke("sync_default_device_name"),
   action: (workspaceId, action) =>
     invoke("sync_action", { workspaceId, action }),
 };

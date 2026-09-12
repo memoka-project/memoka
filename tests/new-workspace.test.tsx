@@ -69,13 +69,17 @@ async function openNewWorkspace(
 async function prepareReceive() {
   fireEvent.click(screen.getByRole("button", { name: "別端末から受信" }));
   await screen.findByRole("dialog", { name: "別端末から受信" });
-  fireEvent.click(screen.getByRole("button", { name: "初めて受信" }));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.change(screen.getByLabelText("招待コード"), {
-    target: { value: "invitation" },
-  });
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    {
+      target: { value: "invitation" },
+    },
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "新しい空の保存先を選択" }),
   );

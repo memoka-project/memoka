@@ -76,7 +76,6 @@ export function SyncJoinDialog({
   onReady: (path: string) => Promise<void>;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<"choice" | "first" | "resume">("choice");
   const [name, setName] = useState("");
   const [info, setInfo] = useState("");
   const [path, setPath] = useState<string | null>(null);
@@ -104,6 +103,18 @@ export function SyncJoinDialog({
     return () => {
       active.current = false;
       clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string | null>("sync_default_device_name")
+      .then((suggested) => {
+        if (!cancelled && suggested) setName((current) => current || suggested);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -145,9 +156,6 @@ export function SyncJoinDialog({
       onClose={close}
     >
       <h2>別端末から受信</h2>
-      <p>
-        元端末の同期設定で作成した招待コードを使います。初回は新しい空の保存先へ複製します。
-      </p>
       {(error || view?.error) && (
         <section role="alert" className="sync-join-error">
           <h3>{guide.title}</h3>
@@ -174,111 +182,53 @@ export function SyncJoinDialog({
         </section>
       )}
       {!receiving && view?.phase !== "ready" && (
-        <>
-          {mode === "choice" ? (
-            <section aria-label="受信方法を選択">
-              <p>初めての受信か、中断した受信の再開かを選んでください。</p>
-              <div className="application-modal-actions">
-                <button
-                  disabled={busy}
-                  onClick={() => setMode("first")}
-                  type="button"
-                >
-                  初めて受信
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() => setMode("resume")}
-                  type="button"
-                >
-                  中断した受信を再開
-                </button>
-              </div>
-              <p>
-                再開は保存先だけで進められます。保存済みの登録情報を使うため、招待コードと端末名の再入力は不要です。
-              </p>
-            </section>
-          ) : (
-            <section
-              aria-label={
-                mode === "first" ? "初めて受信" : "中断した受信を再開"
-              }
-            >
-              <div className="application-modal-actions">
-                <button
-                  disabled={busy}
-                  onClick={() => {
-                    setMode("choice");
-                    setPath(null);
-                  }}
-                  type="button"
-                >
-                  受信方法を選び直す
-                </button>
-              </div>
-              {mode === "first" && (
-                <>
-                  <label>
-                    この端末の名前
-                    <input
-                      value={name}
-                      maxLength={256}
-                      onChange={(event) => setName(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    招待コード
-                    <textarea
-                      rows={4}
-                      value={info}
-                      onChange={(event) => setInfo(event.target.value)}
-                    />
-                  </label>
-                </>
-              )}
-              <button
-                disabled={busy}
-                onClick={() =>
-                  void act(async () => {
-                    const selected = await dataArea.chooseDirectory();
-                    if (selected) setPath(selected);
-                  })
-                }
-                type="button"
-              >
-                {mode === "first"
-                  ? "新しい空の保存先を選択"
-                  : "再開する保存先を選択"}
-              </button>
-              <p>{path ?? "保存先を選択してください"}</p>
-              {mode === "first" && (
-                <p>
-                  既存のWorkspaceや、他の受信で使った保存先へは合流できません。
-                </p>
-              )}
-              <button
-                disabled={
-                  busy ||
-                  !path ||
-                  (mode === "first" && (!name.trim() || !info.trim()))
-                }
-                onClick={() =>
-                  void act(async () => {
-                    const next = await invoke<JoinView>("sync_join_start", {
-                      path,
-                      connectionInfo: info,
-                      name,
-                    });
-                    if (active.current) setView(next);
-                  })
-                }
-                type="button"
-              >
-                {mode === "first" ? "受信を開始" : "受信を再開"}
-              </button>
-            </section>
-          )}
-        </>
+        <section aria-label="受信を開始">
+          <label>
+            この端末の名前
+            <input
+              value={name}
+              maxLength={256}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label>
+            ここに同期元で作成した招待コードを貼り付けてください
+            <textarea
+              rows={4}
+              value={info}
+              onChange={(event) => setInfo(event.target.value)}
+            />
+          </label>
+          <button
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                const selected = await dataArea.chooseDirectory();
+                if (selected) setPath(selected);
+              })
+            }
+            type="button"
+          >
+            新しい空の保存先を選択
+          </button>
+          <p>{path ?? "保存先を選択してください"}</p>
+          <button
+            disabled={busy || !path || !name.trim() || !info.trim()}
+            onClick={() =>
+              void act(async () => {
+                const next = await invoke<JoinView>("sync_join_start", {
+                  path,
+                  connectionInfo: info,
+                  name,
+                });
+                if (active.current) setView(next);
+              })
+            }
+            type="button"
+          >
+            受信を開始
+          </button>
+        </section>
       )}
       {view?.phase === "ready" && (
         <>

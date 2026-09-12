@@ -136,6 +136,7 @@ function fixture({
     { interfaceName: "Wi-Fi", address: "192.168.1.5:1234" },
     { interfaceName: "VPN", address: "10.8.0.2:1234" },
   ],
+  defaultDeviceName = null as string | null,
   action = vi.fn(async (): Promise<SyncActionResult | null> => null),
   invitation = null as SyncInvitation | null,
 } = {}) {
@@ -146,6 +147,7 @@ function fixture({
     start: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     addressCandidates: vi.fn(async () => candidates),
+    defaultDeviceName: vi.fn(async () => defaultDeviceName),
   } satisfies SynchronizationPort;
   const restoreFocus = vi.fn(),
     onClose = vi.fn(),
@@ -225,12 +227,11 @@ it("starts synchronization from the unconfigured status tab", async () => {
   });
   const { port } = fixture({ enabled: false });
   expect(await screen.findByText("同期未設定")).toBeTruthy();
-  fireEvent.click(screen.getByText("元端末として同期を始める"));
+  fireEvent.click(screen.getByText("このワークスペースを他の端末へ同期する"));
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.click(screen.getByText("同期を有効にして次へ"));
-  await screen.findByRole("heading", { name: "元端末で招待" });
+  fireEvent.click(screen.getByText("次へ"));
   await waitFor(() =>
     expect(port.action).toHaveBeenCalledWith("workspace", {
       action: "enable",
@@ -238,6 +239,21 @@ it("starts synchronization from the unconfigured status tab", async () => {
       bind: "0.0.0.0:0",
     }),
   );
+});
+
+it("suggests the hostname as the initial device name without overriding input", async () => {
+  const { port } = fixture({
+    enabled: false,
+    defaultDeviceName: "jun-laptop",
+  });
+  await waitFor(() => expect(port.defaultDeviceName).toHaveBeenCalled());
+  fireEvent.click(screen.getByText("このワークスペースを他の端末へ同期する"));
+  const name = screen.getByLabelText("この端末の名前") as HTMLInputElement;
+  await waitFor(() => expect(name.value).toBe("jun-laptop"));
+  fireEvent.change(screen.getByLabelText("この端末の名前"), {
+    target: { value: "My name" },
+  });
+  expect(name.value).toBe("My name");
 });
 
 it("edits the listen address in a sub-screen and returns without closing", async () => {
@@ -382,7 +398,7 @@ it("keeps approvals and peer revocation on the other-device tab", async () => {
   await screen.findByRole("button", { name: "端末を追加" });
 });
 
-it("offers interface candidates, creates an invitation, and copies the whole code", async () => {
+it("auto-creates an invitation from interface candidates and copies the code", async () => {
   clipboard.writeText.mockResolvedValue(true);
   const action = vi.fn(async () => ({
     connectionInfo: "memoka-sync:secret",
@@ -392,12 +408,9 @@ it("offers interface candidates, creates an invitation, and copies the whole cod
   const { port, onInvitation } = fixture({ action });
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByText("192.168.1.5:1234（Wi-Fi）");
   await waitFor(() =>
     expect(port.addressCandidates).toHaveBeenCalledWith("workspace"),
   );
-  fireEvent.click(screen.getByLabelText("192.168.1.5:1234（Wi-Fi）"));
-  fireEvent.click(screen.getByText("招待コードを作成"));
   await waitFor(() =>
     expect(action).toHaveBeenCalledWith("workspace", {
       action: "invite",
@@ -416,22 +429,18 @@ it("offers interface candidates, creates an invitation, and copies the whole cod
   expect(clipboard.writeText).toHaveBeenCalledWith("memoka-sync:secret");
 });
 
-it("keeps manual entry available and reports copy failures without closing", async () => {
+it("reports copy failures without closing", async () => {
   clipboard.writeText.mockResolvedValue(false);
-  const action = vi.fn(async () => ({
-    connectionInfo: "memoka-sync:manual",
-    invitationId: "manual-invite",
-    expiresAt: 4_102_444_800,
-  }));
-  const { onClose } = fixture({ candidates: [], action });
+  const invitation: SyncInvitation = {
+    workspaceId: "workspace",
+    invitationId: "kept",
+    expiresAt: Math.floor(Date.now() / 1000) + 600,
+    code: "memoka-sync:kept",
+  };
+  const { onClose } = fixture({ invitation });
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByText(/候補が見つかりませんでした。/);
-  fireEvent.change(screen.getByLabelText("または手入力"), {
-    target: { value: "172.16.0.8:4242" },
-  });
-  fireEvent.click(screen.getByText("招待コードを作成"));
-  await screen.findByText("memoka-sync:manual");
+  await screen.findByText("memoka-sync:kept");
   fireEvent.click(screen.getByText("招待コードをコピー"));
   await screen.findByText(/コピーできませんでした。/);
   expect(onClose).not.toHaveBeenCalled();
@@ -441,7 +450,7 @@ it("returns from the add flow with Esc and closes from the base view", async () 
   const { onClose, restoreFocus } = fixture();
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByRole("heading", { name: "元端末で招待" });
+  await screen.findByRole("heading", { name: "新しい端末で受信" });
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await screen.findByRole("tablist", { name: "同期設定の画面" });
   expect(onClose).not.toHaveBeenCalled();
