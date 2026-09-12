@@ -458,3 +458,14 @@ it("returns from the add flow with Esc and closes from the base view", async () 
   expect(onClose).toHaveBeenCalledOnce();
   await waitFor(() => expect(restoreFocus).toHaveBeenCalledOnce());
 });
+
+it("advances from receiving instructions to the approval step", async () => {
+  fixture();
+  fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
+  fireEvent.click(await screen.findByText("端末を追加"));
+  await screen.findByRole("heading", { name: "新しい端末で受信" });
+  fireEvent.click(screen.getByRole("button", { name: "次へ" }));
+  await screen.findByRole("heading", { name: "元端末で承認" });
+  fireEvent.click(screen.getByRole("button", { name: "戻る" }));
+  await screen.findByRole("heading", { name: "新しい端末で受信" });
+});

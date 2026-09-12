@@ -444,7 +444,7 @@ export function SyncSettingsDialog({
                 </button>
                 <button
                   disabled={busy}
-                  onClick={() => setAddStep(2)}
+                  onClick={() => setAddStep(3)}
                   type="button"
                 >
                   次へ
@@ -506,7 +506,7 @@ export function SyncSettingsDialog({
               <div className="application-modal-actions">
                 <button
                   disabled={busy}
-                  onClick={() => setAddStep(3)}
+                  onClick={() => setAddStep(2)}
                   type="button"
                 >
                   戻る
