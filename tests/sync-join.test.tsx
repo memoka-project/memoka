@@ -151,3 +151,29 @@ it("shows the inviter address and expiry while editing the code", async () => {
   expect(screen.getByText(/有効期限/)).toBeTruthy();
   expect(screen.queryByText("（期限切れ）")).toBeNull();
 });
+
+it("reports an invalid code without showing anything while empty", async () => {
+  native.invoke.mockResolvedValue(null);
+  render(
+    <SyncJoinDialog
+      dataArea={new MemoryDataAreaPort(false)}
+      onReady={vi.fn(async () => {})}
+      onClose={() => {}}
+    />,
+  );
+  expect(screen.queryByText("有効な招待コードではありません")).toBeNull();
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    { target: { value: "not-a-valid-code" } },
+  );
+  expect(screen.getByText("有効な招待コードではありません")).toBeTruthy();
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    { target: { value: "" } },
+  );
+  expect(screen.queryByText("有効な招待コードではありません")).toBeNull();
+});

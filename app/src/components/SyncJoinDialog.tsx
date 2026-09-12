@@ -241,8 +241,10 @@ export function SyncJoinDialog({
             />
           </label>
           {(() => {
+            if (!info.trim()) return null;
             const preview = previewInvitation(info);
-            if (!preview) return null;
+            if (!preview)
+              return <p role="alert">有効な招待コードではありません</p>;
             return (
               <dl className="sync-status-facts">
                 <div>
