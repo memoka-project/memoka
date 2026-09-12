@@ -119,7 +119,10 @@ export function SyncSettingsDialog({
     try {
       const candidates = await port.addressCandidates(workspaceId);
       if (candidates.length > 0) {
-        await act({ action: "invite", addresses: [candidates[0]!.address] });
+        await act({
+          action: "invite",
+          addresses: candidates.map((candidate) => candidate.address),
+        });
       }
     } catch {
       // The next step explains that no invitation is available.

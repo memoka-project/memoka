@@ -414,7 +414,7 @@ it("auto-creates an invitation from interface candidates and copies the code", a
   await waitFor(() =>
     expect(action).toHaveBeenCalledWith("workspace", {
       action: "invite",
-      addresses: ["192.168.1.5:1234"],
+      addresses: ["192.168.1.5:1234", "10.8.0.2:1234"],
     }),
   );
   await screen.findByText("memoka-sync:secret");
