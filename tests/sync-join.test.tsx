@@ -177,3 +177,26 @@ it("reports an invalid code without showing anything while empty", async () => {
   );
   expect(screen.queryByText("有効な招待コードではありません")).toBeNull();
 });
+
+it("shows a red expiry warning for an expired invitation", async () => {
+  native.invoke.mockResolvedValue(null);
+  render(
+    <SyncJoinDialog
+      dataArea={new MemoryDataAreaPort(false)}
+      onReady={vi.fn(async () => {})}
+      onClose={() => {}}
+    />,
+  );
+  const expiredCode = encodeInvitation(
+    ["192.168.1.5:34722"],
+    Math.floor(Date.now() / 1000) - 1,
+  );
+  fireEvent.change(
+    screen.getByLabelText(
+      "ここに同期元で作成した招待コードを貼り付けてください",
+    ),
+    { target: { value: expiredCode } },
+  );
+  const warning = screen.getByText("有効期限が切れています");
+  expect(warning.classList.contains("sync-expired-notice")).toBe(true);
+});

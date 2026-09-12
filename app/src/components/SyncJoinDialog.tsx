@@ -71,9 +71,13 @@ function receiveErrorGuide(code: string | null): {
 interface InvitationPreview {
   addresses: string[];
   expiresAt: number;
+  expired: boolean;
 }
 
-function previewInvitation(code: string): InvitationPreview | null {
+function previewInvitation(
+  code: string,
+  now: number,
+): InvitationPreview | "invalid" | null {
   const encoded = code.trim().replace(/^memoka-sync:/, "");
   if (!encoded) return null;
   try {
@@ -87,7 +91,7 @@ function previewInvitation(code: string): InvitationPreview | null {
     for (let index = 0; index < decoded.length; index++)
       bytes[index] = decoded.charCodeAt(index);
     const signed = JSON.parse(new TextDecoder().decode(bytes));
-    if (typeof signed.content !== "string") return null;
+    if (typeof signed.content !== "string") return "invalid";
     const contentDecoded = atob(signed.content);
     const content = new Uint8Array(contentDecoded.length);
     for (let index = 0; index < contentDecoded.length; index++)
@@ -98,13 +102,14 @@ function previewInvitation(code: string): InvitationPreview | null {
       !invitation.addresses.every((a: unknown) => typeof a === "string") ||
       typeof invitation.expiresAt !== "number"
     )
-      return null;
+      return "invalid";
     return {
       addresses: invitation.addresses,
       expiresAt: invitation.expiresAt,
+      expired: invitation.expiresAt <= now,
     };
   } catch {
-    return null;
+    return "invalid";
   }
 }
 
@@ -126,6 +131,9 @@ export function SyncJoinDialog({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const active = useRef(true),
     working = useRef(false);
+  const [preview, setPreview] = useState<InvitationPreview | "invalid" | null>(
+    null,
+  );
 
   useEffect(() => {
     active.current = true;
@@ -163,6 +171,11 @@ export function SyncJoinDialog({
     if (!active.current) return;
     setError(synchronizationError(cause));
     setErrorCode(failureCode(cause));
+  };
+
+  const updateInfo = (value: string) => {
+    setInfo(value);
+    setPreview(previewInvitation(value, Math.floor(Date.now() / 1000)));
   };
   const act = async (action: () => Promise<void>) => {
     if (working.current) return;
@@ -237,31 +250,31 @@ export function SyncJoinDialog({
             <textarea
               rows={4}
               value={info}
-              onChange={(event) => setInfo(event.target.value)}
+              onChange={(event) => updateInfo(event.target.value)}
             />
           </label>
-          {(() => {
-            if (!info.trim()) return null;
-            const preview = previewInvitation(info);
-            if (!preview)
-              return <p role="alert">有効な招待コードではありません</p>;
-            return (
-              <dl className="sync-status-facts">
-                <div>
-                  <dt>同期元のアドレス</dt>
-                  <dd>{preview.addresses.join("、")}</dd>
-                </div>
-                <div>
-                  <dt>有効期限</dt>
-                  <dd>
-                    {formatEventDateTime(
-                      new Date(preview.expiresAt * 1000).toISOString(),
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            );
-          })()}
+          {preview === "invalid" ? (
+            <p role="alert">有効な招待コードではありません</p>
+          ) : preview?.expired ? (
+            <p role="alert" className="sync-expired-notice">
+              有効期限が切れています
+            </p>
+          ) : preview ? (
+            <dl className="sync-status-facts">
+              <div>
+                <dt>同期元のアドレス</dt>
+                <dd>{preview.addresses.join("、")}</dd>
+              </div>
+              <div>
+                <dt>有効期限</dt>
+                <dd>
+                  {formatEventDateTime(
+                    new Date(preview.expiresAt * 1000).toISOString(),
+                  )}
+                </dd>
+              </div>
+            </dl>
+          ) : null}
           <button
             disabled={busy}
             onClick={() =>

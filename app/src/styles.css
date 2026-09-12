@@ -3224,6 +3224,9 @@ textarea {
   background: var(--memoka-color-danger-selected);
   color: var(--memoka-color-selection-text);
 }
+.sync-expired-notice {
+  color: var(--memoka-color-danger-text);
+}
 .sync-device-list {
   max-height: 35vh;
   overflow: auto;
