@@ -77,6 +77,7 @@ export function SyncSettingsDialog({
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
+  const [invitationAddresses, setInvitationAddresses] = useState<string[]>([]);
   const active = useRef(true);
   const saving = useRef(false);
   const invitationClaimed = useRef(false);
@@ -119,6 +120,7 @@ export function SyncSettingsDialog({
     try {
       const candidates = await port.addressCandidates(workspaceId);
       if (candidates.length > 0) {
+        setInvitationAddresses(candidates.map((c) => c.address));
         await act({
           action: "invite",
           addresses: candidates.map((candidate) => candidate.address),
@@ -436,7 +438,11 @@ export function SyncSettingsDialog({
               <dl className="sync-status-facts">
                 <div>
                   <dt>待ち受けアドレス</dt>
-                  <dd>{view.listening ?? "未構成"}</dd>
+                  <dd>
+                    {activeInvitation && invitationAddresses.length
+                      ? invitationAddresses.join("、")
+                      : (view.listening ?? "未構成")}
+                  </dd>
                 </div>
                 {activeInvitation && (
                   <div>
