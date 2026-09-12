@@ -14,9 +14,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 
 function encodeInvitation(addresses: string[], expiresAt: number): string {
   const invitation = { addresses, expiresAt };
-  const content = Array.from(
-    new TextEncoder().encode(JSON.stringify(invitation)),
-  );
+  const content = btoa(JSON.stringify(invitation));
   const signed = JSON.stringify({ content, signature: "00" });
   return `memoka-sync:${btoa(signed).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
 }

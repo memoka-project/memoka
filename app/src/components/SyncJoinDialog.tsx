@@ -87,8 +87,11 @@ function previewInvitation(code: string): InvitationPreview | null {
     for (let index = 0; index < decoded.length; index++)
       bytes[index] = decoded.charCodeAt(index);
     const signed = JSON.parse(new TextDecoder().decode(bytes));
-    if (!Array.isArray(signed.content)) return null;
-    const content = new Uint8Array(signed.content);
+    if (typeof signed.content !== "string") return null;
+    const contentDecoded = atob(signed.content);
+    const content = new Uint8Array(contentDecoded.length);
+    for (let index = 0; index < contentDecoded.length; index++)
+      content[index] = contentDecoded.charCodeAt(index);
     const invitation = JSON.parse(new TextDecoder().decode(content));
     if (
       !Array.isArray(invitation.addresses) ||
