@@ -424,7 +424,7 @@ it("auto-creates an invitation from interface candidates and copies the code", a
     expiresAt: 4_102_444_800,
     code: "memoka-sync:secret",
   });
-  fireEvent.click(screen.getByText("招待コードをコピー"));
+  fireEvent.click(screen.getByText("コピー"));
   await screen.findByText("コピーしました");
   expect(clipboard.writeText).toHaveBeenCalledWith("memoka-sync:secret");
 });
@@ -441,7 +441,7 @@ it("reports copy failures without closing", async () => {
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
   await screen.findByText("memoka-sync:kept");
-  fireEvent.click(screen.getByText("招待コードをコピー"));
+  fireEvent.click(screen.getByText("コピー"));
   await screen.findByText(/コピーできませんでした。/);
   expect(onClose).not.toHaveBeenCalled();
 });
@@ -450,7 +450,9 @@ it("returns from the add flow with Esc and closes from the base view", async () 
   const { onClose, restoreFocus } = fixture();
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByRole("heading", { name: "新しい端末を招待" });
+  await screen.findByRole("heading", {
+    name: "新しい端末をこのワークスペースへ招待する",
+  });
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await screen.findByRole("tablist", { name: "同期設定の画面" });
   expect(onClose).not.toHaveBeenCalled();
@@ -463,13 +465,16 @@ it("shows invitation and approval together on the inviting step", async () => {
   fixture();
   fireEvent.click(await screen.findByRole("tab", { name: "他端末" }));
   fireEvent.click(await screen.findByText("端末を追加"));
-  await screen.findByRole("heading", { name: "新しい端末を招待" });
-  await screen.findByRole("heading", { name: "元端末で承認" });
+  await screen.findByRole("heading", {
+    name: "新しい端末をこのワークスペースへ招待する",
+  });
+  await screen.findByRole("heading", {
+    name: "新しい端末の参加を承認する",
+  });
   expect(screen.getByText("0.0.0.0:1234")).toBeTruthy();
-  expect(
-    screen.getByRole("button", { name: "招待コードを再生成" }),
-  ).toBeTruthy();
-  expect(screen.getByText("参加承認待ち: New device")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "この端末を承認" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "通常の画面に戻る" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "再生成" })).toBeTruthy();
+  expect(screen.getByText(/が参加の承認を要求しています/)).toBeTruthy();
+  expect(screen.getAllByText(/New device/).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "承認" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "キャンセル" })).toBeTruthy();
 });

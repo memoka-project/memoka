@@ -374,12 +374,53 @@ export function SyncSettingsDialog({
           </form>
         </section>
       ) : showInviting ? (
-        <section aria-label="新しい端末を招待" data-modal-scroll>
-          <h4>新しい端末を招待</h4>
+        <section
+          aria-label="新しい端末をこのワークスペースへ招待する"
+          data-modal-scroll
+        >
+          <h3>新しい端末をこのワークスペースへ招待する</h3>
           <p>
             新しい端末で<code>:new-workspace</code>
-            を開き、「別端末から受信」を選びます。招待コード・端末名・新しい空の保存先を指定します。
+            を開き、「別端末から受信」の画面に招待コードを貼り付けてください。
           </p>
+          <div className="sync-invitation">
+            {activeInvitation ? (
+              <label>
+                招待コード
+                <textarea
+                  readOnly
+                  rows={4}
+                  value={activeInvitation.code}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              </label>
+            ) : (
+              <p>有効な招待コードがありません。再生成してください。</p>
+            )}
+            <div className="application-modal-actions">
+              {activeInvitation && (
+                <button type="button" onClick={() => void copyInvitation()}>
+                  コピー
+                </button>
+              )}
+              {configured && !configured.paused && (
+                <button
+                  disabled={busy}
+                  onClick={() => void autoInvite()}
+                  type="button"
+                >
+                  再生成
+                </button>
+              )}
+            </div>
+            {copyState !== "idle" && (
+              <p role="status">
+                {copyState === "copied"
+                  ? "コピーしました"
+                  : "コピーできませんでした。コードを選択してCtrl-Cでコピーしてください。"}
+              </p>
+            )}
+          </div>
           <dl className="sync-status-facts">
             <div>
               <dt>待ち受けアドレス</dt>
@@ -389,70 +430,29 @@ export function SyncSettingsDialog({
                   : (view.listening ?? "未構成")}
               </dd>
             </div>
-          </dl>
-          <div className="sync-invitation">
-            {activeInvitation ? (
-              <>
-                <label>
-                  招待コード
-                  <textarea
-                    readOnly
-                    rows={4}
-                    value={activeInvitation.code}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                </label>
-                <p role="status">
-                  {copyState === "copied"
-                    ? "コピーしました"
-                    : copyState === "failed"
-                      ? "コピーできませんでした。コードを選択してCtrl-Cでコピーしてください。"
-                      : `有効期限 ${formatEventDateTime(
-                          new Date(
-                            activeInvitation.expiresAt * 1000,
-                          ).toISOString(),
-                        )}`}
-                </p>
-              </>
-            ) : (
-              <p>
-                有効な招待コードがありません。新しいコードを作成してください。
-              </p>
+            {activeInvitation && (
+              <div>
+                <dt>有効期限</dt>
+                <dd>
+                  {formatEventDateTime(
+                    new Date(activeInvitation.expiresAt * 1000).toISOString(),
+                  )}
+                </dd>
+              </div>
             )}
-            <div className="application-modal-actions">
-              {configured && !configured.paused && (
-                <button
-                  disabled={busy}
-                  onClick={() => void autoInvite()}
-                  type="button"
-                >
-                  招待コードを再生成
-                </button>
-              )}
-              {activeInvitation && (
-                <button type="button" onClick={() => void copyInvitation()}>
-                  招待コードをコピー
-                </button>
-              )}
-            </div>
-          </div>
-
-          <h4>元端末で承認</h4>
-          <p>
-            新しい端末に表示された名前と鍵の識別情報が一致することを確認してから承認してください。承認後は新しい端末で受信完了を待ち、Workspaceを開きます。
-          </p>
+          </dl>
+          <h3>新しい端末の参加を承認する</h3>
           {view.pending.filter((pending) => !pending.approved).length ? (
             view.pending
               .filter((pending) => !pending.approved)
               .map((pending) => (
                 <section key={pending.invitationId} className="sync-review">
-                  <h5>参加承認待ち: {pending.member.name}</h5>
-                  <code>{pending.fingerprint}</code>
                   <p>
-                    期限{" "}
-                    {formatEventDateTime(
-                      new Date(pending.expiresAt * 1000).toISOString(),
-                    )}
+                    {pending.member.name}
+                    が参加の承認を要求しています。識別情報が一致することを確認してから承認してください。
+                  </p>
+                  <p>
+                    識別情報: <code>{pending.fingerprint}</code>
                   </p>
                   <div className="application-modal-actions">
                     <button
@@ -462,11 +462,16 @@ export function SyncSettingsDialog({
                           action: "approve",
                           invitationId: pending.invitationId,
                           expectedPublicKey: pending.member.publicKey,
+                        }).then((succeeded) => {
+                          if (succeeded && active.current) {
+                            setShowInviting(false);
+                            setTab("devices");
+                          }
                         })
                       }
                       type="button"
                     >
-                      この端末を承認
+                      承認
                     </button>
                     <button
                       disabled={busy}
@@ -486,14 +491,13 @@ export function SyncSettingsDialog({
           ) : (
             <p>この端末の承認を待っている要求はありません。</p>
           )}
-
           <div className="application-modal-actions">
             <button
               disabled={busy}
               onClick={() => setShowInviting(false)}
               type="button"
             >
-              通常の画面に戻る
+              キャンセル
             </button>
           </div>
         </section>
@@ -830,7 +834,7 @@ export function SyncSettingsDialog({
           </section>
         </>
       )}
-      {screen === null && !showNaming && (
+      {screen === null && !showNaming && !showInviting && (
         <div className="application-modal-actions">
           <button disabled={busy} onClick={close} type="button">
             閉じる
