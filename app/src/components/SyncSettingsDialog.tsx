@@ -337,8 +337,11 @@ export function SyncSettingsDialog({
           }}
         />
       ) : showNaming ? (
-        <section aria-label="この端末に名前を付ける" data-modal-scroll>
-          <h3>この端末に名前を付ける</h3>
+        <section
+          aria-label="この端末に名前を付けて同期を有効にする"
+          data-modal-scroll
+        >
+          <h3>この端末に名前を付けて同期を有効にする</h3>
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -348,7 +351,7 @@ export function SyncSettingsDialog({
             }}
           >
             <label>
-              この端末の名前
+              名前
               <input
                 required
                 maxLength={256}
@@ -356,9 +359,18 @@ export function SyncSettingsDialog({
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
-            <button disabled={busy || !name.trim()} type="submit">
-              同期を有効にする
-            </button>
+            <div className="application-modal-actions">
+              <button
+                disabled={busy}
+                onClick={() => setShowNaming(false)}
+                type="button"
+              >
+                キャンセル
+              </button>
+              <button disabled={busy || !name.trim()} type="submit">
+                同期を有効にする
+              </button>
+            </div>
           </form>
         </section>
       ) : showInviting ? (
@@ -818,7 +830,7 @@ export function SyncSettingsDialog({
           </section>
         </>
       )}
-      {screen === null && (
+      {screen === null && !showNaming && (
         <div className="application-modal-actions">
           <button disabled={busy} onClick={close} type="button">
             閉じる

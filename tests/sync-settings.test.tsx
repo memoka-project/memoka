@@ -228,7 +228,7 @@ it("starts synchronization from the unconfigured status tab", async () => {
   const { port } = fixture({ enabled: false });
   expect(await screen.findByText("同期未設定")).toBeTruthy();
   fireEvent.click(screen.getByText("このワークスペースを他の端末へ同期する"));
-  fireEvent.change(screen.getByLabelText("この端末の名前"), {
+  fireEvent.change(screen.getByLabelText("名前"), {
     target: { value: "Laptop" },
   });
   fireEvent.click(screen.getByText("同期を有効にする"));
@@ -248,9 +248,9 @@ it("suggests the hostname as the initial device name without overriding input", 
   });
   await waitFor(() => expect(port.defaultDeviceName).toHaveBeenCalled());
   fireEvent.click(screen.getByText("このワークスペースを他の端末へ同期する"));
-  const name = screen.getByLabelText("この端末の名前") as HTMLInputElement;
+  const name = screen.getByLabelText("名前") as HTMLInputElement;
   await waitFor(() => expect(name.value).toBe("jun-laptop"));
-  fireEvent.change(screen.getByLabelText("この端末の名前"), {
+  fireEvent.change(screen.getByLabelText("名前"), {
     target: { value: "My name" },
   });
   expect(name.value).toBe("My name");
