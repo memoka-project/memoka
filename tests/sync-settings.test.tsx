@@ -231,7 +231,7 @@ it("starts synchronization from the unconfigured status tab", async () => {
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
   });
-  fireEvent.click(screen.getByText("次へ"));
+  fireEvent.click(screen.getByText("同期を有効にする"));
   await waitFor(() =>
     expect(port.action).toHaveBeenCalledWith("workspace", {
       action: "enable",
