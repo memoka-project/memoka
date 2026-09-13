@@ -267,40 +267,6 @@ export function SyncSettingsDialog({
         )
       : undefined;
 
-  const invitationPanel = (
-    <>
-      {activeInvitation ? (
-        <div className="sync-invitation">
-          <label>
-            招待コード
-            <textarea
-              readOnly
-              rows={4}
-              value={activeInvitation.code}
-              onFocus={(event) => event.currentTarget.select()}
-            />
-          </label>
-          <div className="application-modal-actions">
-            <button type="button" onClick={() => void copyInvitation()}>
-              招待コードをコピー
-            </button>
-          </div>
-          <p role="status">
-            {copyState === "copied"
-              ? "コピーしました"
-              : copyState === "failed"
-                ? "コピーできませんでした。コードを選択してCtrl-Cでコピーしてください。"
-                : `有効期限 ${formatEventDateTime(
-                    new Date(activeInvitation.expiresAt * 1000).toISOString(),
-                  )}`}
-          </p>
-        </div>
-      ) : (
-        <p>有効な招待コードがありません。新しいコードを作成してください。</p>
-      )}
-    </>
-  );
-
   return (
     <ModalDialog
       ariaLabel="端末間同期"
@@ -370,7 +336,7 @@ export function SyncSettingsDialog({
           <h3>端末を追加</h3>
           <ol className="sync-add-steps">
             <li data-current={addStep === 1}>この端末に名前を付ける</li>
-            <li data-current={addStep === 2}>新しい端末で受信</li>
+            <li data-current={addStep === 2}>新しい端末を招待</li>
             <li data-current={addStep === 3}>元端末で承認</li>
           </ol>
           {addStep === 1 && (
@@ -430,7 +396,7 @@ export function SyncSettingsDialog({
           )}
           {addStep === 2 && (
             <section>
-              <h4>新しい端末で受信</h4>
+              <h4>新しい端末を招待</h4>
               <p>
                 新しい端末で<code>:new-workspace</code>
                 を開き、「別端末から受信」を選びます。招待コード・端末名・新しい空の保存先を指定します。
@@ -444,34 +410,53 @@ export function SyncSettingsDialog({
                       : (view.listening ?? "未構成")}
                   </dd>
                 </div>
-                {activeInvitation && (
-                  <div>
-                    <dt>有効期限</dt>
-                    <dd>
-                      {formatEventDateTime(
-                        new Date(
-                          activeInvitation.expiresAt * 1000,
-                        ).toISOString(),
-                      )}
-                    </dd>
-                  </div>
-                )}
               </dl>
-              {invitationPanel}
-              {configured && !configured.paused && (
+              <div className="sync-invitation">
+                {activeInvitation ? (
+                  <>
+                    <label>
+                      招待コード
+                      <textarea
+                        readOnly
+                        rows={4}
+                        value={activeInvitation.code}
+                        onFocus={(event) => event.currentTarget.select()}
+                      />
+                    </label>
+                    <p role="status">
+                      {copyState === "copied"
+                        ? "コピーしました"
+                        : copyState === "failed"
+                          ? "コピーできませんでした。コードを選択してCtrl-Cでコピーしてください。"
+                          : `有効期限 ${formatEventDateTime(
+                              new Date(
+                                activeInvitation.expiresAt * 1000,
+                              ).toISOString(),
+                            )}`}
+                    </p>
+                  </>
+                ) : (
+                  <p>
+                    有効な招待コードがありません。新しいコードを作成してください。
+                  </p>
+                )}
                 <div className="application-modal-actions">
-                  <button
-                    disabled={busy}
-                    onClick={() => void autoInvite()}
-                    type="button"
-                  >
-                    招待コードを再生成
-                  </button>
+                  {configured && !configured.paused && (
+                    <button
+                      disabled={busy}
+                      onClick={() => void autoInvite()}
+                      type="button"
+                    >
+                      招待コードを再生成
+                    </button>
+                  )}
+                  {activeInvitation && (
+                    <button type="button" onClick={() => void copyInvitation()}>
+                      招待コードをコピー
+                    </button>
+                  )}
                 </div>
-              )}
-              <p>
-                受信の初回と中断後の再開は、新しい端末で別の操作として案内されます。
-              </p>
+              </div>
               <div className="application-modal-actions">
                 <button
                   disabled={busy}
