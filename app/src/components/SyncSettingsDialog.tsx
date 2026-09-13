@@ -73,7 +73,7 @@ export function SyncSettingsDialog({
   const bind = "0.0.0.0:0";
   const [tab, setTab] = useState<SyncTab>("status");
   const [screen, setScreen] = useState<SubScreen | null>(null);
-  const [addStep, setAddStep] = useState<1 | 2 | 3 | null>(null);
+  const [addStep, setAddStep] = useState<1 | 2 | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -337,7 +337,6 @@ export function SyncSettingsDialog({
           <ol className="sync-add-steps">
             <li data-current={addStep === 1}>この端末に名前を付ける</li>
             <li data-current={addStep === 2}>新しい端末を招待</li>
-            <li data-current={addStep === 3}>元端末で承認</li>
           </ol>
           {addStep === 1 && (
             <section>
@@ -457,26 +456,7 @@ export function SyncSettingsDialog({
                   )}
                 </div>
               </div>
-              <div className="application-modal-actions">
-                <button
-                  disabled={busy}
-                  onClick={() => setAddStep(1)}
-                  type="button"
-                >
-                  戻る
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() => setAddStep(3)}
-                  type="button"
-                >
-                  次へ
-                </button>
-              </div>
-            </section>
-          )}
-          {addStep === 3 && (
-            <section>
+
               <h4>元端末で承認</h4>
               <p>
                 新しい端末に表示された名前と鍵の識別情報が一致することを確認してから承認してください。承認後は新しい端末で受信完了を待ち、Workspaceを開きます。
@@ -526,10 +506,11 @@ export function SyncSettingsDialog({
               ) : (
                 <p>この端末の承認を待っている要求はありません。</p>
               )}
+
               <div className="application-modal-actions">
                 <button
                   disabled={busy}
-                  onClick={() => setAddStep(2)}
+                  onClick={() => setAddStep(1)}
                   type="button"
                 >
                   戻る
