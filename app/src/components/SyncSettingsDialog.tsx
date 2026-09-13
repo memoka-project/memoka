@@ -567,7 +567,6 @@ export function SyncSettingsDialog({
               </>
             ) : configured ? (
               <>
-                <h3>同期の操作</h3>
                 <div className="application-modal-actions">
                   <button
                     disabled={busy}
