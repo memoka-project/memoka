@@ -117,6 +117,27 @@ pub(super) fn prepare(
             r.get(0)
         })
         .optional()?;
+    // A fresh invitation always replaces an earlier pending receipt so the
+    // join uses the current addresses and token rather than stale ones.
+    if previous.is_some() && !connection_info.is_empty() {
+        if let Some(previous) = &previous {
+            if let Ok(old) = serde_json::from_str::<JoinReceipt>(previous) {
+                if let Ok(credential) =
+                    identity::credential_id(&old.config.group_id, &old.member)
+                {
+                    credentials.remove(&credential);
+                    credentials.remove(&format!("{credential}/invitation"));
+                }
+            }
+        }
+        store.connection.execute("DELETE FROM settings WHERE key=?1", [RECEIPT])?;
+    }
+    let previous: Option<String> = store
+        .connection
+        .query_row("SELECT value FROM settings WHERE key=?1", [RECEIPT], |r| {
+            r.get(0)
+        })
+        .optional()?;
     let receipt = if let Some(previous) = previous {
         serde_json::from_str::<JoinReceipt>(&previous)?
     } else {
