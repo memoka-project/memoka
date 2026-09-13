@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir } from "@tauri-apps/api/path";
 
 export interface DataAreaStatus {
   readonly selected: boolean;
@@ -66,6 +67,7 @@ class TauriDataAreaPort implements DataAreaPort {
   async chooseDirectory(): Promise<string | null> {
     const selected = await open({
       title: "Memoka Workspaceデータ領域を選択",
+      defaultPath: await homeDir(),
       directory: true,
       multiple: false,
     });
