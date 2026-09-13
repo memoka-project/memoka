@@ -315,6 +315,7 @@ export function SyncSettingsDialog({
         />
       ) : screen?.kind === "revoke" ? (
         <RevokeConfirm
+          self={screen.deviceId === configured?.origin.deviceId}
           name={
             screen.deviceId === configured?.origin.deviceId
               ? "この端末"
@@ -584,6 +585,19 @@ export function SyncSettingsDialog({
                   >
                     今すぐ同期
                   </button>
+                  <button
+                    className="sync-danger-button"
+                    disabled={busy}
+                    onClick={() =>
+                      setScreen({
+                        kind: "revoke",
+                        deviceId: configured.origin.deviceId,
+                      })
+                    }
+                    type="button"
+                  >
+                    同期を無効化
+                  </button>
                 </div>
                 <h3>自端末の状態</h3>
                 <dl className="sync-status-facts">
@@ -691,21 +705,6 @@ export function SyncSettingsDialog({
                 )}
                 <h3>送信</h3>
                 <p>送信待ち {view.local.pendingSignatureCount}件</p>
-                <div className="application-modal-actions">
-                  <button
-                    className="sync-danger-button"
-                    disabled={busy}
-                    onClick={() =>
-                      setScreen({
-                        kind: "revoke",
-                        deviceId: configured.origin.deviceId,
-                      })
-                    }
-                    type="button"
-                  >
-                    この端末の登録を解除…
-                  </button>
-                </div>
               </>
             ) : (
               <>
@@ -936,23 +935,34 @@ function PeerAddressEditor({
 }
 
 function RevokeConfirm({
+  self,
   name,
   busy,
   onCancel,
   onConfirm,
 }: {
+  self: boolean;
   name: string;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
   return (
-    <section aria-label="登録解除の確認" data-modal-scroll>
-      <h3>登録解除の確認</h3>
-      <p>
-        {name}
-        を同期から削除します。登録を解除すると元に戻すことはできません。渡したデータは相手の端末に残ります。
-      </p>
+    <section
+      aria-label={self ? "同期無効化の確認" : "登録解除の確認"}
+      data-modal-scroll
+    >
+      <h3>{self ? "同期無効化の確認" : "登録解除の確認"}</h3>
+      {self ? (
+        <p>
+          この端末の同期を無効化します。一度同期を無効化すると元に戻せません。
+        </p>
+      ) : (
+        <p>
+          {name}
+          を同期から削除します。登録を解除すると元に戻すことはできません。渡したデータは相手の端末に残ります。
+        </p>
+      )}
       <div className="application-modal-actions">
         <button disabled={busy} onClick={onCancel} type="button">
           キャンセル
@@ -963,7 +973,7 @@ function RevokeConfirm({
           onClick={() => void onConfirm()}
           type="button"
         >
-          解除
+          {self ? "無効化" : "解除"}
         </button>
       </div>
     </section>

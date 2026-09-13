@@ -283,24 +283,22 @@ it("edits the listen address in a sub-screen and returns without closing", async
   await screen.findByRole("tablist", { name: "同期設定の画面" });
 });
 
-it("confirms self revocation in a sub-screen with a red action", async () => {
+it("confirms self sync disable in a sub-screen with a red action", async () => {
   const { port, onClose } = fixture();
-  fireEvent.click(
-    await screen.findByRole("button", { name: "この端末の登録を解除…" }),
-  );
-  expect(screen.getByText(/この端末を同期から削除します。/)).toBeTruthy();
+  fireEvent.click(await screen.findByRole("button", { name: "同期を無効化" }));
+  expect(
+    screen.getByText(
+      "この端末の同期を無効化します。一度同期を無効化すると元に戻せません。",
+    ),
+  ).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "キャンセル" }));
   await screen.findByRole("tablist", { name: "同期設定の画面" });
   expect(onClose).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getByRole("button", { name: "この端末の登録を解除…" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "同期を無効化" }));
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await screen.findByRole("tablist", { name: "同期設定の画面" });
-  fireEvent.click(
-    screen.getByRole("button", { name: "この端末の登録を解除…" }),
-  );
-  const confirm = screen.getByRole("button", { name: "解除" });
+  fireEvent.click(screen.getByRole("button", { name: "同期を無効化" }));
+  const confirm = screen.getByRole("button", { name: "無効化" });
   expect(confirm.classList.contains("sync-danger-button")).toBe(true);
   fireEvent.click(confirm);
   await waitFor(() =>
