@@ -131,6 +131,7 @@ export function SyncJoinDialog({
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const active = useRef(true),
     working = useRef(false);
+  const autoOpened = useRef(false);
   const [preview, setPreview] = useState<InvitationPreview | "invalid" | null>(
     null,
   );
@@ -166,6 +167,15 @@ export function SyncJoinDialog({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (view?.phase === "ready" && !autoOpened.current) {
+      autoOpened.current = true;
+      onReady(view.path).catch(() => {
+        autoOpened.current = false;
+      });
+    }
+  }, [view?.phase, view?.path, onReady]);
 
   const reportError = (cause: unknown) => {
     if (!active.current) return;

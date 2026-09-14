@@ -138,7 +138,6 @@ it.each(["create", "receive"])(
   async (method) => {
     const { dataArea, activate, editor } = await openNewWorkspace();
     const prepare = vi.spyOn(dataArea, "prepareNew");
-    if (method === "receive") await prepareReceive();
     expect(activate).not.toHaveBeenCalled();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -158,11 +157,13 @@ it.each(["create", "receive"])(
       expect(saved).toBe(true);
       return originalActivate.call(dataArea, path);
     });
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: method === "create" ? "空のWorkspaceを作成" : "Workspaceを開く",
-      }),
-    );
+    if (method === "receive") {
+      await prepareReceive();
+    } else {
+      fireEvent.click(
+        screen.getByRole("button", { name: "空のWorkspaceを作成" }),
+      );
+    }
     await screen.findByRole("dialog", { name: "Workspaceを切り替え" });
     await waitFor(() => expect(flush).toHaveBeenCalled());
     expect(activate).not.toHaveBeenCalled();
@@ -198,13 +199,14 @@ it.each(["create", "receive"])(
       backupFixture({ run, cancel }),
     );
     await waitFor(() => expect(run).toHaveBeenCalled());
-    if (method === "receive") await prepareReceive();
     hold = true;
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: method === "create" ? "空のWorkspaceを作成" : "Workspaceを開く",
-      }),
-    );
+    if (method === "receive") {
+      await prepareReceive();
+    } else {
+      fireEvent.click(
+        screen.getByRole("button", { name: "空のWorkspaceを作成" }),
+      );
+    }
     await screen.findByText(/バックアップの完了を待っています/);
     expect(editor.isConnected).toBe(true);
     expect(activate).not.toHaveBeenCalled();
