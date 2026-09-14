@@ -67,7 +67,7 @@ async function openNewWorkspace(
 }
 
 async function prepareReceive() {
-  fireEvent.click(screen.getByRole("button", { name: "別端末から受信" }));
+  fireEvent.click(screen.getByRole("button", { name: "招待コードで同期" }));
   await screen.findByRole("dialog", { name: "別端末から受信" });
   fireEvent.change(screen.getByLabelText("この端末の名前"), {
     target: { value: "Laptop" },
@@ -103,7 +103,7 @@ it("opens receive from an existing Workspace and returns focus through both dial
     "sync_join_start",
     expect.anything(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "別端末から受信" }));
+  fireEvent.click(screen.getByRole("button", { name: "招待コードで同期" }));
   const receiving = await screen.findByRole("dialog", {
     name: "別端末から受信",
   });

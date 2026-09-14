@@ -40,7 +40,7 @@ export function NewWorkspaceDialog({
     >
       <h2>新しいWorkspace</h2>
       <p>
-        新しい空の保存先を使います。別端末からの受信は途中から再開することもできます。
+        新しい空のワークスペースを作成するか、招待コードで別端末と同期するワークスペースを作成するか選択してください。
       </p>
       <p>切り替え前に、現在のWorkspaceの保存とバックアップの完了を待ちます。</p>
       {error && <p role="alert">{error}</p>}
@@ -50,7 +50,7 @@ export function NewWorkspaceDialog({
         </button>
         {onReceive && (
           <button disabled={busy} onClick={onReceive}>
-            別端末から受信
+            招待コードで同期
           </button>
         )}
         <button disabled={busy} onClick={onClose}>

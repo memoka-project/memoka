@@ -288,7 +288,7 @@ it("confirms self sync disable in a sub-screen with a red action", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "同期を無効化" }));
   expect(
     screen.getByText(
-      "この端末の同期を無効化します。一度同期を無効化すると元に戻せません。",
+      "⚠ この端末の同期を無効化します。一度同期を無効化すると元に戻せません。",
     ),
   ).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "キャンセル" }));

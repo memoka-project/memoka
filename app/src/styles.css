@@ -3227,6 +3227,13 @@ textarea {
 .sync-expired-notice {
   color: var(--memoka-color-danger-text);
 }
+.sync-approval-request {
+  color: var(--memoka-color-text-strong);
+  background: color-mix(in srgb, var(--memoka-color-focus) 12%, transparent);
+  border-inline-start: 3px solid var(--memoka-color-focus);
+  padding: 0.6rem 0.75rem;
+  border-radius: 4px;
+}
 .sync-device-list {
   max-height: 35vh;
   overflow: auto;

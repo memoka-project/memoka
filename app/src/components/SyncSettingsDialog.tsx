@@ -347,7 +347,11 @@ export function SyncSettingsDialog({
             onSubmit={(event) => {
               event.preventDefault();
               void act({ action: "enable", name, bind }).then((succeeded) => {
-                if (succeeded && active.current) setShowNaming(false);
+                if (succeeded && active.current) {
+                  setShowNaming(false);
+                  setShowInviting(true);
+                  void autoInvite();
+                }
               });
             }}
           >
@@ -382,7 +386,7 @@ export function SyncSettingsDialog({
           <h3>新しい端末をこのワークスペースへ招待する</h3>
           <p>
             新しい端末で<code>:new-workspace</code>
-            を開き、「別端末から受信」の画面に招待コードを貼り付けてください。
+            を開き「招待コードで同期」を選択し、画面に招待コードを貼り付けてください。
           </p>
           <div className="sync-invitation">
             {activeInvitation ? (
@@ -448,7 +452,7 @@ export function SyncSettingsDialog({
               .filter((pending) => !pending.approved)
               .map((pending) => (
                 <section key={pending.invitationId} className="sync-review">
-                  <p>
+                  <p className="sync-approval-request">
                     {pending.member.name}
                     が参加の承認を要求しています。識別情報が一致することを確認してから承認してください。
                   </p>
@@ -954,7 +958,7 @@ function RevokeConfirm({
       <h3>{self ? "同期無効化の確認" : "登録解除の確認"}</h3>
       {self ? (
         <p>
-          この端末の同期を無効化します。一度同期を無効化すると元に戻せません。
+          ⚠ この端末の同期を無効化します。一度同期を無効化すると元に戻せません。
         </p>
       ) : (
         <p>
