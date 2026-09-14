@@ -63,20 +63,26 @@ export function BlockTypePicker({
       setPhase("alert-type");
       return;
     }
-    completeTransform(entry, session.transform(entry.id));
+    const target = entry.id;
+    completeTransform(entry, () => session.transform(target));
   };
 
   const completeTransform = (
     entry: BlockTypeCatalogEntry,
-    result: BlockTransformResult | null,
+    transform: () => BlockTransformResult | null,
   ): void => {
     onClose();
-    queueMicrotask(session.restoreFocus);
-    if (result?.changed) {
-      onMessage(`block.transform · ${entry.name}`);
-      return;
-    }
-    onMessage(blockTransformFailureMessage(result));
+    queueMicrotask(() => {
+      // Register the return path before the structural dispatch. A block
+      // transform can replace Editor-managed DOM while its plugins update.
+      restoreFocusAfterEditorUpdate(session.restoreFocus);
+      const result = transform();
+      if (result?.changed) {
+        onMessage(`block.transform · ${entry.name}`);
+        return;
+      }
+      onMessage(blockTransformFailureMessage(result));
+    });
   };
 
   if (phase === "table-size") {
@@ -93,8 +99,7 @@ export function BlockTypePicker({
         blockId={session.blockId}
         focused={focused}
         onAccept={(dimensions) =>
-          completeTransform(
-            tableEntry,
+          completeTransform(tableEntry, () =>
             session.transform("table", { tableDimensions: dimensions }),
           )
         }
@@ -120,7 +125,9 @@ export function BlockTypePicker({
         blockId={session.blockId}
         focused={focused}
         onAccept={(alert) =>
-          completeTransform(alertEntry, session.transform("alert", { alert }))
+          completeTransform(alertEntry, () =>
+            session.transform("alert", { alert }),
+          )
         }
         onClose={() => {
           onClose();
@@ -174,6 +181,10 @@ export function BlockTypePicker({
       idPrefix="block-type-picker"
     />
   );
+}
+
+function restoreFocusAfterEditorUpdate(restoreFocus: () => void): void {
+  window.setTimeout(restoreFocus, 0);
 }
 
 function AlertTypePicker({

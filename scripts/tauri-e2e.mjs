@@ -20,6 +20,7 @@ const windowChromeOnly = process.env.MEMOKA_E2E_WINDOW_CHROME_ONLY === "1";
 const attachmentOnly = process.env.MEMOKA_E2E_ATTACHMENT_ONLY === "1";
 const namespaceHistoryOnly =
   process.env.MEMOKA_E2E_NAMESPACE_HISTORY_ONLY === "1";
+const tableExitOnly = process.env.MEMOKA_E2E_TABLE_EXIT_ONLY === "1";
 const W3C_ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
 const ENTER = "\uE007";
 const ESCAPE = "\uE00C";
@@ -808,6 +809,150 @@ async function sendActiveChord(sessionId, modifier, value) {
     method: "DELETE",
     body: {},
   });
+}
+
+async function runTableExitRegression(sessionId) {
+  const editor = await waitForElement(
+    sessionId,
+    ".editor-window:first-child .memoka-editor",
+  );
+  await sendKeys(sessionId, editor, "G");
+  await sendKeys(sessionId, editor, "i");
+  await sendKeys(
+    sessionId,
+    editor,
+    `Paragraph 1${ENTER}Paragraph 2${ENTER}Paragraph 3${ENTER}Paragraph 4`,
+  );
+  await sendKeys(sessionId, editor, `${ESCAPE}ggjjo/`);
+  const blockPicker = await waitForElement(
+    sessionId,
+    'input[aria-label="ブロックタイプを検索"]',
+  );
+  await sendKeys(sessionId, blockPicker, `table${ENTER}`);
+  const tableSize = await waitForElement(
+    sessionId,
+    '[aria-label="Tableサイズ"]',
+  );
+  await sendKeys(sessionId, tableSize, ENTER);
+  await waitFor(
+    sessionId,
+    `return {
+       pickerOpen: document.querySelector('.table-size-picker') !== null,
+       rows: document.querySelectorAll(
+         '.editor-window:first-child .memoka-editor .memoka-table tr'
+       ).length
+     }`,
+    (value) => value?.pickerOpen === false && value.rows === 3,
+  );
+  await waitFor(
+    sessionId,
+    `return {
+       active:
+         document.activeElement?.classList.contains('memoka-editor') ?? false,
+       mode:
+         document.querySelector('.editor-window:first-child')?.dataset
+           .vimMode ?? '',
+       inCell: Boolean(
+         window.getSelection()?.anchorNode?.parentElement?.closest('td, th')
+       )
+     }`,
+    (value) =>
+      value?.active === true &&
+      value.mode === "insert" &&
+      value.inCell === true,
+  );
+  for (const key of "cell") await sendActiveKey(sessionId, key);
+  await execute(
+    sessionId,
+    `window.__MEMOKA_TABLE_EXIT_EVENTS__ = [];
+     const editor = document.querySelector(
+       '.editor-window:first-child .memoka-editor'
+     );
+     for (const type of ['keydown', 'beforeinput', 'input']) {
+       editor.addEventListener(type, (event) => {
+         const record = () => window.__MEMOKA_TABLE_EXIT_EVENTS__.push({
+           type,
+           key: event.key ?? null,
+           ctrlKey: event.ctrlKey ?? false,
+           isComposing: event.isComposing ?? false,
+           inputType: event.inputType ?? null,
+           data: event.data ?? null,
+           defaultPrevented: event.defaultPrevented
+         });
+         record();
+         queueMicrotask(record);
+       }, true);
+     }
+     return true`,
+  );
+  await sendActiveChord(sessionId, CONTROL, ENTER);
+  await sendActiveKey(sessionId, "/");
+  const result = await waitFor(
+    sessionId,
+    `return (() => {
+       const root = document.querySelector('.editor-window:first-child');
+       const chunks = [...root.querySelectorAll(
+         '[data-body-chunk][data-body-chunk-virtualized="false"]'
+       )];
+       const blocks = chunks.flatMap((chunk) =>
+         [...chunk.children].map((block) => ({
+           tag: block.tagName,
+           blockId: block.getAttribute('data-block-id'),
+           className: block.className,
+           text: block.textContent
+         }))
+       );
+       const markers = [...root.querySelectorAll(
+         '.memoka-logical-line-number'
+       )].map((marker) => ({
+         absolute: marker.dataset.logicalLineNumber,
+         current: marker.classList.contains(
+           'memoka-logical-line-number--current'
+         ),
+         blockPosition: marker.dataset.logicalLineBlockPosition
+       }));
+       return {
+         blocks,
+         markers,
+         events: window.__MEMOKA_TABLE_EXIT_EVENTS__,
+         pickerOpen: Boolean(document.querySelector('.block-type-picker')),
+         mode: root.dataset.vimMode,
+         action: root.dataset.vimAction,
+         selection: (() => {
+           const selection = window.getSelection();
+           const element = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+             ? selection.anchorNode
+             : selection?.anchorNode?.parentElement;
+           return {
+             text: selection?.anchorNode?.textContent ?? null,
+             offset: selection?.anchorOffset ?? null,
+             cell: element?.closest('td, th')?.tagName ?? null,
+             paragraphId:
+               element?.closest('[data-block-id]')?.dataset.blockId ?? null
+           };
+         })()
+       };
+     })()`,
+    (value) =>
+      value?.pickerOpen === true &&
+      value.blocks?.length === 6 &&
+      value.events?.some((event) => event.type === "input"),
+  );
+  const blockTypes = result.blocks.map((block) => block.tag);
+  if (
+    JSON.stringify(blockTypes) !==
+    JSON.stringify(["P", "P", "DIV", "P", "P", "P"])
+  ) {
+    throw new Error(
+      `Unexpected blocks after Table exit: ${JSON.stringify(result.blocks)}`,
+    );
+  }
+  if (result.blocks[3]?.text !== "/" || !result.blocks[3]?.blockId) {
+    throw new Error(
+      `Table exit did not create one slash-enabled Paragraph: ${JSON.stringify(result.blocks[3])}`,
+    );
+  }
+  return result;
 }
 
 async function focusElement(sessionId, selector) {
@@ -4177,6 +4322,20 @@ if (process.env.MEMOKA_E2E_AGENT_EDIT_ONLY === "1") {
       () => undefined,
     );
     throw error;
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
+
+if (tableExitOnly) {
+  try {
+    const result = await runTableExitRegression(firstSession);
+    writeFileSync(
+      `${evidenceDirectory}/table-exit-tauri.json`,
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
     await closeSession(firstSession);
   }

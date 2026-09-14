@@ -34,9 +34,9 @@ describe("Memoka Block Type picker", () => {
     );
 
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(transform).toHaveBeenCalledWith("paragraph");
     expect(onClose).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
+    expect(transform).toHaveBeenCalledWith("paragraph");
   });
 
   it("filters Japanese and English aliases with whitespace AND semantics", () => {
@@ -150,11 +150,11 @@ describe("Memoka Block Type picker", () => {
     expect(screen.getByText("3列 × 3行")).toBeTruthy();
     fireEvent.keyDown(grid, { key: "Enter" });
 
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
     expect(transform).toHaveBeenCalledWith("table", {
       tableDimensions: { rows: 3, columns: 3 },
     });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
   });
 
   it("chooses an Alert type in a second shared search pane", async () => {
@@ -192,10 +192,10 @@ describe("Memoka Block Type picker", () => {
     expect(screen.getAllByRole("option")).toHaveLength(1);
     fireEvent.keyDown(alertTypeInput, { key: "Enter" });
 
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
     expect(transform).toHaveBeenCalledWith("alert", {
       alert: { type: "warning", title: null, fold: null },
     });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
   });
 });

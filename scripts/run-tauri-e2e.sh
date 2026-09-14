@@ -4,6 +4,7 @@ set -euo pipefail
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 evidence_dir="${MEMOKA_EVIDENCE_DIR:-${workspace_dir}/evidence/generated}"
 application="${MEMOKA_TAURI_APP:-${workspace_dir}/target/release/memoka}"
+application_identifier="${MEMOKA_E2E_APP_IDENTIFIER:-dev.memoka.desktop}"
 runtime_dir="$(mktemp -d)"
 driver_pid=""
 
@@ -39,7 +40,7 @@ fi
 
 mkdir -p "${evidence_dir}"
 workspace_data="${runtime_dir}/workspace"
-application_config="${runtime_dir}/config/dev.memoka.desktop"
+application_config="${runtime_dir}/config/${application_identifier}"
 mkdir -p "${workspace_data}/.memoka" "${application_config}"
 printf '%s\n' '{"schemaVersion":1,"kind":"memoka-data-area"}' \
   >"${workspace_data}/.memoka/data-area.json"

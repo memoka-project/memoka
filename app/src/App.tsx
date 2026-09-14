@@ -1024,9 +1024,12 @@ export function App({
       setNoteSearch(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
-      setBlockTypePicker(session);
+      setBlockTypePicker({
+        ...session,
+        restoreFocus: () => requestEditorFocus(session.windowId),
+      });
     },
-    [clearEditorFocusRequests],
+    [clearEditorFocusRequests, requestEditorFocus],
   );
 
   const openInlineFormatPicker = useCallback(
