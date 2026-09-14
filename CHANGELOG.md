@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-15
+
+- **互換性の変更:** 端末間同期に対応するためDB／NoteDocをschema 7、WorkspaceMetadataDocをschema 4へ移行。更新前にMemokaを終了してWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。既存ID・内容・装飾・構造・添付hashは検証してから移行します。
+- 明示的に有効化したLAN／VPN内の端末間で、署名付き招待と承認を用いてWorkspaceを直接同期する機能を追加。公開relay・自動port転送は使わず、同期鍵はOS資格情報ストアへ保存します。
+- Note本文とNamespaceを安定ID単位で複製し、同時編集、再接続、差分交換、添付転送、失効端末の無効化に対応。CLI編集はReplica IDを検証し、別Replicaからの再送を拒否します。
+- 端末の命名、招待の作成・コピー・期限表示、受信内容の確認、参加承認、再接続、同期停止を段階的に案内する同期設定画面を追加。受信完了後は新しいWorkspaceを自動的に開きます。
+- `:new-workspace`を追加し、空のデータ領域を選んで新しいWorkspaceを作成可能に変更。移行失敗時の詳細表示と復旧導線も整理しました。
+- Table内のInsertモードで`Ctrl-Enter`を押した際、Table直後へ通常のParagraphを1つだけ作成するよう修正。`/table`のサイズ選択を1回のEnterで確定し、block type選択後に本文へfocusが戻らない問題も修正しました。
+- **既知の問題:** 端末間同期は登録したLAN／VPNアドレスへ直接到達できる構成が必要です。Windows向け配布は引き続きソースコードのみです。
+
 ## [0.2.3] - 2026-09-09
 
 - **互換性の変更:** Task ListとCLI編集の再送管理に対応するためDB／NoteDocをschema 6へ移行。更新前にMemokaを終了してWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。既存本文・block IDは保持します。
@@ -123,7 +133,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/memoka-project/memoka/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/memoka-project/memoka/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/memoka-project/memoka/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/memoka-project/memoka/compare/v0.2.0...v0.2.1

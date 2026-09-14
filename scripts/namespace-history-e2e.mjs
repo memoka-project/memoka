@@ -299,8 +299,7 @@ export async function runNamespaceHistory({
           "document.querySelector('.backup-dialog').scrollTop = 0; return true;",
         );
         await screenshot(`${name}${size ? "-small" : ""}.png`);
-        if (size) await sendActiveChord(sessionId, CONTROL, "c");
-        else await sendActiveKey(sessionId, ESCAPE);
+        await sendActiveKey(sessionId, ESCAPE);
         await waitForElement(sessionId, '[data-backup-focus="add"]');
         await sendActiveKey(sessionId, ESCAPE);
         await waitFor(

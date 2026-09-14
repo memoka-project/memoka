@@ -531,6 +531,7 @@ THE SOFTWARE.
 - hex@0.4.3 — MIT OR Apache-2.0 — https://github.com/KokaKiwi/rust-hex
 - hkdf@0.12.4 — MIT OR Apache-2.0 — https://github.com/RustCrypto/KDFs/
 - hmac@0.12.1 — MIT OR Apache-2.0 — https://github.com/RustCrypto/MACs
+- hostname@0.4.2 — MIT — https://github.com/djc/hostname
 - html5ever@0.38.0 — MIT OR Apache-2.0 — https://github.com/servo/html5ever
 - http-body-util@0.1.4 — MIT — https://github.com/hyperium/http-body
 - http-body@1.1.0 — MIT — https://github.com/hyperium/http-body
