@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { Fragment } from "@tiptap/pm/model";
 import type { UndoManager } from "yjs";
 import { describe, expect, it, vi } from "vitest";
 import { createUuidV7 } from "../app/src/core/ids";
@@ -3869,8 +3870,13 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       code: "Enter",
       ctrlKey: true,
     });
+    const leakedNativeBreak = beforeInput(editor, "", "insertParagraph");
     await runtime.flush();
     expect(created.defaultPrevented).toBe(true);
+    expect(leakedNativeBreak.defaultPrevented).toBe(true);
+    expect(beforeInput(editor, "", "insertParagraph").defaultPrevented).toBe(
+      false,
+    );
     expect(editor.state.doc.childCount).toBe(2);
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     expect(adapter.vimSnapshot.action).toBe(
@@ -3905,6 +3911,102 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
 
     adapter.destroy();
     runtime.destroy();
+  });
+
+  it("creates one slash-enabled Paragraph after a Table on Ctrl+Enter", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-09-14T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onBlockTypePicker = vi.fn();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+      onBlockTypePicker,
+    });
+    let initialParagraph: { position: number; nodeSize: number } | null = null;
+    editor.state.doc.descendants((node, position) => {
+      if (!initialParagraph && node.type.name === "paragraph") {
+        initialParagraph = { position, nodeSize: node.nodeSize };
+      }
+    });
+    expect(initialParagraph).not.toBeNull();
+    const paragraphType = editor.schema.nodes.paragraph!;
+    const paragraphIds = Array.from({ length: 5 }, () => createUuidV7());
+    const paragraphs = [
+      "Paragraph 1",
+      "Paragraph 2",
+      "",
+      "Paragraph 3",
+      "Paragraph 4",
+    ].map((text, index) =>
+      paragraphType.create(
+        { blockId: paragraphIds[index] },
+        text ? editor.schema.text(text) : undefined,
+      ),
+    );
+    const initial = initialParagraph!;
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(
+        initial.position,
+        initial.position + initial.nodeSize,
+        Fragment.fromArray(paragraphs),
+      ),
+    );
+    expect(adapter.transformBlock(paragraphIds[2]!, "table").changed).toBe(
+      true,
+    );
+    editor.commands.insertContent("table cell");
+    editor.commands.focus();
+
+    const created = press(editor, "Enter", {
+      code: "Enter",
+      ctrlKey: true,
+    });
+    await runtime.flush();
+    expect(created.defaultPrevented).toBe(true);
+    const paragraph = editor.state.selection.$from.parent;
+    const bodyChunk = editor.state.selection.$from.node(
+      editor.state.selection.$from.depth - 1,
+    );
+    expect(bodyChunk.type.name).toBe("bodyChunk");
+    expect(
+      Array.from(
+        { length: bodyChunk.childCount },
+        (_, index) => bodyChunk.child(index).type.name,
+      ),
+    ).toEqual([
+      "paragraph",
+      "paragraph",
+      "table",
+      "paragraph",
+      "paragraph",
+      "paragraph",
+    ]);
+    expect(paragraph.type.name).toBe("paragraph");
+    expect(paragraph.attrs.blockId).toEqual(expect.any(String));
+    const logicalLines = defaultVimBlockSemantics.logicalLines(editor.view);
+    expect(logicalLines).toHaveLength(9);
+    expect(
+      logicalLines.findIndex(
+        (line) => line.blockPosition === editor.state.selection.from - 1,
+      ),
+    ).toBe(6);
+
+    const position = editor.state.selection.from;
+    editor.view.someProp("handleTextInput", (handler) =>
+      handler(editor.view, position, position, "/", () => editor.state.tr),
+    );
+    editor.commands.insertContent("/");
+    await Promise.resolve();
+    expect(onBlockTypePicker).toHaveBeenCalledWith({
+      blockId: paragraph.attrs.blockId,
+    });
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
   });
 
   it.each([

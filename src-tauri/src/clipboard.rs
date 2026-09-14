@@ -110,6 +110,40 @@ pub(crate) async fn clipboard_write_rich(
 }
 
 #[tauri::command]
+pub(crate) async fn clipboard_write_text(app: AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        validate_clipboard_size(PLAIN_CLIPBOARD_MIME, text.len())?;
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        app.run_on_main_thread(move || {
+            let _ = sender.try_send(write_linux_text_clipboard(text));
+        })
+        .map_err(|error| format!("cannot schedule GTK Clipboard write: {error}"))?;
+        return receiver
+            .recv()
+            .await
+            .ok_or_else(|| "GTK Clipboard write ended without a result".to_owned())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        validate_clipboard_size(PLAIN_CLIPBOARD_MIME, text.len())?;
+        return tauri::async_runtime::spawn_blocking(move || {
+            windows_clipboard::write_text_clipboard(&text)
+        })
+        .await
+        .map_err(|error| format!("Windows Clipboard write task failed: {error}"))?;
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (app, text);
+        Err("native text Clipboard write is not implemented on this platform".to_owned())
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn clipboard_read_preferred(
     app: AppHandle,
 ) -> Result<Option<PreferredClipboardFormats>, String> {
@@ -204,6 +238,20 @@ fn write_linux_rich_clipboard(formats: RichClipboardFormats) -> Result<(), Strin
         .map(|(mime_type, content)| (mime_type.to_owned(), content.to_owned()))
         .collect::<Vec<_>>();
     write_linux_clipboard_payloads(payloads, None, None, "rich")
+}
+
+#[cfg(target_os = "linux")]
+fn write_linux_text_clipboard(text: String) -> Result<(), String> {
+    let plain = text.clone();
+    write_linux_clipboard_payloads(
+        vec![
+            (PLAIN_CLIPBOARD_MIME.to_owned(), plain.clone()),
+            (UTF8_PLAIN_CLIPBOARD_MIME.to_owned(), plain),
+        ],
+        None,
+        None,
+        "text",
+    )
 }
 
 #[cfg(target_os = "linux")]

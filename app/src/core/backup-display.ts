@@ -17,6 +17,7 @@ export function phaseLabel(phase: string): string {
         uninitialized: "未作成",
         idle: "待機中",
         capturing: "取得中",
+        "awaiting-sync": "同期データの取得待ち",
         saving: "保存・検証中",
         copying: "転送中",
         verifying: "転送後の検証中",

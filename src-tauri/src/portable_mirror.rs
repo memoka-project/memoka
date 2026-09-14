@@ -294,7 +294,17 @@ fn restore_documents(
     manifest: &PortableMirrorManifest,
 ) -> Result<(), PersistenceError> {
     // Validate and migrate the complete set before writing any source document.
-    let documents = load_recovery_documents(source, manifest)?;
+    let mut documents = load_recovery_documents(source, manifest)?;
+    let replica = store.manifest()?.replica_id;
+    for document in &mut documents {
+        document.snapshot = if document.kind == "note" {
+            crate::replicated_note::edit::migrate(document, &replica)
+        } else {
+            crate::replicated_namespace::migrate(document, &replica)
+        }
+        .map_err(legacy_error)?;
+        document.schema_version = if document.kind == "note" { 7 } else { 4 };
+    }
     let transaction = store.connection.transaction()?;
     for document in documents {
         transaction.execute("INSERT INTO documents (kind, document_id, schema_version, revision, snapshot_revision, snapshot)

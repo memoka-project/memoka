@@ -34,6 +34,7 @@ Memokaは、Vimの操作感でMarkdownを意識せず高速に書ける、ロー
 | ---------------------------------------------------------------------------- | ----------------------------------------------------- |
 | [プロダクト](specification/product.md)                                       | コンセプト、対象範囲、用語、採用・非採用方針          |
 | [アーキテクチャとデータモデル](specification/architecture-and-data-model.md) | Workspace、Note、Section、CRDT、schema、revision      |
+| [端末間同期](specification/device-synchronization.md)                        | 共有モデル、端末登録、直接通信、統合・復旧の境界      |
 | [コンテンツとEditor](specification/content-model-and-editor.md)              | block、論理行、Section、IME、大規模文書               |
 | [Vim操作](specification/vim-operations.md)                                   | mode、motion、operator、Visual、Table、Tree、独自拡張 |
 | [Application UI](specification/application-ui.md)                            | focus、Tab、Window、Buffer、Sidebar、Outline、表示    |

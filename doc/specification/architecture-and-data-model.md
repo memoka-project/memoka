@@ -18,9 +18,9 @@
 
 | 対象                     | 現行schema |
 | ------------------------ | ---------- |
-| WorkspaceMetadataDoc     | 3          |
-| NoteDoc                  | 6          |
-| SQLite database          | 6          |
+| WorkspaceMetadataDoc     | 4          |
+| NoteDoc                  | 7          |
+| SQLite database          | 7          |
 | Workspace search index   | 9          |
 | 内部Clipboard            | 7          |
 | Application Window state | 9          |
@@ -29,6 +29,9 @@
 schemaの未知の新versionは、意味を推測して開かず明示的に拒否する。既知の旧versionは定義済みmigrationだけを
 通して変換する。migration前のNote snapshot/update logはbackup tableへ保持する。
 
+NoteDoc 7は本文と配置を分離した共有モデルを使う。新規作成・既存Workspaceの移行・共通readerの
+詳細は[端末間同期](device-synchronization.md)を参照する。コピーごとにReplica IDを発行し、Workspace IDと区別する。
+
 ## 3. WorkspaceMetadataDoc
 
 WorkspaceMetadataDocはNote metadataとMain Namespaceの配置を分離して保持するYjs文書である。
@@ -36,28 +39,27 @@ WorkspaceMetadataDocはNote metadataとMain Namespaceの配置を分離して保
 ```text
 WorkspaceMetadataDoc
 ├── workspace_id
-├── schema_version = 3
+├── schema_version = 4
 ├── notes[note_id]
 │   ├── title_cache
 │   ├── created_at / updated_at
-│   ├── deleted_at? / trash_operation_id?
 │   └── system_role?
 └── main_namespace
     ├── namespace_id
-    └── entries[entry_id]
-        ├── parent_entry_id?
-        ├── position
-        ├── target? = { kind: "note", id: NoteId }
-        ├── name?  # targetなしのグループのみ
-        ├── created_at / updated_at
-        └── deleted_at? / trash_operation_id?
+    ├── entries[entry_id]
+    │   ├── target? = { kind: "note", id: NoteId }
+    │   ├── name?  # targetなしのグループのみ
+    │   └── created_at / updated_at
+    ├── placements  # 親と兄弟位置の変更履歴
+    ├── deletions   # 観測した対象Entryの削除操作
+    └── restorations  # 観測した削除操作の取消し
 ```
 
 不変条件は次のとおりである。
 
 1. live Entryは親を高々1つ持ち、top-levelでは`parent_entry_id`がnullである。
 2. live Entryの親は同じNamespaceのlive Entryである。Note付きEntryもグループも子を持てる。
-3. self-parent、循環、orphan、deleted parentとlive childの組み合わせを拒否する。
+3. 不正IDとorphanを拒否する。並行した親変更の循環は履歴から決定的に解消し、削除親の子はTrashへ投影する。
 4. virtual rootを永続化しない。
 5. live Noteを参照するlive Entryはちょうど1つである。Entry IDをNote IDと兼用しない。
 6. Note付きEntryの名前はRoot Section titleから導出する。`title_cache`は第二の正本ではない。
@@ -73,22 +75,20 @@ WorkspaceMetadataDoc
 
 ## 4. NoteDocとSection
 
-1 Noteにつき1 NoteDocを持つ。NoteDocは再帰的なSection treeである。
-
-NoteDocの`schema_version`は6。ListItemは非空の`Block+`を持ち、先頭をParagraphに限定しない。
-v5でDetails / DetailsSummary / DetailsBody、v6でListItemの`checked: null | boolean`を追加する。
-null/未指定は通常項目、booleanはタスクである。本文textへチェック状態を埋め込まない。
-v3/v4/v5からはmetadataだけを更新し、本文、Block/Section/BodyChunk ID、Yjs内の本文要素を作り直さない。
-v2からは既存のBodyChunk化も行う。移行updateを永続化し、旧履歴の読み取りを維持する。
-v6非対応の旧アプリでの再編集は非対応とし、未知schemaを拒否して暗黙の内容欠落を防ぐ。
-WorkspaceMetadataDocのschemaは3のままである。
+1 Noteにつき1 NoteDocを持つ。schema 7は安定IDごとの内容Mapと配置・削除・復元の履歴を正本にし、
+再帰的なSection treeをEditor・Markdown・CLI用に投影する。移動で本文の共有要素を作り直さない。
+ListItemは非空の`Block+`を持ち、先頭をParagraphに限定しない。`checked: null | boolean`で通常項目とタスクを区別する。
+Details / DetailsSummary / DetailsBodyも同じモデルで保持する。Tableには行・列IDがあり、セルをその組で対応付ける。
+旧schema 2〜6は移行前検査・バックアップを経てIDと内容を保って変換し、旧履歴の読出しも維持する。
+schema 7非対応の旧アプリとの混在編集・同期は拒否する。
 
 SQLite v6は外部CLI編集の`agent_edit_receipts`を持つ。`(workspace_id, request_id)`を一意keyとし、
 canonical request hashと最初の成功結果を文書更新と同じtransactionで保存する。
-これは再生成可能なcacheではなく、DBバックアップにも含める。詳細は[CLI編集](agent-editing.md)を参照する。
+SQLite v7はReplica ID、同期journal・inbox・frontier・checkpoint・署名付き認可・添付受信位置も持つ。
+receiptは再生成可能なcacheではなく、DBバックアップにも含める。復旧時は別Replicaとして取り除く。詳細は[CLI編集](agent-editing.md)を参照する。
 
 ```text
-NoteDoc
+Editor用projection
 └── Root Section
     ├── Header
     ├── Body
@@ -101,18 +101,18 @@ NoteDoc
 - Root Section IDはNote IDと同一である。
 - Root HeaderのtextがNote titleの正本である。
 - Root以外のSectionは独立したUUIDv7を持つ。
-- RootをH1/深さ0とし、最大H6/深さ5とする。超過を平坦化・分割せず、操作全体を拒否する。
+- RootをH1/深さ0とし、最大H6/深さ5とする。ローカル操作の超過は拒否し、並行統合による超過は表示だけを補正して通知する。
 - SectionはHeader、直接Body、子Sectionを持つ。
 - Sectionを移動、yank、put、昇格、降格するときは、そのsubtreeの構造と表示順を保つ。
 - 同一Note内の構造copyでは貼り付け側にfresh IDを割り当て、既存entityと衝突させない。
 
 最終的なSection treeにあるすべてのIDがvalidかつ一意で、Root IDがNote IDと一致することをload時に検証する。
-Yjs履歴のreplay中に内部要素とIDの対応が変わること自体はidentity変更と判定しない。最終IDが欠損している場合だけ、
-過去に同じ要素で観測され、他の最終Sectionが使用していないvalid IDが一意に決まるときに限り修復する。
+旧schemaの履歴読出しでは、欠損IDを過去に一意に観測できる場合だけ既存の限定的修復を使う。
+schema 7の不正ID・壊れた共有要素は修復せず隔離する。
 
 ## 5. BodyChunk
 
-BodyChunkは大きなNoteDocの本文を分割して扱う物理格納・Editor mount単位であり、
+BodyChunkは大きなNoteDocの本文を分割して扱う表示・Editor mount単位であり、
 Vimの論理行、Clipboard、検索、Markdown、Section snapshotからは透過である。
 
 - 分割目安は256 blockまたはUTF-8換算128 KiBである。
@@ -124,7 +124,7 @@ Vimの論理行、Clipboard、検索、Markdown、Section snapshotからは透�
 - Vim motion、operator、IME、Undoはchunk境界を透過する。
 - offscreenへのmouse dragによる連続選択は保証しない。
 
-旧NoteDocはWorkspace全体のnative移行前検査を通し、既存block順とIDを保ってBodyChunkへ包む。
+旧schemaのBodyChunkを読み出す際もblock順とIDを保つ。schema 7の再分割では本文の共有要素を移し替えない。
 
 ## 6. block identity
 
@@ -136,7 +136,7 @@ Internal Linkは表示textではなくtarget IDを保持し、表示名はtarget
 
 ## 7. Yjs、transaction、revision
 
-TipTapの編集状態はYjs bindingを通してNoteDocへ反映する。UIが同じ変更を独自に再適用してはならない。
+TipTapの編集状態は要素ごとのadapterを通してNoteDocへ差分として反映する。UIが同じ変更を独自に再適用してはならない。
 IME composition中のDOM mutationもYjs/ProseMirrorの単一経路で確定する。
 
 永続変更はCore transactionで処理する。
@@ -166,7 +166,7 @@ fold、scroll、Jump ListはWindowごとに分離する。
 
 Tree表示はWorkspaceMetadataDocから次の順で導出する。
 
-1. deleted Entryを除く。
+1. 配置履歴から循環のない親と兄弟順を導出し、削除・復元履歴を解釈してdeleted Entryを除く。
 2. parent-child adjacencyを構築する。
 3. 各siblingを`position`、Entry IDの順にsortする。
 4. 展開状態を適用してdepth-firstに平坦化する。
@@ -196,7 +196,7 @@ Treeの削除は永続消去ではなくmetadata上のTrash移動である。
 - 選択Entryの削除は、その時点でliveな子孫Entryとtarget Noteを同じ`trash_operation_id`で原子的にTrashへ移す。
 - Noteを持たないグループだけのsubtreeも検索・復元できる。
 - 以前の別操作ですでにTrashへ移された子孫を、後から親を削除したoperationへ取り込まない。
-- 同じoperationで削除したsubtreeは`r`でまとめて復元する。
+- 同じoperationで削除したsubtreeは`r`でまとめて復元する。確認後の並行削除は取り消さずTrashに残す。
 - 復元に必要な親が別operationのTrash内にある場合は、祖先を先に復元するまで拒否する。
 - 削除Noteを表示していたWindowは利用可能な既存BufferまたはEmpty Bufferへ移る。
 - live Noteが残らなくても代替Noteを暗黙作成しない。

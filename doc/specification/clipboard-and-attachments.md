@@ -213,6 +213,10 @@ ClipboardとNative Markdown readへ出力し、同じ限定形式から幅を復
 `gx`はallowlistで安全と判定したAttachmentだけをOS既定handlerへ渡す。危険な形式、missing bytes、
 不正なmaterializationはopenしない。
 
+同期で受信したmetadataの実ファイルが未取得なら「別端末から取得待ち」と表示する。
+取得失敗は同期設定の詳細から再試行できる。サイズとSHA-256の検証前にpreviewやOS openへ渡さない。
+metadataの更新通知は取得状態が変わった添付だけへ行い、本文Editorや既存画像のfocusを初期化しない。
+
 ## 12. Markdown表現
 
 Clipboardではgeneric Attachmentは`[label](attachment:<UUIDv7>)`、Imageは

@@ -68,6 +68,13 @@ impl AgentRequest {
             Self::Section(r) => &r.request_id,
         }
     }
+    pub fn replica_id(&self) -> Option<&str> {
+        match self {
+            Self::Body(r) => r.replica_id.as_deref(),
+            Self::Note(r) => r.replica_id.as_deref(),
+            Self::Section(r) => r.replica_id.as_deref(),
+        }
+    }
     pub fn note_id(&self) -> Option<&str> {
         match self {
             Self::Body(r) => Some(&r.note_id),
@@ -110,6 +117,9 @@ pub struct EditRequest {
     pub schema_version: u32,
     /// Lowercase UUIDv7 of the explicitly selected Workspace.
     pub workspace_id: String,
+    /// Copy identity from the edit view. Required while synchronization is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replica_id: Option<String>,
     /// Lowercase UUIDv7 of the Note (also its Root Section ID).
     pub note_id: String,
     /// Note-wide persisted revision from read --for-edit. No force/rebase.
@@ -190,6 +200,9 @@ pub fn validate_id(id: &str) -> Result<(), ReadError> {
 }
 impl EditRequest {
     pub fn validate(&self) -> Result<(), ReadError> {
+        if let Some(id) = &self.replica_id {
+            validate_id(id)?;
+        }
         validate_note_envelope(
             self.schema_version,
             &self.workspace_id,
@@ -365,6 +378,9 @@ pub fn receipt(
     request: impl Into<AgentRequest>,
 ) -> Result<Option<Value>, ReadError> {
     let request = request.into();
+    // Identity must be checked even for an existing receipt. A copied backup
+    // cannot reuse the original copy's completed request or its revision.
+    check_replica_binding(connection, request.replica_id())?;
     let row: Option<(String, String)> = connection.query_row(
         "SELECT request_hash,result_json FROM agent_edit_receipts WHERE workspace_id=?1 AND request_id=?2",
         params![request.workspace_id(), request.request_id()], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
@@ -382,19 +398,115 @@ pub fn receipt(
     .transpose()
 }
 
+pub(crate) fn check_replica_binding(
+    connection: &Connection,
+    requested: Option<&str>,
+) -> Result<(), ReadError> {
+    let replica: Option<String> = connection
+        .query_row(
+            "SELECT value FROM settings WHERE key='replica_id'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let enabled: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key='replication_config')",
+        [],
+        |r| r.get(0),
+    )?;
+    if enabled && requested.is_none() {
+        return Err(ReadError::new(
+            "EDIT_REPLICA_REQUIRED",
+            "Read this Workspace copy again and include its replica_id",
+        ));
+    }
+    if requested.is_some() && requested != replica.as_deref() {
+        return Err(ReadError::new(
+            "EDIT_REPLICA_MISMATCH",
+            "Editing request belongs to another Workspace copy",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn require_edit_schema(reader: &WorkspaceReader) -> Result<(), ReadError> {
     let version: String = reader.connection.query_row(
         "SELECT value FROM settings WHERE key='database_schema_version'",
         [],
         |r| r.get(0),
     )?;
-    if version != "6" {
+    if version != "6" && version != crate::workspace_migration::DATABASE_SCHEMA.to_string() {
         return Err(ReadError::new(
             "MIGRATION_REQUIRED",
             "Open this Workspace in the updated Memoka before editing",
         ));
     }
     Ok(())
+}
+
+fn editable_note_document(
+    stored: &crate::persistence::PersistedDocument,
+) -> Result<yrs::Doc, ReadError> {
+    if stored.schema_version == crate::replicated_note::SCHEMA_VERSION {
+        crate::replicated_note::edit::legacy_projection(&read_note(stored, false)?)
+    } else {
+        decode_document(stored)
+    }
+}
+fn edited_note_view(
+    stored: &crate::persistence::PersistedDocument,
+    doc: &yrs::Doc,
+) -> Result<crate::document_model::Note, ReadError> {
+    read_note(
+        &crate::persistence::PersistedDocument {
+            schema_version: 6,
+            snapshot: doc
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default()),
+            snapshot_revision: stored.revision,
+            updates: vec![],
+            ..stored.clone()
+        },
+        false,
+    )
+}
+fn local_replica_id(reader: &WorkspaceReader) -> Result<String, ReadError> {
+    let id: Option<String> = reader
+        .connection
+        .query_row(
+            "SELECT value FROM settings WHERE key='replica_id'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = id {
+        validate_id(&id)?;
+        return Ok(id);
+    }
+    // Unsynchronized pre-migration copies have no enrollment identity. This
+    // process-local author never authorizes a network connection.
+    static LOCAL_REPLICA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    Ok(LOCAL_REPLICA
+        .get_or_init(|| uuid::Uuid::now_v7().to_string())
+        .clone())
+}
+fn edited_note_update(
+    stored: &crate::persistence::PersistedDocument,
+    doc: &yrs::Doc,
+    vector: &StateVector,
+    reader: &WorkspaceReader,
+    now: &str,
+) -> Result<Vec<u8>, ReadError> {
+    if stored.schema_version == crate::replicated_note::SCHEMA_VERSION {
+        crate::replicated_note::edit::reconcile(
+            stored,
+            &edited_note_view(stored, doc)?.root,
+            &local_replica_id(reader)?,
+            now,
+        )
+    } else {
+        Ok(doc.transact().encode_state_as_update_v1(vector))
+    }
 }
 
 fn live_note(reader: &WorkspaceReader, note_id: &str) -> Result<(), ReadError> {
@@ -429,17 +541,27 @@ pub fn read_for_edit(
     for note_id in ids {
         let stored = load_document(&reader.connection, "note", &note_id)?;
         let note = read_note(&stored, false)?;
-        let doc = decode_document(&stored)?;
+        let doc = editable_note_document(&stored)?;
         let index = projection::Index::new(&doc)?;
         if index.sections.contains_key(id) {
             live_note(&reader, &note_id)?;
-            if stored.schema_version != 6 {
+            if ![6, 7].contains(&stored.schema_version) {
                 return Err(ReadError::new(
                     "MIGRATION_REQUIRED",
                     "Open this Note in the updated Memoka before editing",
                 ));
             }
-            return index.read(&doc, &note, &reader.workspace_id, id, limit, cursor);
+            let replica: Option<String> = reader
+                .connection
+                .query_row(
+                    "SELECT value FROM settings WHERE key='replica_id'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let mut result = index.read(&doc, &note, &reader.workspace_id, id, limit, cursor)?;
+            result["replica_id"] = json!(replica);
+            return Ok(result);
         }
     }
     Err(ReadError::new(
@@ -479,7 +601,7 @@ pub fn prepare(
     }
     live_note(&reader, &request.note_id)?;
     let stored = load_document(&reader.connection, "note", &request.note_id)?;
-    if stored.schema_version != 6 {
+    if ![6, 7].contains(&stored.schema_version) {
         return Err(ReadError::new(
             "MIGRATION_REQUIRED",
             "Open this Note in the updated Memoka before editing",
@@ -487,24 +609,19 @@ pub fn prepare(
     }
     check_revision(request.expected_revision, stored.revision)?;
     let before = read_note(&stored, false)?;
-    let doc = decode_document(&stored)?;
+    let doc = editable_note_document(&stored)?;
     let vector = doc.transact().state_vector();
     let index = projection::Index::new(&doc)?;
     let changes = index.plan(&doc, &reader, &request)?;
     let applied_edits = changes.changed_count();
     let (changed_ids, created_ids) = changes.apply(&doc, &index)?;
-    let update = doc.transact().encode_state_as_update_v1(&vector);
-    let after = read_note(
-        &crate::persistence::PersistedDocument {
-            snapshot: doc
-                .transact()
-                .encode_state_as_update_v1(&StateVector::default()),
-            snapshot_revision: stored.revision,
-            updates: vec![],
-            ..stored.clone()
-        },
-        false,
-    )?;
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let update = if applied_edits > 0 {
+        edited_note_update(&stored, &doc, &vector, &reader, &now)?
+    } else {
+        vec![]
+    };
+    let after = edited_note_view(&stored, &doc)?;
     let section_ids = request
         .edits
         .iter()
@@ -558,7 +675,7 @@ pub fn prepare(
         documents.push(DocumentCommitInput {
             kind: "note".into(),
             document_id: request.note_id.clone(),
-            schema_version: 6,
+            schema_version: stored.schema_version,
             base_revision: stored.revision,
             snapshot: None,
             update: Some(update),
@@ -578,11 +695,7 @@ pub fn prepare(
             let Some(yrs::Out::YMap(meta)) = notes.get(&txn, &request.note_id) else {
                 return Err(invalid("Missing Note metadata"));
             };
-            meta.insert(
-                &mut txn,
-                "updated_at",
-                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            );
+            meta.insert(&mut txn, "updated_at", now.as_str());
         }
         documents.push(DocumentCommitInput {
             kind: "workspace".into(),

@@ -29,6 +29,68 @@ describe("Workspace data area startup", () => {
     });
   });
 
+  it.each([undefined, "Migration changed content or identities"])(
+    "shows the affected document and preserves migration diagnostics (reason=%s)",
+    async (message) => {
+      const documentId = "01a0753d-aca3-78d1-bd85-f08a4628dd55";
+      const failure = {
+        code: "MIGRATION_PREFLIGHT_FAILED",
+        message:
+          "移行前検査に失敗しました。元のWorkspaceを旧版で修正してから再試行してください。",
+        details: {
+          documents: [
+            {
+              code: "INVALID_DATA",
+              details: null,
+              document_id: documentId,
+              ...(message ? { kind: "note", message } : {}),
+            },
+          ],
+        },
+      };
+      const dataArea = new MemoryDataAreaPort();
+      vi.spyOn(dataArea, "status").mockRejectedValue(
+        `invalid input: ${JSON.stringify(failure)}`,
+      );
+      render(<App dataArea={dataArea} desktopWindow={null} />);
+
+      await screen.findByRole("heading", {
+        name: "ワークスペースを開けませんでした",
+      });
+      expect(screen.getByText(/元のWorkspaceは変更していません/)).toBeTruthy();
+      const targets = screen.getByRole("list", { name: "移行できない対象" });
+      expect(targets.textContent).toContain(documentId);
+      expect(targets.textContent).toContain(
+        message ?? "具体的な理由が記録されていません。",
+      );
+      expect(targets.textContent).toContain("INVALID_DATA");
+      const summary = screen.getByText("技術的な詳細");
+      const details = summary.closest("details")!;
+      expect(details.open).toBe(false);
+      fireEvent.click(summary);
+      expect(details.open).toBe(true);
+      expect(JSON.parse(details.querySelector("pre")!.textContent!)).toEqual(
+        failure,
+      );
+      expect(
+        screen.getByRole("button", { name: "Workspaceデータ領域を選択" }),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each(["保存先にアクセスできません。", 'invalid input: {"code":broken'])(
+    "preserves an unstructured startup error: %s",
+    async (message) => {
+      const dataArea = new MemoryDataAreaPort();
+      vi.spyOn(dataArea, "status").mockRejectedValue(new Error(message));
+      render(<App dataArea={dataArea} desktopWindow={null} />);
+      await screen.findByRole("heading", {
+        name: "ワークスペースを開けませんでした",
+      });
+      expect(screen.getByText(message).tagName).toBe("PRE");
+    },
+  );
+
   it.each([false, true])(
     "withdraws switching without stopping backup, or reaps children on explicit skip (switch=%s)",
     async (proceed) => {

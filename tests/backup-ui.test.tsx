@@ -385,7 +385,10 @@ describe("backup settings and read-only history", () => {
     expect(screen.getByText("未保存の入力を破棄しますか？")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "編集を続ける" }));
     expect(password.value).toBe("sensitive-draft");
+    // Text controls keep Ctrl-C for selection copy instead of closing.
     fireEvent.keyDown(password, { key: "c", ctrlKey: true });
+    expect(screen.queryByText("未保存の入力を破棄しますか？")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "戻る" }));
     fireEvent.click(screen.getByRole("button", { name: "破棄して戻る" }));
     expect(password.value).toBe("");
     expect(screen.queryByLabelText("パスワード")).toBeNull();

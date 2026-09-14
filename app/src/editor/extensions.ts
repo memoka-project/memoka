@@ -15,6 +15,8 @@ import {
 } from "@tiptap/core";
 import Code from "@tiptap/extension-code";
 import Collaboration from "@tiptap/extension-collaboration";
+import { replicatedNoteExtension } from "./replicated-note-extension";
+import { isReplicatedProjection } from "../core/replicated-editor-binding";
 import Image, { type ImageOptions } from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import { TableKit } from "@tiptap/extension-table";
@@ -1302,18 +1304,22 @@ export const AttachmentBlock = Node.create<{
         element.dataset.attachmentLabel = String(node.attrs.label ?? "");
         element.dataset.attachmentState = metadata?.available
           ? "available"
-          : "missing";
+          : (metadata?.synchronization ?? "missing");
         name.textContent =
           String(node.attrs.label ?? "") ||
           metadata?.originalFilename ||
           "Missing Attachment";
         detail.textContent = metadata?.available
           ? attachmentMetadataText(metadata)
-          : metadata
-            ? "添付ファイルがありません"
-            : isUuidV7(attachmentId)
-              ? "添付ファイルを確認中…"
-              : "添付ファイルがありません";
+          : metadata?.synchronization === "pending"
+            ? "別端末から取得待ち"
+            : metadata?.synchronization === "error"
+              ? "添付の取得に失敗しました。:sync-settingsで確認してください"
+              : metadata
+                ? "添付ファイルがありません"
+                : isUuidV7(attachmentId)
+                  ? "添付ファイルを確認中…"
+                  : "添付ファイルがありません";
         element.setAttribute(
           "aria-label",
           `${name.textContent}（添付ファイル、gxで開く）`,
@@ -1495,11 +1501,13 @@ const MemokaImage = Image.extend<
         next.dataset.attachmentId = attachmentId;
         next.dataset.attachmentState = previewUrl
           ? "available"
-          : metadata
-            ? "missing"
-            : validAttachmentId
-              ? "loading"
-              : "reference";
+          : metadata?.synchronization
+            ? metadata.synchronization
+            : metadata
+              ? "missing"
+              : validAttachmentId
+                ? "loading"
+                : "reference";
         if (next instanceof HTMLImageElement && previewUrl) {
           next.className = "memoka-image-block";
           next.alt = String(node.attrs.alt ?? metadata?.originalFilename ?? "");
@@ -1525,11 +1533,15 @@ const MemokaImage = Image.extend<
           next.dataset.placeholder =
             attachmentId === "attachment:missing"
               ? String(node.attrs.alt ?? "Image Block stub")
-              : metadata?.available === false
-                ? "Missing Attachment"
-                : validAttachmentId
-                  ? "画像を確認中…"
-                  : String(node.attrs.alt ?? "External Image");
+              : metadata?.synchronization === "pending"
+                ? "別端末から画像を取得待ち"
+                : metadata?.synchronization === "error"
+                  ? "画像の取得に失敗しました。:sync-settingsで確認してください"
+                  : metadata?.available === false
+                    ? "Missing Attachment"
+                    : validAttachmentId
+                      ? "画像を確認中…"
+                      : String(node.attrs.alt ?? "External Image");
         }
         next.setAttribute("data-memoka-image", "true");
         next.setAttribute(
@@ -1724,6 +1736,7 @@ const BodyChunking = Extension.create({
     return [
       new Plugin({
         appendTransaction: (transactions, _oldState, newState) => {
+          if (transactions.some(isReplicatedProjection)) return null;
           const started = performance.now();
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
@@ -1869,6 +1882,7 @@ const BlockIdentity = Extension.create({
           transformPasted: freshBlockIdsInSlice,
         },
         appendTransaction: (transactions, oldState, newState) => {
+          if (transactions.some(isReplicatedProjection)) return null;
           const started = performance.now();
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
@@ -2036,6 +2050,7 @@ const SectionIdentity = Extension.create({
     return [
       new Plugin({
         appendTransaction: (transactions, oldState, newState) => {
+          if (transactions.some(isReplicatedProjection)) return null;
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
@@ -2413,10 +2428,16 @@ export function productEditorExtensions(
     collapsedSectionIds?: readonly string[];
   } = {},
 ) {
+  if (note.replicated && options.directBodyOnly)
+    throw new Error("Normalized Notes require a Section binding");
+  const focusedSectionId =
+    note.replicated?.visibleSectionAncestor(
+      options.focusedSectionId ?? note.noteId,
+    ) ?? options.focusedSectionId;
   const focusedSection = options.directBodyOnly
     ? null
-    : options.focusedSectionId
-      ? findSectionWithDepth(note.rootSection, options.focusedSectionId)
+    : focusedSectionId
+      ? findSectionWithDepth(note.rootSection, focusedSectionId)
       : { element: note.rootSection, depth: 0 };
   const fragment = options.directBodyOnly
     ? directBodyTestFragment(note)
@@ -2506,16 +2527,25 @@ export function productEditorExtensions(
     AttachmentIdentity,
     TableShortcuts,
     SectionEditing.configure({ absoluteDepth: focusedSection?.depth ?? 0 }),
-    Collaboration.configure({
-      fragment,
-      yUndoOptions: {
-        undoManager: options.readOnly
-          ? undefined
-          : options.directBodyOnly
-            ? directBodyTestUndoManager(fragment)
-            : note.undoManager,
-      },
-    }),
+    ...(note.replicated && !options.directBodyOnly
+      ? [
+          replicatedNoteExtension(
+            note.replicated,
+            focusedSectionId ?? note.noteId,
+          ),
+        ]
+      : [
+          Collaboration.configure({
+            fragment,
+            yUndoOptions: {
+              undoManager: options.readOnly
+                ? undefined
+                : options.directBodyOnly
+                  ? directBodyTestUndoManager(fragment)
+                  : (note.undoManager as Y.UndoManager),
+            },
+          }),
+        ]),
   ];
 }
 

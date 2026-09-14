@@ -54,6 +54,18 @@ pub(super) fn write_rich_clipboard(formats: RichClipboardFormats) -> Result<(), 
     Ok(())
 }
 
+pub(super) fn write_text_clipboard(text: &str) -> Result<(), String> {
+    let clipboard = open_clipboard()?;
+    empty_clipboard()?;
+    if let Err(error) = set_clipboard_unicode_text(text) {
+        // Do not leave a stale prior payload behind a failed text write.
+        let _ = empty_clipboard();
+        return Err(error);
+    }
+    drop(clipboard);
+    Ok(())
+}
+
 pub(super) fn write_rich_file_clipboard(
     paths: Vec<String>,
     formats: RichClipboardFormats,

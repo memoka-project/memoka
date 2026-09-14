@@ -355,7 +355,9 @@ export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
   const indexAfterBlock = $from.indexAfter(parentDepth);
   const afterBlock = $from.after(target.depth);
 
-  const paragraph = view.state.schema.nodes.paragraph?.createAndFill();
+  const paragraph = view.state.schema.nodes.paragraph?.create({
+    blockId: createUuidV7(),
+  });
   if (
     !paragraph ||
     !parent.canReplaceWith(

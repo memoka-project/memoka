@@ -354,6 +354,17 @@ impl ConnectionGuard {
         transaction.execute("DELETE FROM settings WHERE key NOT IN ('database_schema_version','active_workspace_id','content_epoch','namespace_migration_entry_ids')",[])?;
         transaction.execute("DELETE FROM attachment_operation_items", [])?;
         transaction.execute("DELETE FROM attachment_operations", [])?;
+        crate::replication::clear_group_state(&transaction)?;
+        for table in ["operations", "agent_edit_receipts"] {
+            let exists: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+                [table],
+                |r| r.get(0),
+            )?;
+            if exists {
+                transaction.execute(&format!("DELETE FROM {table}"), [])?;
+            }
+        }
         transaction.execute("INSERT OR REPLACE INTO workspace_search_invalidations(kind,document_id,source_revision) SELECT kind,document_id,revision FROM documents",[])?;
         transaction.commit()?;
         Ok(())

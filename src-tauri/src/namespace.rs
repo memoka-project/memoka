@@ -40,6 +40,9 @@ pub struct Namespace {
 
 pub fn read_namespace(document: &PersistedDocument) -> Result<Namespace, ReadError> {
     let value = workspace_json(document)?;
+    if document.schema_version == crate::replicated_namespace::SCHEMA_VERSION {
+        return crate::replicated_namespace::project(&value);
+    }
     if document.schema_version != WORKSPACE_SCHEMA
         || value["schema_version"].as_i64() != Some(WORKSPACE_SCHEMA)
     {

@@ -343,3 +343,13 @@ moveはBody編集のMarkdown subset外のブロックも保持するが、新規
 deleteの対象ID・削除Markdownを持つ意味的差分。indexは0始まり。64 KiB超過時は`changes`を省略し`diff_truncated: true`を返す。
 全応答は2 MiB以内。previewのIDは予約しない。receiptの再送は生成IDを含む確定済み結果を返す。
 次の操作は適用後に読み直してから作り、過去のrevisionの連番を推測しない。GUI Undoへは追加しない。
+
+## 端末間同期とReplica
+
+`read-for-edit`はWorkspaceコピーの`replica_id`を返す。同期有効Workspaceの本文・Note・Section requestには
+このIDを必須とし、別ReplicaのIDと欠損をreceipt照合前に拒否する。同期無効でも指定されたIDが不一致なら拒否する。
+整数revisionは端末内の排他制御専用であり、端末間の新旧比較に使わない。同一requestのreceipt再送保証も同じReplicaに限る。
+別端末で編集する場合は、その端末でdescriptorを取得し直す。バックアップ復旧時は新しいReplica IDを発行して古いreceiptを除く。
+
+`memoka-cli sync status --workspace PATH --format json`は端末・受信/反映frontier・待機件数/容量を返す。
+GUI ownerが動作していれば接続状態も取得し、閉じている場合は読出し専用で永続状態を返す。状態読出しは待受けや同期を開始しない。

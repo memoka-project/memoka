@@ -18,6 +18,11 @@ import type {
 export type CoreCommandSource = "ui" | "editor" | "internal";
 
 export interface CoreCommandPayloads {
+  "note.recover": {
+    action: import("./replicated-note-recovery").NoteRecoveryAction;
+    updatedAt: string;
+    fault?: CommitFault;
+  };
   "namespace.edit": import("./namespace").NamespaceEdit;
   "note.create_root": {
     noteId: string;
@@ -57,6 +62,7 @@ export interface CoreCommandPayloads {
   };
   "note.open_help": {
     windowId: string;
+    activate?: boolean;
     newNoteId: string;
     synchronizedAt: string;
     fault?: CommitFault;
@@ -125,6 +131,7 @@ export interface CoreCommandPayloads {
     noteId: string;
     update: Uint8Array;
     sectionCatalogChanged: boolean;
+    preserveUpdatedAt?: boolean;
   };
   "note.repair_section_identity": {
     noteId: string;
@@ -160,6 +167,9 @@ export interface CoreCommandPayloads {
     noteId: string;
     sectionId: string;
     selection?: { anchor: number; head: number } | null;
+    /** A received deletion repairs only the view that still names this Section. */
+    expectedSectionId?: string;
+    preserveView?: boolean;
     fault?: CommitFault;
   };
   "window.split": {
@@ -223,6 +233,7 @@ export interface CoreCommandPayloads {
 }
 
 export interface CoreCommandResults {
+  "note.recover": { noteId: string; createdId: string | null };
   "namespace.edit": {
     entryId: string;
     changed: boolean;

@@ -2,6 +2,7 @@ import * as Y from "yjs";
 import { assertUuidV7, createUuidV7 } from "./ids";
 import { isCanonicalSiblingPosition } from "./sibling-position";
 import type { NoteMetadata, WorkspaceDocument } from "./documents";
+import { replicatedNamespace } from "./replicated-namespace";
 import {
   planNoteMove,
   planNoteTrash,
@@ -62,6 +63,10 @@ export function readMainNamespace(root: Y.Map<unknown>): MainNamespace {
 export function readNamespaceEntry(
   entryId: string,
   value: Y.Map<unknown>,
+  placement?: Pick<
+    NamespaceEntry,
+    "parentEntryId" | "position" | "deletedAt" | "trashOperationId"
+  >,
 ): NamespaceEntry {
   assertUuidV7(entryId, "entryId");
   const target = value.get("target");
@@ -81,10 +86,12 @@ export function readNamespaceEntry(
     if (typeof item !== "string") throw new Error(`Invalid Namespace ${key}`);
     return item;
   };
-  const position = nullable("position");
+  const position = placement ? placement.position : nullable("position");
   if (!position || !isCanonicalSiblingPosition(position))
     throw new Error("Invalid Namespace position");
-  const parentEntryId = nullable("parent_entry_id") ?? null;
+  const parentEntryId = placement
+    ? placement.parentEntryId
+    : (nullable("parent_entry_id") ?? null);
   if (parentEntryId !== null) assertUuidV7(parentEntryId, "parentEntryId");
   const name = nullable("name") ?? null;
   if (target != null && name !== null)
@@ -95,8 +102,10 @@ export function readNamespaceEntry(
   const updatedAt = nullable("updated_at");
   if (createdAt === undefined || updatedAt === undefined)
     throw new Error("Namespace timestamps are missing");
-  const deletedAt = nullable("deleted_at");
-  const trashOperationId = nullable("trash_operation_id");
+  const deletedAt = placement ? placement.deletedAt : nullable("deleted_at");
+  const trashOperationId = placement
+    ? placement.trashOperationId
+    : nullable("trash_operation_id");
   if ((deletedAt === undefined) !== (trashOperationId === undefined))
     throw new Error("Namespace Trash metadata must be paired");
   if (trashOperationId !== undefined)
@@ -115,6 +124,8 @@ export function readNamespaceEntry(
 }
 
 export function listNamespaceEntries(root: Y.Map<unknown>): NamespaceEntry[] {
+  const model = replicatedNamespace(root);
+  if (model) return [...model.project().entries];
   const { entries } = readMainNamespace(root);
   return [...entries]
     .map(([id, value]) => {
@@ -313,6 +324,7 @@ export function planNamespaceEdit(
   affectedEntryIds: string[];
   affectedNoteIds: string[];
   fallbackEntryId: string | null;
+  replicatedUpdate?: Uint8Array;
 } {
   const entries = new Map(
     listNamespaceEntries(workspace.root).map((entry) => [
@@ -404,14 +416,19 @@ export function planNamespaceEdit(
     entries.get(id)?.target ? [entries.get(id)!.target!.id] : [],
   );
   const notes = new Map(
-    [...workspace.notes].map(([id, value]) => [
-      id,
-      {
-        deletedAt: (value.get("deleted_at") as string | undefined) ?? undefined,
-        trashOperationId:
-          (value.get("trash_operation_id") as string | undefined) ?? undefined,
-      },
-    ]),
+    nodes.flatMap((node) =>
+      node.targetNoteId
+        ? [
+            [
+              node.targetNoteId,
+              {
+                deletedAt: node.deletedAt,
+                trashOperationId: node.trashOperationId,
+              },
+            ] as const,
+          ]
+        : [],
+    ),
   );
   if (request.kind === "trash" || request.kind === "restore")
     for (const id of affectedNoteIds)
@@ -420,6 +437,52 @@ export function planNamespaceEdit(
         trashOperationId: request.kind === "trash" ? operationId : undefined,
       });
   validateNamespace([...entries.values()], notes);
+  if (workspace.replicated) {
+    // Resolve the command on a disposable candidate before the owner commits it.
+    // Restoring one observed operation may reveal another concurrent deletion.
+    const candidate = new Y.Doc({ gc: false });
+    try {
+      Y.applyUpdate(candidate, Y.encodeStateAsUpdate(workspace.doc));
+      const vector = Y.encodeStateVector(candidate);
+      const model = replicatedNamespace(
+        candidate.getMap("workspace"),
+        workspace.replicated.replicaId,
+      )!;
+      model.writeEntries([...entries.values()], new Set(affectedEntryIds));
+      const projected = model.project().entries;
+      const before = new Map(
+        listNamespaceEntries(workspace.root).map((entry) => [
+          entry.entryId,
+          entry,
+        ]),
+      );
+      const changed = projected.filter(
+        (entry) =>
+          JSON.stringify(before.get(entry.entryId)) !== JSON.stringify(entry),
+      );
+      return {
+        entries: [...projected],
+        affectedEntryIds: [
+          ...new Set([
+            ...affectedEntryIds,
+            ...changed.map((entry) => entry.entryId),
+          ]),
+        ],
+        affectedNoteIds: [
+          ...new Set([
+            ...affectedNoteIds,
+            ...changed.flatMap((entry) =>
+              entry.target ? [entry.target.id] : [],
+            ),
+          ]),
+        ],
+        fallbackEntryId,
+        replicatedUpdate: Y.encodeStateAsUpdate(candidate, vector),
+      };
+    } finally {
+      candidate.destroy();
+    }
+  }
   return {
     entries: [...entries.values()],
     affectedEntryIds,
@@ -433,6 +496,12 @@ export function applyNamespacePlan(
   plan: ReturnType<typeof planNamespaceEdit>,
   origin: unknown,
 ): void {
+  if (workspace.replicated) {
+    if (!plan.replicatedUpdate)
+      throw new Error("Replicated Namespace plan has no prepared update");
+    Y.applyUpdate(workspace.doc, plan.replicatedUpdate, origin);
+    return;
+  }
   const { entries } = readMainNamespace(workspace.root);
   const changed = new Set(plan.affectedEntryIds);
   workspace.doc.transact(() => {

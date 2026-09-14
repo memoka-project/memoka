@@ -8,10 +8,27 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { CoreRuntime, type RuntimeSnapshot } from "./core/runtime";
 import { createDefaultPersistencePort } from "./core/persistence";
 import { installNativeSaveBarrier } from "./core/native-save-barrier";
 import { installNativeAgentEditing } from "./core/native-agent-edit";
+import { installNativeSynchronization } from "./core/native-sync";
+import { SyncJoinDialog } from "./components/SyncJoinDialog";
+import { NewWorkspaceDialog } from "./components/NewWorkspaceDialog";
+import { StartupErrorDetails } from "./components/StartupErrorDetails";
+import {
+  nativeSynchronization,
+  synchronizationAvailable,
+  synchronizationError,
+  watchSynchronization,
+  type SyncView,
+} from "./platform/synchronization";
+import {
+  SyncSettingsDialog,
+  type SyncInvitation,
+  type SyncSettingsSession,
+} from "./components/SyncSettingsDialog";
 import {
   BackupController,
   createDefaultBackupPort,
@@ -19,6 +36,10 @@ import {
   type BackupPort,
 } from "./core/history";
 import { HistoryPane, type HistorySession } from "./components/HistoryPane";
+import {
+  NoteRecoveryDialog,
+  type NoteRecoverySession,
+} from "./components/NoteRecoveryDialog";
 import {
   BackupDialog,
   type BackupDialogSession,
@@ -293,6 +314,10 @@ export function App({
   const [dataAreaStatusChecked, setDataAreaStatusChecked] = useState(false);
   const [dataAreaRequired, setDataAreaRequired] = useState(false);
   const [dataAreaBusy, setDataAreaBusy] = useState(false);
+  const [syncJoining, setSyncJoining] = useState(false);
+  const [newWorkspace, setNewWorkspace] = useState<{
+    restoreFocus: () => void;
+  } | null>(null);
   const [focusRequests, setFocusRequests] = useState<Record<string, number>>(
     {},
   );
@@ -317,6 +342,16 @@ export function App({
   const [historySession, setHistorySession] = useState<HistorySession | null>(
     null,
   );
+  const [noteRecovery, setNoteRecovery] = useState<NoteRecoverySession | null>(
+    null,
+  );
+  const [syncSettings, setSyncSettings] = useState<SyncSettingsSession | null>(
+    null,
+  );
+  const [syncInvitation, setSyncInvitation] = useState<SyncInvitation | null>(
+    null,
+  );
+  const [syncView, setSyncView] = useState<SyncView | null>(null);
   const [backupDialog, setBackupDialog] = useState<BackupDialogSession | null>(
     null,
   );
@@ -349,7 +384,15 @@ export function App({
       ? "update"
       : backupDialog
         ? "backup"
-        : null;
+        : syncJoining
+          ? "sync-join"
+          : newWorkspace
+            ? "new-workspace"
+            : syncSettings
+              ? "sync-settings"
+              : noteRecovery
+                ? "note-recovery"
+                : null;
   const [departure] = useState(
     () => new ApplicationDeparture(setShutdownProgress, nextBrowserPaint),
   );
@@ -981,9 +1024,12 @@ export function App({
       setNoteSearch(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
-      setBlockTypePicker(session);
+      setBlockTypePicker({
+        ...session,
+        restoreFocus: () => requestEditorFocus(session.windowId),
+      });
     },
-    [clearEditorFocusRequests],
+    [clearEditorFocusRequests, requestEditorFocus],
   );
 
   const openInlineFormatPicker = useCallback(
@@ -1341,6 +1387,11 @@ export function App({
     runtimeRef.current = next;
     setRuntime(next);
     setSnapshot(next.snapshot());
+    setSyncInvitation((current) =>
+      current && current.workspaceId === next.workspaceDocument.workspaceId
+        ? current
+        : null,
+    );
     if (previous && previous !== next) previous.destroy();
   }, []);
 
@@ -1358,6 +1409,27 @@ export function App({
       onError: (error) => setStartupError(error.message),
     });
   }, []);
+
+  useEffect(() => {
+    if (!runtime) return;
+    const installed = installNativeSynchronization(() => runtimeRef.current);
+    const stop = synchronizationAvailable()
+      ? watchSynchronization(
+          runtime.workspaceDocument.workspaceId,
+          (view) => {
+            setSyncView(view);
+            void attachmentRepository
+              .refreshSynchronization()
+              .catch(() => undefined);
+          },
+          (message) => setCommandMessage(`sync · ${message}`),
+        )
+      : () => {};
+    return () => {
+      stop();
+      void installed.then((stop) => stop());
+    };
+  }, [runtime, attachmentRepository]);
 
   useEffect(() => {
     let active = true;
@@ -1402,58 +1474,80 @@ export function App({
     [],
   );
 
+  const openDataArea = useCallback(
+    async (selected: string): Promise<boolean> => {
+      if (departure.active) return false;
+      const previousStatus = await dataArea.status().catch(() => null);
+      const current = runtimeRef.current;
+      let activated = false;
+      setStartupError(null);
+      const activate = async (): Promise<void> => {
+        try {
+          await dataArea.activate(selected);
+          activated = true;
+          const next = await openSelectedDataArea();
+          replaceRuntime(next);
+          setDataAreaRequired(false);
+        } catch (error) {
+          if (
+            activated &&
+            current &&
+            previousStatus?.selected &&
+            previousStatus.path
+          ) {
+            await dataArea.activate(previousStatus.path);
+            activated = false;
+          }
+          throw error;
+        }
+      };
+      if (current) {
+        // Keep the editors mounted while the modal owns focus: unmounting before
+        // the Core barrier could discard their pending confirmed edits.
+        return departure.start({
+          kind: "switch-workspace",
+          save: async () => {
+            await current.prepareInputDeparture();
+            await current.flushDurableState();
+          },
+          backup,
+          controller: backupController.current,
+          complete: activate,
+        });
+      }
+      setDataAreaBusy(true);
+      try {
+        await activate();
+        return true;
+      } catch (error) {
+        setStartupError(nativeErrorMessage(error));
+        setDataAreaRequired(true);
+        return false;
+      } finally {
+        setDataAreaStatusChecked(true);
+        setDataAreaBusy(false);
+      }
+    },
+    [backup, dataArea, departure, openSelectedDataArea, replaceRuntime],
+  );
+
   const chooseAndOpenDataArea = useCallback(async (): Promise<boolean> => {
     if (departure.active) return false;
     const selected = await dataArea.chooseDirectory();
-    if (!selected) return false;
-    const previousStatus = await dataArea.status().catch(() => null);
-    const current = runtimeRef.current;
-    let activated = false;
-    setStartupError(null);
-    const activate = async (): Promise<void> => {
-      try {
-        await dataArea.activate(selected);
-        activated = true;
-        const next = await openSelectedDataArea();
-        replaceRuntime(next);
-        setDataAreaRequired(false);
-      } catch (error) {
-        if (
-          activated &&
-          current &&
-          previousStatus?.selected &&
-          previousStatus.path
-        ) {
-          await dataArea.activate(previousStatus.path);
-          activated = false;
-        }
-        throw error;
+    return selected ? openDataArea(selected) : false;
+  }, [dataArea, departure, openDataArea]);
+
+  const openReceivedDataArea = useCallback(
+    async (path: string): Promise<void> => {
+      if (await openDataArea(path)) {
+        await invoke("sync_join_stop");
+        setStartupError(null);
+        setSyncJoining(false);
+        setNewWorkspace(null);
       }
-    };
-    if (current) {
-      // Keep the editors mounted while the modal owns focus: unmounting before
-      // the Core barrier could discard their pending confirmed edits.
-      return departure.start({
-        kind: "switch-workspace",
-        save: () => current.flushDurableState(),
-        backup,
-        controller: backupController.current,
-        complete: activate,
-      });
-    }
-    setDataAreaBusy(true);
-    try {
-      await activate();
-      return true;
-    } catch (error) {
-      setStartupError(nativeErrorMessage(error));
-      setDataAreaRequired(true);
-      return false;
-    } finally {
-      setDataAreaStatusChecked(true);
-      setDataAreaBusy(false);
-    }
-  }, [backup, dataArea, departure, openSelectedDataArea, replaceRuntime]);
+    },
+    [openDataArea],
+  );
 
   const requestApplicationShutdown = useCallback(async (): Promise<void> => {
     if (departure.active) return;
@@ -1463,7 +1557,10 @@ export function App({
     }
     await departure.start({
       kind: "quit",
-      save: () => runtime.flushDurableState(),
+      save: async () => {
+        await runtime.prepareInputDeparture();
+        await runtime.flushDurableState();
+      },
       backup,
       controller: backupController.current,
       complete: () => desktopWindow.forceClose!(),
@@ -1925,7 +2022,7 @@ export function App({
         <section className="startup-panel" role="alert">
           <p className="eyebrow">Memoka</p>
           <h1>ワークスペースを開けませんでした</h1>
-          <pre>{startupError}</pre>
+          <StartupErrorDetails error={startupError} />
           <button
             className="startup-panel__action"
             type="button"
@@ -1933,7 +2030,22 @@ export function App({
           >
             Workspaceデータ領域を選択
           </button>
+          {synchronizationAvailable() && (
+            <button
+              className="startup-panel__action"
+              onClick={() => setSyncJoining(true)}
+            >
+              別端末から受信
+            </button>
+          )}
         </section>
+        {syncJoining && (
+          <SyncJoinDialog
+            dataArea={dataArea}
+            onClose={() => setSyncJoining(false)}
+            onReady={openReceivedDataArea}
+          />
+        )}
       </main>
     );
   }
@@ -1979,9 +2091,24 @@ export function App({
               >
                 ディレクトリを選択
               </button>
+              {synchronizationAvailable() && (
+                <button
+                  className="startup-panel__action"
+                  onClick={() => setSyncJoining(true)}
+                >
+                  別端末から受信
+                </button>
+              )}
             </>
           ) : null}
         </section>
+        {syncJoining && (
+          <SyncJoinDialog
+            dataArea={dataArea}
+            onClose={() => setSyncJoining(false)}
+            onReady={openReceivedDataArea}
+          />
+        )}
       </main>
     );
   }
@@ -2391,7 +2518,10 @@ export function App({
     recordDiagnostic("update-install-started");
     const completed = await departure.start({
       kind: "update",
-      save: () => runtime.flushDurableState(),
+      save: async () => {
+        await runtime.prepareInputDeparture();
+        await runtime.flushDurableState();
+      },
       backup,
       controller: backupController.current,
       complete: async () => {
@@ -2431,6 +2561,57 @@ export function App({
     setCommandLine(null);
     setCommandMessage(message);
     switch (command) {
+      case "workspace.sync":
+      case "workspace.sync_settings": {
+        if (!synchronizationAvailable()) {
+          setCommandMessage("端末間同期はデスクトップ版で利用できます");
+          session?.restoreFocus();
+          return;
+        }
+        if (command === "workspace.sync") {
+          void nativeSynchronization
+            .action(runtime.workspaceDocument.workspaceId, {
+              action: "reconnect",
+            })
+            .then(
+              () =>
+                setCommandMessage(
+                  "sync · 再接続を要求しました。進行状況は:sync-settingsで確認できます",
+                ),
+              (cause) =>
+                setCommandMessage(`sync · ${synchronizationError(cause)}`),
+            );
+          session?.restoreFocus();
+        } else {
+          clearEditorFocusRequests();
+          setSyncSettings({
+            restoreFocus:
+              session?.restoreFocus ??
+              (() => requestEditorFocus(effectiveTargetWindowId)),
+          });
+        }
+        return;
+      }
+      case "note.recovery": {
+        const target = runtime
+          .snapshot()
+          .windows.find(
+            (window) => window.windowId === effectiveTargetWindowId,
+          );
+        if (!target?.noteId) {
+          setCommandMessage("復旧するノートを開いてください");
+          session?.restoreFocus();
+          return;
+        }
+        clearEditorFocusRequests();
+        setNoteRecovery({
+          noteId: target.noteId,
+          restoreFocus:
+            session?.restoreFocus ??
+            (() => requestEditorFocus(effectiveTargetWindowId)),
+        });
+        return;
+      }
       case "workspace.backup":
         if (!backupController.current) {
           setCommandMessage("バックアップはデスクトップ版で利用できます");
@@ -2632,6 +2813,14 @@ export function App({
         queueMicrotask(restoreFocus);
         return;
       }
+      case "workspace.new":
+        clearEditorFocusRequests();
+        setNewWorkspace({
+          restoreFocus:
+            session?.restoreFocus ??
+            (() => requestEditorFocus(effectiveTargetWindowId)),
+        });
+        return;
       case "workspace.switch":
         void chooseAndOpenDataArea().then((changed) => {
           if (changed) setCommandMessage(":switch-workspace · 切り替えました");
@@ -3291,6 +3480,47 @@ export function App({
               );
           }}
         />
+      ) : syncJoining ? (
+        <SyncJoinDialog
+          dataArea={dataArea}
+          onClose={() => setSyncJoining(false)}
+          onReady={openReceivedDataArea}
+        />
+      ) : newWorkspace ? (
+        <NewWorkspaceDialog
+          onCreate={async () => {
+            const selected = await dataArea.chooseDirectory();
+            if (!selected) return;
+            const prepared = await dataArea.prepareNew(selected);
+            if (await openDataArea(prepared)) {
+              setNewWorkspace(null);
+              setCommandMessage(":new-workspace · 作成しました");
+            }
+          }}
+          onReceive={
+            synchronizationAvailable() ? () => setSyncJoining(true) : undefined
+          }
+          onClose={() => {
+            const restoreFocus = newWorkspace.restoreFocus;
+            setNewWorkspace(null);
+            queueMicrotask(restoreFocus);
+          }}
+        />
+      ) : syncSettings ? (
+        <SyncSettingsDialog
+          workspaceId={runtime.workspaceDocument.workspaceId}
+          prepare={() => runtime.prepareSynchronization()}
+          session={syncSettings}
+          onClose={() => setSyncSettings(null)}
+          invitation={syncInvitation}
+          onInvitation={setSyncInvitation}
+        />
+      ) : noteRecovery ? (
+        <NoteRecoveryDialog
+          runtime={runtime}
+          session={noteRecovery}
+          onClose={() => setNoteRecovery(null)}
+        />
       ) : groupName ? (
         <GroupNameDialog
           session={groupName}
@@ -3395,6 +3625,14 @@ export function App({
         <footer className="debug-line" aria-label="開発デバッグ情報">
           <span>focus {transientFocus ?? applicationFocusOwner.area}</span>
           <span>save {snapshot.persistence}</span>
+          <span>
+            sync{" "}
+            {syncView?.local.enabled
+              ? syncView.local.paused
+                ? "paused"
+                : `${syncView.devices.filter((d) => d.connection.connected && !d.member.revoked).length} connected · ${syncView.local.pendingApplyCount} apply · ${syncView.local.pendingAttachmentCount} attachments`
+              : "off"}
+          </span>
           <span>workspace rev {snapshot.workspaceRevision}</span>
           <span>note rev {snapshot.noteRevision ?? "-"}</span>
           <span>note {snapshot.noteId ?? "-"}</span>
@@ -3767,7 +4005,11 @@ function ImageViewerWindow({
           <div className="image-viewer-window__missing">
             {metadata === null && !loadFailed
               ? "画像を確認中…"
-              : "画像が見つからないか、破損しています"}
+              : metadata?.synchronization === "pending"
+                ? "別端末から画像を取得待ち"
+                : metadata?.synchronization === "error"
+                  ? "画像の取得に失敗しました。:sync-settingsで確認してください"
+                  : "画像が見つからないか、破損しています"}
           </div>
         )}
       </div>
@@ -4040,6 +4282,15 @@ function EditorWindow({
   const editorScroll = useRef<HTMLDivElement>(null);
   const editorRoot = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<TiptapEditorAdapter | null>(null);
+  const focusedSectionRef = useRef(focusedSectionId);
+  const boundDocument = runtime.getNoteHandle(noteId).current;
+  const sectionBindingKey =
+    boundDocument.kind === "note" && boundDocument.replicated
+      ? null
+      : focusedSectionId;
+  useLayoutEffect(() => {
+    focusedSectionRef.current = focusedSectionId;
+  }, [focusedSectionId]);
   const focusedRef = useRef(focused);
   const restoreEditorFocusOnAttach = useRef(false);
   const [vimSnapshot, setVimSnapshot] = useState<VimSessionSnapshot | null>(
@@ -4083,15 +4334,16 @@ function EditorWindow({
     const adapter = runtime.attachEditor(windowId, attachedRoot, {
       onVimSnapshot: setVimSnapshot,
       onCaretSectionChange: (sectionId) => {
-        const currentSectionId = sectionId ?? focusedSectionId;
+        const focusedBoundary = focusedSectionRef.current;
+        const currentSectionId = sectionId ?? focusedBoundary;
         setCaretSectionProjection((current) =>
           current?.noteId === noteId &&
-          current.focusedSectionId === focusedSectionId &&
+          current.focusedSectionId === focusedBoundary &&
           current.sectionId === currentSectionId
             ? current
             : {
                 noteId,
-                focusedSectionId,
+                focusedSectionId: focusedBoundary,
                 sectionId: currentSectionId,
               },
         );
@@ -4191,7 +4443,7 @@ function EditorWindow({
     attachmentRepository,
     windowId,
     noteId,
-    focusedSectionId,
+    sectionBindingKey,
     onWorkspaceSearch,
     onBlockTypePicker,
     onInlineFormatPicker,
@@ -4205,6 +4457,13 @@ function EditorWindow({
     keyConfig,
     onAdapterChange,
   ]);
+
+  useEffect(() => {
+    const adapter = adapterRef.current;
+    if (!adapter) return;
+    adapter.syncFocusedSection(focusedSectionId);
+    runtime.applyPendingNavigation(windowId, adapter);
+  }, [focusedSectionId, runtime, windowId]);
 
   useLayoutEffect(() => {
     focusedRef.current = focused;

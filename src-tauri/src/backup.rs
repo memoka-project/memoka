@@ -193,6 +193,7 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
             .map_err(|(_, error)| ReadError::from(error))?;
         drop(source);
         let mut reader = WorkspaceReader::open_database(&database, internal.clone(), None)?;
+        require_synchronized_files(&reader.connection)?;
         reader.validate_all()?;
         let mut owners = BTreeMap::new();
         for id in reader
@@ -276,9 +277,13 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
                 [],
                 |r| r.get(0),
             )?,
-            workspace_schema: 3,
+            workspace_schema: reader.connection.query_row(
+                "SELECT schema_version FROM documents WHERE kind='workspace' AND document_id=?1",
+                [&reader.workspace_id],
+                |r| r.get(0),
+            )?,
             note_schema: reader.connection.query_row(
-                "SELECT COALESCE(MAX(schema_version),6) FROM documents WHERE kind='note'",
+                "SELECT COALESCE(MAX(schema_version),7) FROM documents WHERE kind='note'",
                 [],
                 |r| r.get(0),
             )?,
@@ -321,9 +326,9 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
 
 pub fn validate_descriptor(descriptor: &Descriptor) -> Result<(), ReadError> {
     if descriptor.backup_format_version != FORMAT_VERSION
-        || !matches!(descriptor.database_schema, 5 | 6)
-        || descriptor.workspace_schema != 3
-        || !matches!(descriptor.note_schema, 3..=6)
+        || !matches!(descriptor.database_schema, 5..=7)
+        || !matches!(descriptor.workspace_schema, 3 | 4)
+        || !matches!(descriptor.note_schema, 3..=7)
     {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
@@ -627,6 +632,7 @@ fn listed_generations(
 pub fn run_local(workspace: &Path, restic: &Restic) -> Result<Option<Generation>, ReadError> {
     let result: Result<Option<Generation>, ReadError> = (|| {
         let mut current = WorkspaceReader::open(workspace)?;
+        require_synchronized_files(&current.connection)?;
         current.validate_all()?;
         let workspace_id = current.workspace_id.clone();
         let epoch = current.content_epoch;
@@ -715,12 +721,62 @@ pub fn run_local(workspace: &Path, restic: &Restic) -> Result<Option<Generation>
         result
     })();
     if let Err(error) = &result {
+        if error.code == "BACKUP_SYNC_PENDING" {
+            update_status(workspace, |value| {
+                value.phase = "awaiting-sync".into();
+                value.local_error = None;
+            })?;
+            return Ok(None);
+        }
         let _ = update_status(workspace, |value| {
             value.phase = "error".into();
             value.local_error = Some(error.clone());
         });
     }
     result
+}
+
+fn require_synchronized_files(connection: &Connection) -> Result<(), ReadError> {
+    let present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='sync_attachment_transfers')", [], |r| r.get(0))?;
+    if present {
+        let pending: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_attachment_transfers t JOIN attachments a ON a.sha256=t.sha256 WHERE t.complete=0 AND a.known_missing=0) OR EXISTS(SELECT 1 FROM sync_local_documents l WHERE NOT EXISTS(SELECT 1 FROM documents d WHERE d.kind='note' AND d.document_id=l.document_id))", [], |r| r.get(0))?;
+        if pending {
+            return Err(ReadError::new(
+                "BACKUP_SYNC_PENDING",
+                "添付ファイルや管理Helpの準備後に履歴を作成します",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pending_sync_files_defer_backups_without_changing_known_missing_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let store = crate::persistence::ProductStore::open(root.path()).unwrap();
+    let hash = "a".repeat(64);
+    store.connection.execute("INSERT INTO attachment_objects(sha256,size,created_at) VALUES(?1,10,'2026-09-10T00:00:00Z')", [&hash]).unwrap();
+    store.connection.execute("INSERT INTO attachments(attachment_id,sha256,size,original_filename,mime_type,created_at) VALUES(?1,?2,10,'file.txt','text/plain','2026-09-10T00:00:00Z')", rusqlite::params![Uuid::now_v7().to_string(),hash]).unwrap();
+    store.connection.execute("INSERT INTO sync_attachment_transfers(sha256,size,received,complete) VALUES(?1,10,0,0)", [&hash]).unwrap();
+    assert_eq!(
+        require_synchronized_files(&store.connection)
+            .unwrap_err()
+            .code,
+        "BACKUP_SYNC_PENDING"
+    );
+    let missing: bool = store
+        .connection
+        .query_row("SELECT known_missing FROM attachments", [], |r| r.get(0))
+        .unwrap();
+    assert!(!missing);
+    store
+        .connection
+        .execute(
+            "UPDATE sync_attachment_transfers SET received=size,complete=1",
+            [],
+        )
+        .unwrap();
+    require_synchronized_files(&store.connection).unwrap();
 }
 
 /// Only removes our recognized, direct UUID staging directory; never follows a
@@ -808,7 +864,7 @@ pub(crate) mod tests {
         validate_descriptor(&descriptor).unwrap();
         descriptor.note_schema = 3;
         validate_descriptor(&descriptor).unwrap();
-        descriptor.note_schema = 7;
+        descriptor.note_schema = 8;
         assert_eq!(
             validate_descriptor(&descriptor).unwrap_err().code,
             "UNSUPPORTED_SCHEMA"

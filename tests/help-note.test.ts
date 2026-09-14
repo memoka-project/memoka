@@ -2,6 +2,8 @@ import * as Y from "yjs";
 import { describe, expect, it } from "vitest";
 import {
   CORE_TRANSACTION_ORIGIN,
+  encodeProductDocument,
+  listNoteMetadata,
   noteSectionCatalog,
   readNotePlainText,
   type NoteDocument,
@@ -30,6 +32,75 @@ function deterministicIds() {
 const clock = () => "2027-01-05T00:00:00.000Z";
 
 describe("managed Memoka help note", () => {
+  it("generates a received Help identity from bundled Markdown and keeps manual edits out of shared metadata", async () => {
+    class ReplicatedPersistence extends MemoryPersistencePort {
+      replicaId = createUuidV7();
+      missing: string[] = [];
+      override async manifest() {
+        return {
+          ...(await super.manifest()),
+          databaseSchemaVersion: 7,
+          replicaId: this.replicaId,
+          missingLocalHelpNoteIds: this.missing,
+        };
+      }
+    }
+    const persistence = new ReplicatedPersistence();
+    const source = await CoreRuntime.open(persistence, { clock });
+    let joined: CoreRuntime | undefined;
+    try {
+      const current = source.noteId;
+      await source.prepareSynchronization();
+      expect(source.noteId).toBe(current);
+      const help = await source.openHelpNote("window-1");
+      const original = source.getNoteHandle(help.noteId)
+        .current as NoteDocument;
+      const ids = noteSectionCatalog(original).map(
+        (section) => section.sectionId,
+      );
+      const vector = Y.encodeStateVector(source.workspaceDocument.doc);
+      await source.renameNote(help.noteId, "この端末だけのHelpタイトル");
+      expect(Y.encodeStateVector(source.workspaceDocument.doc)).toEqual(vector);
+      const copy = new ReplicatedPersistence();
+      copy.missing = [help.noteId];
+      const docs = [
+        source.workspaceDocument,
+        ...listNoteMetadata(source.workspaceDocument)
+          .filter((meta) => meta.systemRole !== "help")
+          .map((meta) => source.getNoteHandle(meta.noteId).current),
+      ];
+      await copy.commit({
+        operationId: createUuidV7(),
+        scope: "bootstrap",
+        localStates: [],
+        documents: docs.map((doc) => ({
+          kind: doc.kind,
+          documentId: doc.id,
+          schemaVersion: doc.schemaVersion,
+          baseRevision: 0,
+          snapshot: encodeProductDocument(doc),
+          update: null,
+        })),
+      });
+      joined = await CoreRuntime.open(copy, { clock });
+      copy.missing = [];
+      await joined.openNote("window-1", help.noteId);
+      expect(joined.noteDocument.replicated?.replicaId).toBe(copy.replicaId);
+      expect(
+        noteSectionCatalog(joined.noteDocument).map(
+          (section) => section.sectionId,
+        ),
+      ).toEqual(ids);
+      expect(readNotePlainText(joined.noteDocument)).not.toContain(
+        "この端末だけのHelpタイトル",
+      );
+      expect(readNotePlainText(joined.noteDocument)).toContain("Command-line");
+    } finally {
+      joined?.destroy();
+      source.destroy();
+    }
+  });
+
   it("creates one rich Help NoteDoc and keeps semantic block IDs stable", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

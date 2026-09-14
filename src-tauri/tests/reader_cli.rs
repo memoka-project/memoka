@@ -73,6 +73,24 @@ fn cli(workspace: &std::path::Path, arguments: &[&str]) -> Output {
         .unwrap()
 }
 
+#[test]
+fn synchronization_status_is_read_only_and_does_not_require_a_display_or_credentials() {
+    let workspace = fixture();
+    let database = workspace.path().join(".memoka/memoka.sqlite3");
+    let before = hash_file(&database).unwrap();
+    let output = cli(workspace.path(), &["sync", "status", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["status"]["local"]["enabled"], false);
+    assert_eq!(value["status"]["listening"], Value::Null);
+    assert_eq!(hash_file(&database).unwrap(), before);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn config_cli_is_workspace_free_headless_previewable_and_revision_checked() {
@@ -152,6 +170,21 @@ fn config_cli_is_workspace_free_headless_previewable_and_revision_checked() {
     );
 }
 #[cfg(target_os = "linux")]
+fn run_copied_cli(command: &mut Command) -> Output {
+    // A parallel test's fork can briefly inherit fs::copy's writable handle
+    // before exec closes it. Retry only this pre-exec ETXTBSY, never a CLI result.
+    for _ in 0..20 {
+        match command.output() {
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result.unwrap(),
+        }
+    }
+    command.output().unwrap()
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {
     let temp = tempfile::tempdir().unwrap();
@@ -160,18 +193,18 @@ fn unconfigured_cloud_cli_is_headless_workspace_free_and_needs_no_sidecar() {
     let executable = installation.join("memoka-cli");
     fs::copy(env!("CARGO_BIN_EXE_memoka-cli"), &executable).unwrap();
     let config = temp.path().join("isolated-config");
-    let output = Command::new(&executable)
-        .args(["cloud", "list", "--format", "json"])
-        .env("XDG_CONFIG_HOME", &config)
-        .env(
-            "MEMOKA_GOOGLE_OAUTH_CLIENT_FILE",
-            temp.path().join("missing-client.json"),
-        )
-        .env_remove("DISPLAY")
-        .env_remove("WAYLAND_DISPLAY")
-        .env_remove("DBUS_SESSION_BUS_ADDRESS")
-        .output()
-        .unwrap();
+    let output = run_copied_cli(
+        Command::new(&executable)
+            .args(["cloud", "list", "--format", "json"])
+            .env("XDG_CONFIG_HOME", &config)
+            .env(
+                "MEMOKA_GOOGLE_OAUTH_CLIENT_FILE",
+                temp.path().join("missing-client.json"),
+            )
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env_remove("DBUS_SESSION_BUS_ADDRESS"),
+    );
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -465,7 +498,7 @@ fn editing_cli_is_headless_atomic_and_does_not_fallback_from_owner_failure() {
         .stdout,
     )
     .unwrap();
-    assert_eq!(view["representation"], "edit_view");
+    assert_eq!(view["representation"], "edit_view", "{view}");
     let request = json!({"schema_version":1,"workspace_id":view["workspace_id"],"note_id":note,"expected_revision":view["revision"],"request_id":uuid::Uuid::now_v7().to_string(),
         "edits":[{"op":"append_markdown","section_id":note,"markdown":"CLI日本語😀"}]});
     let input = workspace.path().join("request.json");

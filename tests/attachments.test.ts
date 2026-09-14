@@ -52,6 +52,39 @@ function fileLike(bytes: Uint8Array, name: string, type: string): File {
 }
 
 describe("Memoka attachment boundary", () => {
+  it("refreshes a pending remote attachment when its verified file arrives without rewriting Editor content", async () => {
+    const port = new MemoryAttachmentPort();
+    const id = createUuidV7();
+    const metadata: AttachmentMetadata = {
+      attachmentId: id,
+      sha256: "a".repeat(64),
+      size: 10,
+      originalFilename: "received.txt",
+      mimeType: "text/plain",
+      createdAt: "2026-09-10T00:00:00Z",
+      available: false,
+      previewable: false,
+      synchronization: "pending",
+    };
+    const resolve = vi.spyOn(port, "resolve").mockResolvedValue([metadata]);
+    const repository = new AttachmentRepository(port);
+    const changed = vi.fn();
+    repository.subscribe(changed);
+    await repository.resolve([id]);
+    expect(repository.cached(id)?.synchronization).toBe("pending");
+    await repository.refreshSynchronization();
+    expect(changed).toHaveBeenCalledTimes(1);
+    resolve.mockResolvedValue([
+      { ...metadata, available: true, synchronization: null },
+    ]);
+    await repository.refreshSynchronization();
+    expect(repository.cached(id)?.available).toBe(true);
+    expect(changed).toHaveBeenCalledTimes(2);
+    resolve.mockClear();
+    await repository.refreshSynchronization();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("imports a batch in source order and deduplicates equal bytes in CAS", async () => {
     const repository = new AttachmentRepository(
       new MemoryAttachmentPort(),

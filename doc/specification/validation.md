@@ -37,6 +37,21 @@ VM/jsdom計測は回帰検出に使い、操作感とplatform integrationの最�
 - snapshot/update log replay、revision conflict、compaction failure recovery
 - 2 Windowで同じNoteDocを開いた場合のcontent共有とWindow-local state分離
 
+端末間同期の共有モデルは`tests/replicated-note.test.ts`と`tests/replicated-note-adapter.test.ts`で、
+複数Replicaの本文と構造、観測済み削除の復元、Table行列、H6補正、相対位置、IME待機、local Undoを確認する。
+`tests/fixtures/replicated-note-contract.json`をYjsとRust readerの双方で読み、projection契約を確認する。
+fixture更新は`node scripts/generate-replicated-note-contract.mjs`で行う。
+`tests/replicated-note-product.test.ts`では通常CoreRuntimeの保存、TipTapのID付与、Vim Undo、分割Window、IME、受信日時を確認する。
+`tests/replicated-note-native.test.ts`ではRustの配置・Unicode本文・削除deltaをYjsで統合し、別Replicaの編集と観測済み復旧を確認する。
+`tests/replicated-namespace.test.ts`ではTree・Trashの3端末収束、観測済み操作に束縛した復元、CoreとCLIの保存を確認する。
+Workspaceの双方向fixtureは`node scripts/generate-replicated-namespace-contract.mjs`で生成する。
+`tests/replicated-note-recovery.test.tsx`ではSection復旧、種類変更後のList復旧、装飾付き本文の複製、保存失敗からの再試行、modalと背景Editorのfocus・DOM維持を確認する。
+`corepack pnpm large-note-replicated-gate`はNoteDoc 7を通常CoreRuntimeで開き、既存の10 MiB／10万行の基準を適用する。
+`cargo test -p memoka-desktop replication:: --lib`では実SQLite・CASとメモリ内配送を使い、3端末の順序逆転・重複・転送、durable inboxと反映の分離、強制中断からの再開、checkpoint、署名・構造検証、添付の分割転送とhashを確認する。
+管理Helpの本文をjournalとcheckpointから除き、登録済みの別端末からも書換えを受け付けないことを確認する。
+Workspaceのschema移行、永続engine、実通信、publicationはRustと統合試験でも検証する。
+実行した範囲とWindows・異なるLAN/VPN実端末での未検証事項は[検証記録](../device-synchronization-implementation.md)を参照する。
+
 ## 4. EditorとVim
 
 unit/integration試験で次を網羅する。

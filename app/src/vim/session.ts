@@ -25,7 +25,7 @@ import {
 import { CellSelection } from "@tiptap/pm/tables";
 import { windowShortcutKey } from "../core/window-shortcuts";
 import type { EditorView } from "@tiptap/pm/view";
-import type { UndoManager } from "yjs";
+import type { EditorHistory as UndoManager } from "../core/editor-history";
 import { sanitizeExternalHtml } from "../editor/html-paste";
 import { SectionDepthLimitError } from "../core/section-model";
 import {
@@ -371,6 +371,8 @@ function recordVimCursorHistory(
 interface PasteFallback {
   html: string;
   plain: string;
+  markdown?: string;
+  tsv?: string;
 }
 
 interface ChangeUndoCapture {
@@ -395,6 +397,51 @@ function isVisualMode(mode: VimMode): mode is VimVisualMode {
   );
 }
 
+function collectBlockIds(doc: ProseMirrorNode): ReadonlySet<string> {
+  const blockIds = new Set<string>();
+  doc.descendants((node) => {
+    const blockId = node.attrs.blockId;
+    if (typeof blockId === "string" && blockId) blockIds.add(blockId);
+  });
+  return blockIds;
+}
+
+function duplicateFreshParagraphAfterTable(
+  existingBlockIds: ReadonlySet<string>,
+  after: ProseMirrorNode,
+): { from: number; to: number } | null {
+  let duplicate: { from: number; to: number } | null = null;
+  after.descendants((parent, parentPosition) => {
+    if (duplicate || parent.type.name !== "bodyChunk") return !duplicate;
+    let position = parentPosition + 1;
+    for (let index = 0; index < parent.childCount; index += 1) {
+      const child = parent.child(index);
+      if (child.type.name === "table") {
+        const first = parent.maybeChild(index + 1);
+        const second = parent.maybeChild(index + 2);
+        const firstId = first?.attrs.blockId;
+        const secondId = second?.attrs.blockId;
+        if (
+          first?.type.name === "paragraph" &&
+          second?.type.name === "paragraph" &&
+          second.content.size === 0 &&
+          typeof firstId === "string" &&
+          typeof secondId === "string" &&
+          !existingBlockIds.has(firstId) &&
+          !existingBlockIds.has(secondId)
+        ) {
+          const from = position + child.nodeSize + first.nodeSize;
+          duplicate = { from, to: from + second.nodeSize };
+          return false;
+        }
+      }
+      position += child.nodeSize;
+    }
+    return true;
+  });
+  return duplicate;
+}
+
 export class ProductVimSession {
   private mode: VimMode;
   private composing = false;
@@ -415,6 +462,7 @@ export class ProductVimSession {
   private visualLine: VimVisualLineState | null = null;
   private input: VimInputState = createVimInputState();
   private view: EditorView | null = null;
+  private nativeEventRoot: HTMLElement | null = null;
   private caret: HTMLSpanElement | null = null;
   private gutter: VimLogicalLineGutter | null = null;
   private visualLineOverlay: VimVisualLineOverlay | null = null;
@@ -428,6 +476,11 @@ export class ProductVimSession {
   private normalPutClipboardReadInFlight = false;
   private externalFileClipboardPaths: readonly string[] | null = null;
   private largePlainTextPasteAbort: AbortController | null = null;
+  private viewBindingGeneration = 0;
+  private domTableSelectionPosition: number | null = null;
+  private ignoreStaleDomTableSelection = false;
+  private suppressInsertBreakBeforeInput = false;
+  private suppressInsertBreakTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingExternalVisualSelection:
     VimVisualSelectionSnapshot | null | undefined;
 
@@ -524,6 +577,30 @@ export class ProductVimSession {
           handleClick: (view, position, event) =>
             this.handleClick(view, position, event),
           handleDOMEvents: {
+            mousedown: (view, event) => {
+              if (event.button !== 0) return false;
+              const position = this.tableSelectionPositionFromTarget(
+                view,
+                event.target,
+              );
+              if (position === null) return false;
+              event.preventDefault();
+              this.ignoreStaleDomTableSelection = false;
+              this.domTableSelectionPosition = position;
+              const selection = TextSelection.near(
+                view.state.doc.resolve(position),
+                1,
+              );
+              if (!selection.eq(view.state.selection)) {
+                view.dispatch(
+                  view.state.tr
+                    .setSelection(selection)
+                    .setMeta("addToHistory", false),
+                );
+              }
+              view.focus();
+              return true;
+            },
             click: (_view, event) => {
               const target = event.target;
               if (
@@ -551,13 +628,14 @@ export class ProductVimSession {
             input: (view, event) => {
               const input = event as InputEvent;
               if (signalsComposition(input)) this.setComposing(true);
+              this.captureDomTableSelection(view);
               this.scheduleCaretRefresh(view);
               return false;
             },
           },
         },
         view: (view) => {
-          this.bind(view);
+          const bindingGeneration = this.bind(view);
           const gutter = new VimLogicalLineGutter(
             view,
             lineNumberCursor(view.state),
@@ -584,15 +662,31 @@ export class ProductVimSession {
               if (this.visualLineOverlay === visualLineOverlay) {
                 this.visualLineOverlay = null;
               }
-              this.unbind(view);
+              this.unbind(view, bindingGeneration);
             },
           };
         },
       });
     };
+    const handleCtrlEnterShortcut = (view: EditorView): boolean =>
+      this.handleKeyDown(
+        view,
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     return Extension.create({
       name: "memokaVim",
       priority: 2_000,
+      addKeyboardShortcuts() {
+        return {
+          "Mod-Enter": () => handleCtrlEnterShortcut(this.editor.view),
+        };
+      },
       addProseMirrorPlugins: () => [createPlugin()],
     });
   }
@@ -639,6 +733,7 @@ export class ProductVimSession {
   destroy(): void {
     this.largePlainTextPasteAbort?.abort();
     this.largePlainTextPasteAbort = null;
+    this.clearInsertBreakSuppression();
     this.clipboardWriteGeneration += 1;
     this.clipboardReadGeneration += 1;
     this.navigationGeneration += 1;
@@ -659,13 +754,32 @@ export class ProductVimSession {
     this.caret = null;
   }
 
-  private bind(view: EditorView): void {
+  private bind(view: EditorView): number {
     if (this.view && this.view !== view) this.unbind(this.view);
+    const generation = ++this.viewBindingGeneration;
+    if (this.view === view) return generation;
     this.view = view;
+    const nativeEventRoot = view.dom.parentElement ?? view.dom;
+    this.nativeEventRoot = nativeEventRoot;
     applyNativeCaretMode(view.dom, this.mode);
     view.dom.addEventListener("focus", this.handleFocus);
     view.dom.addEventListener("blur", this.handleBlur);
-    view.dom.addEventListener("keydown", this.handleNativeKeyDown, true);
+    nativeEventRoot.addEventListener("keydown", this.handleNativeKeyDown, true);
+    nativeEventRoot.addEventListener(
+      "pointerdown",
+      this.handleNativePointerDown,
+      true,
+    );
+    nativeEventRoot.addEventListener(
+      "mousedown",
+      this.handleNativePointerDown,
+      true,
+    );
+    nativeEventRoot.addEventListener(
+      "beforeinput",
+      this.handleNativeBeforeInput,
+      true,
+    );
     view.dom.addEventListener(
       "compositionstart",
       this.handleCompositionStart,
@@ -682,16 +796,43 @@ export class ProductVimSession {
     window.addEventListener("focus", this.handleWindowFocus);
     this.updateNormalModeImeGuard();
     this.scheduleCaretRefresh(view);
+    return generation;
   }
 
-  private unbind(view: EditorView | null): void {
+  private unbind(view: EditorView | null, bindingGeneration?: number): void {
     if (!view) return;
+    if (
+      bindingGeneration !== undefined &&
+      bindingGeneration !== this.viewBindingGeneration
+    ) {
+      return;
+    }
     if (this.view === view) this.disableNormalModeImeGuard();
     this.clearFocusCaretRefresh();
     if (this.view === view) this.finishChangeUndoCapture();
+    const nativeEventRoot = this.nativeEventRoot ?? view.dom;
     view.dom.removeEventListener("focus", this.handleFocus);
     view.dom.removeEventListener("blur", this.handleBlur);
-    view.dom.removeEventListener("keydown", this.handleNativeKeyDown, true);
+    nativeEventRoot.removeEventListener(
+      "keydown",
+      this.handleNativeKeyDown,
+      true,
+    );
+    nativeEventRoot.removeEventListener(
+      "pointerdown",
+      this.handleNativePointerDown,
+      true,
+    );
+    nativeEventRoot.removeEventListener(
+      "mousedown",
+      this.handleNativePointerDown,
+      true,
+    );
+    nativeEventRoot.removeEventListener(
+      "beforeinput",
+      this.handleNativeBeforeInput,
+      true,
+    );
     view.dom.removeEventListener(
       "compositionstart",
       this.handleCompositionStart,
@@ -711,12 +852,14 @@ export class ProductVimSession {
     if (this.view === view) {
       this.clipboardReadGeneration += 1;
       this.view = null;
+      this.nativeEventRoot = null;
     }
     this.hideCaret();
   }
 
   private readonly handleLayoutChange = (): void => {
     if (this.view) {
+      this.captureDomTableSelection(this.view);
       this.scheduleCaretRefresh(this.view);
       this.gutter?.refreshCursor(
         this.mode === "visual-line" && this.visualLine
@@ -757,12 +900,6 @@ export class ProductVimSession {
     this.externalFileClipboardPaths = null;
   };
 
-  private readonly handleNativeKeyDown = (event: KeyboardEvent): void => {
-    if (this.view && this.handleKeyDown(this.view, event)) {
-      event.stopImmediatePropagation();
-    }
-  };
-
   private readonly handleCompositionStart = (): void => {
     this.setComposing(true);
   };
@@ -771,7 +908,39 @@ export class ProductVimSession {
     this.setComposing(false);
   };
 
+  private readonly handleNativeKeyDown = (event: KeyboardEvent): void => {
+    if (this.view && this.handleKeyDown(this.view, event)) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  private readonly handleNativePointerDown = (event: MouseEvent): void => {
+    if (!this.view || event.button !== 0) return;
+    const position = this.tableSelectionPositionFromTarget(
+      this.view,
+      event.target,
+    );
+    if (position !== null) this.ignoreStaleDomTableSelection = false;
+    this.domTableSelectionPosition = position;
+  };
+
+  private readonly handleNativeBeforeInput = (event: InputEvent): void => {
+    if (this.view && this.handleBeforeInput(this.view, event)) {
+      event.stopImmediatePropagation();
+    }
+  };
+
   private handleBeforeInput(view: EditorView, input: InputEvent): boolean {
+    if (this.suppressInsertBreakBeforeInput) {
+      this.clearInsertBreakSuppression();
+      if (
+        input.inputType === "insertParagraph" ||
+        input.inputType === "insertLineBreak"
+      ) {
+        input.preventDefault();
+        return true;
+      }
+    }
     if (this.largePlainTextPasteAbort) {
       input.preventDefault();
       return true;
@@ -805,6 +974,70 @@ export class ProductVimSession {
       this.emit();
       this.scheduleCaretRefresh(view);
       return true;
+    }
+    return false;
+  }
+
+  private synchronizeInsertSelectionFromDom(view: EditorView): void {
+    if (this.ignoreStaleDomTableSelection) return;
+    const domSelection = view.dom.ownerDocument.getSelection();
+    const anchorNode = domSelection?.anchorNode;
+    let position: number | null = null;
+    if (
+      !domSelection?.isCollapsed ||
+      !anchorNode ||
+      !view.dom.contains(anchorNode)
+    ) {
+      position = this.domTableSelectionPosition;
+    } else {
+      try {
+        const current = view.posAtDOM(anchorNode, domSelection.anchorOffset, 1);
+        position = this.positionInsideTable(view.state, current)
+          ? current
+          : this.domTableSelectionPosition;
+      } catch {
+        position = this.domTableSelectionPosition;
+      }
+    }
+    if (position === null || !this.positionInsideTable(view.state, position))
+      return;
+    const selection = TextSelection.near(view.state.doc.resolve(position), 1);
+    if (selection.eq(view.state.selection)) return;
+    view.dispatch(
+      view.state.tr.setSelection(selection).setMeta("addToHistory", false),
+    );
+  }
+
+  private captureDomTableSelection(view: EditorView): void {
+    const selection = view.dom.ownerDocument.getSelection();
+    const anchorNode = selection?.anchorNode;
+    if (
+      !selection?.isCollapsed ||
+      !anchorNode ||
+      !view.dom.contains(anchorNode)
+    ) {
+      return;
+    }
+    try {
+      const position = view.posAtDOM(anchorNode, selection.anchorOffset, 1);
+      if (this.positionInsideTable(view.state, position)) {
+        if (!this.ignoreStaleDomTableSelection) {
+          this.domTableSelectionPosition = position;
+        }
+      } else {
+        this.ignoreStaleDomTableSelection = false;
+        this.domTableSelectionPosition = null;
+      }
+    } catch {
+      // Keep the last valid Table position through WebKit selection churn.
+    }
+  }
+
+  private positionInsideTable(state: EditorState, position: number): boolean {
+    if (position < 0 || position > state.doc.content.size) return false;
+    const $position = state.doc.resolve(position);
+    for (let depth = $position.depth; depth > 0; depth -= 1) {
+      if ($position.node(depth).type.name === "table") return true;
     }
     return false;
   }
@@ -850,10 +1083,22 @@ export class ProductVimSession {
     }
 
     const fallback = readPasteFallback(event.clipboardData);
+    // WebKit can omit the private MIME while retaining its HTML table. Read
+    // the native formats before interpreting that fallback as a cell matrix.
+    if (
+      this.options.onPasteRead &&
+      !markdown &&
+      shouldReadPreferredClipboard(event.clipboardData)
+    ) {
+      event.preventDefault();
+      this.beginPreferredClipboardPaste(view, fallback);
+      return true;
+    }
+
     const tabularRegister = registerFromTabularClipboard(
       {
         html: fallback.html,
-        tsv: event.clipboardData.getData(TSV_CLIPBOARD_MIME) || null,
+        tsv: fallback.tsv || null,
         markdown: markdown || null,
         plain: isDirectListParagraph(view.state.selection.$from)
           ? null
@@ -888,36 +1133,35 @@ export class ProductVimSession {
     }
 
     if (
-      !this.options.onPasteRead ||
-      !shouldReadPreferredClipboard(event.clipboardData)
+      fallback.plain &&
+      this.pasteMarkdownNote(view, fallback.plain, "plain")
     ) {
-      if (
-        fallback.plain &&
-        this.pasteMarkdownNote(view, fallback.plain, "plain")
-      ) {
-        this.clipboardReadGeneration += 1;
-        event.preventDefault();
-        return true;
-      }
-      if (fallback.plain && isLargePlainTextPaste(fallback.plain)) {
-        event.preventDefault();
-        return this.beginLargePlainTextPaste(view, fallback.plain);
-      }
-      if (
-        !fallback.html &&
-        fallback.plain &&
-        this.pasteListPlainFallback(view, fallback.plain)
-      ) {
-        event.preventDefault();
-        return true;
-      }
-      return false;
+      this.clipboardReadGeneration += 1;
+      event.preventDefault();
+      return true;
     }
+    if (fallback.plain && isLargePlainTextPaste(fallback.plain)) {
+      event.preventDefault();
+      return this.beginLargePlainTextPaste(view, fallback.plain);
+    }
+    if (
+      !fallback.html &&
+      fallback.plain &&
+      this.pasteListPlainFallback(view, fallback.plain)
+    ) {
+      event.preventDefault();
+      return true;
+    }
+    return false;
+  }
 
+  private beginPreferredClipboardPaste(
+    view: EditorView,
+    fallback: PasteFallback,
+  ): void {
     const generation = ++this.clipboardReadGeneration;
     const document = view.state.doc;
     const selection = view.state.selection;
-    event.preventDefault();
     this.action = "clipboard:paste:reading";
     this.emit();
 
@@ -926,7 +1170,7 @@ export class ProductVimSession {
       | null
       | Promise<PreferredClipboardFormats | null>;
     try {
-      pending = this.options.onPasteRead();
+      pending = this.options.onPasteRead?.() ?? null;
     } catch {
       this.finishPreferredClipboardPaste(
         generation,
@@ -936,7 +1180,7 @@ export class ProductVimSession {
         fallback,
         null,
       );
-      return true;
+      return;
     }
     void Promise.resolve(pending).then(
       (formats) =>
@@ -958,7 +1202,6 @@ export class ProductVimSession {
           null,
         ),
     );
-    return true;
   }
 
   private readPlainClipboardPaste(view: EditorView): void {
@@ -1059,10 +1302,12 @@ export class ProductVimSession {
     const resolvedFallback: PasteFallback = {
       html: formats?.html || fallback.html,
       plain: formats?.plain || fallback.plain,
+      markdown: formats?.markdown || fallback.markdown,
+      tsv: formats?.tsv || fallback.tsv,
     };
     if (
-      formats?.markdown &&
-      this.pasteMarkdownNote(view, formats.markdown, "markdown")
+      resolvedFallback.markdown &&
+      this.pasteMarkdownNote(view, resolvedFallback.markdown, "markdown")
     ) {
       return;
     }
@@ -1072,17 +1317,16 @@ export class ProductVimSession {
     ) {
       return;
     }
-    const tabularRegister = formats
-      ? registerFromTabularClipboard(
-          {
-            ...formats,
-            plain: isDirectListParagraph(view.state.selection.$from)
-              ? null
-              : resolvedFallback.plain,
-          },
-          view.state.schema,
-        )
-      : null;
+    const tabularRegister = registerFromTabularClipboard(
+      {
+        ...resolvedFallback,
+        markdown: resolvedFallback.markdown || null,
+        plain: isDirectListParagraph(view.state.selection.$from)
+          ? null
+          : resolvedFallback.plain,
+      },
+      view.state.schema,
+    );
     if (
       tabularRegister &&
       this.pasteClipboardRegister(view, tabularRegister, "internal")
@@ -1096,8 +1340,8 @@ export class ProductVimSession {
       return;
     }
 
-    const markdownRegister = formats?.markdown
-      ? registerFromMarkdown(formats.markdown, view.state.schema)
+    const markdownRegister = resolvedFallback.markdown
+      ? registerFromMarkdown(resolvedFallback.markdown, view.state.schema)
       : null;
     if (
       markdownRegister &&
@@ -1388,6 +1632,32 @@ export class ProductVimSession {
     position: number,
     event: MouseEvent,
   ): boolean {
+    const tablePosition = this.tableSelectionPositionFromTarget(
+      view,
+      event.target,
+    );
+    if (tablePosition !== null) this.ignoreStaleDomTableSelection = false;
+    this.domTableSelectionPosition =
+      tablePosition ??
+      (this.positionInsideTable(view.state, position) ? position : null);
+    if (
+      this.mode === "insert" &&
+      !this.composing &&
+      event.button === 0 &&
+      this.domTableSelectionPosition !== null
+    ) {
+      const selection = TextSelection.near(
+        view.state.doc.resolve(this.domTableSelectionPosition),
+        1,
+      );
+      if (!selection.eq(view.state.selection)) {
+        view.dispatch(
+          view.state.tr.setSelection(selection).setMeta("addToHistory", false),
+        );
+      }
+      this.scheduleCaretRefresh(view);
+      return false;
+    }
     if (this.mode !== "normal" || this.composing || event.button !== 0) {
       return false;
     }
@@ -1399,7 +1669,44 @@ export class ProductVimSession {
     return true;
   }
 
+  private tableSelectionPositionFromTarget(
+    view: EditorView,
+    target: EventTarget | null,
+  ): number | null {
+    const cell = target instanceof Element ? target.closest("th, td") : null;
+    const blockId = cell?.getAttribute("data-block-id");
+    if (!cell || !view.dom.contains(cell) || !blockId) return null;
+    let result: number | null = null;
+    view.state.doc.descendants((node, position) => {
+      if (
+        result !== null ||
+        node.attrs.blockId !== blockId ||
+        (node.type.name !== "tableCell" && node.type.name !== "tableHeader")
+      ) {
+        return result === null;
+      }
+      let current = node;
+      let currentPosition = position;
+      while (!current.isTextblock && current.firstChild) {
+        current = current.firstChild;
+        currentPosition += 1;
+      }
+      if (current.isTextblock) result = currentPosition + 1;
+      return false;
+    });
+    return result;
+  }
+
   private handleKeyDown(view: EditorView, event: KeyboardEvent): boolean {
+    if (event.ctrlKey && event.key === "Enter") {
+      this.scheduleFreshParagraphNormalization(
+        view,
+        collectBlockIds(view.state.doc),
+      );
+    }
+    if (this.mode === "insert" && event.ctrlKey) {
+      this.synchronizeInsertSelectionFromDom(view);
+    }
     if (this.largePlainTextPasteAbort) {
       event.preventDefault();
       if (
@@ -1532,6 +1839,9 @@ export class ProductVimSession {
       const result = runEditorExitBlock(view);
       if (result.handled) {
         event.preventDefault();
+        this.armInsertBreakSuppression();
+        this.ignoreStaleDomTableSelection = true;
+        this.domTableSelectionPosition = null;
         if (standaloneUndo) undoManager?.stopCapturing();
         this.action = `${result.detail}:changed`;
         this.emit();
@@ -2244,6 +2554,42 @@ export class ProductVimSession {
 
     this.scheduleCaretRefresh(view);
     return false;
+  }
+
+  private armInsertBreakSuppression(): void {
+    this.clearInsertBreakSuppression();
+    this.suppressInsertBreakBeforeInput = true;
+    this.suppressInsertBreakTimer = setTimeout(() => {
+      this.suppressInsertBreakBeforeInput = false;
+      this.suppressInsertBreakTimer = null;
+    }, 250);
+  }
+
+  private clearInsertBreakSuppression(): void {
+    this.suppressInsertBreakBeforeInput = false;
+    if (this.suppressInsertBreakTimer !== null) {
+      clearTimeout(this.suppressInsertBreakTimer);
+      this.suppressInsertBreakTimer = null;
+    }
+  }
+
+  private scheduleFreshParagraphNormalization(
+    view: EditorView,
+    existingBlockIds: ReadonlySet<string>,
+  ): void {
+    setTimeout(() => {
+      if (view.isDestroyed) return;
+      const duplicate = duplicateFreshParagraphAfterTable(
+        existingBlockIds,
+        view.state.doc,
+      );
+      if (!duplicate) return;
+      view.dispatch(
+        view.state.tr
+          .delete(duplicate.from, duplicate.to)
+          .setMeta("addToHistory", false),
+      );
+    }, 100);
   }
 
   private runNormalPut(
@@ -3755,6 +4101,10 @@ function readPasteFallback(
   return {
     html: types.includes("text/html") ? data.getData("text/html") : "",
     plain: plainType ? data.getData(plainType) : "",
+    markdown: readMarkdownClipboardSource(data),
+    tsv: types.includes(TSV_CLIPBOARD_MIME)
+      ? data.getData(TSV_CLIPBOARD_MIME)
+      : "",
   };
 }
 

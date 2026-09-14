@@ -2,6 +2,8 @@
 
 [仕様書へ戻る](../specification.md)
 
+独立した共有要素を使うEditor adapterと受信・IME・Undoの境界は[端末間同期](device-synchronization.md)を参照する。
+
 ## 1. Noteの表示構造
 
 NoteはRoot Sectionと再帰的な子Sectionで構成する。Root HeaderはNote titleとして表示し、

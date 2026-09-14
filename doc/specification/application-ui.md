@@ -228,6 +228,9 @@ Core保存失敗を無視する操作は用意しない。切替・更新のバ�
 待機中も旧Editorをmountしたまま保つが、modalがfocusを所有し、背後へのキー入力・pointer操作を遮断する。
 Tab/Shift-Tabは有効なcontrol間を循環し、controlがないstageでもdialogへfocusを保持する。
 更新確認ではEnterまたは確認buttonで進め、取り消しbutton上のEnterは更新を実行しない。Esc/Ctrl-cは取り消し可能なstageだけ受け付ける。
+共通modalのinput・textarea・編集可能領域では、Ctrl-cを閉じる操作より標準の選択範囲copyとして優先する。
+読み取り専用欄も対象とし、選択がなくても閉じない。欄の外のCtrl-c、Esc、Tab循環、IME中のkey処理は既存の規則を維持する。
+招待code欄の隣には常にcopy buttonを置き、成功時は「コピーしました」、失敗時は手動選択とCtrl-cによる方法を案内する。
 Command-line入力とNote内`/`検索入力、通常の通知messageは引き続き下部に表示する。
 
 バックアップ設定と状態表示は`:backup-settings`へ統合し、Application Window中央のfloating modal dialogで表示する。
@@ -236,6 +239,20 @@ localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別
 背景を覆って背後への操作を遮断し、Tab/Shift-Tabはdialog内を循環する。小さいWindowではdialog内をscrollする。
 閉じるbuttonまたはEsc/Ctrl-cで元の操作領域へfocusを戻す。背景clickでは閉じず、設定保存中は閉じる操作を受け付けない。
 設定画面をpollしても、編集中の間隔やpassword入力を上書きしない。
+
+`:sync-settings`も同じ中央modalとfocus制御を使い、「状態」「他端末」の2画面に分ける。
+状態は操作・自端末の状態・受信（最終反映・反映待ち・添付取得待ち・検証失敗）・送信待ちを表示し、
+他端末は追加・承認待ちと、公開鍵・接続状態・アドレス更新・反映待ち・最終反映・登録解除を行う端末ごとの一覧を表示する。
+待受アドレス変更・接続先アドレス更新・登録解除確認は副画面で行い、Esc/キャンセルで元の画面へ戻る。
+タブ切替や状態pollingで入力・選択・focus・scroll位置を初期化しない。
+:sync-settingsは自端末が他端末から解除されている場合、状態タブへ「登録解除済み」と操作不可の案内を表示し、
+「同期を未設定に戻す」操作でのみ状態を消去する。他端末タブも管理操作を無効化する。
+`:new-workspace`は中央modalで「空のWorkspaceを作成」と「別端末から受信」を提供する。
+空Workspaceは既存のWorkspaceを含む非空の保存先を拒否する。受信は開いているWorkspaceと独立した保存先で進める。
+起動時のWorkspace選択からも「別端末から受信」を開ける。承認待ち・文書受信・反映・再試行を表示する。
+作成・受信後の切替は既存の保存barrierとバックアップ待ちを通り、完了まで旧Editorをmountしたまま保つ。
+閉じる・中断・切替の取消で現在のWorkspaceを継続でき、modal間の移動や閉じた後もfocusを復元する。
+同期設定を開くだけでは有効化しない。本文の取得後にWorkspaceを開き、添付の取得は引き続き行う。
 
 GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。過去のeventは`(5m ago)`などを併記する。
 単位はs/m/h/d/mo/y、月は30日・年は365日換算で端数を切り捨てる。未来日時にagoを付けず、不正日時は`—`とする。
@@ -251,6 +268,7 @@ debug lineには機密contentを含めず、次の診断情報を表示できる
 
 - focus owner、mode、保存revisionの短い状態
 - FTSのidle/waiting/running/error
+- 同期の無効/一時停止、接続端末数、文書反映待ち、添付取得待ち
 - backupのcapturing/copying/maintaining/idle、世代保存時刻、追加先保護時刻、pending/expired、error
 - keydownから対応する可視inputまたは次のDOM更新frameまでの直近値、p95、最大値、sample数、slow件数
 

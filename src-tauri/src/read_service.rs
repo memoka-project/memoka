@@ -50,6 +50,7 @@ pub struct AttachmentRecord {
 }
 
 pub struct WorkspaceReader {
+    pub replica_id: Option<String>,
     pub connection: Connection,
     pub internal_root: PathBuf,
     pub workspace_id: String,
@@ -169,7 +170,10 @@ impl WorkspaceReader {
             [],
             |row| row.get(0),
         )?;
-        if schema != "5" && schema != crate::workspace_migration::DATABASE_SCHEMA.to_string() {
+        if schema != "5"
+            && schema != "6"
+            && schema != crate::workspace_migration::DATABASE_SCHEMA.to_string()
+        {
             return Err(ReadError::new(
                 "MIGRATION_REQUIRED",
                 "Open the Workspace in Memoka before using the reader",
@@ -217,7 +221,18 @@ impl WorkspaceReader {
                 return Err(ReadError::new("INVALID_DATA", "Invalid Attachment hash"));
             }
         }
+        let replica_id: Option<String> = connection
+            .query_row(
+                "SELECT value FROM settings WHERE key='replica_id'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = &replica_id {
+            crate::attachment::validate_uuid_v7(id, "replicaId")?;
+        }
         Ok(Self {
+            replica_id,
             connection,
             internal_root,
             workspace_id,
@@ -293,7 +308,7 @@ impl WorkspaceReader {
         }
     }
     fn source(&self, revision: Option<i64>) -> Value {
-        json!({"generation_id":self.generation,"document_revision":revision,"workspace_metadata_revision":self.workspace_revision,"read_at":self.read_at})
+        json!({"generation_id":self.generation,"replica_id":if self.generation.is_none(){self.replica_id.as_deref()}else{None},"document_revision":revision,"workspace_metadata_revision":self.workspace_revision,"read_at":self.read_at})
     }
     fn paginate(&self, items: Vec<Value>, request: &ReadRequest) -> Result<Value, ReadError> {
         let fingerprint = hex(&Sha256::digest(

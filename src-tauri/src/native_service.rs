@@ -338,6 +338,9 @@ impl NativeService {
     }
     pub fn query(&self, request: Request) -> Result<Reply, ReadError> {
         match request {
+            Request::SyncStatus => {
+                crate::replication::controller::read_status(&self.workspace).map(Reply::Json)
+            }
             Request::SectionEdit { request, dry_run } => {
                 if self._lease.is_none() || self.departing() {
                     return Err(ReadError::new(
@@ -1653,6 +1656,14 @@ pub(crate) fn gui_handler(
         }
         if request.needs_barrier() {
             app.state::<SaveBarriers>().wait(&app)?;
+        }
+        if matches!(request, Request::SyncStatus) {
+            let status = tauri::async_runtime::block_on(
+                crate::replication::controller::sync_status(app.clone()),
+            )?;
+            return Ok(Reply::Json(
+                json!({"schema_version":1,"workspace_id":status.workspace_id,"status":status}),
+            ));
         }
         if let Request::Edit { request, dry_run } = request {
             return app

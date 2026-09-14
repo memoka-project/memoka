@@ -136,6 +136,31 @@ describe("shared floating modal dialogs", () => {
     expect(document.documentElement.scrollTop).toBe(pageScroll);
   });
 
+  it("keeps Ctrl-C inside text controls for selection copy instead of closing", () => {
+    const close = vi.fn();
+    render(
+      <ModalDialog ariaLabel="処理" focusSurface="test" onClose={close}>
+        <input aria-label="通常入力" />
+        <textarea aria-label="読み取り専用コード" readOnly value="code" />
+      </ModalDialog>,
+    );
+    fireEvent.keyDown(screen.getByLabelText("通常入力"), {
+      key: "c",
+      ctrlKey: true,
+    });
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText("読み取り専用コード"), {
+      key: "c",
+      ctrlKey: true,
+    });
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("dialog"), {
+      key: "c",
+      ctrlKey: true,
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it.each(["saving", "closing", "stopping", "cancelling", "resuming"] as const)(
     "does not cancel the protected %s stage or pass keys through to the editor",
     (stage) => {

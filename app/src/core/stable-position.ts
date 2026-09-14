@@ -10,6 +10,7 @@ import {
 } from "y-prosemirror";
 import type { NoteDocument } from "./documents";
 import { findSectionById, sectionId } from "./section-model";
+import { replicatedNotePluginKey } from "./replicated-editor-binding";
 
 const CONTEXT_LENGTH = 12;
 
@@ -21,6 +22,7 @@ export interface StableEditorPosition {
   before: string;
   after: string;
   relative: Uint8Array;
+  relativeEntityId?: string;
 }
 
 export interface ResolvedStableEditorPosition {
@@ -217,6 +219,24 @@ export function saveStableEditorPosition(
   position = view.state.selection.head,
 ): StableEditorPosition {
   const cursor = clampedPosition(view.state, position);
+  const binding = replicatedNotePluginKey.getState(view.state)?.adapter;
+  if (note.replicated) {
+    if (!binding || binding.note !== note.replicated)
+      throw new Error("Editor is not bound to the requested NoteDoc");
+    const relative = binding.cursor(cursor);
+    const block = blockAt(view.state, cursor);
+    return {
+      noteId: note.noteId,
+      sectionId: binding.sectionId,
+      blockId: block.blockId,
+      offset: block.offset,
+      ...surroundingText(view.state, cursor),
+      relative: relative
+        ? Y.encodeRelativePosition(relative.relative)
+        : new Uint8Array(),
+      ...(relative ? { relativeEntityId: relative.entityId } : {}),
+    };
+  }
   // Capturing an origin is on the hot path for every n/N repeat. The active
   // Section ID is enough to prove that this Editor belongs to the NoteDoc;
   // rebuilding the entire ProseMirror document is only required later when a
@@ -244,19 +264,19 @@ export function resolveStableEditorPosition(
   if (saved.noteId !== note.noteId) {
     throw new Error(`Position belongs to ${saved.noteId}, not ${note.noteId}`);
   }
-  const { mapping, fragment } = prosemirrorMapping(
-    view.state,
-    note,
-    saved.sectionId,
-  );
+  const legacy = note.replicated
+    ? null
+    : prosemirrorMapping(view.state, note, saved.sectionId);
   try {
     const relative = Y.decodeRelativePosition(saved.relative);
-    const position = relativePositionToAbsolutePosition(
-      note.doc,
-      fragment,
-      relative,
-      mapping,
-    );
+    const position = note.replicated
+      ? resolveReplicatedRelative(note, view.state, saved, relative)
+      : relativePositionToAbsolutePosition(
+          note.doc,
+          legacy!.fragment,
+          relative,
+          legacy!.mapping,
+        );
     if (
       position !== null &&
       position >= 0 &&
@@ -324,16 +344,24 @@ export function resolveVisibleStableEditorPosition(
   if (saved.noteId !== note.noteId) return null;
   const sync = ySyncPluginKey.getState(view.state) as
     ActiveYSyncState | null | undefined;
-  if (!sync || sync.doc !== note.doc) return null;
+  const binding = replicatedNotePluginKey.getState(view.state)?.adapter;
+  if (
+    note.replicated
+      ? binding?.note !== note.replicated
+      : !sync || sync.doc !== note.doc
+  )
+    return null;
 
   try {
     const relative = Y.decodeRelativePosition(saved.relative);
-    const position = relativePositionToAbsolutePosition(
-      sync.doc,
-      sync.type,
-      relative,
-      sync.binding.mapping,
-    );
+    const position = note.replicated
+      ? resolveReplicatedRelative(note, view.state, saved, relative)
+      : relativePositionToAbsolutePosition(
+          sync!.doc,
+          sync!.type,
+          relative,
+          sync!.binding.mapping,
+        );
     if (
       position !== null &&
       position >= 0 &&
@@ -358,4 +386,19 @@ export function resolveVisibleStableEditorPosition(
   return original
     ? fallbackFromCandidate(original, saved, "block-fallback")
     : null;
+}
+
+function resolveReplicatedRelative(
+  note: NoteDocument,
+  state: EditorState,
+  saved: StableEditorPosition,
+  relative: Y.RelativePosition,
+): number | null {
+  const binding = replicatedNotePluginKey.getState(state)?.adapter;
+  if (!binding || binding.note !== note.replicated || !saved.relativeEntityId)
+    return null;
+  return binding.resolveCursor(
+    { entityId: saved.relativeEntityId, relative },
+    state.doc,
+  );
 }

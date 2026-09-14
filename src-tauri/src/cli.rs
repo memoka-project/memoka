@@ -29,6 +29,7 @@ const USAGE: &str = "Memoka CLI\n\n\
   memoka-cli note-edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
   memoka-cli section-edit --input FILE|- [--workspace DIR] [--dry-run] --format json\n\
   memoka-cli edit-schema --format json\n\
+  memoka-cli sync status [--workspace DIR] --format json\n\
   memoka-cli attachment get --id ID --output NEW-FILE [--workspace DIR] [--generation ID] [--include-trash]\n\
   memoka-cli history [--id ID] [--workspace DIR] --format json\n\
   memoka-cli backup run|status|list|copy [--workspace DIR]\n\
@@ -448,6 +449,10 @@ pub fn run(arguments: Vec<String>) -> Result<(), ReadError> {
             Request::History {
                 id: options.get("--id").map(str::to_owned),
             }
+        }
+        ["sync", "status"] => {
+            options.allow(&["--workspace", "--format"])?;
+            Request::SyncStatus
         }
         ["backup", action] => {
             options.allow(match *action {

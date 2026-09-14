@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { cpus, release, totalmem } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -20,6 +20,7 @@ const windowChromeOnly = process.env.MEMOKA_E2E_WINDOW_CHROME_ONLY === "1";
 const attachmentOnly = process.env.MEMOKA_E2E_ATTACHMENT_ONLY === "1";
 const namespaceHistoryOnly =
   process.env.MEMOKA_E2E_NAMESPACE_HISTORY_ONLY === "1";
+const tableExitOnly = process.env.MEMOKA_E2E_TABLE_EXIT_ONLY === "1";
 const W3C_ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
 const ENTER = "\uE007";
 const ESCAPE = "\uE00C";
@@ -499,6 +500,19 @@ async function waitFor(sessionId, script, predicate, timeoutMs = 15_000) {
     if (predicate(value)) return value;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  const page = await execute(
+    sessionId,
+    "return { text: document.body.innerText.slice(0, 65536), html: document.body.innerHTML.slice(0, 65536) }",
+  ).catch(() => null);
+  writeFileSync(
+    `${evidenceDirectory}/timeout-state.json`,
+    JSON.stringify({ script, value, page }, null, 2),
+  );
+  if (e2eWorkspace) {
+    cpSync(e2eWorkspace, `${evidenceDirectory}/failed-workspace`, {
+      recursive: true,
+    });
+  }
   throw new Error(
     `Timed out waiting for ${script}; last value: ${JSON.stringify(value)}`,
   );
@@ -795,6 +809,150 @@ async function sendActiveChord(sessionId, modifier, value) {
     method: "DELETE",
     body: {},
   });
+}
+
+async function runTableExitRegression(sessionId) {
+  const editor = await waitForElement(
+    sessionId,
+    ".editor-window:first-child .memoka-editor",
+  );
+  await sendKeys(sessionId, editor, "G");
+  await sendKeys(sessionId, editor, "i");
+  await sendKeys(
+    sessionId,
+    editor,
+    `Paragraph 1${ENTER}Paragraph 2${ENTER}Paragraph 3${ENTER}Paragraph 4`,
+  );
+  await sendKeys(sessionId, editor, `${ESCAPE}ggjjo/`);
+  const blockPicker = await waitForElement(
+    sessionId,
+    'input[aria-label="ブロックタイプを検索"]',
+  );
+  await sendKeys(sessionId, blockPicker, `table${ENTER}`);
+  const tableSize = await waitForElement(
+    sessionId,
+    '[aria-label="Tableサイズ"]',
+  );
+  await sendKeys(sessionId, tableSize, ENTER);
+  await waitFor(
+    sessionId,
+    `return {
+       pickerOpen: document.querySelector('.table-size-picker') !== null,
+       rows: document.querySelectorAll(
+         '.editor-window:first-child .memoka-editor .memoka-table tr'
+       ).length
+     }`,
+    (value) => value?.pickerOpen === false && value.rows === 3,
+  );
+  await waitFor(
+    sessionId,
+    `return {
+       active:
+         document.activeElement?.classList.contains('memoka-editor') ?? false,
+       mode:
+         document.querySelector('.editor-window:first-child')?.dataset
+           .vimMode ?? '',
+       inCell: Boolean(
+         window.getSelection()?.anchorNode?.parentElement?.closest('td, th')
+       )
+     }`,
+    (value) =>
+      value?.active === true &&
+      value.mode === "insert" &&
+      value.inCell === true,
+  );
+  for (const key of "cell") await sendActiveKey(sessionId, key);
+  await execute(
+    sessionId,
+    `window.__MEMOKA_TABLE_EXIT_EVENTS__ = [];
+     const editor = document.querySelector(
+       '.editor-window:first-child .memoka-editor'
+     );
+     for (const type of ['keydown', 'beforeinput', 'input']) {
+       editor.addEventListener(type, (event) => {
+         const record = () => window.__MEMOKA_TABLE_EXIT_EVENTS__.push({
+           type,
+           key: event.key ?? null,
+           ctrlKey: event.ctrlKey ?? false,
+           isComposing: event.isComposing ?? false,
+           inputType: event.inputType ?? null,
+           data: event.data ?? null,
+           defaultPrevented: event.defaultPrevented
+         });
+         record();
+         queueMicrotask(record);
+       }, true);
+     }
+     return true`,
+  );
+  await sendActiveChord(sessionId, CONTROL, ENTER);
+  await sendActiveKey(sessionId, "/");
+  const result = await waitFor(
+    sessionId,
+    `return (() => {
+       const root = document.querySelector('.editor-window:first-child');
+       const chunks = [...root.querySelectorAll(
+         '[data-body-chunk][data-body-chunk-virtualized="false"]'
+       )];
+       const blocks = chunks.flatMap((chunk) =>
+         [...chunk.children].map((block) => ({
+           tag: block.tagName,
+           blockId: block.getAttribute('data-block-id'),
+           className: block.className,
+           text: block.textContent
+         }))
+       );
+       const markers = [...root.querySelectorAll(
+         '.memoka-logical-line-number'
+       )].map((marker) => ({
+         absolute: marker.dataset.logicalLineNumber,
+         current: marker.classList.contains(
+           'memoka-logical-line-number--current'
+         ),
+         blockPosition: marker.dataset.logicalLineBlockPosition
+       }));
+       return {
+         blocks,
+         markers,
+         events: window.__MEMOKA_TABLE_EXIT_EVENTS__,
+         pickerOpen: Boolean(document.querySelector('.block-type-picker')),
+         mode: root.dataset.vimMode,
+         action: root.dataset.vimAction,
+         selection: (() => {
+           const selection = window.getSelection();
+           const element = selection?.anchorNode?.nodeType === Node.ELEMENT_NODE
+             ? selection.anchorNode
+             : selection?.anchorNode?.parentElement;
+           return {
+             text: selection?.anchorNode?.textContent ?? null,
+             offset: selection?.anchorOffset ?? null,
+             cell: element?.closest('td, th')?.tagName ?? null,
+             paragraphId:
+               element?.closest('[data-block-id]')?.dataset.blockId ?? null
+           };
+         })()
+       };
+     })()`,
+    (value) =>
+      value?.pickerOpen === true &&
+      value.blocks?.length === 6 &&
+      value.events?.some((event) => event.type === "input"),
+  );
+  const blockTypes = result.blocks.map((block) => block.tag);
+  if (
+    JSON.stringify(blockTypes) !==
+    JSON.stringify(["P", "P", "DIV", "P", "P", "P"])
+  ) {
+    throw new Error(
+      `Unexpected blocks after Table exit: ${JSON.stringify(result.blocks)}`,
+    );
+  }
+  if (result.blocks[3]?.text !== "/" || !result.blocks[3]?.blockId) {
+    throw new Error(
+      `Table exit did not create one slash-enabled Paragraph: ${JSON.stringify(result.blocks[3])}`,
+    );
+  }
+  return result;
 }
 
 async function focusElement(sessionId, selector) {
@@ -1243,6 +1401,11 @@ async function runOsClipboardPasteProbes(
   ) ?? null;
   const selectedRect = selected?.getBoundingClientRect() ?? null;
   const selectedStyle = selected ? getComputedStyle(selected) : null;
+  const colorProbe = document.createElement('span');
+  colorProbe.style.backgroundColor = selectedStyle?.getPropertyValue('--memoka-color-selection') ?? '';
+  document.body.append(colorProbe);
+  const expectedBackground = getComputedStyle(colorProbe).backgroundColor;
+  colorProbe.remove();
   const nativeSelection = window.getSelection();
   return {
     mode:
@@ -1259,6 +1422,7 @@ async function runOsClipboardPasteProbes(
     blockId: selected?.dataset.blockId ?? null,
     text: selected?.textContent ?? '',
     backgroundColor: selectedStyle?.backgroundColor ?? null,
+    expectedBackground,
     boxShadow: selectedStyle?.boxShadow ?? null,
     width: selectedRect?.width ?? null,
     height: selectedRect?.height ?? null,
@@ -1288,7 +1452,8 @@ async function runOsClipboardPasteProbes(
         value.kind === kind &&
         value.text.includes(text) &&
         (!excludedText || !value.text.includes(excludedText)) &&
-        value.backgroundColor === "rgb(41, 61, 84)" &&
+        value.backgroundColor === value.expectedBackground &&
+        value.backgroundColor !== "rgba(0, 0, 0, 0)" &&
         value.boxShadow !== "none" &&
         value.width > 100 &&
         value.height > 0 &&
@@ -1628,7 +1793,7 @@ async function runOsClipboardPasteProbes(
   const tableMarkdown =
     tableClipboard.content["text/markdown"]?.replace(/\r\n/gu, "\n") ?? "";
   if (
-    tablePayload.schemaVersion !== 6 ||
+    tablePayload.schemaVersion !== 7 ||
     tablePayload.structureKind !== "table-row" ||
     !tableClipboard.content["text/html"]?.startsWith("<table><tbody><tr") ||
     !tableMarkdown.includes("| alpha | 1 |") ||
@@ -1973,7 +2138,7 @@ async function runHighLoadPerformance(sessionId) {
      Object.defineProperty(event, 'clipboardData', {
        value: {
          types: ['text/markdown', 'text/plain'],
-         getData: (type) => type === 'text/markdown' ? markdown : markdown
+         getData: (type) => ['text/markdown', 'text/plain'].includes(type) ? markdown : ''
        }
      });
      editor.dispatchEvent(event);
@@ -3126,6 +3291,179 @@ async function runSidebarFocusNavigation(sessionId) {
   };
 }
 
+async function runSynchronizationSettings(sessionId) {
+  const ime = await runSynchronizationImeBoundary(sessionId);
+  await execute(
+    sessionId,
+    `window.__syncEditorBefore = document.querySelector('.memoka-editor.ProseMirror-focused'); return true`,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  await sendActiveKey(sessionId, ":");
+  const input = await waitForElement(
+    sessionId,
+    'input[aria-label="Memoka Command"]',
+  );
+  await sendKeys(sessionId, input, `sync-settings${ENTER}`);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('.sync-settings-dialog'); return Boolean(dialog?.textContent.includes('同期を有効にする') && dialog.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  const status = await invokeTauriCommand(
+    sessionId,
+    "SYNC_DISABLED",
+    "sync_status",
+    {},
+  );
+  if (
+    status.local.enabled ||
+    status.listening !== null ||
+    status.config !== null
+  )
+    throw new Error("Opening synchronization settings started networking");
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `return !document.querySelector('.sync-settings-dialog') && document.querySelector('.memoka-editor.ProseMirror-focused') === window.__syncEditorBefore`,
+    (value) => value === true,
+  );
+  await sendActiveKey(sessionId, ":");
+  const newWorkspaceCommand = await waitForElement(
+    sessionId,
+    'input[aria-label="Memoka Command"]',
+  );
+  await sendKeys(sessionId, newWorkspaceCommand, `new-workspace${ENTER}`);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="新しいWorkspace"]'); return Boolean(dialog?.textContent.includes('空のWorkspaceを作成') && dialog.textContent.includes('別端末から受信') && dialog.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  const receiveButton = await findElement(
+    sessionId,
+    '[role="dialog"][aria-label="新しいWorkspace"] .application-modal-actions button:nth-child(2)',
+  );
+  await clickElement(sessionId, receiveButton);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="別端末から受信"]'); return Boolean(dialog?.querySelector('textarea') && dialog.contains(document.activeElement) && window.__syncEditorBefore.isConnected)`,
+    (value) => value === true,
+  );
+  const join = await invokeTauriCommand(
+    sessionId,
+    "JOIN_NOT_STARTED",
+    "sync_join_status",
+    {},
+  );
+  if (join !== null)
+    throw new Error("Opening receive started initial replication");
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `const dialog = document.querySelector('[role="dialog"][aria-label="新しいWorkspace"]'); return Boolean(dialog?.contains(document.activeElement))`,
+    (value) => value === true,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  await waitFor(
+    sessionId,
+    `return !document.querySelector('[role="dialog"]') && document.activeElement === window.__syncEditorBefore`,
+    (value) => value === true,
+  );
+  return {
+    result: "TAURI_SYNC_SETTINGS_PASS",
+    enabled: status.local.enabled,
+    listening: status.listening,
+    editorPreserved: true,
+    newWorkspaceReceive: true,
+    newWorkspaceFocusRestored: true,
+    ime,
+  };
+}
+
+async function runSynchronizationImeBoundary(sessionId) {
+  await sendActiveKey(sessionId, ESCAPE);
+  await sendActiveKey(sessionId, "i");
+  const noteId = await execute(
+    sessionId,
+    `
+    const root = document.querySelector('.memoka-editor.ProseMirror-focused');
+    const editor = root.editor;
+    const adapter = editor.storage.memokaReplication?.adapter;
+    if (!adapter) throw new Error('Replicated Editor binding is missing');
+    let at = null;
+    editor.state.doc.descendants((node, pos) => {
+      if (at === null && node.type.name === 'paragraph') at = pos + 1;
+    });
+    if (at === null) throw new Error('IME fixture paragraph is missing');
+    editor.commands.setTextSelection(at);
+    adapter.note.history.stopCapturing();
+    window.__syncIme = { root, editor, adapter, at, before: Array.from(adapter.note.snapshot()).join(',') };
+    return adapter.note.noteId;
+  `,
+  );
+  const before = await invokeTauriCommand(
+    sessionId,
+    "IME_BEFORE",
+    "persistence_load_document",
+    { kind: "note", documentId: noteId },
+  );
+  const unchanged = await execute(
+    sessionId,
+    `
+    const { root, editor, adapter, before, at } = window.__syncIme;
+    root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    for (const text of ['に', 'にほん', '日本']) {
+      const length = window.__syncIme.length ?? 0;
+      editor.commands.insertContentAt({ from: at, to: at + length }, text);
+      window.__syncIme.length = text.length;
+      if (Array.from(adapter.note.snapshot()).join(',') !== before) return false;
+    }
+    return true;
+  `,
+  );
+  if (!unchanged) throw new Error("Unconfirmed IME text entered Yjs");
+  const during = await invokeTauriCommand(
+    sessionId,
+    "IME_DURING",
+    "persistence_load_document",
+    { kind: "note", documentId: noteId },
+  );
+  if (during.revision !== before.revision)
+    throw new Error("Unconfirmed IME text was persisted");
+  await execute(
+    sessionId,
+    `window.__syncIme.root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '日本' })); return true;`,
+  );
+  await waitFor(
+    sessionId,
+    `return !window.__syncIme.adapter.compositionPending && Array.from(window.__syncIme.adapter.note.snapshot()).join(',') !== window.__syncIme.before`,
+    (value) => value === true,
+  );
+  let confirmed;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    confirmed = await invokeTauriCommand(
+      sessionId,
+      "IME_CONFIRMED",
+      "persistence_load_document",
+      { kind: "note", documentId: noteId },
+    );
+    if (confirmed.revision > before.revision) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (confirmed.revision !== before.revision + 1)
+    throw new Error("IME confirmation was not persisted as one edit");
+  await execute(
+    sessionId,
+    `window.__syncIme.editor.commands.undo(); return true;`,
+  );
+  await sendActiveKey(sessionId, ESCAPE);
+  return {
+    syntheticComposition: true,
+    preeditExcludedFromYjs: true,
+    preeditExcludedFromPersistence: true,
+    confirmationCommits: 1,
+  };
+}
+
 async function runManagedHelpChrome(sessionId) {
   const openHelp = async () => {
     const editor = await findElement(
@@ -3220,6 +3558,7 @@ async function runManagedHelpChrome(sessionId) {
 }
 
 async function runUtilityNavigationBenchmark(sessionId, initialNoteId) {
+  const synchronizationSettings = await runSynchronizationSettings(sessionId);
   const sidebarFocusNavigation = await runSidebarFocusNavigation(sessionId);
   const windowNotesBefore = await execute(
     sessionId,
@@ -3629,6 +3968,7 @@ async function runUtilityNavigationBenchmark(sessionId, initialNoteId) {
     },
     warmup,
     warmBufferSwitch: measured,
+    synchronizationSettings,
     sidebarFocusNavigation,
     jumpBack,
     sectionOutline: {
@@ -3922,6 +4262,20 @@ await waitFor(
   (value) => value === "NORMAL",
 );
 
+if (process.env.MEMOKA_E2E_SYNC_ONLY === "1") {
+  try {
+    const result = await runSynchronizationSettings(firstSession);
+    writeFileSync(
+      `${evidenceDirectory}/sync-settings-tauri.json`,
+      JSON.stringify(result, null, 2),
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
+
 if (process.env.MEMOKA_E2E_VIEWPORT_CARET_ONLY === "1") {
   try {
     const result = await runViewportCaret({
@@ -3968,6 +4322,20 @@ if (process.env.MEMOKA_E2E_AGENT_EDIT_ONLY === "1") {
       () => undefined,
     );
     throw error;
+  } finally {
+    await closeSession(firstSession);
+  }
+  process.exit(0);
+}
+
+if (tableExitOnly) {
+  try {
+    const result = await runTableExitRegression(firstSession);
+    writeFileSync(
+      `${evidenceDirectory}/table-exit-tauri.json`,
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
     await closeSession(firstSession);
   }
@@ -4597,6 +4965,23 @@ if (fcitxRemote.expected && imeOff.statuses[0] !== "inactive") {
     })}`,
   );
 }
+// This fixture asserts Unicode script-run boundaries. The product's default
+// fine/BudouX mode has different, intentional Japanese phrase boundaries.
+await sendKeys(secondSession, restoredEditor, ":");
+const wordModeInput = await waitForElement(
+  secondSession,
+  'input[aria-label="Memoka Command"]',
+);
+await sendKeys(
+  secondSession,
+  wordModeInput,
+  `word-segmentation unicode${ENTER}`,
+);
+await waitFor(
+  secondSession,
+  `return !document.querySelector('input[aria-label="Memoka Command"]') && Boolean(document.querySelector('.memoka-editor.ProseMirror-focused'))`,
+  (value) => value === true,
+);
 const wordCursorProbe = `const editor = document.querySelector(
     '.editor-window:first-child .memoka-editor'
   );
