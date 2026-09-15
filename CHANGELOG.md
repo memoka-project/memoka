@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-16
+
+- Code Blockに言語設定とLowlightによるsyntax highlight、本文copy button、`,a`の共通操作paneを追加。11行以上は先頭5行を残してWindowごとに折り畳めます。
+- `{` / `}`で段落、List、Table、Code Block、引用、Detailsなどの前後のblockへ移動し、`[[` / `]]`で前後のSection titleへ移動できるようにしました。
+- 同じ種類の箇条書き・番号付きListを隣接して作成または貼り付けた場合に1つへ統合。Taskは通常の箇条書き項目と混在できます。
+- Normalの`gx`で外部URLを開く際、Tauri openerの許可scopeに阻まれて開けない問題を修正しました。
+- **既知の問題:** 端末間同期は登録したLAN／VPNアドレスへ直接到達できる構成が必要です。Windows向け配布は引き続きソースコードのみです。
+
 ## [0.3.0] - 2026-09-15
 
 - **互換性の変更:** 端末間同期に対応するためDB／NoteDocをschema 7、WorkspaceMetadataDocをschema 4へ移行。更新前にMemokaを終了してWorkspace全体を外部へバックアップし、移行後のWorkspaceを旧版で開かないでください。既存ID・内容・装飾・構造・添付hashは検証してから移行します。
@@ -133,7 +141,8 @@
 - 巨大NoteDoc向けBodyChunk、bounded editor、非同期paste・索引・mirrorを実装。
 - Linux x86_64はTauri Updater署名付きAppImage、Windowsはsource codeのみを配布する方針を採用。
 
-[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/memoka-project/memoka/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/memoka-project/memoka/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/memoka-project/memoka/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/memoka-project/memoka/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/memoka-project/memoka/compare/v0.2.1...v0.2.2

@@ -1,5 +1,5 @@
 {
-  "cli_version": "0.3.0",
+  "cli_version": "0.3.1",
   "color": "#RRGGBB; no CSS, scripts, URLs or external files",
   "conflict": "expected_revision is SHA-256 of the exact config bytes; reread on conflict, no force or auto-rebase",
   "constraints": {
