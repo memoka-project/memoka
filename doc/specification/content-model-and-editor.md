@@ -73,6 +73,18 @@ Task Listへの型変換、slash picker、Markdown貼付けから作成できる
 タスクからの`Enter`、`o/O`、`Ctrl-Enter`等で新規Itemを作る場合は未完了にする。
 コピーしたItemの状態は保存し、新規入力との違いを維持する。状態変更は通常のUndo対象である。
 
+### 3.2 隣接Listの正規化
+
+編集・変換・貼付けによって同じeditable container内で同種のListが隣接した場合、1つのListへ統合する。
+Bullet List同士、Numbered List同士だけを統合し、BulletとNumberedは別Listのままにする。
+Taskは独立したList種別ではなくListItemの`checked`状態なので、通常項目とTask項目は同じBullet List内に混在できる。
+Numbered Listを統合した場合は左側Listの開始番号を維持する。
+
+統合はSection BodyのBodyChunk境界を透過し、ListItem内とDetails本文内にも適用する。
+左側List、全ListItem、Item内部BlockのIDと順序、mark、Task状態を維持し、作成・貼付け操作と合わせて1 Undo単位にする。
+読み込み時、受信同期時、Undo/Redo時には、保存済みの隣接Listをそれだけを理由に書き換えない。
+ただしローカル編集で新しい隣接境界が生じた場合は、その境界を含む連続した同種List全体を統合する。
+
 ## 4. 論理行
 
 論理行はVimの行単位motion/operator、相対行番号、Visual Lineの単位である。

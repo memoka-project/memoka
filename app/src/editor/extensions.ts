@@ -85,6 +85,7 @@ import {
 } from "./body-chunk-scroll";
 import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
+import { AdjacentListNormalization } from "./adjacent-list-normalization";
 import { RichListItem } from "./list-editing";
 import { sectionDepthLimit } from "./section-depth-limit";
 import {
@@ -2520,6 +2521,7 @@ export function productEditorExtensions(
     SourceBlock,
     ...(!options.directBodyOnly ? [WebKitGtkCompositionGuard] : []),
     SectionIdentity,
+    AdjacentListNormalization,
     ...(!options.directBodyOnly ? [BodyChunkViewport, BodyChunking] : []),
     JapaneseLineBreaking,
     BulletListMarkers,

@@ -186,6 +186,59 @@ describe("Memoka block.transform", () => {
     destroy();
   });
 
+  it("joins a converted List with compatible Lists on both sides", async () => {
+    const { adapter, destroy, editor } = await editorHarness();
+    const leftId = createUuidV7();
+    const middleId = createUuidV7();
+    const rightId = createUuidV7();
+    const listItem = (text: string): JSONContent => ({
+      type: "listItem",
+      attrs: { blockId: createUuidV7(), checked: null },
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: createUuidV7() },
+          content: [{ type: "text", text }],
+        },
+      ],
+    });
+    editor.commands.setContent(
+      directBodyContent([
+        {
+          type: "bulletList",
+          attrs: { blockId: leftId },
+          content: [listItem("left")],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: middleId },
+          content: [{ type: "text", text: "middle" }],
+        },
+        {
+          type: "bulletList",
+          attrs: { blockId: rightId },
+          content: [listItem("right")],
+        },
+      ]),
+    );
+
+    expect(transform(adapter, middleId, "bulletList")).toMatchObject({
+      changed: true,
+    });
+    const lists: ProseMirrorNode[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "bulletList") lists.push(node);
+    });
+    expect(lists).toHaveLength(1);
+    expect(lists[0]?.attrs.blockId).toBe(leftId);
+    expect(lists[0]?.content.content.map((node) => node.textContent)).toEqual([
+      "left",
+      "middle",
+      "right",
+    ]);
+    destroy();
+  });
+
   it("creates a 3x3 Table only from an empty direct Paragraph", async () => {
     const { adapter, destroy, editor } = await editorHarness();
     const blockId = createUuidV7();
