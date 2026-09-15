@@ -75,6 +75,10 @@ import {
   TableActionPicker,
   type TableActionPickerSession,
 } from "./components/TableActionPicker";
+import {
+  CodeActionPicker,
+  type CodeActionPickerSession,
+} from "./components/CodeActionPicker";
 import { ThemePicker, type ThemePickerSession } from "./components/ThemePicker";
 import { FontPicker, type FontPickerSession } from "./components/FontPicker";
 import {
@@ -335,6 +339,8 @@ export function App({
     useState<InlineFormatPickerSession | null>(null);
   const [tableActionPicker, setTableActionPicker] =
     useState<TableActionPickerSession | null>(null);
+  const [codeActionPicker, setCodeActionPicker] =
+    useState<CodeActionPickerSession | null>(null);
   const [themePicker, setThemePicker] = useState<ThemePickerSession | null>(
     null,
   );
@@ -982,6 +988,7 @@ export function App({
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setCommandLine(session);
     },
     [clearEditorFocusRequests],
@@ -996,6 +1003,7 @@ export function App({
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setWorkspaceSearch(session);
     },
     [clearEditorFocusRequests],
@@ -1010,6 +1018,7 @@ export function App({
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setNoteSearch(session);
     },
     [clearEditorFocusRequests],
@@ -1024,6 +1033,7 @@ export function App({
       setNoteSearch(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setBlockTypePicker({
         ...session,
         restoreFocus: () => requestEditorFocus(session.windowId),
@@ -1041,6 +1051,7 @@ export function App({
       setNoteSearch(null);
       setBlockTypePicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setInlineFormatPicker(session);
     },
     [clearEditorFocusRequests],
@@ -1055,7 +1066,23 @@ export function App({
       setNoteSearch(null);
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
+      setCodeActionPicker(null);
       setTableActionPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
+  const openCodeActionPicker = useCallback(
+    (session: CodeActionPickerSession): void => {
+      clearEditorFocusRequests();
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setCommandPicker(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setInlineFormatPicker(null);
+      setTableActionPicker(null);
+      setCodeActionPicker(session);
     },
     [clearEditorFocusRequests],
   );
@@ -1069,6 +1096,7 @@ export function App({
       setBlockTypePicker(null);
       setInlineFormatPicker(null);
       setTableActionPicker(null);
+      setCodeActionPicker(null);
       setCommandPicker(session);
     },
     [clearEditorFocusRequests],
@@ -2160,13 +2188,15 @@ export function App({
                 ? "inline-format-picker"
                 : tableActionPicker
                   ? "table-action-picker"
-                  : noteSearch
-                    ? "note-search"
-                    : commandPicker
-                      ? "command-picker"
-                      : commandLine
-                        ? "command-line"
-                        : null);
+                  : codeActionPicker
+                    ? "code-action-picker"
+                    : noteSearch
+                      ? "note-search"
+                      : commandPicker
+                        ? "command-picker"
+                        : commandLine
+                          ? "command-line"
+                          : null);
   const applicationFocusOwner = snapshot.applicationWindow.focusOwner;
   const leftSidebarFocused =
     transientFocus === null && applicationFocusOwner.area === "left-sidebar";
@@ -3201,6 +3231,7 @@ export function App({
         onWorkspaceSearch={openWorkspaceSearch}
         onBlockTypePicker={openBlockTypePicker}
         onInlineFormatPicker={openInlineFormatPicker}
+        onCodeActionPicker={openCodeActionPicker}
         onTableActionPicker={openTableActionPicker}
         onMessage={setCommandMessage}
         onNoteSearch={openNoteSearch}
@@ -3578,6 +3609,13 @@ export function App({
         <TableActionPicker
           session={tableActionPicker}
           onClose={() => setTableActionPicker(null)}
+          onMessage={setCommandMessage}
+          focused
+        />
+      ) : codeActionPicker ? (
+        <CodeActionPicker
+          session={codeActionPicker}
+          onClose={() => setCodeActionPicker(null)}
           onMessage={setCommandMessage}
           focused
         />
@@ -4232,6 +4270,7 @@ function EditorWindow({
   onWorkspaceSearch,
   onBlockTypePicker,
   onInlineFormatPicker,
+  onCodeActionPicker,
   onTableActionPicker,
   onMessage,
   onNoteSearch,
@@ -4260,6 +4299,7 @@ function EditorWindow({
   onWorkspaceSearch: (session: WorkspaceSearchSession) => void;
   onBlockTypePicker: (session: BlockTypePickerSession) => void;
   onInlineFormatPicker: (session: InlineFormatPickerSession) => void;
+  onCodeActionPicker: (session: CodeActionPickerSession) => void;
   onTableActionPicker: (session: TableActionPickerSession) => void;
   onMessage: (message: string) => void;
   onNoteSearch: (session: ApplicationNoteSearchSession) => void;
@@ -4382,6 +4422,14 @@ function EditorWindow({
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
+      onCodeActionPicker: (request) =>
+        onCodeActionPicker({
+          windowId,
+          selection: request.selection,
+          copy: request.copy,
+          setLanguage: request.setLanguage,
+          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+        }),
       onTableActionPicker: (request) =>
         onTableActionPicker({
           windowId,
@@ -4447,6 +4495,7 @@ function EditorWindow({
     onWorkspaceSearch,
     onBlockTypePicker,
     onInlineFormatPicker,
+    onCodeActionPicker,
     onTableActionPicker,
     onMessage,
     onNoteSearch,

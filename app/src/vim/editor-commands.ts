@@ -60,6 +60,7 @@ import {
   sectionFoldHiddenEntries,
 } from "../editor/section-folding";
 import { enterDetailsBody, detailsFoldHiddenEntries } from "../editor/details";
+import { codeFoldHiddenEntries } from "../editor/code-block";
 import {
   moveNormalTableCell,
   moveNormalTableRow,
@@ -6710,34 +6711,51 @@ export function replaceVisualCharacters(
   const hidden = [
     ...sectionFoldHiddenEntries(view.state),
     ...detailsFoldHiddenEntries(view.state),
+    ...codeFoldHiddenEntries(view.state),
   ].sort((left, right) => left.hiddenFrom - right.hiddenFrom);
-  let hiddenIndex = 0;
   view.state.doc.nodesBetween(from, to, (node, position) => {
-    while (
-      hiddenIndex < hidden.length &&
-      hidden[hiddenIndex]!.hiddenTo <= position
-    )
-      hiddenIndex += 1;
-    const fold = hidden[hiddenIndex];
     if (
-      fold &&
-      position >= fold.hiddenFrom &&
-      position + node.nodeSize <= fold.hiddenTo
+      hidden.some(
+        (fold) =>
+          position >= fold.hiddenFrom &&
+          position + node.nodeSize <= fold.hiddenTo,
+      )
     )
       return false;
     if (node.isText) {
       const start = Math.max(from, position);
       const end = Math.min(to, position + node.nodeSize);
-      const original = node.text!.slice(start - position, end - position);
-      // Code/Source newlines, Hard Breaks and container boundaries are not
-      // characters to flatten. Keep each text run's marks and block identities.
-      const replacement = original.replace(/[^\r\n]/gu, () => character);
-      if (replacement)
-        edits.push({
-          from: start,
-          to: end,
-          node: view.state.schema.text(replacement, node.marks),
+      let ranges = [{ from: start, to: end }];
+      for (const fold of hidden) {
+        ranges = ranges.flatMap((visible) => {
+          if (fold.hiddenTo <= visible.from || fold.hiddenFrom >= visible.to) {
+            return [visible];
+          }
+          return [
+            ...(visible.from < fold.hiddenFrom
+              ? [{ from: visible.from, to: fold.hiddenFrom }]
+              : []),
+            ...(fold.hiddenTo < visible.to
+              ? [{ from: fold.hiddenTo, to: visible.to }]
+              : []),
+          ];
         });
+      }
+      for (const visible of ranges) {
+        const original = node.text!.slice(
+          visible.from - position,
+          visible.to - position,
+        );
+        // Code/Source newlines, Hard Breaks and container boundaries are not
+        // characters to flatten. Keep each text run's marks and identities.
+        const replacement = original.replace(/[^\r\n]/gu, () => character);
+        if (replacement)
+          edits.push({
+            from: visible.from,
+            to: visible.to,
+            node: view.state.schema.text(replacement, node.marks),
+          });
+      }
     } else if (
       node.isInline &&
       node.isAtom &&

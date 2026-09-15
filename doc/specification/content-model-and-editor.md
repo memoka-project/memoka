@@ -85,6 +85,22 @@ Numbered Listを統合した場合は左側Listの開始番号を維持する。
 読み込み時、受信同期時、Undo/Redo時には、保存済みの隣接Listをそれだけを理由に書き換えない。
 ただしローカル編集で新しい隣接境界が生じた場合は、その境界を含む連続した同種List全体を統合する。
 
+### 3.3 Code Block
+
+Code Blockは任意の言語識別子を保存する。言語未設定ではplain textとして表示し、自動判定しない。
+Editorの言語選択にはLowlightが標準提供する全言語を表示する。保存済みの未知の言語識別子も保持するが、
+対応するgrammarがない場合はhighlightしない。UTF-8で64 KiBを超えるCode Blockもhighlightせず、編集、折り畳み、copyは利用可能にする。
+
+Code Block上部には常時toolbarを表示する。copy buttonは保存textを装飾や末尾改行の加工なしでClipboardへ書き込む。
+Normalの`,a`は共通検索paneを開き、CopyとLanguageを表示する。Languageを選ぶと同じpaneで言語を検索・選択でき、
+Plain textを選ぶと言語設定を解除する。言語変更は文書変更として同期し、Undo/Redoの対象にする。
+
+11行以上のCode Blockは折り畳み可能とし、初期状態では展開する。折り畳むと先頭5行だけを表示する。
+Code Block内ではDetailsと同じ`zo/zO/zc/zC/za/zA`を使用し、再帰指定も単一Code Blockへの同じ操作として扱う。
+折り畳み状態はWindow-localであり、文書、Undo、Markdown、別Windowへ保存・同期しない。
+折り畳まれた行は論理行motionやoperatorの対象から除外する。検索や位置復元などで非表示行へ移動する場合は、
+対象Code Blockを自動的に展開する。Source Blockにはこのtoolbar、highlight、折り畳みを適用しない。
+
 ## 4. 論理行
 
 論理行はVimの行単位motion/operator、相対行番号、Visual Lineの単位である。

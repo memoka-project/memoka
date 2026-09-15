@@ -1679,6 +1679,109 @@ textarea {
   text-autospace: no-autospace;
 }
 
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-code-block {
+  position: relative;
+  max-width: calc(100% - var(--memoka-indent-guide-offset));
+  margin-left: var(--memoka-indent-guide-offset);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-code-block pre {
+  max-width: 100%;
+  margin-left: 0;
+  padding-top: 36px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-code-block[data-code-expanded="false"]
+  pre {
+  max-height: calc(7.5em + 51px);
+  overflow-y: hidden;
+}
+
+.memoka-code-block__toolbar {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--memoka-color-text-muted);
+  font-family: var(--memoka-font-monospace);
+  font-size: 10px;
+  user-select: none;
+}
+
+.memoka-code-block__language {
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memoka-code-block__language::before,
+.memoka-code-block__button::before {
+  content: attr(data-label);
+}
+
+.memoka-code-block__button {
+  padding: 2px 7px;
+  border: 1px solid var(--memoka-color-border);
+  border-radius: 4px;
+  color: var(--memoka-color-text-muted);
+  background: var(--memoka-color-surface-inset);
+  font: inherit;
+  cursor: pointer;
+}
+
+.memoka-code-block__button:hover {
+  color: var(--memoka-color-text);
+  background: var(--memoka-color-surface-hover);
+}
+
+.memoka-code-block__button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.memoka-code-block .hljs-comment,
+.memoka-code-block .hljs-quote {
+  color: var(--memoka-color-text-muted);
+}
+
+.memoka-code-block :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal) {
+  color: var(--memoka-color-markup-heading-1);
+}
+
+.memoka-code-block :is(.hljs-string, .hljs-regexp, .hljs-addition) {
+  color: var(--memoka-color-success);
+}
+
+.memoka-code-block :is(.hljs-number, .hljs-symbol, .hljs-bullet) {
+  color: var(--memoka-color-warning);
+}
+
+.memoka-code-block
+  :is(.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class) {
+  color: var(--memoka-color-link);
+}
+
+.memoka-code-block
+  :is(.hljs-built_in, .hljs-type, .hljs-class, .hljs-function) {
+  color: var(--memoka-color-info);
+}
+
+.memoka-code-block
+  :is(.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable) {
+  color: var(--memoka-color-markup-italic);
+}
+
+.memoka-code-block :is(.hljs-meta, .hljs-deletion) {
+  color: var(--memoka-color-danger);
+}
+
 .memoka-editor .memoka-source-block {
   border-color: var(--memoka-color-warning);
   background: var(--memoka-color-warning-surface);
@@ -2782,13 +2885,15 @@ textarea {
 }
 
 .table-action-picker__row,
-.command-picker__row {
+.command-picker__row,
+.code-action-picker__row {
   display: grid;
   gap: 3px;
 }
 
 .table-action-picker__row > strong,
-.command-picker__row > strong {
+.command-picker__row > strong,
+.code-action-picker__row > strong {
   overflow: hidden;
   color: var(--memoka-color-text);
   font-size: 13px;
@@ -2797,7 +2902,8 @@ textarea {
 }
 
 .table-action-picker__row > span,
-.command-picker__row > span {
+.command-picker__row > span,
+.code-action-picker__row > span {
   overflow: hidden;
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
@@ -2806,19 +2912,22 @@ textarea {
 }
 
 .table-action-picker__preview,
-.command-picker__preview {
+.command-picker__preview,
+.code-action-picker__preview {
   padding: 28px;
 }
 
 .table-action-picker__preview-content,
-.command-picker__preview-content {
+.command-picker__preview-content,
+.code-action-picker__preview-content {
   align-self: center;
   color: var(--memoka-color-text-muted);
   line-height: 1.6;
 }
 
 .table-action-picker__preview-content > strong,
-.command-picker__preview-content > strong {
+.command-picker__preview-content > strong,
+.code-action-picker__preview-content > strong {
   color: var(--memoka-color-text-strong);
   font-size: 18px;
 }
@@ -2956,7 +3065,7 @@ textarea {
 }
 
 /* An item's text origin is already indented. Do not indent its blocks twice. */
-.memoka-editor
+:is(.memoka-editor, .workspace-search-preview-document)
   :is(li, .memoka-task-content)
   > :is(
     pre,

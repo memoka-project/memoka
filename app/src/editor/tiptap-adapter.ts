@@ -132,6 +132,14 @@ import {
   revealSectionFoldsAtPosition,
   setSectionFoldCollapsedSectionIds,
 } from "./section-folding";
+import type { CodeCopyResult } from "./code-block";
+import {
+  codeBlockText,
+  setCodeBlockLanguage,
+  type CodeBlockActionRequest,
+  type CodeBlockActionSelection,
+  type CodeBlockLanguageResult,
+} from "../vim/code-block-actions";
 
 export interface BlockTypePickerRequest {
   readonly blockId: string;
@@ -147,6 +155,8 @@ export interface TableActionPickerRequest {
   readonly selection: TableActionSelection;
   readonly apply: (action: TableActionId) => TableActionResult;
 }
+
+export type CodeActionPickerRequest = CodeBlockActionRequest;
 
 export interface TiptapEditorAdapterOptions {
   /** Internal unit-test harness; production windows always render a Section. */
@@ -194,6 +204,7 @@ export interface TiptapEditorAdapterOptions {
   onNoteSearch?: (origin: NoteSearchOrigin) => void;
   onBlockTypePicker?: (request: BlockTypePickerRequest) => void;
   onInlineFormatPicker?: (request: InlineFormatPickerRequest) => void;
+  onCodeActionPicker?: (request: CodeActionPickerRequest) => void;
   onTableActionPicker?: (request: TableActionPickerRequest) => void;
   openExternalLink?: (href: string) => void | Promise<void>;
   attachmentRepository?: AttachmentRepository;
@@ -443,6 +454,8 @@ export class TiptapEditorAdapter {
             this.handleNoteSearchRepeat(cursor, direction, count)
         : undefined,
       onInlineFormat: () => this.requestInlineFormatPicker(),
+      onCodeBlockActions: (selection) =>
+        this.requestCodeActionPicker(selection),
       onTableActions: (selection) => this.requestTableActionPicker(selection),
       onOpenExternalLink:
         options.openExternalLink ?? ((href) => externalLinkPort.open(href)),
@@ -806,6 +819,79 @@ export class TiptapEditorAdapter {
       apply: (action) => this.applyTableAction(selection, action),
     });
     return true;
+  }
+
+  private requestCodeActionPicker(
+    selection: CodeBlockActionSelection,
+  ): boolean {
+    if (this.currentEditor.isDestroyed || !this.options.onCodeActionPicker) {
+      return false;
+    }
+    this.options.onCodeActionPicker({
+      selection,
+      copy: () => this.copyCodeBlock(selection.blockId),
+      setLanguage: (language) =>
+        this.applyCodeBlockLanguage(selection, language),
+    });
+    return true;
+  }
+
+  private applyCodeBlockLanguage(
+    selection: CodeBlockActionSelection,
+    language: string | null,
+  ): CodeBlockLanguageResult {
+    if (this.currentEditor.isDestroyed) {
+      return {
+        changed: false,
+        reason: "missing",
+        position: selection.beforeCursor,
+        language,
+      };
+    }
+    this.vimSession.prepareExternalMutationUndoBoundary();
+    const result = setCodeBlockLanguage(
+      this.currentEditor.view,
+      selection,
+      language,
+    );
+    if (result.changed) {
+      this.vimSession.completeExternalSelectionMutation(
+        result.position,
+        selection.beforeCursor,
+        "code.language:changed",
+      );
+    } else if (result.reason === "no-op") {
+      this.vimSession.applyNavigationPosition(
+        selection.beforeCursor,
+        "code.language:no-op",
+      );
+      this.vimSession.requestInputMethodDeactivation();
+    } else {
+      this.vimSession.cancelExternalMutationUndoBoundary();
+    }
+    return result;
+  }
+
+  private async copyCodeBlock(blockId: string): Promise<CodeCopyResult> {
+    if (this.currentEditor.isDestroyed) return "missing";
+    const text = codeBlockText(this.currentEditor.view, {
+      blockId,
+      beforeCursor: this.currentEditor.state.selection.head,
+      language: null,
+    });
+    if (text === null) return "missing";
+    const result = await this.clipboard.write(
+      { kind: "text", text },
+      this.currentEditor.schema,
+      this.options.resolveInternalLinkTitle,
+    );
+    const copied = result === "unavailable" ? "unavailable" : "copied";
+    this.options.onMessage?.(
+      copied === "copied"
+        ? "code.copy · Clipboardへコピーしました"
+        : "code.copy · Clipboardを利用できません",
+    );
+    return copied;
   }
 
   private applyTableAction(
@@ -1358,6 +1444,7 @@ export class TiptapEditorAdapter {
           focusedSectionId: focusedSectionId,
           directBodyOnly: this.options.directBodyOnly,
           attachmentRepository: this.options.attachmentRepository,
+          onCopyCodeBlock: (blockId) => this.copyCodeBlock(blockId),
           collapsedSectionIds:
             this.options.getWindowState?.().collapsedSectionIds ?? [],
         }),

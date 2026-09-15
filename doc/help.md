@@ -298,6 +298,24 @@ Undo履歴へは保存しません。折り畳んだ本文も`/`検索の対象�
 block移動ではSection titleを数えません。Section本文直下の段落、リスト、テーブル、Code Block、引用、Details
 などをそれぞれ1 blockとし、その内部にある項目、行、セル間では止まりません。
 
+### Code Block
+
+Code Block上部には言語名、折り畳みbutton、copy buttonを表示します。copy buttonはコード本文だけをそのまま
+Clipboardへコピーします。Normalで`,a`を押すと共通検索paneにCopyとLanguageが表示されます。
+Languageを選ぶと対応言語を検索でき、Plain textで言語設定を解除できます。言語未設定では自動判定しません。
+
+11行以上のCode Blockは次のキーで折り畳めます。折り畳むと先頭5行を残し、それ以降を隠します。
+
+| Key         | 動作                                   |
+| ----------- | -------------------------------------- |
+| `zo` / `zO` | 展開します。                           |
+| `zc` / `zC` | 折り畳みます。                         |
+| `za` / `zA` | 展開状態と折り畳み状態を切り替えます。 |
+
+折り畳み状態はWindowごとの表示状態で、本文、Undo履歴、別Windowには保存されません。検索などで隠れた行へ
+移動すると自動的に展開します。64 KiBを超えるコードと未対応の言語はhighlightしませんが、編集、折り畳み、
+copyは利用できます。これらの機能はSource Blockには適用しません。
+
 ### 構造blockから本文へ戻る
 
 リスト外のTable、Code Block、Source Block、Blockquote内で`Ctrl-Enter`を押すと、その最外構造の直後へ

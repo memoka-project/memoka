@@ -93,6 +93,14 @@ import {
   type TableActionSelection,
 } from "./table-editing";
 import type { TableActionRepeat } from "../core/table-actions";
+import {
+  revealCodeFoldAtPosition,
+  runCodeBlockFoldCommand,
+} from "../editor/code-block";
+import {
+  captureCodeBlockActionSelection,
+  type CodeBlockActionSelection,
+} from "./code-block-actions";
 import { VimLogicalLineGutter } from "./logical-line-gutter";
 import { VimVisualLineOverlay } from "./visual-line-overlay";
 import {
@@ -292,6 +300,7 @@ export interface ProductVimSessionOptions {
     count: number,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
   onInlineFormat?: () => boolean;
+  onCodeBlockActions?: (selection: CodeBlockActionSelection) => boolean;
   onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
   onOpenAttachment?: (attachmentId: string) => void | Promise<void>;
@@ -2089,6 +2098,13 @@ export class ProductVimSession {
                 : command === "section.fold-toggle"
                   ? "toggle"
                   : "toggle-recursive";
+      const codeResult = runCodeBlockFoldCommand(view, action);
+      if (codeResult) {
+        this.action = `${codeResult.detail}:${codeResult.changed ? "changed" : "boundary"}`;
+        this.emit();
+        this.scheduleCaretRefresh(view);
+        return true;
+      }
       const detailsResult = runDetailsFoldCommand(view, action);
       if (detailsResult) {
         this.action = `${detailsResult.detail}:${detailsResult.changed ? "changed" : "boundary"}`;
@@ -2240,15 +2256,19 @@ export class ProductVimSession {
 
     if (command === "context.action_picker") {
       event.preventDefault();
-      const selection = captureTableActionSelection(
-        view,
-        this.mode,
-        this.visualLine,
-      );
-      const opened = selection
-        ? (this.options.onTableActions?.(selection) ?? false)
-        : false;
-      this.action = opened ? "table:actions:open" : "table:actions:unavailable";
+      const codeSelection = captureCodeBlockActionSelection(view);
+      const tableSelection = codeSelection
+        ? null
+        : captureTableActionSelection(view, this.mode, this.visualLine);
+      const opened = codeSelection
+        ? (this.options.onCodeBlockActions?.(codeSelection) ?? false)
+        : tableSelection
+          ? (this.options.onTableActions?.(tableSelection) ?? false)
+          : false;
+      const context = codeSelection ? "code" : "table";
+      this.action = opened
+        ? `${context}:actions:open`
+        : `${context}:actions:unavailable`;
       if (!opened) {
         const shortcut = leaderShortcutForCommand("context.action_picker");
         this.options.onMessage?.(
@@ -3029,6 +3049,7 @@ export class ProductVimSession {
     applyNativeCaretMode(view.dom, "normal");
     // Hidden body lines are absent from Normal cursor candidates. Reveal an
     // explicit destination before clamping, rather than snapping to summary.
+    revealCodeFoldAtPosition(view, position);
     revealDetailsFoldsAtPosition(view, position);
     applyModeSelection(view, "normal", position, focus);
     this.updateNormalModeImeGuard();

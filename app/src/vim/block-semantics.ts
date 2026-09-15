@@ -13,6 +13,10 @@ import {
   sectionFoldHiddenEntries,
   sectionFoldStateSignature,
 } from "../editor/section-folding";
+import {
+  codeFoldHiddenEntries,
+  codeFoldStateSignature,
+} from "../editor/code-block";
 
 export type VimLogicalLineKind = "block-atom" | "code-line" | "text-block";
 
@@ -501,13 +505,15 @@ export class VimBlockSemanticsRegistry {
     const allLines = this.#allLogicalLines(view);
     const signature =
       sectionFoldStateSignature(view.state) +
-      detailsFoldStateSignature(view.state);
+      detailsFoldStateSignature(view.state) +
+      codeFoldStateSignature(view.state);
     if (!signature) return allLines;
     const cached = this.#visibleLogicalLinesByDocument.get(view.state.doc);
     if (cached?.signature === signature) return cached.lines;
     const hidden = [
       ...sectionFoldHiddenEntries(view.state),
       ...detailsFoldHiddenEntries(view.state),
+      ...codeFoldHiddenEntries(view.state),
     ].sort(
       (left, right) =>
         left.hiddenFrom - right.hiddenFrom || right.hiddenTo - left.hiddenTo,
@@ -523,8 +529,8 @@ export class VimBlockSemanticsRegistry {
       const entry = hidden[hiddenIndex];
       return !(
         entry &&
-        line.blockPosition >= entry.hiddenFrom &&
-        line.blockPosition < entry.hiddenTo
+        line.from >= entry.hiddenFrom &&
+        line.from < entry.hiddenTo
       );
     });
     this.#visibleLogicalLinesByDocument.set(view.state.doc, {
@@ -794,7 +800,8 @@ export class VimBlockSemanticsRegistry {
       : this.#structuralUnitsByDocument;
     const signature =
       sectionFoldStateSignature(view.state) +
-      detailsFoldStateSignature(view.state);
+      detailsFoldStateSignature(view.state) +
+      codeFoldStateSignature(view.state);
     const cached = cache.get(view.state.doc);
     if (cached?.signature === signature) return cached.units;
     const units: VimStructuralUnit[] = [];

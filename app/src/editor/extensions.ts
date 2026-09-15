@@ -86,6 +86,11 @@ import {
 import { WebKitGtkCompositionGuard } from "./section-title-composition";
 import { JapaneseLineBreaking } from "./japanese-line-breaking";
 import { AdjacentListNormalization } from "./adjacent-list-normalization";
+import {
+  CodeBlockFolding,
+  MemokaCodeBlock,
+  type CodeCopyResult,
+} from "./code-block";
 import { RichListItem } from "./list-editing";
 import { sectionDepthLimit } from "./section-depth-limit";
 import {
@@ -2427,6 +2432,9 @@ export function productEditorExtensions(
     attachmentRepository?: EditorAttachmentRepository;
     /** Window-local Section fold state; never persisted into the NoteDoc. */
     collapsedSectionIds?: readonly string[];
+    onCopyCodeBlock?: (
+      blockId: string,
+    ) => CodeCopyResult | Promise<CodeCopyResult>;
   } = {},
 ) {
   if (note.replicated && options.directBodyOnly)
@@ -2449,6 +2457,7 @@ export function productEditorExtensions(
   return [
     StarterKit.configure({
       code: false,
+      codeBlock: false,
       document: false,
       heading: false,
       link: false,
@@ -2456,6 +2465,8 @@ export function productEditorExtensions(
       trailingNode: false,
       listItem: false,
     }),
+    MemokaCodeBlock.configure({ onCopyCode: options.onCopyCodeBlock }),
+    CodeBlockFolding,
     RichListItem,
     MarkdownAlertAttributes,
     Details,
