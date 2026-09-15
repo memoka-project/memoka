@@ -45,6 +45,8 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 | `W/B/E`             | 空白区切りWORDの次/前/末尾                      |
 | `0/$`               | 論理行の先頭/末尾                               |
 | `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾      |
+| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                 |
+| `{` / `}`           | 前/次の表示中blockの先頭                        |
 | `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置 |
 | `Ctrl-f/Ctrl-b`     | 1画面下/上                                      |
 | `Ctrl-d/Ctrl-u`     | 半画面下/上                                     |
@@ -54,6 +56,9 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。
+Section移動は現在所属するSectionを基準にし、折り畳まれた子Sectionを飛ばす。block移動はSection本文直下の
+Paragraph、List、Table、Code/Source、Blockquote、Detailsなどをそれぞれ1 blockとして数え、Section titleと
+各block内部の論理行を移動先から除外する。どちらもCountを受け付ける。
 
 `zz/zt/zb`はNormal commandとし、Countなしではcaretの文書位置とcolumnを変更しない。
 CountありではFocused Section内の指定論理行へ移り、可能な限り現在のcolumnを保って配置する。

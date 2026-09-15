@@ -1506,6 +1506,68 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     root.remove();
   });
 
+  it("moves braces by outer blocks instead of List items or Table rows", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "before" }] },
+        {
+          type: "bulletList",
+          content: ["list one", "list two"].map((text) => ({
+            type: "listItem",
+            content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+          })),
+        },
+        {
+          type: "table",
+          content: ["table one", "table two"].map((text) => ({
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                content: [
+                  { type: "paragraph", content: [{ type: "text", text }] },
+                ],
+              },
+            ],
+          })),
+        },
+        { type: "paragraph", content: [{ type: "text", text: "after" }] },
+      ],
+    });
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    editor.commands.setTextSelection(textPosition(editor, "before"));
+    press(editor, "}");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "list one"));
+    press(editor, "}");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "table one"));
+    press(editor, "}");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "after"));
+
+    editor.commands.setTextSelection(textPosition(editor, "list two"));
+    press(editor, "}");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "table one"));
+    editor.commands.setTextSelection(textPosition(editor, "table two"));
+    press(editor, "{");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "list one"));
+
+    editor.commands.setTextSelection(textPosition(editor, "before"));
+    press(editor, "2");
+    press(editor, "}");
+    expect(editor.state.selection.head).toBe(textPosition(editor, "table one"));
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it("uses Hard Break lines for j/k and wrapped display rows only for gj/gk", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

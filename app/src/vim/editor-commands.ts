@@ -49,8 +49,13 @@ import {
   VIM_VIEWPORT_ALIGNMENT_META,
   type VimViewportAlignment,
 } from "./viewport-scroll";
-import { BODY_CHUNK_NODE, type SectionSnapshot } from "../core/section-model";
 import {
+  BODY_CHUNK_NODE,
+  SECTION_NODE,
+  type SectionSnapshot,
+} from "../core/section-model";
+import {
+  deriveEditorSectionFoldEntries,
   sectionFoldCollapsedSectionIds,
   sectionFoldHiddenEntries,
 } from "../editor/section-folding";
@@ -3433,6 +3438,150 @@ function moveLogical(
   return true;
 }
 
+function moveToVisibleSection(
+  view: VimEditorView,
+  direction: -1 | 1,
+  count = 1,
+): boolean {
+  const entries = deriveEditorSectionFoldEntries(view.state.doc);
+  if (entries.length === 0) return false;
+  const hidden = sectionFoldHiddenEntries(view.state);
+  let hiddenIndex = 0;
+  const visible = entries.filter(({ headerFrom }) => {
+    while (
+      hiddenIndex < hidden.length &&
+      hidden[hiddenIndex]!.hiddenTo <= headerFrom
+    ) {
+      hiddenIndex += 1;
+    }
+    const fold = hidden[hiddenIndex];
+    return !(
+      fold &&
+      headerFrom >= fold.hiddenFrom &&
+      headerFrom < fold.hiddenTo
+    );
+  });
+  const cursor = selectionCursor(view);
+  const currentIndex = visible.reduce(
+    (deepest, entry, index) =>
+      cursor >= entry.sectionFrom &&
+      cursor <= entry.sectionTo &&
+      (deepest < 0 || entry.depth >= visible[deepest]!.depth)
+        ? index
+        : deepest,
+    -1,
+  );
+  if (currentIndex < 0) return false;
+  const targetIndex = Math.max(
+    0,
+    Math.min(
+      currentIndex + direction * normalizedCount(count),
+      visible.length - 1,
+    ),
+  );
+  if (targetIndex === currentIndex) return false;
+  const target = visible[targetIndex];
+  if (!target) return false;
+  const lines = blockSemantics.logicalLines(view);
+  const header = lines.find(
+    ({ blockPosition, blockNodeName }) =>
+      blockPosition === target.headerFrom && blockNodeName === "sectionHeader",
+  );
+  if (!header) return false;
+  dispatchSelection(
+    view,
+    header.cursorPositions[0] ?? header.from,
+    "normal",
+    lines,
+  );
+  return true;
+}
+
+function moveToVisibleBlock(
+  view: VimEditorView,
+  direction: -1 | 1,
+  count = 1,
+): boolean {
+  const lines = blockSemantics.logicalLines(view);
+  if (lines.length === 0) return false;
+  const cursor = selectionCursor(view);
+  const blocks: Array<{ from: number; to: number; cursor: number }> = [];
+  let lineIndex = 0;
+  view.state.doc.descendants((node, position, parent) => {
+    if (parent?.type.name !== BODY_CHUNK_NODE) return true;
+    const to = position + node.nodeSize;
+    while (
+      lineIndex < lines.length &&
+      lines[lineIndex]!.blockPosition < position
+    ) {
+      lineIndex += 1;
+    }
+    const firstLine = lines[lineIndex];
+    if (firstLine && firstLine.blockPosition < to) {
+      blocks.push({
+        from: position,
+        to,
+        cursor: firstLine.cursorPositions[0] ?? firstLine.from,
+      });
+    }
+    return false;
+  });
+  // Direct-body editors used by previews have a conventional ProseMirror doc
+  // without Section/BodyChunk wrappers. Its top-level children are blocks.
+  if (blocks.length === 0 && view.state.doc.type.name !== SECTION_NODE) {
+    lineIndex = 0;
+    view.state.doc.forEach((node, position) => {
+      const to = position + node.nodeSize;
+      while (
+        lineIndex < lines.length &&
+        lines[lineIndex]!.blockPosition < position
+      ) {
+        lineIndex += 1;
+      }
+      const firstLine = lines[lineIndex];
+      if (firstLine && firstLine.blockPosition < to) {
+        blocks.push({
+          from: position,
+          to,
+          cursor: firstLine.cursorPositions[0] ?? firstLine.from,
+        });
+      }
+    });
+  }
+  const currentIndex = blocks.findIndex(
+    ({ from, to }) => cursor >= from && cursor < to,
+  );
+  if (blocks.length === 0) return false;
+  const step = normalizedCount(count);
+  let targetIndex: number;
+  if (currentIndex >= 0) {
+    targetIndex = currentIndex + direction * step;
+  } else if (direction < 0) {
+    let previous = blocks.length - 1;
+    while (previous >= 0 && blocks[previous]!.from >= cursor) {
+      previous -= 1;
+    }
+    if (previous < 0) return false;
+    targetIndex = previous - (step - 1);
+  } else {
+    const next = blocks.findIndex(({ from }) => from > cursor);
+    if (next < 0) return false;
+    targetIndex = next + (step - 1);
+  }
+  targetIndex = Math.max(0, Math.min(targetIndex, blocks.length - 1));
+  if (
+    targetIndex < 0 ||
+    targetIndex >= blocks.length ||
+    targetIndex === currentIndex
+  ) {
+    return false;
+  }
+  const target = blocks[targetIndex];
+  if (!target) return false;
+  dispatchSelection(view, target.cursor, "normal", lines);
+  return true;
+}
+
 function moveCharacter(
   view: VimEditorView,
   direction: -1 | 1,
@@ -6764,6 +6913,22 @@ const editorVimCommandHandlers: Partial<
   "cursor.document-end": (view, mode, _register, count, countExplicit) => ({
     handled: moveToDocumentLine(view, mode, "end", count, countExplicit),
     detail: "cursor:document-end",
+  }),
+  "cursor.section-previous": (view, _mode, _register, count) => ({
+    handled: moveToVisibleSection(view, -1, count),
+    detail: "cursor:section-previous",
+  }),
+  "cursor.section-next": (view, _mode, _register, count) => ({
+    handled: moveToVisibleSection(view, 1, count),
+    detail: "cursor:section-next",
+  }),
+  "cursor.block-previous": (view, _mode, _register, count) => ({
+    handled: moveToVisibleBlock(view, -1, count),
+    detail: "cursor:block-previous",
+  }),
+  "cursor.block-next": (view, _mode, _register, count) => ({
+    handled: moveToVisibleBlock(view, 1, count),
+    detail: "cursor:block-next",
   }),
   "motion.line-start": (view, mode, _register, count) => ({
     handled: moveMotion(view, "motion.line-start", mode, count),

@@ -282,6 +282,66 @@ describe("Window-local Section folding", () => {
     }
   });
 
+  it("moves between visible Section titles and block starts with counts", async () => {
+    const { note, childId, grandchildId, siblingId } = createNestedNote();
+    const editor = new Editor({
+      extensions: productEditorExtensions(note, {
+        collapsedSectionIds: [childId],
+      }),
+    });
+
+    const select = (position: number): void => {
+      editor.view.dispatch(
+        editor.state.tr.setSelection(
+          TextSelection.create(editor.state.doc, position),
+        ),
+      );
+    };
+    const move = (
+      command:
+        | "cursor.section-previous"
+        | "cursor.section-next"
+        | "cursor.block-previous"
+        | "cursor.block-next",
+      count = 1,
+    ): boolean =>
+      runEditorVimCommand(editor.view, command, "normal", null, count).handled;
+
+    try {
+      await Promise.resolve();
+      const rootBody = textPosition(editor, "root body");
+      const siblingBody = textPosition(editor, "sibling body");
+      const childHeader = sectionHeaderTextPosition(editor, childId);
+      const siblingHeader = sectionHeaderTextPosition(editor, siblingId);
+
+      select(rootBody);
+      expect(move("cursor.section-next")).toBe(true);
+      expect(editor.state.selection.head).toBe(childHeader);
+      expect(move("cursor.section-next")).toBe(true);
+      expect(editor.state.selection.head).toBe(siblingHeader);
+      expect(move("cursor.section-previous")).toBe(true);
+      expect(editor.state.selection.head).toBe(childHeader);
+
+      select(rootBody);
+      expect(move("cursor.section-next", 2)).toBe(true);
+      expect(editor.state.selection.head).toBe(siblingHeader);
+      expect(editor.state.selection.head).not.toBe(
+        sectionHeaderTextPosition(editor, grandchildId),
+      );
+
+      select(rootBody);
+      expect(move("cursor.block-next")).toBe(true);
+      expect(editor.state.selection.head).toBe(siblingBody);
+      expect(move("cursor.block-previous")).toBe(true);
+      expect(editor.state.selection.head).toBe(rootBody);
+      expect(move("cursor.block-previous")).toBe(false);
+      expect(editor.state.selection.head).toBe(rootBody);
+    } finally {
+      editor.destroy();
+      note.doc.destroy();
+    }
+  });
+
   it("marks closed Headers and hides only their body and child container", async () => {
     const { note, childId } = createNestedNote();
     const editor = new Editor({
