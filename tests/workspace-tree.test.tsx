@@ -88,7 +88,7 @@ describe("Workspace Tree", () => {
     view.unmount();
   });
 
-  it("opens the clicked Note rather than the previous selection and focuses its Editor", async () => {
+  it("selects a clicked Note and opens it only on double-click", async () => {
     const view = render(<App />);
     const tree = await screen.findByRole("tree", { name: "ノートツリー" });
     const rootId = selectedId(tree)!;
@@ -122,20 +122,14 @@ describe("Workspace Tree", () => {
     fireEvent.click(rootTitle);
     await waitFor(() => {
       expect(selectedId(tree)).toBe(rootId);
-      expect(document.activeElement?.getAttribute("data-note-id")).toBe(
-        rootNoteId,
-      );
-      expect(document.activeElement?.classList.contains("memoka-editor")).toBe(
-        true,
-      );
+      expect(document.activeElement).toBe(tree);
       expect(
-        tree.closest("aside")?.classList.contains("focus-surface--focused"),
-      ).toBe(false);
+        view.container.querySelector<HTMLElement>(".memoka-editor")?.dataset
+          .noteId,
+      ).toBe(childNoteId);
     });
 
-    // Opening an already selected Note must also return real DOM focus.
-    fireEvent.mouseDown(rootRow);
-    fireEvent.click(rootRow);
+    fireEvent.doubleClick(rootTitle);
     await waitFor(() => {
       expect(document.activeElement?.getAttribute("data-note-id")).toBe(
         rootNoteId,
@@ -145,12 +139,20 @@ describe("Workspace Tree", () => {
       );
     });
 
-    // Rows (including their blank space), not only their title, are clickable.
+    // Rows (including their blank space), not only their title, are selectable.
     const childRow = document.getElementById(childId)!;
     fireEvent.mouseDown(childRow);
     fireEvent.click(childRow);
     await waitFor(() => {
       expect(selectedId(tree)).toBe(childId);
+      expect(document.activeElement).toBe(tree);
+      expect(
+        view.container.querySelector<HTMLElement>(".memoka-editor")?.dataset
+          .noteId,
+      ).toBe(rootNoteId);
+    });
+    fireEvent.doubleClick(childRow);
+    await waitFor(() => {
       expect(document.activeElement?.getAttribute("data-note-id")).toBe(
         childNoteId,
       );
@@ -224,7 +226,7 @@ describe("Workspace Tree", () => {
     }
   });
 
-  it("selects and toggles a clicked Group without opening a Note or stealing Tree focus", async () => {
+  it("selects a clicked Group and toggles it only on double-click or Enter", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
       const group = await runtime.createNamespaceGroup(null, "Group");
@@ -239,19 +241,22 @@ describe("Workspace Tree", () => {
       fireEvent.mouseDown(row);
       fireEvent.click(row);
       expect(selectedId(tree)).toBe(`tree-note-${group.entryId}`);
-      expect(row.getAttribute("aria-expanded")).toBe("false");
-      expect(screen.queryByText("Child group")).toBeNull();
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByText("Child group")).toBeTruthy();
       expect(document.activeElement).toBe(tree);
       await waitFor(() =>
         expect(
           activeTab(runtime.snapshot().applicationWindow).leftSidebar.tree,
         ).toMatchObject({
           selectedEntryId: group.entryId,
-          collapsedEntryIds: [group.entryId],
+          collapsedEntryIds: [],
         }),
       );
-      // Clicking clears any unfinished keyboard count, so Enter still opens.
+      // Clicking clears any unfinished keyboard count, so Enter toggles once.
       fireEvent.keyDown(tree, { key: "Enter" });
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.queryByText("Child group")).toBeNull();
+      fireEvent.doubleClick(row);
       expect(row.getAttribute("aria-expanded")).toBe("true");
       expect(screen.getByText("Child group")).toBeTruthy();
       expect(props.onOpenNote).not.toHaveBeenCalled();
@@ -262,7 +267,7 @@ describe("Workspace Tree", () => {
     }
   });
 
-  it("keeps Tree focus and reports an error when a clicked Note cannot open", async () => {
+  it("keeps Tree focus and reports an error when a double-clicked Note cannot open", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
       const props = treeProps(runtime);
@@ -274,6 +279,8 @@ describe("Workspace Tree", () => {
       const row = tree.querySelector('[role="treeitem"]')!;
       fireEvent.mouseDown(row);
       fireEvent.click(row);
+      expect(props.onOpenNote).not.toHaveBeenCalled();
+      fireEvent.doubleClick(row);
       expect((await screen.findByRole("alert")).textContent).toBe(
         "Cannot open Note",
       );

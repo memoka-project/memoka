@@ -176,6 +176,11 @@ export function WorkspaceTree({
     persistTree(entries[bounded]?.note.noteId ?? null);
   };
 
+  const selectEntry = (entryId: string): void => {
+    inputState.current = createTreeInputState();
+    if (entryId !== selectedEntryId) persistTree(entryId);
+  };
+
   const openEntry = async (entryId: string | null): Promise<void> => {
     if (!entryId || busy) return;
     const entry = snapshot.namespaceEntries.find(
@@ -417,7 +422,8 @@ export function WorkspaceTree({
                 aria-level={entry.depth + 1}
                 aria-selected={selected}
                 aria-expanded={entry.hasChildren ? entry.expanded : undefined}
-                onClick={() => void openEntry(entry.note.noteId)}
+                onClick={() => selectEntry(entry.note.noteId)}
+                onDoubleClick={() => void openEntry(entry.note.noteId)}
                 style={
                   {
                     "--tree-depth": entry.depth,

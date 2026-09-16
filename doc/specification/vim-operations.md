@@ -316,7 +316,8 @@ EditorのVim modeではないが、共通cursor motionとCountを使用する。
 | `gg/G`                     | 表示Treeの先頭/末尾                                                                 |
 | `h` / `←`                  | 展開Entryを閉じる。閉じていれば親へ移動                                             |
 | `l` / `→`                  | 閉じた親を展開。展開済みなら最初の子へ移動                                          |
-| `Enter` / クリック         | Noteを現在Windowで開きEditorへfocusする。グループはTreeにfocusを保って展開/折り畳み |
+| `Enter` / ダブルクリック   | Noteを現在Windowで開きEditorへfocusする。グループはTreeにfocusを保って展開/折り畳み |
+| クリック                   | 対象Entryを選択してTreeにfocusを保つ                                                |
 | `a`                        | 選択Entryの次に空titleの兄弟Noteを作る                                              |
 | `c`                        | 選択Entryの子として空titleのNoteを作る                                              |
 | `A`                        | top-levelへ空titleのNoteを作る                                                      |
@@ -326,7 +327,7 @@ EditorのVim modeではないが、共通cursor motionとCountを使用する。
 | `T`                        | Trash検索を開く                                                                     |
 
 矢印keyはTree固有の補助操作として固定し、設定可能な共通cursor bindingを併用する。Editor内の矢印keyの挙動は変更しない。
-clickは対象Entryを選択してからEnter相当の操作を実行し、未完のTree key sequenceやCountは破棄する。
+clickは対象Entryを選択し、未完のTree key sequenceやCountを破棄する。ダブルクリックは選択後にEnter相当の操作を実行する。
 mouse hoverだけでは選択を変更しない。mouseによる並べ替え、作成、inline renameは提供しない。
 Note titleはBuffer内のRoot Headerで編集する。
 `:group`で名前入力画面から選択Entryの子にグループを作り、`:rename-group`で選択グループを改名する。
