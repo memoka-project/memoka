@@ -93,8 +93,14 @@ describe("Japanese text semantics", () => {
     expect(starts(divided)).toEqual([0, 4, 10]);
   });
 
-  it("retains Unicode-class words for non-Japanese and oversized text", () => {
-    expect(starts(segments("alpha-beta_gamma"))).toEqual([0, 6]);
+  it("uses Vim keyword and punctuation runs for non-Japanese text", () => {
+    expect(starts(segments("alpha-beta_gamma"))).toEqual([0, 5, 6]);
+    expect(starts(segments("foo.bar-baz_qux() => value"))).toEqual([
+      0, 3, 4, 7, 8, 15, 18, 21,
+    ]);
+  });
+
+  it("retains Unicode-class words for oversized Japanese text", () => {
     const oversized = `${"日".repeat(MAX_BUDOUX_TEXT_LENGTH)}ひらがな`;
     expect(japanesePhraseBoundaries(oversized)).toBeNull();
     expect(starts(segments(oversized))).toEqual([0, MAX_BUDOUX_TEXT_LENGTH]);

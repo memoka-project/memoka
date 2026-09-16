@@ -166,6 +166,8 @@ describe("Memoka Vim input grammar", () => {
     ["d2w", "delete", "motion.word-forward", 2],
     ["2d3w", "delete", "motion.word-forward", 6],
     ["2dW", "delete", "motion.big-word-forward", 2],
+    ["2dge", "delete", "motion.word-backward-end", 2],
+    ["d2gE", "delete", "motion.big-word-backward-end", 2],
     ["d2iw", "delete", "text-object.inner-word", 2],
     ["2d3aw", "delete", "text-object.around-word", 6],
     ["d2ap", "delete", "text-object.around-paragraph", 2],
@@ -202,6 +204,9 @@ describe("Memoka Vim input grammar", () => {
     expect(resolveKey("normal", "w", noteContext)).toBe("motion.word-forward");
     expect(resolveKey("normal", "b", noteContext)).toBe("motion.word-backward");
     expect(resolveKey("normal", "e", noteContext)).toBe("motion.word-end");
+    expect(resolveKey("normal", "ge", noteContext)).toBe(
+      "motion.word-backward-end",
+    );
     expect(resolveKey("normal", "W", noteContext)).toBe(
       "motion.big-word-forward",
     );
@@ -209,6 +214,15 @@ describe("Memoka Vim input grammar", () => {
       "motion.big-word-backward",
     );
     expect(resolveKey("normal", "E", noteContext)).toBe("motion.big-word-end");
+    expect(resolveKey("normal", "gE", noteContext)).toBe(
+      "motion.big-word-backward-end",
+    );
+    expect(resolveKey("visual-char", "ge", noteContext)).toBe(
+      "motion.word-backward-end",
+    );
+    expect(resolveKey("visual-char", "gE", noteContext)).toBe(
+      "motion.big-word-backward-end",
+    );
   });
 
   it("maps Section fold commands without claiming Normal Enter", () => {
@@ -788,6 +802,40 @@ describe("Memoka Vim input grammar", () => {
       );
       expect(
         advanceVimInput(pending.state, "normal", motionKey, noteContext),
+      ).toMatchObject({
+        state: { pending: null },
+        operator,
+        resolvedCommand: command,
+        action: { kind: "execute", command },
+      });
+    },
+  );
+
+  it.each([
+    ["d", "delete", "e", "motion.word-backward-end"],
+    ["y", "yank", "E", "motion.big-word-backward-end"],
+  ] as const)(
+    "resolves %s (%s) + g%s as %s",
+    (operatorKey, operator, motionKey, command) => {
+      const operatorPending = advanceVimInput(
+        createVimInputState(),
+        "normal",
+        operatorKey,
+        noteContext,
+      );
+      const prefixPending = advanceVimInput(
+        operatorPending.state,
+        "normal",
+        "g",
+        noteContext,
+      );
+      expect(prefixPending).toMatchObject({
+        state: { pending: { motionPrefix: "g" } },
+        resolvedCommand: null,
+        action: { kind: "pending", detail: "pending:g" },
+      });
+      expect(
+        advanceVimInput(prefixPending.state, "normal", motionKey, noteContext),
       ).toMatchObject({
         state: { pending: null },
         operator,

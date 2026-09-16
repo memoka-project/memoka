@@ -41,8 +41,8 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 | `h/l`               | 前/次の文字またはatomic node                    |
 | `j/k`               | 次/前の論理行。可能な限り目標columnを維持       |
 | `gj/gk`             | 次/前の画面上の表示行                           |
-| `w/b/e`             | 設定されたwordの次/前/末尾                      |
-| `W/B/E`             | 空白区切りWORDの次/前/末尾                      |
+| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾             |
+| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾             |
 | `0/$`               | 論理行の先頭/末尾                               |
 | `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾      |
 | `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                 |
@@ -52,7 +52,10 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 | `Ctrl-d/Ctrl-u`     | 半画面下/上                                     |
 | `[count]n/[count]N` | Note内検索の次/前の一致                         |
 
-`whichwrap`がtrueの場合、Normalの`h/l/w/b/e/W/B/E`は論理行端から前後の論理行へ続く。
+小文字のwordでは、Vim標準と同様にkeyword文字（Unicodeの文字・数字と`_`）の連続、および空白以外の
+非keyword記号の連続をそれぞれ1 wordとする。日本語は設定された分割方式を適用する。
+
+`whichwrap`がtrueの場合、Normalの`h/l/w/b/e/ge/W/B/E/gE`は論理行端から前後の論理行へ続く。
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。

@@ -1226,12 +1226,15 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     press(editor, "Escape");
 
     const alphaStart = textPosition(editor, "alpha");
+    const comma = alphaStart + "alpha".length;
     const betaStart = textPosition(editor, "beta");
     const betaEnd = betaStart + "beta".length - 1;
     const charlieStart = textPosition(editor, "charlie");
     const charlieEnd = charlieStart + "charlie".length - 1;
 
     editor.commands.setTextSelection(alphaStart);
+    press(editor, "w");
+    expect(editor.state.selection.head).toBe(comma);
     press(editor, "w");
     expect(editor.state.selection.head).toBe(betaStart);
 
@@ -1268,6 +1271,102 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     press(editor, "d");
     press(editor, "W");
     expect(editor.getText()).toBe("gamma");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("matches Vim symbol words and supports ge/gE in Code Blocks", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const text = "foo.bar-baz_qux() => value";
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { blockId: createUuidV7(), language: null },
+          content: [{ type: "text", text }],
+        },
+      ],
+    });
+    const start = textPosition(editor, text);
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    press(editor, "Escape");
+
+    for (const offset of [3, 4, 7, 8, 15, 18, 21]) {
+      press(editor, "w");
+      expect(editor.state.selection.head).toBe(start + offset);
+    }
+
+    editor.commands.setTextSelection(start);
+    for (const offset of [2, 3, 6, 7, 14, 16, 19, 25]) {
+      press(editor, "e");
+      expect(editor.state.selection.head).toBe(start + offset);
+    }
+
+    editor.commands.setTextSelection(start + text.length - 1);
+    for (const offset of [21, 18, 15, 8, 7, 4, 3, 0]) {
+      press(editor, "b");
+      expect(editor.state.selection.head).toBe(start + offset);
+    }
+
+    editor.commands.setTextSelection(start + text.length - 1);
+    for (const offset of [19, 16, 14, 7, 6, 3, 2, 0]) {
+      press(editor, "g");
+      press(editor, "e");
+      expect(editor.state.selection.head).toBe(start + offset);
+    }
+
+    editor.commands.setTextSelection(start + text.length - 1);
+    for (const offset of [19, 16, 0]) {
+      press(editor, "g");
+      press(editor, "E");
+      expect(editor.state.selection.head).toBe(start + offset);
+    }
+
+    const firstLine = "alpha beta";
+    const secondLine = "gamma delta";
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { blockId: createUuidV7(), language: null },
+          content: [{ type: "text", text: `${firstLine}\n${secondLine}` }],
+        },
+      ],
+    });
+    const betaEnd = textPosition(editor, "beta") + "beta".length - 1;
+    editor.commands.setTextSelection(textPosition(editor, "gamma") + 2);
+    press(editor, "g");
+    press(editor, "e");
+    expect(editor.state.selection.head).toBe(betaEnd);
+
+    editor.commands.setTextSelection(textPosition(editor, "gamma") + 2);
+    press(editor, "g");
+    press(editor, "E");
+    expect(editor.state.selection.head).toBe(betaEnd);
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "codeBlock",
+          attrs: { blockId: createUuidV7(), language: null },
+          content: [{ type: "text", text: "foo bar baz" }],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "baz"));
+    press(editor, "d");
+    press(editor, "g");
+    press(editor, "e");
+    expect(editor.getText()).toBe("foo baaz");
 
     adapter.destroy();
     runtime.destroy();

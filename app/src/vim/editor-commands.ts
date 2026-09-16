@@ -3761,9 +3761,11 @@ type VimWordMotion =
   | "motion.word-forward"
   | "motion.word-backward"
   | "motion.word-end"
+  | "motion.word-backward-end"
   | "motion.big-word-forward"
   | "motion.big-word-backward"
-  | "motion.big-word-end";
+  | "motion.big-word-end"
+  | "motion.big-word-backward-end";
 
 function isWordMotion(
   command: VimCommand | "motion.table-cell-end",
@@ -3772,24 +3774,36 @@ function isWordMotion(
     command === "motion.word-forward" ||
     command === "motion.word-backward" ||
     command === "motion.word-end" ||
+    command === "motion.word-backward-end" ||
     command === "motion.big-word-forward" ||
     command === "motion.big-word-backward" ||
-    command === "motion.big-word-end"
+    command === "motion.big-word-end" ||
+    command === "motion.big-word-backward-end"
   );
 }
 
 function isBackwardWordMotion(command: VimWordMotion): boolean {
   return (
-    command === "motion.word-backward" || command === "motion.big-word-backward"
+    command === "motion.word-backward" ||
+    command === "motion.big-word-backward" ||
+    command === "motion.word-backward-end" ||
+    command === "motion.big-word-backward-end"
   );
 }
 
-function isEndWordMotion(command: VimWordMotion): boolean {
+function isForwardEndWordMotion(command: VimWordMotion): boolean {
   return command === "motion.word-end" || command === "motion.big-word-end";
 }
 
+function isBackwardEndWordMotion(command: VimWordMotion): boolean {
+  return (
+    command === "motion.word-backward-end" ||
+    command === "motion.big-word-backward-end"
+  );
+}
+
 function isForwardWordMotion(command: VimWordMotion): boolean {
-  return !isBackwardWordMotion(command) && !isEndWordMotion(command);
+  return !isBackwardWordMotion(command) && !isForwardEndWordMotion(command);
 }
 
 function wordMotionGranularity(command: VimWordMotion): "word" | "WORD" {
@@ -3832,6 +3846,19 @@ function motionDestination(
     return positions[Math.min(lastIndex, currentIndex + 1)] ?? cursor;
   }
 
+  if (isWordMotion(command) && isBackwardEndWordMotion(command)) {
+    const currentClass = classes[currentIndex] ?? null;
+    let index = currentIndex - 1;
+    if (currentClass !== null && classes[index] === currentClass) {
+      while (index >= 0 && classes[index] === currentClass) index -= 1;
+    }
+    while (index >= 0 && classes[index] === null) index -= 1;
+    if (index < 0) return cursor;
+    const targetClass = classes[index] ?? null;
+    while (index < lastIndex && classes[index + 1] === targetClass) index += 1;
+    return positions[index] ?? cursor;
+  }
+
   if (isWordMotion(command) && isBackwardWordMotion(command)) {
     let index = currentIndex - 1;
     while (index >= 0 && classes[index] === null) {
@@ -3861,7 +3888,7 @@ function motionDestination(
     return index < positions.length ? (positions[index] ?? cursor) : cursor;
   }
 
-  if (isWordMotion(command) && isEndWordMotion(command)) {
+  if (isWordMotion(command) && isForwardEndWordMotion(command)) {
     let index = currentIndex;
     const currentClass = classes[index] ?? null;
     if (currentClass !== null) {
@@ -3903,6 +3930,7 @@ function adjacentLineWordDestination(
     let index = positions.length - 1;
     while (index >= 0 && classes[index] === null) index -= 1;
     if (index < 0) return positions[0] ?? line.from;
+    if (isBackwardEndWordMotion(command)) return positions[index] ?? line.from;
     const targetClass = classes[index] ?? null;
     while (index > 0 && classes[index - 1] === targetClass) index -= 1;
     return positions[index] ?? line.from;
@@ -3911,7 +3939,7 @@ function adjacentLineWordDestination(
   let index = 0;
   while (index < positions.length && classes[index] === null) index += 1;
   if (index >= positions.length) return positions[0] ?? line.from;
-  if (isEndWordMotion(command)) {
+  if (isForwardEndWordMotion(command)) {
     const targetClass = classes[index] ?? null;
     while (index + 1 < positions.length && classes[index + 1] === targetClass) {
       index += 1;
@@ -3936,7 +3964,6 @@ function motionDestinationWithWrapping(
   if (
     destination === null ||
     destination !== cursorPosition ||
-    !whichwrap ||
     !isWordMotion(command)
   ) {
     return destination;
@@ -3946,6 +3973,15 @@ function motionDestinationWithWrapping(
     semanticLines,
     cursorPosition,
   );
+  const line = semanticLines[lineIndex];
+  if (isBackwardEndWordMotion(command)) {
+    if (!whichwrap) return line?.cursorPositions[0] ?? destination;
+    const previousLine = semanticLines[lineIndex - 1];
+    return previousLine
+      ? adjacentLineWordDestination(view, command, previousLine)
+      : (line?.cursorPositions[0] ?? destination);
+  }
+  if (!whichwrap) return destination;
   const direction = isBackwardWordMotion(command) ? -1 : 1;
   const adjacentLine = semanticLines[lineIndex + direction];
   return adjacentLine
@@ -4672,6 +4708,15 @@ export function runEditorVimOperator(
         if (lineEnd !== undefined && lineEnd > destination) {
           destination = lineEnd;
         }
+        const lineStart = line?.cursorPositions[0];
+        if (
+          isWordMotion(motion) &&
+          isBackwardEndWordMotion(motion) &&
+          lineStart !== undefined &&
+          lineStart < destination
+        ) {
+          destination = lineStart;
+        }
         break;
       }
       destination = next;
@@ -4700,6 +4745,13 @@ export function runEditorVimOperator(
     from = Math.min(cursor, activeDestination);
     to = Math.max(cursor, activeDestination);
     if (motion === "cursor.right" && activeDestination === cursor) {
+      to = exclusivePositionAfter(
+        view,
+        activeLine.cursorPositions,
+        cursor,
+        activeLine,
+      );
+    } else if (isWordMotion(motion) && isBackwardEndWordMotion(motion)) {
       to = exclusivePositionAfter(
         view,
         activeLine.cursorPositions,
@@ -7007,6 +7059,23 @@ const editorVimCommandHandlers: Partial<
     ),
     detail: "motion:word-end",
   }),
+  "motion.word-backward-end": (
+    view,
+    mode,
+    _register,
+    count,
+    _countExplicit,
+    keyConfig,
+  ) => ({
+    handled: moveMotion(
+      view,
+      "motion.word-backward-end",
+      mode,
+      count,
+      keyConfig.whichwrap ?? true,
+    ),
+    detail: "motion:word-backward-end",
+  }),
   "motion.big-word-forward": (
     view,
     mode,
@@ -7057,6 +7126,23 @@ const editorVimCommandHandlers: Partial<
       keyConfig.whichwrap ?? true,
     ),
     detail: "motion:big-word-end",
+  }),
+  "motion.big-word-backward-end": (
+    view,
+    mode,
+    _register,
+    count,
+    _countExplicit,
+    keyConfig,
+  ) => ({
+    handled: moveMotion(
+      view,
+      "motion.big-word-backward-end",
+      mode,
+      count,
+      keyConfig.whichwrap ?? true,
+    ),
+    detail: "motion:big-word-backward-end",
   }),
   "line.delete": (view, _mode, register, count) => {
     const result = deleteLine(view, register, count);

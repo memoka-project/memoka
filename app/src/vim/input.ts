@@ -102,9 +102,11 @@ export const VIM_COMMANDS = [
   "motion.word-forward",
   "motion.word-backward",
   "motion.word-end",
+  "motion.word-backward-end",
   "motion.big-word-forward",
   "motion.big-word-backward",
   "motion.big-word-end",
+  "motion.big-word-backward-end",
   "text-object.inner-word",
   "text-object.around-word",
   "text-object.inner-paragraph",
@@ -155,6 +157,7 @@ export type VimPendingInput =
       key: "d" | "y" | "c";
       count: string;
       textObjectPrefix?: "i" | "a";
+      motionPrefix?: "g";
     }
   | {
       kind: "prefix";
@@ -308,9 +311,11 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     w: "motion.word-forward",
     b: "motion.word-backward",
     e: "motion.word-end",
+    ge: "motion.word-backward-end",
     W: "motion.big-word-forward",
     B: "motion.big-word-backward",
     E: "motion.big-word-end",
+    gE: "motion.big-word-backward-end",
     d: "operator.delete",
     y: "operator.yank",
     c: "operator.change",
@@ -370,6 +375,8 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     w: "motion.word-forward",
     b: "motion.word-backward",
     e: "motion.word-end",
+    ge: "motion.word-backward-end",
+    gE: "motion.big-word-backward-end",
     iw: "text-object.inner-word",
     aw: "text-object.around-word",
     ip: "text-object.inner-paragraph",
@@ -460,6 +467,8 @@ const operatorMotions: Partial<Record<string, VimCommand>> = {
   W: "motion.big-word-forward",
   B: "motion.big-word-backward",
   E: "motion.big-word-end",
+  ge: "motion.word-backward-end",
+  gE: "motion.big-word-backward-end",
 };
 
 const modifierOnlyKeys = new Set([
@@ -523,7 +532,7 @@ export function createVimInputState(): VimInputState {
 
 function pendingKey(pending: VimPendingInput | null): string {
   if (pending?.kind === "operator") {
-    return `${pending.key}${pending.textObjectPrefix ?? ""}`;
+    return `${pending.key}${pending.textObjectPrefix ?? pending.motionPrefix ?? ""}`;
   }
   if (pending?.kind === "custom-prefix") return pending.sequence;
   return pending?.kind === "prefix" && pending.key === "leader"
@@ -538,7 +547,7 @@ function inputSequence(
 ): string {
   if (!state.pending) return `${state.count}${key}`;
   if (state.pending.kind === "operator") {
-    return `${state.pending.count}${state.pending.key}${state.count}${state.pending.textObjectPrefix ?? ""}${key}`;
+    return `${state.pending.count}${state.pending.key}${state.count}${state.pending.textObjectPrefix ?? state.pending.motionPrefix ?? ""}${key}`;
   }
   if (state.pending.kind === "custom-prefix") {
     return `${state.pending.count}${state.pending.sequence}${key}`;
@@ -607,6 +616,7 @@ export function advanceVimInput(
     state.pending?.kind === "operator" ? state.pending : null;
   const pendingOperator = operatorInput?.operator ?? null;
   const textObjectPrefix = operatorInput?.textObjectPrefix;
+  const motionPrefix = operatorInput?.motionPrefix;
 
   // Typing symbols such as `$` produces a standalone Shift keydown first.
   // Modifier-only events must not cancel a pending Operator, prefix, or Count.
@@ -769,6 +779,7 @@ export function advanceVimInput(
     context.targetKind === "note-body" &&
     pendingOperator &&
     !textObjectPrefix &&
+    !motionPrefix &&
     (key === "i" || key === "a")
   ) {
     return {
@@ -798,9 +809,34 @@ export function advanceVimInput(
     context.targetKind === "note-body" &&
     pendingOperator &&
     !textObjectPrefix &&
-    operatorMotions[key]
+    !motionPrefix &&
+    key === "g"
   ) {
-    const command = operatorMotions[key] as VimCommand;
+    return {
+      state: {
+        pending: {
+          ...(state.pending as Extract<VimPendingInput, { kind: "operator" }>),
+          motionPrefix: "g",
+        },
+        count: state.count,
+      },
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: parsedCount(state.count),
+      action: { kind: "pending", detail: "pending:g" },
+    };
+  }
+
+  const operatorMotion = operatorMotions[`${motionPrefix ?? ""}${key}`];
+  if (
+    !context.isComposing &&
+    context.targetKind === "note-body" &&
+    pendingOperator &&
+    !textObjectPrefix &&
+    operatorMotion
+  ) {
+    const command = operatorMotion;
     return {
       state: createVimInputState(),
       sequence,

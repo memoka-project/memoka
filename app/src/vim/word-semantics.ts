@@ -4,7 +4,8 @@ import {
   type JapaneseWordSegmentationMode,
 } from "../core/japanese-segmentation";
 
-export type VimWordClass = "han" | "hiragana" | "katakana" | "alphanumeric";
+export type VimWordClass =
+  "han" | "hiragana" | "katakana" | "alphanumeric" | "punctuation";
 
 export type VimWordSegment = string;
 
@@ -144,7 +145,7 @@ function rawVimWordClass(value: string): RawVimWordClass {
   }
   if (/[\p{L}\p{N}_]/u.test(value)) return "alphanumeric";
   if (/\p{M}/u.test(value)) return "inherited";
-  return null;
+  return WHITESPACE.test(value) ? null : "punctuation";
 }
 
 function isResolvedWordClass(value: RawVimWordClass): value is VimWordClass {
@@ -152,7 +153,8 @@ function isResolvedWordClass(value: RawVimWordClass): value is VimWordClass {
     value === "han" ||
     value === "hiragana" ||
     value === "katakana" ||
-    value === "alphanumeric"
+    value === "alphanumeric" ||
+    value === "punctuation"
   );
 }
 
