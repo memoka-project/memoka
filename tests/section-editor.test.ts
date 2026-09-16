@@ -8,6 +8,7 @@ import {
   blockToYXml,
   CORE_TRANSACTION_ORIGIN,
   readNoteTitle,
+  replaceNoteSectionTree,
 } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -243,6 +244,51 @@ class PausedWorkspaceCommitPort extends MemoryPersistencePort {
     request: PersistenceCommitRequest,
   ): Promise<PersistenceCommitResponse> {
     if (this.armed && request.scope === "workspace-structure") {
+      this.armed = false;
+      const held = this.held;
+      this.held = null;
+      held?.();
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    return super.commit(request);
+  }
+}
+
+class PausedReplicatedWorkspaceCommitPort extends PausedWorkspaceCommitPort {
+  private readonly replicaId = createUuidV7();
+
+  override async manifest() {
+    return {
+      ...(await super.manifest()),
+      databaseSchemaVersion: 7,
+      replicaId: this.replicaId,
+    };
+  }
+}
+
+class PausedLocalStateCommitPort extends MemoryPersistencePort {
+  private armed = false;
+  private held: (() => void) | null = null;
+  private release: (() => void) | null = null;
+
+  pauseNextLocalStateCommit(): Promise<void> {
+    this.armed = true;
+    return new Promise((resolve) => {
+      this.held = resolve;
+    });
+  }
+
+  releaseLocalStateCommit(): void {
+    this.release?.();
+    this.release = null;
+  }
+
+  override async commit(
+    request: PersistenceCommitRequest,
+  ): Promise<PersistenceCommitResponse> {
+    if (this.armed && request.scope === "local-ui") {
       this.armed = false;
       const held = this.held;
       this.held = null;
@@ -1355,6 +1401,225 @@ describe("Memoka Section editor semantics", () => {
     createdEditor.adapter.destroy();
     runtime.destroy();
     createdRoot.remove();
+  });
+
+  it("shows the created sibling before its Window focus is durably saved", async () => {
+    const persistence = new PausedLocalStateCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "i", { code: "KeyI" });
+    await settle(runtime);
+
+    const focusCommitHeld = persistence.pauseNextLocalStateCommit();
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await focusCommitHeld;
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    persistence.releaseLocalStateCommit();
+    await settle(runtime);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows the created sibling while its structural commit is in flight", async () => {
+    const persistence = new PausedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ),
+    );
+    editor.commands.insertContent("#");
+    await settle(runtime);
+
+    const structuralCommitHeld = persistence.pauseNextWorkspaceCommit();
+    const insertion = editor.state.selection.from;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (
+        handler(editor.view, insertion, insertion, " ", () =>
+          editor.state.tr.insertText(" ", insertion),
+        )
+      ) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    expect(handled).toBe(true);
+    await structuralCommitHeld;
+    await Promise.resolve();
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      sourceSectionId,
+    );
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+
+    persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows the created sibling while the preceding '#' commit is in flight", async () => {
+    const persistence = new PausedReplicatedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: sourceSectionId,
+            title: "Source",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: targetBlockId },
+                content: [],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-16T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ),
+    );
+
+    const hashCommitHeld = persistence.pauseNextWorkspaceCommit();
+    editor.commands.insertContent("#");
+    await hashCommitHeld;
+    const insertion = editor.state.selection.from;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (
+        handler(editor.view, insertion, insertion, " ", () =>
+          editor.state.tr.insertText(" ", insertion),
+        )
+      ) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    expect(handled).toBe(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+
+    persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
   });
 
   it("allows '# ' to create an H6 sibling without increasing depth", async () => {

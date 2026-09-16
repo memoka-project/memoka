@@ -255,6 +255,7 @@ export interface TiptapEditorAdapterOptions {
       mode: "insert" | "normal";
       joinPreviousUndo?: boolean;
     },
+    onApplied?: (createdSectionId: string) => void,
   ) => Promise<{
     changed: boolean;
     createdSectionId: string | null;
@@ -350,6 +351,7 @@ export class TiptapEditorAdapter {
   private previousDepthCorrections: readonly string[] | null = null;
   private boundSection: Y.XmlElement | null = null;
   private structuralRebindQueued = false;
+  private optimisticFocusedSectionId: string | null = null;
 
   constructor(
     private readonly handle: ManagedCrdtDocument<ProductDocument>,
@@ -1450,8 +1452,19 @@ export class TiptapEditorAdapter {
     if (document.kind !== "note") {
       throw new Error("TipTap adapter can only bind a NoteDoc");
     }
+    if (
+      this.optimisticFocusedSectionId &&
+      !findSectionWithDepth(
+        document.rootSection,
+        this.optimisticFocusedSectionId,
+      )
+    ) {
+      this.optimisticFocusedSectionId = null;
+    }
     const requestedSectionId =
-      this.options.getWindowState?.().focusedSectionId ?? document.noteId;
+      this.optimisticFocusedSectionId ??
+      this.options.getWindowState?.().focusedSectionId ??
+      document.noteId;
     const focusedSectionId =
       document.replicated?.visibleSectionAncestor(requestedSectionId) ??
       requestedSectionId;
@@ -1853,6 +1866,8 @@ export class TiptapEditorAdapter {
     },
     options: {
       allowReverse?: boolean;
+      onApplied?: (createdSectionId: string) => void;
+      wasAppliedOutsideView?: () => boolean;
       onOutsideView?: (
         sectionId: string,
         sourceSectionId: string,
@@ -1873,7 +1888,10 @@ export class TiptapEditorAdapter {
     const scrollLock = { scrollTop: this.scrollElement.scrollTop };
     this.beginSectionDepthScrollLock(scrollLock);
     try {
-      const result = await this.options.onSectionFromParagraph(request);
+      const result = await this.options.onSectionFromParagraph(
+        request,
+        options.onApplied,
+      );
       if (!result.changed || !result.createdSectionId) return result;
       await Promise.resolve();
       if (this.currentEditor.isDestroyed) return result;
@@ -1882,7 +1900,22 @@ export class TiptapEditorAdapter {
         result.createdSectionId,
         request.caretOffset,
       );
-      if (position !== null) {
+      if (options.wasAppliedOutsideView?.() && options.onOutsideView) {
+        const focus = options.onOutsideView(
+          result.createdSectionId,
+          request.sourceSectionId,
+        );
+        try {
+          await focus;
+          this.optimisticFocusedSectionId = null;
+        } catch (error) {
+          this.optimisticFocusedSectionId = null;
+          if (!this.syncFocusedSection(request.sourceSectionId)) {
+            this.recreateEditor();
+          }
+          throw error;
+        }
+      } else if (position !== null) {
         this.vimSession.applySectionDepthShiftPosition(
           position,
           request.mode,
@@ -1890,21 +1923,18 @@ export class TiptapEditorAdapter {
           request.mode === "normal" ? request.caretPosition : undefined,
         );
       } else if (options.onOutsideView) {
-        await options.onOutsideView(
+        const focus = options.onOutsideView(
           result.createdSectionId,
           request.sourceSectionId,
         );
-        await Promise.resolve();
-        if (!this.currentEditor.isDestroyed) {
-          if (
-            sectionHeaderPosition(
-              this.currentEditor.view,
-              result.createdSectionId,
-              request.caretOffset,
-            ) === null
-          ) {
-            this.recreateEditor();
-          }
+        let rebound = this.syncFocusedSection(result.createdSectionId);
+        if (!rebound && !this.currentEditor.isDestroyed) {
+          this.recreateEditor();
+          rebound =
+            this.currentEditor.view.dom.dataset.sectionId ===
+            result.createdSectionId;
+        }
+        if (rebound && !this.currentEditor.isDestroyed) {
           const reboundPosition = sectionHeaderPosition(
             this.currentEditor.view,
             result.createdSectionId,
@@ -1919,6 +1949,16 @@ export class TiptapEditorAdapter {
               request.mode === "normal" ? request.caretPosition : undefined,
             );
           }
+        }
+        try {
+          await focus;
+          this.optimisticFocusedSectionId = null;
+        } catch (error) {
+          this.optimisticFocusedSectionId = null;
+          if (!this.syncFocusedSection(request.sourceSectionId)) {
+            this.recreateEditor();
+          }
+          throw error;
         }
       }
       const undoItem = document.undoManager.undoStack.find(
@@ -1955,6 +1995,7 @@ export class TiptapEditorAdapter {
     if (document.kind !== "note") {
       return Promise.resolve({ changed: false, createdSectionId: null });
     }
+    let appliedOutsideView = false;
     return this.createSectionFromParagraph(
       {
         boundarySectionId: document.noteId,
@@ -1971,6 +2012,36 @@ export class TiptapEditorAdapter {
       },
       {
         allowReverse: false,
+        onApplied: (createdSectionId) => {
+          queueMicrotask(() => {
+            if (this.currentEditor.isDestroyed) return;
+            let position = sectionHeaderPosition(
+              this.currentEditor.view,
+              createdSectionId,
+              0,
+            );
+            if (position === null) {
+              appliedOutsideView = true;
+              this.optimisticFocusedSectionId = createdSectionId;
+              if (!this.syncFocusedSection(createdSectionId)) {
+                this.recreateEditor();
+              }
+              position = sectionHeaderPosition(
+                this.currentEditor.view,
+                createdSectionId,
+                0,
+              );
+            }
+            if (position !== null) {
+              this.vimSession.applySectionDepthShiftPosition(
+                position,
+                "insert",
+                "section:hash-sibling:changed",
+              );
+            }
+          });
+        },
+        wasAppliedOutsideView: () => appliedOutsideView,
         onOutsideView: this.options.onSectionCreatedOutsideView,
         detail: "section:hash-sibling:changed",
       },

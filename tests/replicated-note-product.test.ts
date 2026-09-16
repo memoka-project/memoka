@@ -4,6 +4,7 @@ import * as Y from "yjs";
 import {
   addNoteMetadata,
   applyNoteSectionDepthShift,
+  createNoteSectionFromParagraph,
   createReplicatedNoteDocumentFromSectionSnapshot,
   createWorkspaceDocument,
   encodeProductDocument,
@@ -140,6 +141,85 @@ async function runtime(source: NoteDocument) {
 }
 
 describe("normalized Note in the product Editor and Core", () => {
+  it("splits a replicated Section without materializing the whole Note", () => {
+    const rootId = createUuidV7();
+    const sourceId = createUuidV7();
+    const headingId = createUuidV7();
+    const suffixId = createUuidV7();
+    const childId = createUuidV7();
+    const createdId = createUuidV7();
+    const source = note({
+      sectionId: rootId,
+      title: "Root",
+      tags: [],
+      body: [],
+      children: [
+        {
+          sectionId: sourceId,
+          title: "Source",
+          tags: [],
+          body: [
+            {
+              type: "paragraph",
+              attrs: { blockId: createUuidV7() },
+              content: [{ type: "text", text: "before" }],
+            },
+            {
+              type: "paragraph",
+              attrs: { blockId: headingId },
+              content: [{ type: "text", text: "Created" }],
+            },
+            {
+              type: "paragraph",
+              attrs: { blockId: suffixId },
+              content: [{ type: "text", text: "after" }],
+            },
+          ],
+          children: [
+            {
+              sectionId: childId,
+              title: "Child",
+              tags: [],
+              body: [],
+              children: [],
+            },
+          ],
+        },
+      ],
+    });
+    const materialize = vi.spyOn(source.replicated!, "sectionSnapshot");
+
+    expect(
+      createNoteSectionFromParagraph(source, {
+        boundarySectionId: rootId,
+        sourceSectionId: sourceId,
+        paragraphBlockId: headingId,
+        paragraphBodyIndex: 1,
+        newSectionId: createdId,
+        title: "Created",
+        direction: "shallower",
+        updatedAt: "2026-09-16T00:00:00.000Z",
+      }),
+    ).toEqual({ changed: true, createdSectionId: createdId });
+    expect(materialize).not.toHaveBeenCalled();
+    materialize.mockRestore();
+
+    const snapshot = source.replicated!.sectionSnapshot();
+    expect(snapshot.children.map((child) => child.sectionId)).toEqual([
+      sourceId,
+      createdId,
+    ]);
+    expect(snapshot.children[0]!.body).toHaveLength(1);
+    expect(snapshot.children[0]!.children).toEqual([]);
+    expect(snapshot.children[1]!.title).toBe("Created");
+    expect(
+      (snapshot.children[1]!.body[0] as { attrs?: { blockId?: string } })?.attrs
+        ?.blockId,
+    ).toBe(suffixId);
+    expect(snapshot.children[1]!.children[0]?.sectionId).toBe(childId);
+    expect(source.meta.get("updated_at")).toBe("2026-09-16T00:00:00.000Z");
+  });
+
   it("reopens labelled internal links, including links retained in deleted blocks", async () => {
     const { core, persistence } = await runtime(note());
     const attached = core.editorForTesting("window-1", element(), {

@@ -365,6 +365,14 @@ export class CoreRuntime {
     string,
     { destination: EditorNavigationDestination; detail: string }
   >();
+  private readonly optimisticSectionFocuses = new Map<
+    string,
+    { noteId: string; sectionId: string }
+  >();
+  private readonly sectionParagraphAppliedCallbacks = new Map<
+    string,
+    (createdSectionId: string) => void
+  >();
   private readonly sectionCreationFocusOrigins = new Map<
     string,
     {
@@ -1895,10 +1903,15 @@ export class CoreRuntime {
       direction: "deeper" | "shallower";
       joinPreviousUndo?: boolean;
     },
+    onApplied?: (createdSectionId: string) => void,
   ): Promise<CoreCommandResults["section.create_from_paragraph"]> {
+    const operationId = this.idFactory();
+    if (onApplied) {
+      this.sectionParagraphAppliedCallbacks.set(operationId, onApplied);
+    }
     return this.executeCommand({
       name: "section.create_from_paragraph",
-      operationId: this.idFactory(),
+      operationId,
       source: "editor",
       payload: {
         noteId,
@@ -1906,6 +1919,8 @@ export class CoreRuntime {
         newSectionId: this.idFactory(),
         updatedAt: this.clock(),
       },
+    }).finally(() => {
+      this.sectionParagraphAppliedCallbacks.delete(operationId);
     });
   }
 
@@ -2906,16 +2921,20 @@ export class CoreRuntime {
           [...request.sectionIds],
           request.direction,
         ),
-      onSectionFromParagraph: (request) =>
-        this.createSectionFromParagraph(attachedNoteId, {
-          boundarySectionId: request.boundarySectionId,
-          sourceSectionId: request.sourceSectionId,
-          paragraphBlockId: request.paragraphBlockId,
-          paragraphBodyIndex: request.paragraphBodyIndex,
-          title: request.title,
-          direction: request.direction,
-          joinPreviousUndo: request.joinPreviousUndo,
-        }),
+      onSectionFromParagraph: (request, onApplied) =>
+        this.createSectionFromParagraph(
+          attachedNoteId,
+          {
+            boundarySectionId: request.boundarySectionId,
+            sourceSectionId: request.sourceSectionId,
+            paragraphBlockId: request.paragraphBlockId,
+            paragraphBodyIndex: request.paragraphBodyIndex,
+            title: request.title,
+            direction: request.direction,
+            joinPreviousUndo: request.joinPreviousUndo,
+          },
+          onApplied,
+        ),
       onSectionCreatedOutsideView: async (sectionId, sourceSectionId) => {
         this.sectionCreationFocusOrigins.get(windowId)?.dispose();
         const observedDocument = handle.current.doc;
@@ -2953,7 +2972,15 @@ export class CoreRuntime {
           sourceSectionId,
           dispose: () => observedDocument.off("afterTransaction", observeUndo),
         });
-        await this.focusSection(windowId, attachedNoteId, sectionId);
+        const optimisticFocus = { noteId: attachedNoteId, sectionId };
+        this.optimisticSectionFocuses.set(windowId, optimisticFocus);
+        try {
+          await this.focusSection(windowId, attachedNoteId, sectionId);
+        } finally {
+          if (this.optimisticSectionFocuses.get(windowId) === optimisticFocus) {
+            this.optimisticSectionFocuses.delete(windowId);
+          }
+        }
       },
       keyConfig: options.keyConfig,
       getInternalLinkCandidates: () => this.internalLinkCandidates(),
@@ -3047,6 +3074,8 @@ export class CoreRuntime {
       pending.dispose();
     }
     this.sectionCreationFocusOrigins.clear();
+    this.optimisticSectionFocuses.clear();
+    this.sectionParagraphAppliedCallbacks.clear();
     if (this.windowViewUpdateFrame !== null) {
       cancelAnimationFrame(this.windowViewUpdateFrame);
       this.windowViewUpdateFrame = null;
@@ -3708,6 +3737,74 @@ export class CoreRuntime {
         } = envelope.payload;
         this.requireLiveMetadata(noteId);
         const handle = await this.ensureNoteLoaded(noteId);
+        if (
+          joinPreviousUndo &&
+          !fault &&
+          handle.current.kind === "note" &&
+          handle.current.replicated
+        ) {
+          const before = Y.encodeStateVector(handle.current.doc);
+          const result = createNoteSectionFromParagraph(
+            handle.current,
+            { ...request, updatedAt },
+            SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+          );
+          if (result.changed && result.createdSectionId) {
+            this.sectionParagraphAppliedCallbacks.get(envelope.operationId)?.(
+              result.createdSectionId,
+            );
+          }
+          handle.current.undoManager.stopCapturing();
+          if (!result.changed) return { noteId, ...result };
+          const appliedUpdate = Y.encodeStateAsUpdate(
+            handle.current.doc,
+            before,
+          );
+          return this.runWithNotePersistenceLock(noteId, async () => {
+            this.setSaving();
+            const workspaceBaseRevision = this.workspace.revision;
+            try {
+              await this.transactions.commitAppliedUpdateTransaction(
+                handle,
+                [this.workspace],
+                envelope.operationId,
+                appliedUpdate,
+                () => {
+                  if (handle.current.kind !== "note") {
+                    throw new Error(
+                      "Paragraph conversion target is not a NoteDoc",
+                    );
+                  }
+                  renameNoteMetadata(
+                    this.workspaceDocument,
+                    noteId,
+                    readNoteTitle(handle.current),
+                    updatedAt,
+                    CORE_TRANSACTION_ORIGIN,
+                  );
+                },
+                noteId,
+              );
+              await this.advanceWorkspaceSearchIndexMetadataRevision({
+                schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+                workspaceId: this.workspaceDocument.workspaceId,
+                baseRevision: workspaceBaseRevision,
+                workspaceRevision: this.workspace.revision,
+                noteId,
+              });
+              this.changedNoteRevisions.set(noteId, handle.revision);
+              this.noteContentRevision += 1;
+              this.sectionCatalogRevision += 1;
+              this.internalLinkLabelRevision += 1;
+              this.queueWorkspaceSearchIndexDocument(noteId);
+              this.setReady();
+              return { noteId, ...result };
+            } catch (error) {
+              this.reportError(error);
+              throw error;
+            }
+          });
+        }
         return this.runWithNotePersistenceLock(noteId, async () => {
           if (handle.current.kind !== "note") {
             throw new Error("Paragraph conversion target is not a NoteDoc");
@@ -3739,6 +3836,11 @@ export class CoreRuntime {
                   { ...request, updatedAt },
                   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
                 );
+                if (result.changed && result.createdSectionId) {
+                  this.sectionParagraphAppliedCallbacks.get(
+                    envelope.operationId,
+                  )?.(result.createdSectionId);
+                }
                 handle.current.undoManager.stopCapturing();
                 if (result.changed) {
                   renameNoteMetadata(
@@ -4579,6 +4681,7 @@ export class CoreRuntime {
       this.jumpLists.delete(windowId);
       this.imageReturnOrigins.delete(windowId);
       this.pendingNavigations.delete(windowId);
+      this.optimisticSectionFocuses.delete(windowId);
       this.repeatStores.delete(windowId);
       this.visualSelectionStores.delete(windowId);
       this.noteSearchStates.delete(windowId);
@@ -5759,6 +5862,10 @@ export class CoreRuntime {
       this.pendingWindowViewUpdates.get(windowId),
     ]) {
       if (projected?.noteId === noteId) Object.assign(view, projected.update);
+    }
+    const optimisticFocus = this.optimisticSectionFocuses.get(windowId);
+    if (optimisticFocus?.noteId === noteId) {
+      view.focusedSectionId = optimisticFocus.sectionId;
     }
     return {
       windowId,

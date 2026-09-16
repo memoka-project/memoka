@@ -1,6 +1,5 @@
 import * as Y from "yjs";
 import {
-  cloneProductDocument,
   encodeProductDocument,
   loadProductDocument,
   type ProductDocument,
@@ -79,7 +78,10 @@ export class CoreTransactionGateway {
     const checkpoints = options.documents.map((handle) => ({
       handle,
       revision: handle.revision,
-      document: cloneProductDocument(handle.current),
+      kind: handle.current.kind,
+      documentId: handle.current.id,
+      replicaId: handle.current.replicated?.replicaId,
+      snapshot: encodeProductDocument(handle.current),
       stateVector: Y.encodeStateVector(handle.current.doc),
     }));
     this.log.push({
@@ -125,17 +127,29 @@ export class CoreTransactionGateway {
         status: response.deduplicated ? "deduplicated" : "committed",
         documentIds: checkpoints.map(({ handle }) => handle.current.id),
       });
-      for (const checkpoint of checkpoints) checkpoint.document.doc.destroy();
       return response;
     } catch (error) {
-      for (const checkpoint of checkpoints) {
-        checkpoint.handle.replace(checkpoint.document, checkpoint.revision);
+      // Successful commands only need the encoded checkpoint. Materializing a
+      // second validated ProductDocument for every structural edit makes the
+      // hot path proportional to the whole Note, so defer that work to the
+      // exceptional rollback path.
+      const replacements = checkpoints.map((checkpoint) =>
+        loadProductDocument(
+          checkpoint.kind,
+          checkpoint.documentId,
+          checkpoint.snapshot,
+          [],
+          checkpoint.replicaId,
+        ),
+      );
+      for (const [index, checkpoint] of checkpoints.entries()) {
+        checkpoint.handle.replace(replacements[index]!, checkpoint.revision);
       }
       this.log.push({
         operationId: options.operationId,
         scope: options.scope,
         status: "rolled-back",
-        documentIds: checkpoints.map(({ document }) => document.id),
+        documentIds: checkpoints.map(({ documentId }) => documentId),
       });
       throw error;
     }

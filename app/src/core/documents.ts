@@ -30,6 +30,7 @@ import {
 import {
   compareSiblingPositions,
   isCanonicalSiblingPosition,
+  siblingPositionsBetween,
 } from "./sibling-position";
 import {
   applySectionSnapshot,
@@ -56,6 +57,7 @@ import {
   validateSectionTree,
   validateSectionSnapshotDepth,
   replaceSectionBodySnapshot,
+  MAX_SECTION_DEPTH,
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
   SECTION_NODE,
@@ -1328,9 +1330,7 @@ export function createNoteSectionFromParagraph(
   origin: unknown = SECTION_PARAGRAPH_CONVERSION_ORIGIN,
 ): NoteSectionFromParagraphResult {
   if (note.replicated)
-    return editReplicatedProjection(note, origin, (projection) =>
-      createNoteSectionFromParagraph(projection, request, origin),
-    );
+    return createReplicatedNoteSectionFromParagraph(note, request, origin);
   const boundary = findSectionById(note.rootSection, request.boundarySectionId);
   if (!boundary) {
     throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
@@ -1413,6 +1413,129 @@ export function createNoteSectionFromParagraph(
     }
     note.meta.set("updated_at", request.updatedAt);
     validateSectionTree(note.rootSection, note.noteId);
+  }, origin);
+  return { changed: true, createdSectionId: request.newSectionId };
+}
+
+function createReplicatedNoteSectionFromParagraph(
+  note: NoteDocument,
+  request: Parameters<typeof createNoteSectionFromParagraph>[1],
+  origin: unknown,
+): NoteSectionFromParagraphResult {
+  const replicated = note.replicated!;
+  const tree = replicated.project();
+  if (
+    !tree.visible.has(request.boundarySectionId) ||
+    replicated.type(request.boundarySectionId) !== "section"
+  ) {
+    throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
+  }
+  const source = tree.visible.has(request.sourceSectionId)
+    ? request.sourceSectionId
+    : null;
+  if (!source || replicated.type(source) !== "section") {
+    throw new Error(
+      `Paragraph Section is outside the Focused Section: ${request.sourceSectionId}`,
+    );
+  }
+  let cursor = source;
+  while (cursor !== request.boundarySectionId && cursor !== replicated.noteId) {
+    cursor = tree.parents.get(cursor)?.parentId ?? replicated.noteId;
+  }
+  if (cursor !== request.boundarySectionId) {
+    throw new Error(
+      `Paragraph Section is outside the Focused Section: ${request.sourceSectionId}`,
+    );
+  }
+
+  const body = (tree.children.get(source) ?? []).filter(
+    (id) => tree.parents.get(id)?.region === "body",
+  );
+  const requested = body[request.paragraphBodyIndex];
+  const paragraphIndex =
+    requested === request.paragraphBlockId
+      ? request.paragraphBodyIndex
+      : body.indexOf(request.paragraphBlockId);
+  if (
+    paragraphIndex < 0 ||
+    replicated.type(request.paragraphBlockId) !== "paragraph"
+  ) {
+    return { changed: false, createdSectionId: null };
+  }
+
+  const parentEdge = tree.parents.get(source);
+  if (
+    request.direction === "shallower" &&
+    (source === request.boundarySectionId ||
+      !parentEdge ||
+      replicated.type(parentEdge.parentId) !== "section")
+  ) {
+    return { changed: false, createdSectionId: null };
+  }
+  if (request.direction === "deeper") {
+    let depth = 0;
+    let ancestor = source;
+    while (ancestor !== replicated.noteId) {
+      ancestor = tree.parents.get(ancestor)!.parentId;
+      depth++;
+    }
+    if (depth + 1 > MAX_SECTION_DEPTH) {
+      throw new Error("Section depth exceeds H6");
+    }
+  }
+
+  const sectionParent =
+    request.direction === "deeper" ? source : parentEdge!.parentId;
+  const siblingSections = (tree.children.get(sectionParent) ?? []).filter(
+    (id) =>
+      replicated.type(id) === "section" &&
+      tree.parents.get(id)?.region === "sections",
+  );
+  const insertionIndex =
+    request.direction === "deeper" ? 0 : siblingSections.indexOf(source) + 1;
+  if (insertionIndex <= 0 && request.direction === "shallower") {
+    throw new Error("Paragraph Section parent disappeared before conversion");
+  }
+  const lowerId = siblingSections[insertionIndex - 1];
+  const upperId = siblingSections[insertionIndex];
+  const position = siblingPositionsBetween(
+    lowerId ? tree.parents.get(lowerId)!.position : null,
+    upperId ? tree.parents.get(upperId)!.position : null,
+    1,
+    request.newSectionId,
+  )[0]!;
+  const suffix = body.slice(paragraphIndex + 1);
+  const childSectionsToMove =
+    request.direction === "shallower"
+      ? (tree.children.get(source) ?? []).filter(
+          (id) =>
+            replicated.type(id) === "section" &&
+            tree.parents.get(id)?.region === "sections",
+        )
+      : [];
+
+  replicated.transact(() => {
+    replicated.createEntity("section", sectionParent, "sections", position, {
+      id: request.newSectionId,
+      attrs: { tags: [] },
+      inline: request.title ? [{ type: "text", text: request.title }] : [],
+    });
+    replicated.moveMany([
+      ...suffix.map((id) => ({
+        entityId: id,
+        parentId: request.newSectionId,
+        region: "body",
+        position: tree.parents.get(id)!.position,
+      })),
+      ...childSectionsToMove.map((id) => ({
+        entityId: id,
+        parentId: request.newSectionId,
+        region: "sections",
+        position: tree.parents.get(id)!.position,
+      })),
+    ]);
+    replicated.delete(request.paragraphBlockId);
+    note.meta.set("updated_at", request.updatedAt);
   }, origin);
   return { changed: true, createdSectionId: request.newSectionId };
 }
