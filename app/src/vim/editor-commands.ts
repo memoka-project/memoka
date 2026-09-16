@@ -137,6 +137,12 @@ export interface SectionDepthShiftSelection {
   readonly caretPosition: number;
 }
 
+export interface FocusedSectionLineDeletionSelection {
+  readonly sourceSectionId: string;
+  readonly remaining: SectionSnapshot;
+  readonly register: Extract<VimRegister, { kind: "section" }>;
+}
+
 export interface SectionParagraphConversionSelection {
   readonly boundarySectionId: string;
   readonly sourceSectionId: string;
@@ -2763,6 +2769,138 @@ function sectionSnapshotFromNode(
   };
 }
 
+function selectedSectionProjection(
+  node: ProseMirrorNode,
+  sectionPosition: number,
+  selectedUnits: readonly VimStructuralUnit[],
+): ProseMirrorNode | null {
+  if (
+    node.type.name !== SECTION_NODE ||
+    node.childCount !== 3 ||
+    node.child(0).type.name !== "sectionHeader" ||
+    node.child(1).type.name !== "sectionBody" ||
+    node.child(2).type.name !== "sectionChildren"
+  ) {
+    return null;
+  }
+  const header = node.child(0);
+  const headerPosition = sectionPosition + 1;
+  if (
+    !selectedUnits.some(
+      (unit) =>
+        unit.nodeName === "sectionHeader" &&
+        unit.blockPosition === headerPosition,
+    )
+  ) {
+    return null;
+  }
+  const body = node.child(1);
+  const bodyPosition = headerPosition + header.nodeSize;
+  const projectedBody = body.type.create(
+    body.attrs,
+    Fragment.fromArray(
+      projectSectionBodyChunks(body, bodyPosition, selectedUnits, true),
+    ),
+    body.marks,
+  );
+  const children = node.child(2);
+  const childrenPosition = bodyPosition + body.nodeSize;
+  const projectedChildren: ProseMirrorNode[] = [];
+  children.forEach((child, offset) => {
+    const projected = selectedSectionProjection(
+      child,
+      childrenPosition + 1 + offset,
+      selectedUnits,
+    );
+    if (projected) projectedChildren.push(projected);
+  });
+  return node.type.create(
+    node.attrs,
+    Fragment.fromArray([
+      header,
+      projectedBody,
+      children.type.create(
+        children.attrs,
+        Fragment.fromArray(projectedChildren),
+        children.marks,
+      ),
+    ]),
+    node.marks,
+  );
+}
+
+export function focusedSectionLineDeletionSelection(
+  view: VimEditorView,
+  mode: VimMode,
+  count: number,
+  visualLine: VimVisualLineState | null,
+): FocusedSectionLineDeletionSelection | null {
+  const noteId = view.dom.dataset.noteId ?? null;
+  const focusedSectionId = view.dom.dataset.sectionId ?? null;
+  if (
+    !noteId ||
+    !focusedSectionId ||
+    noteId === focusedSectionId ||
+    view.state.doc.childCount !== 3
+  ) {
+    return null;
+  }
+  const selection =
+    mode === "visual-line" ? visualLine : countedLogicalLine(view, count);
+  if (!selection) return null;
+  const selectedUnits = selectedUnitSlice(view, selection);
+  if (
+    !selectedUnits.some(
+      (unit) => unit.nodeName === "sectionHeader" && unit.blockPosition === 0,
+    )
+  ) {
+    return null;
+  }
+  const rows = collectProjectedSectionRows(view.state.doc, selectedUnits);
+  const rebuilt = rows ? rebuildSectionRows(view.state.doc, rows) : null;
+  const sectionType = view.state.schema.nodes.section;
+  if (!rebuilt || !sectionType || rebuilt.childCount !== 3) return null;
+  const remainingNode = sectionType.create(null, [
+    rebuilt.child(0),
+    rebuilt.child(1),
+    rebuilt.child(2),
+  ]);
+  const remaining = sectionSnapshotFromNode(remainingNode);
+  if (!remaining) return null;
+
+  const originalNode = sectionType.create(null, [
+    view.state.doc.child(0),
+    view.state.doc.child(1),
+    view.state.doc.child(2),
+  ]);
+  const projected = selectedSectionProjection(originalNode, -1, selectedUnits);
+  if (!projected) return null;
+  const sectionIds: string[] = [];
+  projected.descendants((node) => {
+    if (node.type.name === "sectionHeader") {
+      const id = String(node.attrs.sectionId ?? "");
+      if (id) sectionIds.push(id);
+    }
+    return true;
+  });
+  return {
+    sourceSectionId: focusedSectionId,
+    remaining,
+    register: {
+      kind: "section",
+      text: selectedUnits
+        .map((unit) =>
+          view.state.doc.textBetween(unit.textFrom, unit.textTo, "", "\uFFFC"),
+        )
+        .join("\n"),
+      transfer: "cut",
+      sourceNoteId: noteId,
+      sectionIds,
+      slice: new Slice(Fragment.from(projected), 0, 0),
+    },
+  };
+}
+
 /**
  * Materializes a Section register for insertion outside the mounted
  * ProseMirror subtree. This is needed when a Focused Section is the editor
@@ -3299,53 +3437,293 @@ function deleteSelectedListRowsPreservingDescendants(
   }
 }
 
+interface ProjectedSectionRow {
+  readonly originalDepth: number;
+  readonly sectionId: string;
+  readonly node: ProseMirrorNode | null;
+  header: ProseMirrorNode;
+  readonly body: ProseMirrorNode;
+  readonly children: ProseMirrorNode;
+  readonly headerSelected: boolean;
+  bodyChunks: ProseMirrorNode[];
+  depth: number;
+  rebuilt?: ProseMirrorNode;
+}
+
+function selectedUnitSlice(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+): VimStructuralUnit[] {
+  const units = blockSemantics.visualLineUnits(view);
+  return units.slice(
+    Math.min(visualLine.anchorUnit, visualLine.headUnit),
+    Math.max(visualLine.anchorUnit, visualLine.headUnit) + 1,
+  );
+}
+
+function projectSectionBodyChunks(
+  body: ProseMirrorNode,
+  bodyPosition: number,
+  selectedUnits: readonly VimStructuralUnit[],
+  selected: boolean,
+): ProseMirrorNode[] {
+  const chunks: ProseMirrorNode[] = [];
+  body.forEach((chunk, offset) => {
+    const projected = projectListSelection(
+      chunk,
+      bodyPosition + 1 + offset,
+      selectedUnits,
+      selected,
+    );
+    if (projected) chunks.push(projected);
+  });
+  return chunks;
+}
+
+function collectProjectedSectionRows(
+  document: ProseMirrorNode,
+  selectedUnits: readonly VimStructuralUnit[],
+): ProjectedSectionRow[] | null {
+  if (
+    document.childCount !== 3 ||
+    document.child(0).type.name !== "sectionHeader" ||
+    document.child(1).type.name !== "sectionBody" ||
+    document.child(2).type.name !== "sectionChildren"
+  ) {
+    return null;
+  }
+  const rows: ProjectedSectionRow[] = [];
+  const visit = (
+    node: ProseMirrorNode | null,
+    header: ProseMirrorNode,
+    body: ProseMirrorNode,
+    children: ProseMirrorNode,
+    sectionPosition: number,
+    depth: number,
+    root: boolean,
+  ) => {
+    const headerPosition = root ? 0 : sectionPosition + 1;
+    const bodyPosition = headerPosition + header.nodeSize;
+    const sectionId = String(header.attrs.sectionId ?? "");
+    rows.push({
+      originalDepth: depth,
+      depth,
+      sectionId,
+      node,
+      header,
+      body,
+      children,
+      headerSelected: selectedUnits.some(
+        (unit) =>
+          unit.nodeName === "sectionHeader" &&
+          unit.blockPosition === headerPosition,
+      ),
+      bodyChunks: projectSectionBodyChunks(
+        body,
+        bodyPosition,
+        selectedUnits,
+        false,
+      ),
+    });
+    const childrenPosition = bodyPosition + body.nodeSize;
+    children.forEach((child, offset) => {
+      if (
+        child.type.name !== SECTION_NODE ||
+        child.childCount !== 3 ||
+        child.child(0).type.name !== "sectionHeader" ||
+        child.child(1).type.name !== "sectionBody" ||
+        child.child(2).type.name !== "sectionChildren"
+      ) {
+        return;
+      }
+      visit(
+        child,
+        child.child(0),
+        child.child(1),
+        child.child(2),
+        childrenPosition + 1 + offset,
+        depth + 1,
+        false,
+      );
+    });
+  };
+  visit(
+    null,
+    document.child(0),
+    document.child(1),
+    document.child(2),
+    -1,
+    0,
+    true,
+  );
+  return rows;
+}
+
+function rebuildSectionRows(
+  document: ProseMirrorNode,
+  rows: ProjectedSectionRow[],
+): ProseMirrorNode | null {
+  const survivors: ProjectedSectionRow[] = [];
+  for (const row of rows) {
+    if (row.originalDepth === 0 || !row.headerSelected) {
+      if (row.originalDepth === 0 && row.headerSelected) {
+        row.header = row.header.type.create(row.header.attrs);
+      }
+      const previous = survivors.at(-1);
+      row.depth = previous
+        ? Math.min(row.originalDepth, previous.depth + 1)
+        : 0;
+      survivors.push(row);
+    } else if (row.bodyChunks.length) {
+      const destination = survivors.at(-1);
+      if (!destination) return null;
+      destination.bodyChunks.push(...row.bodyChunks);
+    }
+  }
+  const root = survivors[0];
+  if (!root || root.originalDepth !== 0) return null;
+  const children = new Map<ProjectedSectionRow, ProjectedSectionRow[]>();
+  const ancestors: ProjectedSectionRow[] = [root];
+  for (let index = 1; index < survivors.length; index++) {
+    const row = survivors[index]!;
+    const parent = ancestors[row.depth - 1];
+    if (!parent) return null;
+    const values = children.get(parent) ?? [];
+    values.push(row);
+    children.set(parent, values);
+    ancestors[row.depth] = row;
+    ancestors.length = row.depth + 1;
+  }
+  for (let index = survivors.length - 1; index >= 0; index--) {
+    const row = survivors[index]!;
+    const body = row.body.type.create(
+      row.body.attrs,
+      Fragment.fromArray(row.bodyChunks),
+      row.body.marks,
+    );
+    const childNodes = (children.get(row) ?? []).map((child) => child.rebuilt!);
+    const sectionChildren = row.children.type.create(
+      row.children.attrs,
+      Fragment.fromArray(childNodes),
+      row.children.marks,
+    );
+    row.rebuilt = row.node
+      ? row.node.type.create(
+          row.node.attrs,
+          Fragment.fromArray([row.header, body, sectionChildren]),
+          row.node.marks,
+        )
+      : document.type.create(
+          document.attrs,
+          Fragment.fromArray([row.header, body, sectionChildren]),
+          document.marks,
+        );
+  }
+  return root.rebuilt ?? null;
+}
+
+function sectionRegisterForDeletedLines(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+): Extract<VimRegister, { kind: "section" }> | null {
+  const selectedUnits = selectedUnitSlice(view, visualLine);
+  const headers = selectedUnits.filter(
+    (unit) => unit.nodeName === "sectionHeader",
+  );
+  if (headers.length === 0) return null;
+  const target = sectionTitleTarget(view, {
+    anchorUnit: blockSemantics.visualLineUnits(view).indexOf(headers[0]!),
+    headUnit: blockSemantics.visualLineUnits(view).indexOf(headers[0]!),
+    cursor: headers[0]!.cursorFrom,
+  });
+  if (!target || target.root) return null;
+  if (
+    selectedUnits.some((unit) => unit.from < target.from || unit.to > target.to)
+  ) {
+    return null;
+  }
+  const projected = selectedSectionProjection(
+    target.node,
+    target.from,
+    selectedUnits,
+  );
+  if (!projected) return null;
+  const sectionIds: string[] = [];
+  projected.descendants((node) => {
+    if (node.type.name === "sectionHeader") {
+      const id = String(node.attrs.sectionId ?? "");
+      if (id) sectionIds.push(id);
+    }
+    return true;
+  });
+  return {
+    kind: "section",
+    text: selectedUnits
+      .map((unit) =>
+        view.state.doc.textBetween(unit.textFrom, unit.textTo, "", "\uFFFC"),
+      )
+      .join("\n"),
+    transfer: "cut",
+    sourceNoteId: view.dom.dataset.noteId ?? null,
+    sectionIds,
+    slice: new Slice(Fragment.from(projected), 0, 0),
+  };
+}
+
+function deleteSelectedSectionRowsPreservingStructure(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+  register: VimRegister | null,
+): EditorVimResult | null {
+  const selectedUnits = selectedUnitSlice(view, visualLine);
+  if (!selectedUnits.some((unit) => unit.nodeName === "sectionHeader")) {
+    return null;
+  }
+  const rows = collectProjectedSectionRows(view.state.doc, selectedUnits);
+  const rebuilt = rows ? rebuildSectionRows(view.state.doc, rows) : null;
+  if (!rebuilt || rebuilt.type !== view.state.doc.type) return null;
+  const exactRegister = sectionRegisterForDeletedLines(view, visualLine);
+  const deletedRegister =
+    exactRegister ??
+    registerForUnits(
+      view,
+      visualLine,
+      blockSemantics.visualLineUnits(view),
+      true,
+    ) ??
+    register ??
+    undefined;
+  const transaction = view.state.tr.replaceWith(
+    0,
+    view.state.doc.content.size,
+    rebuilt.content,
+  );
+  const cursor = Math.min(selectedUnits[0]!.from, transaction.doc.content.size);
+  transaction.setSelection(Selection.near(transaction.doc.resolve(cursor), -1));
+  view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+  view.focus();
+  return {
+    handled: true,
+    detail: "section:delete-selected-lines",
+    register: deletedRegister,
+    nextMode: "normal",
+  };
+}
+
 function deleteVisualLine(
   view: VimEditorView,
   visualLine: VimVisualLineState,
   register: VimRegister | null,
   nextMode: "normal" | "insert",
   expandDeletionToValidStructure = false,
-  includeSectionSubtree = false,
 ): EditorVimResult {
-  if (includeSectionSubtree) {
-    const target = sectionTitleTarget(view, visualLine);
-    const yanked = sectionRegisterForVisualTitle(view, visualLine);
-    if (target && yanked) {
-      const transaction = view.state.tr;
-      if (target.root) {
-        const headerType = view.state.schema.nodes.sectionHeader;
-        const bodyType = view.state.schema.nodes.sectionBody;
-        const childrenType = view.state.schema.nodes.sectionChildren;
-        if (!headerType || !bodyType || !childrenType) {
-          return { handled: false, detail: "section:delete-root" };
-        }
-        transaction.replaceWith(
-          0,
-          transaction.doc.content.size,
-          Fragment.fromArray([
-            headerType.create(view.state.doc.child(0).attrs),
-            bodyType.create(),
-            childrenType.create(),
-          ]),
-        );
-      } else {
-        transaction.delete(target.from, target.to);
-      }
-      const cursor = target.root
-        ? 0
-        : Math.min(target.from, transaction.doc.content.size);
-      transaction.setSelection(
-        Selection.near(transaction.doc.resolve(cursor), -1),
-      );
-      view.dispatch(scrollWhenLayoutIsAvailable(transaction));
-      view.focus();
-      return {
-        handled: true,
-        detail: target.root ? "section:clear-root" : "section:delete-subtree",
-        register: { ...yanked, transfer: "cut" },
-        nextMode,
-      };
-    }
+  if (nextMode === "normal") {
+    const projected = deleteSelectedSectionRowsPreservingStructure(
+      view,
+      visualLine,
+      register,
+    );
+    if (projected) return projected;
   }
   const units = blockSemantics.visualLineUnits(view);
   const yanked = visualLineRegister(view, visualLine);
@@ -3445,7 +3823,7 @@ const visualLineCommandHandlers: Partial<
     moveVisualLineViewport(view, visualLine, 1, "half-page", count),
   "selection.yank": yankVisualLine,
   "selection.delete": (view, visualLine, register) =>
-    deleteVisualLine(view, visualLine, register, "normal", false, true),
+    deleteVisualLine(view, visualLine, register, "normal"),
   "selection.change": (view, visualLine, register) =>
     deleteVisualLine(view, visualLine, register, "insert"),
   "selection.paste": pasteVisualLine,
@@ -5798,6 +6176,13 @@ function deleteSectionTitleLine(
 ): EditorVimResult | null {
   const target = sectionTitleTarget(view, visualLine);
   if (!target) return null;
+  if (!target.root) {
+    return deleteSelectedSectionRowsPreservingStructure(
+      view,
+      visualLine,
+      register,
+    );
+  }
   const headerPosition = target.root ? 0 : target.from + 1;
   const header = view.state.doc.nodeAt(headerPosition);
   if (!header || header.type.name !== "sectionHeader") return null;

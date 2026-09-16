@@ -2204,7 +2204,409 @@ describe("Memoka Section editor semantics", () => {
     secondRoot.remove();
   });
 
-  it("copies a Visual-line Section subtree with fresh IDs and moves a cut subtree across NoteDocs", async () => {
+  it("deletes only a Section title and preserves body preorder through the previous leaf", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const previousId = createUuidV7();
+    const leafId = createUuidV7();
+    const targetId = createUuidV7();
+    const targetChildId = createUuidV7();
+    const targetBodyId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: previousId,
+            title: "Previous",
+            tags: [],
+            body: [],
+            children: [
+              {
+                sectionId: leafId,
+                title: "Leaf",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: targetBodyId },
+                content: [{ type: "text", text: "preserved body" }],
+              },
+            ],
+            children: [
+              {
+                sectionId: targetChildId,
+                title: "Target child",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "sectionHeader",
+        (node) => node.attrs.sectionId === targetId,
+      ),
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children.map(({ sectionId }) => sectionId)).toEqual([
+      previousId,
+    ]);
+    expect(
+      changed.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([leafId, targetChildId]);
+    expect(JSON.stringify(changed.children[0]!.children[0]!.body)).toContain(
+      "preserved body",
+    );
+    expect(runtime.vimRegister.read(editor.schema)).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.child(1).childCount
+        : -1,
+    ).toBe(0);
+
+    press(editor, "u");
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("deletes only the selected Section title and body rows in Visual Line", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetId = createUuidV7();
+    const firstBodyId = createUuidV7();
+    const secondBodyId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: firstBodyId },
+                content: [{ type: "text", text: "selected body" }],
+              },
+              {
+                type: "paragraph",
+                attrs: { blockId: secondBodyId },
+                content: [{ type: "text", text: "remaining body" }],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "sectionHeader",
+        (node) => node.attrs.sectionId === targetId,
+      ),
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V", { shiftKey: true });
+    press(editor, "j");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children).toEqual([]);
+    expect(JSON.stringify(changed.body)).not.toContain("selected body");
+    expect(JSON.stringify(changed.body)).toContain("remaining body");
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(register).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).toContain("selected body");
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).not.toContain("remaining body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("deletes a focused Section header through Core and restores its focus on Undo", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const previousId = createUuidV7();
+    const leafId = createUuidV7();
+    const targetId = createUuidV7();
+    const childId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: previousId,
+            title: "Previous",
+            tags: [],
+            body: [],
+            children: [
+              {
+                sectionId: leafId,
+                title: "Leaf",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "preserved body" }],
+              },
+            ],
+            children: [
+              {
+                sectionId: childId,
+                title: "Child",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    await runtime.focusSection("window-1", runtime.noteId, targetId);
+    const targetRoot = rootElement();
+    const target = runtime.editorForTesting("window-1", targetRoot, {
+      directBodyOnly: false,
+    });
+    target.editor.commands.setTextSelection(
+      positionOf(target.editor, "sectionHeader"),
+    );
+    target.editor.commands.focus();
+    press(target.editor, "Escape");
+    press(target.editor, "d");
+    press(target.editor, "d");
+    await settle(runtime);
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(
+      findSectionById(runtime.noteDocument.rootSection, targetId),
+    ).toBeNull();
+    expect(
+      changed.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([leafId, childId]);
+    expect(JSON.stringify(changed.children[0]!.children[0]!.body)).toContain(
+      "preserved body",
+    );
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(leafId);
+    expect(runtime.vimRegister.read(target.editor.schema)).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+
+    target.adapter.destroy();
+    targetRoot.remove();
+    const fallbackRoot = rootElement();
+    const fallback = runtime.editorForTesting("window-1", fallbackRoot, {
+      directBodyOnly: false,
+    });
+    fallback.editor.commands.focus();
+    press(fallback.editor, "Escape");
+    press(fallback.editor, "u");
+    await settle(runtime);
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(targetId);
+
+    fallback.adapter.destroy();
+    runtime.destroy();
+    fallbackRoot.remove();
+  });
+
+  it("deletes selected focused-Section body rows without deleting unselected rows", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "selected body" }],
+              },
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "remaining body" }],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    await runtime.focusSection("window-1", runtime.noteId, targetId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V", { shiftKey: true });
+    press(editor, "j");
+    press(editor, "d");
+    await settle(runtime);
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children).toEqual([]);
+    expect(JSON.stringify(changed.body)).not.toContain("selected body");
+    expect(JSON.stringify(changed.body)).toContain("remaining body");
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).toContain("selected body");
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).not.toContain("remaining body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps the Root Note and its body when dd clears its title", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root title",
+    });
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.insertContentAt(
+      positionOf(editor, "paragraph"),
+      "kept body",
+    );
+    editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.sectionId).toBe(runtime.noteId);
+    expect(changed.title).toBe("");
+    expect(JSON.stringify(changed.body)).toContain("kept body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("copies a Visual-line Section subtree and moves only a deleted title across NoteDocs", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "Source note",
@@ -2278,8 +2680,19 @@ describe("Memoka Section editor semantics", () => {
     const targetSection = findSectionById(targetDocument.rootSection, childId);
     expect(targetSection).not.toBeNull();
     expect(sectionTitle(targetSection!)).toBe("Movable");
-    expect(sectionBody(targetSection!).toString()).toContain("payload");
+    expect(sectionBody(targetSection!).toString()).not.toContain("payload");
     expect(findSectionById(sourceDocument.rootSection, childId)).toBeNull();
+    const survivingCopyId = copiedIds.find((id) => id !== childId)!;
+    const survivingCopy = findSectionById(
+      sourceDocument.rootSection,
+      survivingCopyId,
+    );
+    expect(survivingCopy).not.toBeNull();
+    expect(
+      sectionBody(survivingCopy!)
+        .toString()
+        .match(/payload/g),
+    ).toHaveLength(2);
 
     targetEditor.adapter.destroy();
     runtime.destroy();

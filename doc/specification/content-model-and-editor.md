@@ -187,11 +187,16 @@ ListItem内のParagraphと子Listは詰めた間隔を維持する。それ以�
 
 - 親ListItemの`dd`またはVisual Lineの`d`では、未選択の子Itemを削除しない。
   子Itemは表示位置を保つ範囲で昇格させる。
+- Root以外のSection titleの`dd`またはVisual Lineの`d`では、選択した論理行だけを削除する。
+  未選択の本文は直前の表示Section、または親Sectionの本文へ移し、未選択の子Sectionは表示順と可能な限り元の絶対深度を保つ。
+  深度を維持できない場合だけ直前の表示構造に合わせてclampする。Focused Sectionでも同じ規則をNote全体へ適用する。
+- Root Note titleの`dd`はtitleだけを空にし、Root identity、本文、子Sectionを維持する。
 - 親ListItemを単独でyankした場合も、選択されていない子孫をClipboardへ含めない。
 - `dd/yy`とVisual Lineの`d/y`は、同じItemに属する未選択のParagraphやBlockも対象にしない。残るBlockがあればItemを維持する。
 - indent/outdentは所有Item単位。同じItem内の複数論理行を選択しても深さを重複変更しない。
 - ListItemをVisual Lineでyank/putした場合、選択項目どうしの相対的なnest深さを維持する。
 - Sectionを含むVisual Line yankでは、選択範囲に含まれるSection subtreeだけを構造として保持する。
+- Section deleteのregisterには選択したtitle・本文行だけを含める。titleだけなら空本文・子なしのSectionとしてcutする。
 - Section S上で`P`した構造SectionはSの子ではなく、Sの前の同じ階層へ置く。
 - atomic blockの`dd/yy/p/P`はtext化せずblock構造を維持する。
 

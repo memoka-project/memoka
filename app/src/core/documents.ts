@@ -289,6 +289,7 @@ export const CORE_TRANSACTION_ORIGIN = "memoka:core-transaction";
 export const SECTION_DEPTH_SHIFT_ORIGIN = "memoka:section-depth-shift";
 export const SECTION_PARAGRAPH_CONVERSION_ORIGIN =
   "memoka:section-paragraph-conversion";
+export const SECTION_LINE_DELETION_ORIGIN = "memoka:section-line-deletion";
 export const BOOTSTRAP_ORIGIN = "memoka:bootstrap";
 export const NOTE_TIMESTAMP_ORIGIN = "memoka:note-timestamp";
 export const SECTION_IDENTITY_REPAIR_ORIGIN = "memoka:section-identity-repair";
@@ -1190,6 +1191,93 @@ export function replaceNoteSectionTree(
   }, origin);
 }
 
+interface SectionDeletionRow {
+  readonly originalDepth: number;
+  readonly snapshot: SectionSnapshot;
+  depth: number;
+  body: unknown[];
+  children: SectionDeletionRow[];
+}
+
+export interface NoteSectionLineDeletionResult {
+  readonly changed: boolean;
+  readonly fallbackSectionId: string | null;
+}
+
+/**
+ * Removes one non-Root Section header while retaining every unselected body
+ * block and child Section in display order. Remaining depths are clamped only
+ * where the removed header made the original depth impossible.
+ */
+export function deleteNoteSectionSelectedLines(
+  note: NoteDocument,
+  sourceSectionId: string,
+  remaining: SectionSnapshot,
+  updatedAt: string,
+  origin: unknown = SECTION_LINE_DELETION_ORIGIN,
+): NoteSectionLineDeletionResult {
+  if (
+    sourceSectionId === note.noteId ||
+    remaining.sectionId !== sourceSectionId
+  ) {
+    return { changed: false, fallbackSectionId: null };
+  }
+  const root = sectionSnapshot(note.rootSection);
+  let found = false;
+  const rows: SectionDeletionRow[] = [];
+  const visit = (snapshot: SectionSnapshot, depth: number): void => {
+    const value = snapshot.sectionId === sourceSectionId ? remaining : snapshot;
+    if (snapshot.sectionId === sourceSectionId) found = true;
+    rows.push({
+      originalDepth: depth,
+      depth,
+      snapshot: value,
+      body: [...value.body],
+      children: [],
+    });
+    for (const child of value.children) visit(child, depth + 1);
+  };
+  visit(root, 0);
+  if (!found) return { changed: false, fallbackSectionId: null };
+
+  const sourceIndex = rows.findIndex(
+    ({ snapshot }) => snapshot.sectionId === sourceSectionId,
+  );
+  const destination = rows[sourceIndex - 1];
+  if (sourceIndex <= 0 || !destination) {
+    return { changed: false, fallbackSectionId: null };
+  }
+  destination.body.push(...rows[sourceIndex]!.body);
+  rows.splice(sourceIndex, 1);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const previous = rows[index - 1];
+    rows[index]!.depth = previous
+      ? Math.min(rows[index]!.originalDepth, previous.depth + 1)
+      : 0;
+    rows[index]!.children = [];
+  }
+  const ancestors: SectionDeletionRow[] = [rows[0]!];
+  for (let index = 1; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const parent = ancestors[row.depth - 1];
+    if (!parent) throw new Error("Section deletion produced an invalid depth");
+    parent.children.push(row);
+    ancestors[row.depth] = row;
+    ancestors.length = row.depth + 1;
+  }
+  const rebuild = (row: SectionDeletionRow): SectionSnapshot => ({
+    ...row.snapshot,
+    body: row.body,
+    children: row.children.map(rebuild),
+  });
+  replaceNoteSectionTree(note, rebuild(rows[0]!), updatedAt, origin);
+  return {
+    changed: true,
+    fallbackSectionId: destination.snapshot.sectionId,
+  };
+}
+
 export function planNoteSectionDepthShift(
   note: NoteDocument,
   boundarySectionId: string,
@@ -2022,6 +2110,7 @@ function noteDocumentFromParts(
         ySyncPluginKey,
         SECTION_DEPTH_SHIFT_ORIGIN,
         SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+        SECTION_LINE_DELETION_ORIGIN,
       ]),
     }),
   } as Omit<NoteDocument, "body">;
@@ -2075,6 +2164,7 @@ function replicatedDocumentFromModel(replicated: ReplicatedNote): NoteDocument {
     ySyncPluginKey,
     SECTION_DEPTH_SHIFT_ORIGIN,
     SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+    SECTION_LINE_DELETION_ORIGIN,
     NOTE_RECOVERY_ORIGIN,
   ])
     replicated.undoManager.trackedOrigins.add(origin);

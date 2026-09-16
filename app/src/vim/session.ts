@@ -38,6 +38,7 @@ import {
   beginVisualChar,
   beginVisualLine,
   clampVimBlockCursor,
+  focusedSectionLineDeletionSelection,
   moveVimSelectionToViewportPosition,
   resolveVimViewportCaretPosition,
   pasteVimRegisterAtSelection,
@@ -62,6 +63,7 @@ import {
   vimBlockCursorBeforeInsertCaret,
   vimRegisterLabel,
   type EditorVimResult,
+  type FocusedSectionLineDeletionSelection,
   type VimEditorView,
   type VimRegister,
   type VimVisualLineState,
@@ -347,6 +349,9 @@ export interface ProductVimSessionOptions {
         changed: boolean;
         createdSectionId: string | null;
       } | void>;
+  onFocusedSectionLineDelete?: (
+    request: Omit<FocusedSectionLineDeletionSelection, "register">,
+  ) => void | Promise<void>;
   onSectionSiblingPut?: (request: {
     targetSectionId: string;
     direction: "after" | "before";
@@ -2424,6 +2429,26 @@ export class ProductVimSession {
           ? this.captureVisualSelection(view)
           : undefined;
       const currentRegister = this.registerStore.read(view.state.schema);
+      const focusedSectionDeletion =
+        this.options.onFocusedSectionLineDelete &&
+        ((this.mode === "normal" && command === "line.delete") ||
+          (this.mode === "visual-line" && command === "selection.delete"))
+          ? focusedSectionLineDeletionSelection(
+              view,
+              this.mode,
+              resolution.count,
+              this.visualLine,
+            )
+          : null;
+      if (focusedSectionDeletion) {
+        const request = {
+          sourceSectionId: focusedSectionDeletion.sourceSectionId,
+          remaining: focusedSectionDeletion.remaining,
+        };
+        Promise.resolve(
+          this.options.onFocusedSectionLineDelete?.(request),
+        ).catch(() => undefined);
+      }
       const undoManager = findUndoManager(view);
       const cursorBeforeCommand =
         this.mode === "visual-char"
@@ -2447,45 +2472,52 @@ export class ProductVimSession {
               manager: undoManager,
             }
           : null;
-      const result = resolution.operator
-        ? runEditorVimOperator(
-            view,
-            resolution.operator,
-            command,
-            resolution.count,
-          )
-        : command === "replace.character" && resolution.argument
-          ? runEditorReplaceCharacter(
+      const result: EditorVimResult = focusedSectionDeletion
+        ? {
+            handled: true,
+            detail: "section:delete-focused-selected-lines",
+            register: focusedSectionDeletion.register,
+            nextMode: "normal",
+          }
+        : resolution.operator
+          ? runEditorVimOperator(
               view,
-              resolution.argument,
+              resolution.operator,
+              command,
               resolution.count,
-              this.mode,
             )
-          : this.mode === "visual-line" && this.visualLine
-            ? runVisualLineCommand(
+          : command === "replace.character" && resolution.argument
+            ? runEditorReplaceCharacter(
                 view,
-                command,
-                this.visualLine,
-                currentRegister,
+                resolution.argument,
                 resolution.count,
-                resolution.countExplicit,
+                this.mode,
               )
-            : this.mode === "visual-block"
-              ? runVisualBlockCommand(
+            : this.mode === "visual-line" && this.visualLine
+              ? runVisualLineCommand(
                   view,
                   command,
-                  currentRegister,
-                  resolution.count,
-                )
-              : runEditorVimCommand(
-                  view,
-                  command,
-                  this.mode,
+                  this.visualLine,
                   currentRegister,
                   resolution.count,
                   resolution.countExplicit,
-                  this.options.keyConfig,
-                );
+                )
+              : this.mode === "visual-block"
+                ? runVisualBlockCommand(
+                    view,
+                    command,
+                    currentRegister,
+                    resolution.count,
+                  )
+                : runEditorVimCommand(
+                    view,
+                    command,
+                    this.mode,
+                    currentRegister,
+                    resolution.count,
+                    resolution.countExplicit,
+                    this.options.keyConfig,
+                  );
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
             mode: this.mode,

@@ -67,6 +67,8 @@ unit/integration試験で次を網羅する。
 - 日本語境界の`J`とrawな`gJ`
 - Section focus/fold/depth変更とList depth変更
 - 未選択List子孫を`dd`/Visual delete/yankへ含めないこと
+- Section titleの`dd`とVisual Line deleteで未選択本文・子Sectionを削除せず、表示順と可能な深度を維持すること
+- Focused Section titleの削除後に直前Sectionまたは親へfocusし、UndoでSection identityとfocusを復元すること
 - 複数block ListItemでHard Breakを論理行として数え、未選択の行・blockをdelete/yankへ含めないこと
 - 同じItemの複数行を選択したdepth変更が1回だけ適用され、後続blockを含む表示順を保つこと
 - Table Cell移動、空Cell、Visual Block、Clipboard、行列action、repeat

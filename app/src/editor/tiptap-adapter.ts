@@ -19,6 +19,7 @@ import {
 import {
   findSectionWithDepth,
   SECTION_CHILDREN_NODE,
+  type SectionSnapshot,
 } from "../core/section-model";
 import {
   resolveEditorNavigationDestination,
@@ -264,6 +265,10 @@ export interface TiptapEditorAdapterOptions {
     sectionId: string,
     sourceSectionId: string,
   ) => Promise<void>;
+  onFocusedSectionLineDelete?: (request: {
+    sourceSectionId: string;
+    remaining: SectionSnapshot;
+  }) => void | Promise<void>;
   keyConfig?: ApplicationKeyConfig;
   getInternalLinkCandidates?: () => readonly InternalLinkCandidate[];
   resolveInternalLinkTitle?: InternalLinkTitleResolver;
@@ -526,6 +531,8 @@ export class TiptapEditorAdapter {
       },
       onSectionFromParagraph: async (request) =>
         this.createSectionFromParagraph(request),
+      onFocusedSectionLineDelete: (request) =>
+        options.onFocusedSectionLineDelete?.(request),
       onSectionSiblingPut: (request) => {
         const document = this.handle.current;
         if (document.kind !== "note" || this.currentEditor.isDestroyed) {

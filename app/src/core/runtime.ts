@@ -45,6 +45,7 @@ import {
   EXTERNAL_AGENT_EDIT_ORIGIN,
   REPLICATED_PUBLICATION_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
+  SECTION_LINE_DELETION_ORIGIN,
   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
   addNoteMetadata,
   applyNoteSectionDepthShift,
@@ -54,6 +55,7 @@ import {
   createWorkspaceDocument,
   createReplicatedWorkspaceDocument,
   createReplicatedNoteDocumentFromSectionSnapshot,
+  deleteNoteSectionSelectedLines,
   listNoteMetadata,
   loadNoteDocumentWithSectionIdentityRecovery,
   loadProductDocument,
@@ -88,6 +90,7 @@ import {
   findSectionById,
   sectionId,
   sectionTitle,
+  type SectionSnapshot,
 } from "./section-model";
 import { assertUuidV7, createUuidV7 } from "./ids";
 import {
@@ -380,6 +383,14 @@ export class CoreRuntime {
     {
       createdSectionId: string;
       sourceSectionId: string;
+      dispose: () => void;
+    }
+  >();
+  private readonly sectionDeletionFocusOrigins = new Map<
+    string,
+    {
+      sourceSectionId: string;
+      fallbackSectionId: string;
       dispose: () => void;
     }
   >();
@@ -1926,6 +1937,24 @@ export class CoreRuntime {
     });
   }
 
+  deleteFocusedSectionSelectedLines(
+    noteId: string,
+    sourceSectionId: string,
+    remaining: SectionSnapshot,
+  ): Promise<CoreCommandResults["section.delete_selected_lines"]> {
+    return this.executeCommand({
+      name: "section.delete_selected_lines",
+      operationId: this.idFactory(),
+      source: "editor",
+      payload: {
+        noteId,
+        sourceSectionId,
+        remaining,
+        updatedAt: this.clock(),
+      },
+    });
+  }
+
   sectionBreadcrumb(
     noteId: string,
     targetSectionId: string,
@@ -2937,6 +2966,53 @@ export class CoreRuntime {
           },
           onApplied,
         ),
+      onFocusedSectionLineDelete: async (request) => {
+        const result = await this.deleteFocusedSectionSelectedLines(
+          attachedNoteId,
+          request.sourceSectionId,
+          request.remaining,
+        );
+        if (!result.changed || !result.fallbackSectionId) return;
+        this.sectionDeletionFocusOrigins.get(windowId)?.dispose();
+        const observedDocument = handle.current.doc;
+        const observeUndo = (): void => {
+          queueMicrotask(() => {
+            const pending = this.sectionDeletionFocusOrigins.get(windowId);
+            const note = handle.current;
+            if (pending?.sourceSectionId !== request.sourceSectionId) return;
+            if (
+              note.kind !== "note" ||
+              this.windows.get(windowId)?.focusedSectionId !==
+                result.fallbackSectionId
+            ) {
+              pending.dispose();
+              this.sectionDeletionFocusOrigins.delete(windowId);
+              return;
+            }
+            if (!findSectionById(note.rootSection, request.sourceSectionId)) {
+              return;
+            }
+            pending.dispose();
+            this.sectionDeletionFocusOrigins.delete(windowId);
+            void this.focusSection(
+              windowId,
+              attachedNoteId,
+              request.sourceSectionId,
+            ).catch((error) => this.reportError(error));
+          });
+        };
+        observedDocument.on("afterTransaction", observeUndo);
+        this.sectionDeletionFocusOrigins.set(windowId, {
+          sourceSectionId: request.sourceSectionId,
+          fallbackSectionId: result.fallbackSectionId,
+          dispose: () => observedDocument.off("afterTransaction", observeUndo),
+        });
+        await this.focusSection(
+          windowId,
+          attachedNoteId,
+          result.fallbackSectionId,
+        );
+      },
       onSectionCreatedOutsideView: async (sectionId, sourceSectionId) => {
         this.sectionCreationFocusOrigins.get(windowId)?.dispose();
         const observedDocument = handle.current.doc;
@@ -3076,6 +3152,10 @@ export class CoreRuntime {
       pending.dispose();
     }
     this.sectionCreationFocusOrigins.clear();
+    for (const pending of this.sectionDeletionFocusOrigins.values()) {
+      pending.dispose();
+    }
+    this.sectionDeletionFocusOrigins.clear();
     this.optimisticSectionFocuses.clear();
     this.sectionParagraphAppliedCallbacks.clear();
     if (this.windowViewUpdateFrame !== null) {
@@ -3917,6 +3997,83 @@ export class CoreRuntime {
                     envelope.operationId,
                   )?.(result.createdSectionId);
                 }
+                handle.current.undoManager.stopCapturing();
+                if (result.changed) {
+                  renameNoteMetadata(
+                    this.workspaceDocument,
+                    noteId,
+                    readNoteTitle(handle.current),
+                    updatedAt,
+                    CORE_TRANSACTION_ORIGIN,
+                  );
+                }
+              },
+            );
+            handle.current.undoManager.stopCapturing();
+            if (!result.changed) {
+              this.setReady();
+              return { noteId, ...result };
+            }
+            await this.advanceWorkspaceSearchIndexMetadataRevision({
+              schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+              workspaceId: this.workspaceDocument.workspaceId,
+              baseRevision: workspaceBaseRevision,
+              workspaceRevision: this.workspace.revision,
+              noteId,
+            });
+            this.changedNoteRevisions.set(noteId, handle.revision);
+            this.noteContentRevision += 1;
+            this.sectionCatalogRevision += 1;
+            this.internalLinkLabelRevision += 1;
+            this.queueWorkspaceSearchIndexDocument(noteId);
+            this.setReady();
+            return { noteId, ...result };
+          } catch (error) {
+            this.reportError(error);
+            throw error;
+          }
+        });
+      },
+    );
+
+    this.commands.register(
+      "section.delete_selected_lines",
+      async (envelope) => {
+        const { noteId, sourceSectionId, remaining, updatedAt, fault } =
+          envelope.payload;
+        this.requireLiveMetadata(noteId);
+        const handle = await this.ensureNoteLoaded(noteId);
+        return this.runWithNotePersistenceLock(noteId, async () => {
+          if (handle.current.kind !== "note") {
+            throw new Error("Section deletion target is not a NoteDoc");
+          }
+          this.setSaving();
+          handle.current.undoManager.stopCapturing();
+          const workspaceBaseRevision = this.workspace.revision;
+          let result = {
+            changed: false,
+            fallbackSectionId: null as string | null,
+          };
+          try {
+            await this.transactions.transact(
+              {
+                operationId: envelope.operationId,
+                scope: "workspace-structure",
+                documents: [this.workspace, handle],
+                searchIndexMetadataOnlyNoteId: noteId,
+                fault,
+              },
+              () => {
+                if (handle.current.kind !== "note") {
+                  throw new Error("Section deletion target is not a NoteDoc");
+                }
+                result = deleteNoteSectionSelectedLines(
+                  handle.current,
+                  sourceSectionId,
+                  remaining,
+                  updatedAt,
+                  SECTION_LINE_DELETION_ORIGIN,
+                );
                 handle.current.undoManager.stopCapturing();
                 if (result.changed) {
                   renameNoteMetadata(

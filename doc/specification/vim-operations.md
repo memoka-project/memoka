@@ -128,7 +128,11 @@ Blockquote（Alertを含む）、Detailsの本体も同じtransaction内で取�
 削除に関係する祖先だけを調べ、未選択の本文・inline atom・画像・添付・List/Table構造を空とみなして削除しない。
 Tableでは全rowを削除する場合のみ本体を取り除き、未選択の空rowは維持する。
 DetailsはSummaryに内容が残るなら維持し、必須の空本文Paragraphを補う。ListItem内でも同じ規則とし、未選択の子孫は表示順を保って残す。
-Note/Sectionのidentityとtitle削除規則は変えない。`cc`やVisual Lineの`c`などのchangeは入力先を維持する。
+Root Note title上の`dd`はtitleだけを空にし、Root Sectionと本文を維持する。Root以外のSection titleを`dd`または
+Visual Lineの`d`で選択した場合は、選択したtitleと本文行だけを削除する。未選択の本文と子Sectionは表示順を変えず、
+直前の表示Section、または親Sectionの本文・子として残す。元の絶対深度が不可能なSectionだけを文脈上可能な深さへclampする。
+削除registerには選択行だけを入れ、titleだけを削除したSectionは空本文・子なしのSectionとして保持する。
+`cc`やVisual Lineの`c`などのchangeは入力先を維持する。
 
 ## 7. Text object
 
