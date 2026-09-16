@@ -365,6 +365,14 @@ export class CoreRuntime {
     string,
     { destination: EditorNavigationDestination; detail: string }
   >();
+  private readonly sectionCreationFocusOrigins = new Map<
+    string,
+    {
+      createdSectionId: string;
+      sourceSectionId: string;
+      dispose: () => void;
+    }
+  >();
   private readonly repeatStores = new Map<string, VimRepeatStore>();
   private readonly visualSelectionStores = new Map<
     string,
@@ -1885,6 +1893,7 @@ export class CoreRuntime {
       paragraphBodyIndex: number;
       title: string;
       direction: "deeper" | "shallower";
+      joinPreviousUndo?: boolean;
     },
   ): Promise<CoreCommandResults["section.create_from_paragraph"]> {
     return this.executeCommand({
@@ -2823,7 +2832,12 @@ export class CoreRuntime {
           payload: {
             windowId,
             noteId: attachedNoteId,
-            sectionId,
+            sectionId:
+              this.sectionCreationFocusOrigins.get(windowId)
+                ?.createdSectionId === previousSectionId
+                ? this.sectionCreationFocusOrigins.get(windowId)!
+                    .sourceSectionId
+                : sectionId,
             expectedSectionId: previousSectionId,
             preserveView: true,
             selection,
@@ -2900,7 +2914,47 @@ export class CoreRuntime {
           paragraphBodyIndex: request.paragraphBodyIndex,
           title: request.title,
           direction: request.direction,
+          joinPreviousUndo: request.joinPreviousUndo,
         }),
+      onSectionCreatedOutsideView: async (sectionId, sourceSectionId) => {
+        this.sectionCreationFocusOrigins.get(windowId)?.dispose();
+        const observedDocument = handle.current.doc;
+        const observeUndo = (): void => {
+          queueMicrotask(() => {
+            const pending = this.sectionCreationFocusOrigins.get(windowId);
+            const note = handle.current;
+            if (pending?.createdSectionId !== sectionId) return;
+            if (
+              note.kind !== "note" ||
+              this.windows.get(windowId)?.focusedSectionId !== sectionId
+            ) {
+              pending.dispose();
+              this.sectionCreationFocusOrigins.delete(windowId);
+              return;
+            }
+            if (
+              findSectionById(note.rootSection, sectionId) ||
+              !findSectionById(note.rootSection, sourceSectionId)
+            ) {
+              return;
+            }
+            pending.dispose();
+            this.sectionCreationFocusOrigins.delete(windowId);
+            void this.focusSection(
+              windowId,
+              attachedNoteId,
+              sourceSectionId,
+            ).catch((error) => this.reportError(error));
+          });
+        };
+        observedDocument.on("afterTransaction", observeUndo);
+        this.sectionCreationFocusOrigins.set(windowId, {
+          createdSectionId: sectionId,
+          sourceSectionId,
+          dispose: () => observedDocument.off("afterTransaction", observeUndo),
+        });
+        await this.focusSection(windowId, attachedNoteId, sectionId);
+      },
       keyConfig: options.keyConfig,
       getInternalLinkCandidates: () => this.internalLinkCandidates(),
       resolveInternalLinkTitle: (targetSectionId) =>
@@ -2989,6 +3043,10 @@ export class CoreRuntime {
   }
 
   destroy(): void {
+    for (const pending of this.sectionCreationFocusOrigins.values()) {
+      pending.dispose();
+    }
+    this.sectionCreationFocusOrigins.clear();
     if (this.windowViewUpdateFrame !== null) {
       cancelAnimationFrame(this.windowViewUpdateFrame);
       this.windowViewUpdateFrame = null;
@@ -3641,7 +3699,13 @@ export class CoreRuntime {
     this.commands.register(
       "section.create_from_paragraph",
       async (envelope) => {
-        const { noteId, updatedAt, fault, ...request } = envelope.payload;
+        const {
+          noteId,
+          updatedAt,
+          fault,
+          joinPreviousUndo = false,
+          ...request
+        } = envelope.payload;
         this.requireLiveMetadata(noteId);
         const handle = await this.ensureNoteLoaded(noteId);
         return this.runWithNotePersistenceLock(noteId, async () => {
@@ -3649,7 +3713,7 @@ export class CoreRuntime {
             throw new Error("Paragraph conversion target is not a NoteDoc");
           }
           this.setSaving();
-          handle.current.undoManager.stopCapturing();
+          if (!joinPreviousUndo) handle.current.undoManager.stopCapturing();
           const workspaceBaseRevision = this.workspace.revision;
           let result = {
             changed: false,

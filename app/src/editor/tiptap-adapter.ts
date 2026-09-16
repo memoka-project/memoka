@@ -92,6 +92,7 @@ import {
   productEditorExtensions,
   refreshInternalSectionLinkNodeViews,
   type InternalLinkTitleResolver,
+  type SectionHashInputRequest,
 } from "./extensions";
 import {
   InternalLinkCompletion,
@@ -252,11 +253,16 @@ export interface TiptapEditorAdapterOptions {
     request: SectionParagraphConversionSelection & {
       direction: "deeper" | "shallower";
       mode: "insert" | "normal";
+      joinPreviousUndo?: boolean;
     },
   ) => Promise<{
     changed: boolean;
     createdSectionId: string | null;
   }>;
+  onSectionCreatedOutsideView?: (
+    sectionId: string,
+    sourceSectionId: string,
+  ) => Promise<void>;
   keyConfig?: ApplicationKeyConfig;
   getInternalLinkCandidates?: () => readonly InternalLinkCandidate[];
   resolveInternalLinkTitle?: InternalLinkTitleResolver;
@@ -1471,6 +1477,15 @@ export class TiptapEditorAdapter {
             this.options.onCodeFoldsChange?.(ids),
           onDetailsFoldOverridesChange: (overrides) =>
             this.options.onDetailsFoldsChange?.(overrides),
+          onSectionHashInput: (request) => {
+            void this.createSectionFromHashInput(request).catch((error) => {
+              this.options.onMessage?.(
+                `Sectionを作成できませんでした: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            });
+          },
         }),
         blockTypeSlashTrigger({
           enabled: () => {
@@ -1834,7 +1849,16 @@ export class TiptapEditorAdapter {
     request: SectionParagraphConversionSelection & {
       direction: "deeper" | "shallower";
       mode: "insert" | "normal";
+      joinPreviousUndo?: boolean;
     },
+    options: {
+      allowReverse?: boolean;
+      onOutsideView?: (
+        sectionId: string,
+        sourceSectionId: string,
+      ) => Promise<void>;
+      detail?: string;
+    } = {},
   ): Promise<{ changed: boolean; createdSectionId: string | null }> {
     const document = this.handle.current;
     if (
@@ -1862,14 +1886,46 @@ export class TiptapEditorAdapter {
         this.vimSession.applySectionDepthShiftPosition(
           position,
           request.mode,
-          `section:paragraph-${request.direction}:changed`,
+          options.detail ?? `section:paragraph-${request.direction}:changed`,
           request.mode === "normal" ? request.caretPosition : undefined,
         );
+      } else if (options.onOutsideView) {
+        await options.onOutsideView(
+          result.createdSectionId,
+          request.sourceSectionId,
+        );
+        await Promise.resolve();
+        if (!this.currentEditor.isDestroyed) {
+          if (
+            sectionHeaderPosition(
+              this.currentEditor.view,
+              result.createdSectionId,
+              request.caretOffset,
+            ) === null
+          ) {
+            this.recreateEditor();
+          }
+          const reboundPosition = sectionHeaderPosition(
+            this.currentEditor.view,
+            result.createdSectionId,
+            request.caretOffset,
+          );
+          if (reboundPosition !== null) {
+            this.vimSession.applySectionDepthShiftPosition(
+              reboundPosition,
+              request.mode,
+              options.detail ??
+                `section:paragraph-${request.direction}:changed`,
+              request.mode === "normal" ? request.caretPosition : undefined,
+            );
+          }
+        }
       }
       const undoItem = document.undoManager.undoStack.find(
         (item) => !priorUndoItems.has(item),
       );
       if (
+        options.allowReverse !== false &&
         request.mode === "insert" &&
         undoItem &&
         document.undoManager.undoStack.at(-1) === undoItem
@@ -1890,6 +1946,35 @@ export class TiptapEditorAdapter {
     } finally {
       this.finishSectionDepthScrollLock(scrollLock);
     }
+  }
+
+  private createSectionFromHashInput(
+    request: SectionHashInputRequest,
+  ): Promise<{ changed: boolean; createdSectionId: string | null }> {
+    const document = this.handle.current;
+    if (document.kind !== "note") {
+      return Promise.resolve({ changed: false, createdSectionId: null });
+    }
+    return this.createSectionFromParagraph(
+      {
+        boundarySectionId: document.noteId,
+        sourceSectionId: request.sourceSectionId,
+        paragraphBlockId: request.paragraphBlockId,
+        paragraphBodyIndex: request.paragraphBodyIndex,
+        title: "",
+        caretOffset: 0,
+        paragraphOffset: 1,
+        caretPosition: request.caretPosition,
+        direction: "shallower",
+        mode: "insert",
+        joinPreviousUndo: true,
+      },
+      {
+        allowReverse: false,
+        onOutsideView: this.options.onSectionCreatedOutsideView,
+        detail: "section:hash-sibling:changed",
+      },
+    );
   }
 
   private reverseSectionParagraph(

@@ -145,9 +145,11 @@ Tableの詳細は[Vim操作](vim-operations.md)に記載する。
 
 ## 6. Sectionの作成と深さ
 
-Section直下のParagraph先頭で`# `を入力すると、そのParagraph以降を直接Bodyに持つ新しい子Sectionへ変換する。
-Section title以降の内容は、その新SectionのBodyまたは子Sectionになる。
-Root H1からH6までを許す。H6本文での`# `はliteral textのまま残す。
+Root Section直下のParagraph先頭で`# `を入力すると、そのParagraph以降を直接Bodyに持つ新しい子Sectionへ変換する。
+Root以外のSection直下では、現在Section直後に空titleの兄弟Sectionを作る。対象Paragraphより前の直接Bodyは
+現在Sectionに残し、後ろの直接Bodyと現在Sectionの既存子Sectionは新しい兄弟Sectionへ移す。これにより後半本文の
+絶対深度と表示順を維持する。兄弟化は深さを増やさないため、H6本文でも`# `による兄弟Section作成を許す。
+Root H1からH6までを許す。
 深さを変える操作と全paste経路は最終treeの絶対深さを事前検証する。
 H6を超える場合はtyped errorで全体を拒否し、ID、本文、revision、Undoを変更しない。
 H1が複数あるMarkdownの正規化後にH6を超える場合も、平坦化やplain-text fallbackを行わない。

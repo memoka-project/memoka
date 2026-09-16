@@ -205,7 +205,8 @@ Details内にとどまり、既存Paragraphを再利用しない。Normalの`o`�
 
 SectionはNote RootをH1としてH6までとする。`>>/<<`、Insertの`Ctrl-t/Ctrl-d`、Visual Lineの`>/<`、
 ParagraphからSectionを作る操作、`p/P`には同じ上限を適用する。`zf`中も絶対深度で検査する。
-結果がH7を含む場合は操作全体を拒否し、本文、ID、revision、Undoを変えない。H6 Headerでの`# `は文字として残す。
+結果がH7を含む場合は操作全体を拒否し、本文、ID、revision、Undoを変えない。非Root本文での`# `は
+同じ絶対深度の兄弟Sectionを作るため、H6でも許可する。Root本文での`# `は従来どおり子Sectionを作る。
 
 既存の昇降格規則は、明示的に選んだHeaderを動かし、後続Headerの深さは不正な段差の補正以外は維持するもの。
 親Headerだけを選ぶ操作で子孫を自動選択しない。H5親からH6子までを選択してsubtree全体を1段降格する場合は、

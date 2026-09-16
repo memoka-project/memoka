@@ -109,6 +109,13 @@ declare module "@tiptap/core" {
 
 export type InternalLinkTitleResolver = (sectionId: string) => string | null;
 
+export interface SectionHashInputRequest {
+  readonly sourceSectionId: string;
+  readonly paragraphBlockId: string;
+  readonly paragraphBodyIndex: number;
+  readonly caretPosition: number;
+}
+
 export type EditorAttachmentRepository = Pick<
   AttachmentRepository,
   "cached" | "previewUrl" | "resolve" | "subscribe"
@@ -2234,7 +2241,10 @@ const TableShortcuts = Extension.create({
   },
 });
 
-const SectionEditing = Extension.create({
+const SectionEditing = Extension.create<{
+  absoluteDepth: number;
+  onSectionHashInput?: (request: SectionHashInputRequest) => void;
+}>({
   name: "memokaSectionEditing",
   priority: 2_000,
   addOptions() {
@@ -2267,6 +2277,34 @@ const SectionEditing = Extension.create({
             let absoluteDepth = this.options.absoluteDepth;
             for (let depth = 1; depth <= sectionDepth; depth++) {
               if ($from.node(depth).type.name === SECTION_NODE) absoluteDepth++;
+            }
+            if (absoluteDepth > 0) {
+              const sourceSectionId = String(
+                section.firstChild?.attrs.sectionId ?? "",
+              );
+              const paragraphBlockId = String($from.parent.attrs.blockId ?? "");
+              const onSectionHashInput = this.options.onSectionHashInput;
+              if (
+                !sourceSectionId ||
+                !paragraphBlockId ||
+                !onSectionHashInput
+              ) {
+                return false;
+              }
+              const chunkIndex = $from.index(bodyDepth);
+              let paragraphBodyIndex = $from.index(chunkDepth);
+              for (let index = 0; index < chunkIndex; index += 1) {
+                const chunk = body.child(index);
+                if (chunk.type.name !== BODY_CHUNK_NODE) return false;
+                paragraphBodyIndex += chunk.childCount;
+              }
+              onSectionHashInput({
+                sourceSectionId,
+                paragraphBlockId,
+                paragraphBodyIndex,
+                caretPosition: from,
+              });
+              return true;
             }
             if (absoluteDepth >= 5) return false;
             const sectionType = state.schema.nodes[SECTION_NODE];
@@ -2443,6 +2481,7 @@ export function productEditorExtensions(
     onCopyCodeBlock?: (
       blockId: string,
     ) => CodeCopyResult | Promise<CodeCopyResult>;
+    onSectionHashInput?: (request: SectionHashInputRequest) => void;
   } = {},
 ) {
   if (note.replicated && options.directBodyOnly)
@@ -2554,7 +2593,10 @@ export function productEditorExtensions(
     BlockIdentity,
     AttachmentIdentity,
     TableShortcuts,
-    SectionEditing.configure({ absoluteDepth: focusedSection?.depth ?? 0 }),
+    SectionEditing.configure({
+      absoluteDepth: focusedSection?.depth ?? 0,
+      onSectionHashInput: options.onSectionHashInput,
+    }),
     ...(note.replicated && !options.directBodyOnly
       ? [
           replicatedNoteExtension(

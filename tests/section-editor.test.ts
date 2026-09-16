@@ -80,6 +80,25 @@ function press(
   return event;
 }
 
+function typeSectionMarker(editor: Editor, position: number): boolean {
+  editor.commands.setTextSelection(position);
+  editor.commands.insertContent("#");
+  const insertion = editor.state.selection.from;
+  let handled = false;
+  editor.view.someProp("handleTextInput", (handler) => {
+    if (
+      handler(editor.view, insertion, insertion, " ", () =>
+        editor.state.tr.insertText(" ", insertion),
+      )
+    ) {
+      handled = true;
+      return true;
+    }
+    return false;
+  });
+  return handled;
+}
+
 function composition(
   editor: Editor,
   type: "compositionstart" | "compositionupdate" | "compositionend",
@@ -1145,7 +1164,7 @@ describe("Memoka Section editor semantics", () => {
     root.remove();
   });
 
-  it("keeps existing child Section identities when '# ' creates a sibling", async () => {
+  it("keeps existing child Section identities when Root '# ' creates a child", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "Root",
@@ -1174,6 +1193,211 @@ describe("Memoka Section editor semantics", () => {
     expect(
       findSectionById(runtime.noteDocument.rootSection, existingChildId),
     ).toBe(existingChild);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("splits a non-Root body into a sibling Section on '# '", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const note = runtime.noteDocument;
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    const existingChildId = createUuidV7();
+    const followingSectionId = createUuidV7();
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(
+          sourceSectionId,
+          "Source",
+          [
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "before" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: targetBlockId,
+              content: [],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "after" }],
+            }),
+          ],
+          [createSectionXml(existingChildId, "Existing child")],
+        ),
+      );
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(followingSectionId, "Following"),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const converted = sectionSnapshot(note.rootSection);
+    expect(converted.children).toHaveLength(3);
+    expect(converted.children[0]?.sectionId).toBe(sourceSectionId);
+    expect(JSON.stringify(converted.children[0]?.body)).toContain("before");
+    expect(converted.children[0]?.children).toEqual([]);
+    expect(converted.children[1]?.title).toBe("");
+    expect(JSON.stringify(converted.children[1]?.body)).toContain("after");
+    expect(converted.children[1]?.children[0]?.sectionId).toBe(existingChildId);
+    expect(converted.children[2]?.sectionId).toBe(followingSectionId);
+    expect(editor.state.selection.$from.parent.type.name).toBe("sectionHeader");
+    expect(editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      converted.children[1]?.sectionId,
+    );
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    press(editor, "Escape");
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("focuses a sibling created outside the focused Section view", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const sourceRoot = rootElement();
+    const sourceEditor = runtime.editorForTesting("window-1", sourceRoot, {
+      directBodyOnly: false,
+    });
+    sourceEditor.editor.commands.focus();
+    press(sourceEditor.editor, "Escape");
+    press(sourceEditor.editor, "i", { code: "KeyI" });
+    await settle(runtime);
+    expect(sourceEditor.adapter.vimSnapshot.mode).toBe("insert");
+    expect(runtime.windows.get("window-1")?.mode).toBe("insert");
+
+    expect(
+      typeSectionMarker(
+        sourceEditor.editor,
+        positionOf(
+          sourceEditor.editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+    sourceEditor.adapter.destroy();
+    sourceRoot.remove();
+
+    const createdRoot = rootElement();
+    const createdEditor = runtime.editorForTesting("window-1", createdRoot, {
+      directBodyOnly: false,
+    });
+    expect(createdEditor.adapter.vimSnapshot.mode).toBe("insert");
+    expect(
+      createdEditor.editor.state.selection.$from.parent.attrs.sectionId,
+    ).toBe(createdSectionId);
+
+    press(createdEditor.editor, "Escape");
+    press(createdEditor.editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      sourceSectionId,
+    );
+
+    createdEditor.adapter.destroy();
+    runtime.destroy();
+    createdRoot.remove();
+  });
+
+  it("allows '# ' to create an H6 sibling without increasing depth", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetBlockId = createUuidV7();
+    let nested = createSectionXml(createUuidV7(), "H6", [
+      blockToYXml({
+        type: "paragraph",
+        blockId: targetBlockId,
+        content: [],
+      }),
+    ]);
+    for (const title of ["H5", "H4", "H3", "H2"]) {
+      nested = createSectionXml(createUuidV7(), title, [], [nested]);
+    }
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(runtime.noteDocument.rootSection, nested);
+    }, CORE_TRANSACTION_ORIGIN);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const h5 = sectionSnapshot(runtime.noteDocument.rootSection).children[0]!
+      .children[0]!.children[0]!.children[0]!;
+    expect(h5.title).toBe("H5");
+    expect(h5.children.map(({ title }) => title)).toEqual(["H6", ""]);
+
     adapter.destroy();
     runtime.destroy();
     root.remove();

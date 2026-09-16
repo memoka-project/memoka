@@ -109,6 +109,7 @@ export interface CoreCommandPayloads {
     newSectionId: string;
     title: string;
     direction: SectionDepthShiftDirection;
+    joinPreviousUndo?: boolean;
     updatedAt: string;
     fault?: CommitFault;
   };
