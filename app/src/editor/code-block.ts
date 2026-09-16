@@ -184,10 +184,17 @@ export interface CodeFoldEntry {
 
 interface CodeFoldState {
   readonly overrides: ReadonlyMap<string, boolean>;
+  readonly collapsedBlockIds: readonly string[];
+  readonly persistenceSignature: string;
   readonly entries: readonly CodeFoldEntry[];
   readonly hidden: readonly CodeFoldEntry[];
   readonly signature: string;
   readonly decorations: DecorationSet;
+}
+
+interface CodeBlockFoldingOptions {
+  collapsedBlockIds: readonly string[];
+  onCollapsedBlockIdsChange?: (ids: readonly string[]) => void;
 }
 
 const codeFoldKey = new PluginKey<CodeFoldState>("memokaCodeBlockFolding");
@@ -265,22 +272,68 @@ function buildFoldState(
   overrides: ReadonlyMap<string, boolean>,
 ): CodeFoldState {
   const entries = foldEntriesIn(doc);
+  const collapsedBlockIds = [...overrides]
+    .filter(([, open]) => !open)
+    .map(([id]) => id)
+    .sort();
   const hidden = entries.filter((entry) => overrides.get(entry.id) === false);
-  const decorations = entries.map((entry) => {
+  const decorations: Decoration[] = [];
+  for (const entry of entries) {
     const expanded = !hidden.includes(entry);
-    return Decoration.node(entry.from, entry.to, {
-      "data-code-foldable": "true",
-      "data-code-expanded": String(expanded),
-      "data-code-line-count": String(entry.lineCount),
-    });
-  });
+    decorations.push(
+      Decoration.node(entry.from, entry.to, {
+        "data-code-foldable": "true",
+        "data-code-expanded": String(expanded),
+        "data-code-line-count": String(entry.lineCount),
+      }),
+    );
+    if (!expanded) {
+      // Hide the separator after the fifth line as well as the remaining
+      // text. Leaving the newline laid out produces an apparent sixth line.
+      decorations.push(
+        Decoration.inline(entry.hiddenFrom - 1, entry.hiddenTo, {
+          class: "memoka-code-block__hidden-lines",
+        }),
+      );
+    }
+  }
   return {
     overrides,
+    collapsedBlockIds,
+    persistenceSignature: collapsedBlockIds.join("\u0000"),
     entries,
     hidden,
     signature: hidden.map((entry) => entry.id).join("\u0000"),
     decorations: DecorationSet.create(doc, decorations),
   };
+}
+
+function keepCollapsedCodePointerVisible(
+  view: EditorView,
+  event: MouseEvent,
+): boolean {
+  if (event.button !== 0 || !(event.target instanceof Element)) return false;
+  const pre = event.target.closest(
+    '.memoka-code-block[data-code-expanded="false"] pre',
+  );
+  if (!pre || !view.dom.contains(pre)) return false;
+  const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+  if (!hit) return false;
+  const entry = codeFoldKey
+    .getState(view.state)
+    ?.hidden.find(
+      (candidate) =>
+        hit.pos >= candidate.hiddenFrom && hit.pos <= candidate.hiddenTo,
+    );
+  if (!entry) return false;
+  event.preventDefault();
+  view.dispatch(
+    view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, entry.hiddenFrom - 1))
+      .setMeta("addToHistory", false),
+  );
+  view.focus();
+  return true;
 }
 
 function revealCodeFoldTransaction(
@@ -299,14 +352,19 @@ function revealCodeFoldTransaction(
     .setMeta("addToHistory", false);
 }
 
-export const CodeBlockFolding = Extension.create({
+export const CodeBlockFolding = Extension.create<CodeBlockFoldingOptions>({
   name: "memokaCodeBlockFolding",
+  addOptions: () => ({ collapsedBlockIds: [] }),
   addProseMirrorPlugins() {
+    const initialOverrides = new Map(
+      this.options.collapsedBlockIds.map((id) => [id, false] as const),
+    );
+    const onCollapsedBlockIdsChange = this.options.onCollapsedBlockIdsChange;
     return [
       new Plugin<CodeFoldState>({
         key: codeFoldKey,
         state: {
-          init: (_, state) => buildFoldState(state.doc, new Map()),
+          init: (_, state) => buildFoldState(state.doc, initialOverrides),
           apply: (transaction, previous) => {
             const override = transaction.getMeta(codeFoldKey) as
               ReadonlyMap<string, boolean> | undefined;
@@ -320,9 +378,25 @@ export const CodeBlockFolding = Extension.create({
         props: {
           decorations: (state) =>
             codeFoldKey.getState(state)?.decorations ?? null,
+          handleDOMEvents: {
+            mousedown: (view, event) =>
+              keepCollapsedCodePointerVisible(view, event),
+          },
         },
         appendTransaction: (_transactions, _oldState, state) =>
           revealCodeFoldTransaction(state, state.selection.head),
+        view: (view) => {
+          let signature =
+            codeFoldKey.getState(view.state)?.persistenceSignature ?? "";
+          return {
+            update: (next) => {
+              const state = codeFoldKey.getState(next.state);
+              if (!state || state.persistenceSignature === signature) return;
+              signature = state.persistenceSignature;
+              onCollapsedBlockIdsChange?.(state.collapsedBlockIds);
+            },
+          };
+        },
       }),
     ];
   },
@@ -336,6 +410,32 @@ export function codeFoldHiddenEntries(
 
 export function codeFoldStateSignature(state: EditorState): string {
   return codeFoldKey.getState(state)?.signature ?? "";
+}
+
+export function codeFoldCollapsedBlockIds(
+  state: EditorState,
+): readonly string[] {
+  return codeFoldKey.getState(state)?.collapsedBlockIds ?? [];
+}
+
+export function setCodeFoldCollapsedBlockIds(
+  view: EditorView,
+  ids: readonly string[],
+): boolean {
+  const normalized = [...new Set(ids)].sort();
+  const folds = codeFoldKey.getState(view.state);
+  if (!folds || folds.persistenceSignature === normalized.join("\u0000")) {
+    return false;
+  }
+  view.dispatch(
+    view.state.tr
+      .setMeta(
+        codeFoldKey,
+        new Map(normalized.map((id) => [id, false] as const)),
+      )
+      .setMeta("addToHistory", false),
+  );
+  return true;
 }
 
 export function revealCodeFoldAtPosition(

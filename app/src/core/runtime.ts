@@ -294,6 +294,8 @@ interface PendingWindowViewUpdate {
     selection?: WindowViewState["selection"];
     scrollTop?: number;
     collapsedSectionIds?: string[];
+    collapsedCodeBlockIds?: string[];
+    detailsFoldOverrides?: Record<string, boolean>;
   };
   readonly activeSectionId?: string | null;
 }
@@ -2871,6 +2873,18 @@ export class CoreRuntime {
           attachedNoteId,
           activeSectionId,
         ),
+      onCodeFoldsChange: (collapsedCodeBlockIds) =>
+        this.persistWindowUpdate(
+          windowId,
+          { collapsedCodeBlockIds: [...collapsedCodeBlockIds] },
+          attachedNoteId,
+        ),
+      onDetailsFoldsChange: (detailsFoldOverrides) =>
+        this.persistWindowUpdate(
+          windowId,
+          { detailsFoldOverrides: { ...detailsFoldOverrides } },
+          attachedNoteId,
+        ),
       onSectionDepthShift: (request) =>
         this.shiftSectionDepth(
           attachedNoteId,
@@ -4324,12 +4338,24 @@ export class CoreRuntime {
       }
       this.applicationWindowState = next;
       const foldsChanged =
-        envelope.payload.update.collapsedSectionIds !== undefined &&
-        JSON.stringify(previousView?.collapsedSectionIds ?? []) !==
-          JSON.stringify(
-            next.windows[envelope.payload.windowId]?.view.collapsedSectionIds ??
-              [],
-          );
+        (envelope.payload.update.collapsedSectionIds !== undefined &&
+          JSON.stringify(previousView?.collapsedSectionIds ?? []) !==
+            JSON.stringify(
+              next.windows[envelope.payload.windowId]?.view
+                .collapsedSectionIds ?? [],
+            )) ||
+        (envelope.payload.update.collapsedCodeBlockIds !== undefined &&
+          JSON.stringify(previousView?.collapsedCodeBlockIds ?? []) !==
+            JSON.stringify(
+              next.windows[envelope.payload.windowId]?.view
+                .collapsedCodeBlockIds ?? [],
+            )) ||
+        (envelope.payload.update.detailsFoldOverrides !== undefined &&
+          JSON.stringify(previousView?.detailsFoldOverrides ?? {}) !==
+            JSON.stringify(
+              next.windows[envelope.payload.windowId]?.view
+                .detailsFoldOverrides ?? {},
+            ));
       if (outlineChanged || foldsChanged) this.emit();
       this.localStateQueue = this.localStateQueue
         .catch(() => undefined)
@@ -5796,6 +5822,8 @@ export class CoreRuntime {
       selection?: WindowViewState["selection"];
       scrollTop?: number;
       collapsedSectionIds?: string[];
+      collapsedCodeBlockIds?: string[];
+      detailsFoldOverrides?: Record<string, boolean>;
     },
     noteId: string,
     activeSectionId?: string | null,
@@ -5824,8 +5852,16 @@ export class CoreRuntime {
       update.mode !== undefined ||
       update.scrollTop !== undefined ||
       update.collapsedSectionIds !== undefined ||
+      update.collapsedCodeBlockIds !== undefined ||
+      update.detailsFoldOverrides !== undefined ||
       outlineChanged;
-    if (update.collapsedSectionIds !== undefined) this.emit();
+    if (
+      update.collapsedSectionIds !== undefined ||
+      update.collapsedCodeBlockIds !== undefined ||
+      update.detailsFoldOverrides !== undefined
+    ) {
+      this.emit();
+    }
     if (!urgent && this.windowViewUpdateFrame === null) {
       if (this.windowViewUpdateTimer !== null) {
         globalThis.clearTimeout(this.windowViewUpdateTimer);

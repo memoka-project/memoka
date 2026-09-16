@@ -12,7 +12,7 @@ import {
   type WindowViewState as LegacyWindowViewState,
 } from "./window-state";
 
-export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 9;
+export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 10;
 
 export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
 
@@ -814,10 +814,14 @@ export function migrateApplicationWindowState(
   if (!value || typeof value !== "object") {
     return { state: value, changed: false };
   }
-  const version = (value as { schemaVersion?: unknown }).schemaVersion;
-  if (version !== 5 && version !== 6 && version !== 7 && version !== 8) {
+  const candidateVersion = (value as { schemaVersion?: unknown }).schemaVersion;
+  if (
+    typeof candidateVersion !== "number" ||
+    ![5, 6, 7, 8, 9].includes(candidateVersion)
+  ) {
     return { state: value, changed: false };
   }
+  const version = candidateVersion;
   const state = structuredClone(value) as {
     schemaVersion: number;
     tabs?: Array<{
@@ -827,7 +831,16 @@ export function migrateApplicationWindowState(
         tree?: TreeSidebarViewState;
       };
     }>;
-    windows?: Record<string, { view?: { collapsedSectionIds?: string[] } }>;
+    windows?: Record<
+      string,
+      {
+        view?: {
+          collapsedSectionIds?: string[];
+          collapsedCodeBlockIds?: string[];
+          detailsFoldOverrides?: Record<string, boolean>;
+        };
+      }
+    >;
     buffers?: Record<string, { id?: string; kind?: string; utility?: string }>;
   };
   if (version === 5) {
@@ -856,6 +869,13 @@ export function migrateApplicationWindowState(
   if (version < 7) {
     for (const window of Object.values(state.windows ?? {})) {
       if (window.view) window.view.collapsedSectionIds = [];
+    }
+  }
+  if (version < 10) {
+    for (const window of Object.values(state.windows ?? {})) {
+      if (!window.view) continue;
+      window.view.collapsedCodeBlockIds = [];
+      window.view.detailsFoldOverrides = {};
     }
   }
   for (const tab of state.tabs ?? []) {
@@ -1464,6 +1484,8 @@ function legacyView(state: LegacyWindowViewState): WindowLocalViewState {
     scrollTop: state.scrollTop,
     focusedSectionId: null,
     collapsedSectionIds: [],
+    collapsedCodeBlockIds: [],
+    detailsFoldOverrides: {},
   };
 }
 

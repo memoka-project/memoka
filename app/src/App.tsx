@@ -3214,6 +3214,8 @@ export function App({
           applicationWindowState?.view.focusedSectionId ?? windowState.noteId
         }
         collapsedSectionIds={windowState.collapsedSectionIds}
+        collapsedCodeBlockIds={windowState.collapsedCodeBlockIds}
+        detailsFoldOverrides={windowState.detailsFoldOverrides}
         label={note ? noteDisplayTitle(note.title) : "Unknown note"}
         focused={focused}
         internalLinkLabelRevision={snapshot.internalLinkLabelRevision}
@@ -4259,6 +4261,8 @@ function EditorWindow({
   noteId,
   focusedSectionId,
   collapsedSectionIds,
+  collapsedCodeBlockIds,
+  detailsFoldOverrides,
   label,
   focused,
   internalLinkLabelRevision,
@@ -4288,6 +4292,8 @@ function EditorWindow({
   noteId: string;
   focusedSectionId: string;
   collapsedSectionIds: readonly string[];
+  collapsedCodeBlockIds: readonly string[];
+  detailsFoldOverrides: Readonly<Record<string, boolean>>;
   label: string;
   focused: boolean;
   internalLinkLabelRevision: number;
@@ -4551,6 +4557,12 @@ function EditorWindow({
   useLayoutEffect(() => {
     adapterRef.current?.setCollapsedSectionIds(collapsedSectionIds);
   }, [collapsedSectionIds]);
+  useLayoutEffect(() => {
+    adapterRef.current?.setCollapsedCodeBlockIds(collapsedCodeBlockIds);
+  }, [collapsedCodeBlockIds]);
+  useLayoutEffect(() => {
+    adapterRef.current?.setDetailsFoldOverrides(detailsFoldOverrides);
+  }, [detailsFoldOverrides]);
   const clipboard = vimSnapshot?.clipboard ?? "idle";
   const imeOff = vimSnapshot?.imeOff ?? "idle";
   const mode =

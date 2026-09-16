@@ -8,6 +8,7 @@ import {
 import {
   defaultVimBlockSemantics,
   type VimLogicalLineAnchor,
+  vimLogicalLineVisibilitySignature,
 } from "./block-semantics";
 import { measureVimCharacterCell } from "./caret-geometry";
 
@@ -107,6 +108,7 @@ export class VimLogicalLineGutter {
   private items: LogicalLineLayoutItem[] = [];
   private positionShifts: DeferredPositionShift[] = [];
   private cursor: number;
+  private visibilitySignature: string;
   private modelDirty = true;
   private renderDirty = true;
   private renderedCurrentIndex = -1;
@@ -115,6 +117,7 @@ export class VimLogicalLineGutter {
   constructor(view: EditorView, cursor: number) {
     this.view = view;
     this.cursor = cursor;
+    this.visibilitySignature = vimLogicalLineVisibilitySignature(view.state);
     this.host = view.dom.parentElement ?? view.dom;
     this.host.classList.add("memoka-editor-host");
     this.gutter = view.dom.ownerDocument.createElement("div");
@@ -175,6 +178,13 @@ export class VimLogicalLineGutter {
   update(view: EditorView, previous: EditorState, cursor: number): void {
     this.view = view;
     this.cursor = cursor;
+    const visibilitySignature = vimLogicalLineVisibilitySignature(view.state);
+    const visibilityChanged = visibilitySignature !== this.visibilitySignature;
+    this.visibilitySignature = visibilitySignature;
+    if (visibilityChanged) {
+      this.modelDirty = true;
+      this.renderDirty = true;
+    }
     if (
       previous.doc !== view.state.doc &&
       !this.patchSingleSemanticBlock(previous)

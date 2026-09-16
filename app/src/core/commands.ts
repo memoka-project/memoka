@@ -157,6 +157,8 @@ export interface CoreCommandPayloads {
       selection?: WindowSelection | null;
       scrollTop?: number;
       collapsedSectionIds?: string[];
+      collapsedCodeBlockIds?: string[];
+      detailsFoldOverrides?: Record<string, boolean>;
     };
     noteId?: string;
     activeSectionId?: string | null;

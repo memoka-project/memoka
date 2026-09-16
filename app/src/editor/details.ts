@@ -165,6 +165,15 @@ interface FoldState {
   readonly hidden: readonly DetailsEntry[];
   readonly signature: string;
   readonly decorations: DecorationSet;
+  readonly persistenceSignature: string;
+}
+
+interface DetailsFoldingOptions {
+  expandAll: boolean;
+  foldOverrides: Readonly<Record<string, boolean>>;
+  onFoldOverridesChange?: (
+    overrides: Readonly<Record<string, boolean>>,
+  ) => void;
 }
 const foldKey = new PluginKey<FoldState>("memokaDetailsFolding");
 function isOpen(
@@ -233,14 +242,22 @@ function foldState(
     hidden,
     signature: hidden.map((entry) => entry.id).join("\u0000"),
     decorations: DecorationSet.create(doc, decorations),
+    persistenceSignature: [...overrides]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, open]) => `${id}:${open ? "1" : "0"}`)
+      .join("\u0000"),
   };
 }
 
-export const DetailsFolding = Extension.create({
+export const DetailsFolding = Extension.create<DetailsFoldingOptions>({
   name: "detailsFolding",
   priority: 1140,
-  addOptions: () => ({ expandAll: false }),
+  addOptions: () => ({ expandAll: false, foldOverrides: {} }),
   addProseMirrorPlugins() {
+    const initialOverrides = new Map<string, boolean>(
+      Object.entries(this.options.foldOverrides),
+    );
+    const onFoldOverridesChange = this.options.onFoldOverridesChange;
     return [
       new Plugin<FoldState>({
         key: foldKey,
@@ -253,7 +270,7 @@ export const DetailsFolding = Extension.create({
                   ? entriesIn(state.doc).map(
                       (entry) => [entry.id, true] as const,
                     )
-                  : [],
+                  : initialOverrides,
               ),
             ),
           apply: (tr, previous) => {
@@ -273,6 +290,23 @@ export const DetailsFolding = Extension.create({
           // Search, Undo and explicit navigation may address hidden content.
           // Reveal it without moving the caret or changing document history.
           return revealDetailsTransaction(state, state.selection.head);
+        },
+        view: (view) => {
+          let signature = foldKey.getState(view.state)?.persistenceSignature;
+          return {
+            update: (next) => {
+              const state = foldKey.getState(next.state);
+              if (!state || state.persistenceSignature === signature) return;
+              signature = state.persistenceSignature;
+              onFoldOverridesChange?.(
+                Object.fromEntries(
+                  [...state.overrides].sort(([left], [right]) =>
+                    left.localeCompare(right),
+                  ),
+                ),
+              );
+            },
+          };
         },
       }),
     ];
@@ -311,6 +345,30 @@ export function detailsFoldHiddenEntries(
 }
 export function detailsFoldStateSignature(state: EditorState): string {
   return foldKey.getState(state)?.signature ?? "";
+}
+
+export function detailsFoldOverrides(
+  state: EditorState,
+): Readonly<Record<string, boolean>> {
+  return Object.fromEntries(foldKey.getState(state)?.overrides ?? []);
+}
+
+export function setDetailsFoldOverrides(
+  view: EditorView,
+  overrides: Readonly<Record<string, boolean>>,
+): boolean {
+  const folds = foldKey.getState(view.state);
+  if (!folds) return false;
+  const next = new Map(Object.entries(overrides));
+  const signature = [...next]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, open]) => `${id}:${open ? "1" : "0"}`)
+    .join("\u0000");
+  if (folds.persistenceSignature === signature) return false;
+  view.dispatch(
+    view.state.tr.setMeta(foldKey, next).setMeta("addToHistory", false),
+  );
+  return true;
 }
 
 export function runDetailsFoldCommand(

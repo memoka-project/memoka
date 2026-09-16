@@ -97,9 +97,10 @@ Plain textを選ぶと言語設定を解除する。言語変更は文書変更�
 
 11行以上のCode Blockは折り畳み可能とし、初期状態では展開する。折り畳むと先頭5行だけを表示する。
 Code Block内ではDetailsと同じ`zo/zO/zc/zC/za/zA`を使用し、再帰指定も単一Code Blockへの同じ操作として扱う。
-折り畳み状態はWindow-localであり、文書、Undo、Markdown、別Windowへ保存・同期しない。
-折り畳まれた行は論理行motionやoperatorの対象から除外する。検索や位置復元などで非表示行へ移動する場合は、
-対象Code Blockを自動的に展開する。Source Blockにはこのtoolbar、highlight、折り畳みを適用しない。
+折り畳み状態は永続的なWindow-local UI stateとしてアプリ再起動後に復元するが、文書、Undo、Markdown、別Windowへは保存・同期しない。
+折り畳まれた行は表示と行番号から除外し、論理行motionやoperatorの対象にも含めない。表示中の行へのpointer操作では
+折り畳みを維持する。検索や位置復元などで非表示行へ明示的に移動する場合は、対象Code Blockを自動的に展開する。
+Source Blockにはこのtoolbar、highlight、折り畳みを適用しない。
 
 ## 4. 論理行
 
@@ -248,6 +249,7 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。
 - 開閉マークのclick、Summary上のNormal `Enter`、Details内の`za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
   Details内ではSection foldよりDetailsを優先する。閉じるとき本文にあるcaretはSummary先頭へ戻す。
+- ユーザーが変更した開閉状態は永続的なWindow-local UI stateとしてアプリ再起動後に復元する。文書、Undo、Markdown、別Windowには反映しない。
 - InsertのSummary上の`Enter`（`Ctrl-j/Ctrl-m`を含む）または`Shift-Enter`は本文を開いて先頭へ移る。本文のEnterは通常のblock動作を使う。
 - 本文でNormalの`o`はDetails内に次の入力行を追加する。通常Paragraphでは直後に新規Paragraphを作り、本文末尾でも外へ出ない。
   Details自体がListItem内にあっても外側ListにItemを作らない。本文内のList/Code/TableではそれぞれItem/コード行/Table行を追加する。

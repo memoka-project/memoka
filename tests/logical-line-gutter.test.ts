@@ -4,6 +4,7 @@ import { createUuidV7 } from "../app/src/core/ids";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import { defaultVimBlockSemantics } from "../app/src/vim/block-semantics";
+import { runCodeBlockFoldCommand } from "../app/src/editor/code-block";
 
 const defaultIntersectionObserver = globalThis.IntersectionObserver;
 
@@ -81,6 +82,55 @@ afterEach(() => {
 });
 
 describe("Vim logical-line gutter virtualization", () => {
+  it("rebuilds line markers when a Code Block fold changes", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "Folded code gutter",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: true,
+    });
+    const code = Array.from(
+      { length: 11 },
+      (_, index) => `const line${index + 1} = ${index + 1}`,
+    ).join("\n");
+    const markers = () =>
+      root.querySelectorAll(
+        '.memoka-logical-line-number[data-logical-line-kind="code-line"]',
+      );
+
+    try {
+      attached.editor.commands.setContent({
+        type: "doc",
+        content: [
+          {
+            type: "codeBlock",
+            attrs: { blockId: createUuidV7(), language: "typescript" },
+            content: [{ type: "text", text: code }],
+          },
+        ],
+      });
+      attached.editor.commands.setTextSelection(1);
+      await nextFrame();
+      expect(markers()).toHaveLength(11);
+
+      expect(
+        runCodeBlockFoldCommand(attached.editor.view, "close"),
+      ).toMatchObject({ changed: true });
+      await vi.waitFor(() => expect(markers()).toHaveLength(5));
+
+      expect(
+        runCodeBlockFoldCommand(attached.editor.view, "open"),
+      ).toMatchObject({ changed: true });
+      await vi.waitFor(() => expect(markers()).toHaveLength(11));
+    } finally {
+      attached.adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
   it("keeps every BodyChunk inside the viewport margin richly rendered", async () => {
     globalThis.IntersectionObserver =
       ControlledIntersectionObserver as unknown as typeof IntersectionObserver;

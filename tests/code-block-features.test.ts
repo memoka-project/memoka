@@ -107,6 +107,11 @@ describe("Code Block presentation and actions", () => {
         (root.querySelector(".memoka-code-block__fold") as HTMLElement).dataset
           .label,
       ).toBe("+6 lines");
+      expect(
+        Array.from(root.querySelectorAll(".memoka-code-block__hidden-lines"))
+          .map((element) => element.textContent)
+          .join(""),
+      ).toBe(text.slice(text.indexOf("\nconst line6")));
 
       (
         root.querySelector(".memoka-code-block__copy") as HTMLButtonElement
@@ -273,7 +278,26 @@ describe("Code Block presentation and actions", () => {
       );
       expect(codeFoldHiddenEntries(first.state)).toHaveLength(1);
 
-      first.commands.setTextSelection(textPosition(first, "line12"));
+      const hiddenPosition = textPosition(first, "line12");
+      const posAtCoords = vi
+        .spyOn(first.view, "posAtCoords")
+        .mockReturnValue({ pos: hiddenPosition, inside: 0 });
+      const pointer = new MouseEvent("mousedown", {
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+        bubbles: true,
+        cancelable: true,
+      });
+      firstRoot.querySelector(".memoka-code-block pre")?.dispatchEvent(pointer);
+      expect(pointer.defaultPrevented).toBe(true);
+      expect(codeFoldHiddenEntries(first.state)).toHaveLength(1);
+      expect(first.state.selection.$from.parentOffset).toBe(
+        codeContent(5).length,
+      );
+      posAtCoords.mockRestore();
+
+      first.commands.setTextSelection(hiddenPosition);
       expect(codeFoldHiddenEntries(first.state)).toHaveLength(0);
       expect(
         firstRoot
@@ -297,6 +321,53 @@ describe("Code Block presentation and actions", () => {
       note.doc.destroy();
       firstRoot.remove();
       secondRoot.remove();
+    }
+  });
+
+  it("restores a Window-local fold after restarting the application", async () => {
+    const persistence = new MemoryPersistencePort();
+    const runtime = await CoreRuntime.open(persistence, {
+      initialTitle: "Code fold persistence",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: true,
+    });
+    const blockId = createUuidV7();
+    attached.editor.commands.setContent({
+      type: "doc",
+      content: [codeBlock(blockId, codeContent(12), "javascript")],
+    });
+    attached.editor.commands.setTextSelection(1);
+    expect(
+      runCodeBlockFoldCommand(attached.editor.view, "close"),
+    ).toMatchObject({ changed: true });
+    await runtime.flush();
+    expect(runtime.windows.get("window-1")?.collapsedCodeBlockIds).toEqual([
+      blockId,
+    ]);
+    attached.adapter.destroy();
+    runtime.destroy();
+    root.remove();
+
+    const reopened = await CoreRuntime.open(persistence);
+    const reopenedRoot = document.createElement("div");
+    document.body.append(reopenedRoot);
+    const reopenedEditor = reopened.editorForTesting("window-1", reopenedRoot, {
+      directBodyOnly: true,
+    });
+    try {
+      expect(reopened.windows.get("window-1")?.collapsedCodeBlockIds).toEqual([
+        blockId,
+      ]);
+      expect(codeFoldHiddenEntries(reopenedEditor.editor.state)).toHaveLength(
+        1,
+      );
+    } finally {
+      reopenedEditor.adapter.destroy();
+      reopened.destroy();
+      reopenedRoot.remove();
     }
   });
 });

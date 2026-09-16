@@ -16,6 +16,10 @@ export interface WindowLocalViewState {
   focusedSectionId: string | null;
   /** Closed Sections in this Window only; IDs outside the mounted Focus are retained. */
   collapsedSectionIds: string[];
+  /** Closed long Code Blocks in this Window only. */
+  collapsedCodeBlockIds: string[];
+  /** Interactive Details overrides; absent IDs use the authored open state. */
+  detailsFoldOverrides: Record<string, boolean>;
 }
 
 export interface WindowViewState extends WindowLocalViewState {
@@ -32,6 +36,8 @@ export function createWindowLocalViewState(
     scrollTop: 0,
     focusedSectionId: null,
     collapsedSectionIds: [],
+    collapsedCodeBlockIds: [],
+    detailsFoldOverrides: {},
   };
 }
 
@@ -122,5 +128,32 @@ export function validateWindowLocalViewState(
       throw new Error(`Duplicate collapsed Section ID: ${sectionId}`);
     }
     collapsedSectionIds.add(sectionId);
+  }
+  if (!Array.isArray(state.collapsedCodeBlockIds)) {
+    throw new Error("Window-local view requires collapsedCodeBlockIds");
+  }
+  const collapsedCodeBlockIds = new Set<string>();
+  for (const blockId of state.collapsedCodeBlockIds) {
+    if (typeof blockId !== "string") {
+      throw new Error("Window-local collapsed Code Block IDs must be strings");
+    }
+    assertUuidV7(blockId, "collapsed Code Block ID");
+    if (collapsedCodeBlockIds.has(blockId)) {
+      throw new Error(`Duplicate collapsed Code Block ID: ${blockId}`);
+    }
+    collapsedCodeBlockIds.add(blockId);
+  }
+  if (
+    !state.detailsFoldOverrides ||
+    typeof state.detailsFoldOverrides !== "object" ||
+    Array.isArray(state.detailsFoldOverrides)
+  ) {
+    throw new Error("Window-local view requires detailsFoldOverrides");
+  }
+  for (const [blockId, open] of Object.entries(state.detailsFoldOverrides)) {
+    assertUuidV7(blockId, "Details fold override ID");
+    if (typeof open !== "boolean") {
+      throw new Error(`Details fold override must be boolean: ${blockId}`);
+    }
   }
 }

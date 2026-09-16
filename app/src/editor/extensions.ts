@@ -2432,6 +2432,14 @@ export function productEditorExtensions(
     attachmentRepository?: EditorAttachmentRepository;
     /** Window-local Section fold state; never persisted into the NoteDoc. */
     collapsedSectionIds?: readonly string[];
+    /** Window-local Code Block fold state; never persisted into the NoteDoc. */
+    collapsedCodeBlockIds?: readonly string[];
+    /** Window-local Details fold overrides; never persisted into the NoteDoc. */
+    detailsFoldOverrides?: Readonly<Record<string, boolean>>;
+    onCollapsedCodeBlockIdsChange?: (ids: readonly string[]) => void;
+    onDetailsFoldOverridesChange?: (
+      overrides: Readonly<Record<string, boolean>>,
+    ) => void;
     onCopyCodeBlock?: (
       blockId: string,
     ) => CodeCopyResult | Promise<CodeCopyResult>;
@@ -2466,13 +2474,20 @@ export function productEditorExtensions(
       listItem: false,
     }),
     MemokaCodeBlock.configure({ onCopyCode: options.onCopyCodeBlock }),
-    CodeBlockFolding,
+    CodeBlockFolding.configure({
+      collapsedBlockIds: options.collapsedCodeBlockIds ?? [],
+      onCollapsedBlockIdsChange: options.onCollapsedCodeBlockIdsChange,
+    }),
     RichListItem,
     MarkdownAlertAttributes,
     Details,
     DetailsSummary,
     DetailsBody,
-    DetailsFolding.configure({ expandAll: options.readOnly ?? false }),
+    DetailsFolding.configure({
+      expandAll: options.readOnly ?? false,
+      foldOverrides: options.detailsFoldOverrides ?? {},
+      onFoldOverridesChange: options.onDetailsFoldOverridesChange,
+    }),
     ComposableInlineCode,
     MarkdownHighlight,
     MemokaExternalLink.configure({

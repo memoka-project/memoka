@@ -70,7 +70,7 @@ describe("Memoka Application Window pure state", () => {
     const state = initialState();
 
     expect(state).toMatchObject({
-      schemaVersion: 9,
+      schemaVersion: 10,
       applicationWindowId: "application-window-1",
       activeTabId: "tab-1",
       tabs: [
@@ -102,6 +102,8 @@ describe("Memoka Application Window pure state", () => {
         selection: null,
         scrollTop: 0,
         collapsedSectionIds: [],
+        collapsedCodeBlockIds: [],
+        detailsFoldOverrides: {},
       },
     });
     expect(state.buffers[`note:${NOTE_A}`]).toEqual(createNoteBuffer(NOTE_A));
@@ -127,7 +129,7 @@ describe("Memoka Application Window pure state", () => {
     const migrated = migrateApplicationWindowState(legacy);
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(9);
+    expect(state.schemaVersion).toBe(10);
     expect(state.tabs[0]?.leftSidebar).toMatchObject({
       utility: "tree",
       tree: { selectedEntryId: null, collapsedEntryIds: [] },
@@ -150,8 +152,37 @@ describe("Memoka Application Window pure state", () => {
 
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(9);
+    expect(state.schemaVersion).toBe(10);
     expect(state.windows["window-1"]!.view.collapsedSectionIds).toEqual([]);
+    expect(() => validateApplicationWindowState(state)).not.toThrow();
+  });
+
+  it("migrates schema 9 Window state with block folds expanded", () => {
+    const legacy = structuredClone(initialState()) as unknown as {
+      schemaVersion: number;
+      windows: Record<
+        string,
+        {
+          view: {
+            collapsedCodeBlockIds?: string[];
+            detailsFoldOverrides?: Record<string, boolean>;
+          };
+        }
+      >;
+    };
+    legacy.schemaVersion = 9;
+    delete legacy.windows["window-1"]!.view.collapsedCodeBlockIds;
+    delete legacy.windows["window-1"]!.view.detailsFoldOverrides;
+
+    const migrated = migrateApplicationWindowState(legacy);
+
+    expect(migrated.changed).toBe(true);
+    const state = migrated.state as ApplicationWindowState;
+    expect(state.schemaVersion).toBe(10);
+    expect(state.windows["window-1"]!.view).toMatchObject({
+      collapsedCodeBlockIds: [],
+      detailsFoldOverrides: {},
+    });
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
 

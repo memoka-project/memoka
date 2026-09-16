@@ -468,6 +468,77 @@ describe("Details blocks", () => {
     }
   });
 
+  it("restores a Details fold after restarting", async () => {
+    const persistence = new MemoryPersistencePort();
+    const runtime = await CoreRuntime.open(persistence, {
+      initialTitle: "Details fold persistence",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: true,
+    });
+    const detailsId = createUuidV7();
+    attached.editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Before" }],
+        },
+        {
+          type: "details",
+          attrs: { blockId: detailsId, open: true },
+          content: [
+            {
+              type: "detailsSummary",
+              content: [{ type: "text", text: "Summary" }],
+            },
+            {
+              type: "detailsBody",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "Body" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(detailsFoldHiddenEntries(attached.editor.state)).toHaveLength(0);
+    expect(
+      runDetailsFoldCommand(attached.editor.view, "close", detailsId),
+    ).toMatchObject({ changed: true });
+    await runtime.flush();
+    expect(runtime.windows.get("window-1")?.detailsFoldOverrides).toMatchObject(
+      { [detailsId]: false },
+    );
+    attached.adapter.destroy();
+    runtime.destroy();
+    root.remove();
+
+    const reopened = await CoreRuntime.open(persistence);
+    const reopenedRoot = document.createElement("div");
+    document.body.append(reopenedRoot);
+    const reopenedEditor = reopened.editorForTesting("window-1", reopenedRoot, {
+      directBodyOnly: true,
+    });
+    try {
+      expect(
+        reopened.windows.get("window-1")?.detailsFoldOverrides,
+      ).toMatchObject({ [detailsId]: false });
+      expect(
+        detailsFoldHiddenEntries(reopenedEditor.editor.state),
+      ).toHaveLength(1);
+    } finally {
+      reopenedEditor.adapter.destroy();
+      reopened.destroy();
+      reopenedRoot.remove();
+    }
+  });
+
   it("reloads rich Details and every block identity from the persisted NoteDoc", () => {
     const { note, destroy } = harness();
     try {

@@ -132,7 +132,11 @@ import {
   revealSectionFoldsAtPosition,
   setSectionFoldCollapsedSectionIds,
 } from "./section-folding";
-import type { CodeCopyResult } from "./code-block";
+import {
+  setCodeFoldCollapsedBlockIds,
+  type CodeCopyResult,
+} from "./code-block";
+import { setDetailsFoldOverrides } from "./details";
 import {
   codeBlockText,
   setCodeBlockLanguage,
@@ -234,6 +238,8 @@ export interface TiptapEditorAdapterOptions {
     collapsedSectionIds: readonly string[],
     activeSectionId: string | null,
   ) => void;
+  onCodeFoldsChange?: (collapsedBlockIds: readonly string[]) => void;
+  onDetailsFoldsChange?: (overrides: Readonly<Record<string, boolean>>) => void;
   onSectionDepthShift?: (
     request: SectionDepthShiftSelection & {
       direction: "deeper" | "shallower";
@@ -1282,6 +1288,16 @@ export class TiptapEditorAdapter {
     setSectionFoldCollapsedSectionIds(this.currentEditor.view, sectionIds);
   }
 
+  setCollapsedCodeBlockIds(blockIds: readonly string[]): void {
+    if (this.currentEditor.isDestroyed) return;
+    setCodeFoldCollapsedBlockIds(this.currentEditor.view, blockIds);
+  }
+
+  setDetailsFoldOverrides(overrides: Readonly<Record<string, boolean>>): void {
+    if (this.currentEditor.isDestroyed) return;
+    setDetailsFoldOverrides(this.currentEditor.view, overrides);
+  }
+
   applyNavigationDestination(
     destination: EditorNavigationDestination,
     detail: string,
@@ -1447,6 +1463,14 @@ export class TiptapEditorAdapter {
           onCopyCodeBlock: (blockId) => this.copyCodeBlock(blockId),
           collapsedSectionIds:
             this.options.getWindowState?.().collapsedSectionIds ?? [],
+          collapsedCodeBlockIds:
+            this.options.getWindowState?.().collapsedCodeBlockIds ?? [],
+          detailsFoldOverrides:
+            this.options.getWindowState?.().detailsFoldOverrides ?? {},
+          onCollapsedCodeBlockIdsChange: (ids) =>
+            this.options.onCodeFoldsChange?.(ids),
+          onDetailsFoldOverridesChange: (overrides) =>
+            this.options.onDetailsFoldsChange?.(overrides),
         }),
         blockTypeSlashTrigger({
           enabled: () => {

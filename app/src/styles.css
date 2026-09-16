@@ -1695,9 +1695,8 @@ textarea {
 
 :is(.memoka-editor, .workspace-search-preview-document)
   .memoka-code-block[data-code-expanded="false"]
-  pre {
-  max-height: calc(7.5em + 51px);
-  overflow-y: hidden;
+  .memoka-code-block__hidden-lines {
+  display: none;
 }
 
 .memoka-code-block__toolbar {
