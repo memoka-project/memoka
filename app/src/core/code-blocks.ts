@@ -49,6 +49,7 @@ const LANGUAGE_LABELS: Readonly<Record<string, string>> = {
   shell: "Shell",
   sql: "SQL",
   swift: "Swift",
+  toml: "TOML",
   typescript: "TypeScript",
   xml: "HTML / XML",
   yaml: "YAML",
@@ -77,13 +78,18 @@ export interface CodeLanguageCatalogEntry {
   readonly aliases: readonly string[];
 }
 
+// Lowlight recognizes these highlight.js aliases, but `all` only exposes
+// canonical grammar keys, so they need explicit picker entries when the alias
+// is also the language identifier authors expect to preserve in Markdown.
+const LOWLIGHT_LANGUAGE_ALIAS_IDS = ["toml"] as const;
+
 export const CODE_LANGUAGE_CATALOG: readonly CodeLanguageCatalogEntry[] = [
   {
     id: null,
     name: "Plain text",
     aliases: ["plain", "plaintext", "text", "none", "なし"],
   },
-  ...Object.keys(all)
+  ...[...new Set([...Object.keys(all), ...LOWLIGHT_LANGUAGE_ALIAS_IDS])]
     .filter((id) => id !== "plaintext")
     .sort((left, right) => left.localeCompare(right, "en"))
     .map((id) => ({

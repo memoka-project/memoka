@@ -127,6 +127,29 @@ describe("Code Block presentation and actions", () => {
     }
   });
 
+  it("highlights and preserves TOML through its Lowlight alias", () => {
+    const note = createNoteDocument(createUuidV7());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const editor = new Editor({
+      element: root,
+      extensions: productEditorExtensions(note, { directBodyOnly: true }),
+    });
+    try {
+      editor.commands.setContent({
+        type: "doc",
+        content: [codeBlock(createUuidV7(), 'title = "Memoka"', "toml")],
+      });
+      expect(editor.state.doc.firstChild?.attrs.language).toBe("toml");
+      expect(root.querySelector(".hljs-attr")?.textContent).toBe("title");
+      expect(root.querySelector(".hljs-string")?.textContent).toBe('"Memoka"');
+    } finally {
+      editor.destroy();
+      note.doc.destroy();
+      root.remove();
+    }
+  });
+
   it("keeps short, unknown, and oversized blocks plain without changing their language", () => {
     const note = createNoteDocument(createUuidV7());
     const root = document.createElement("div");
@@ -168,6 +191,9 @@ describe("Code Block presentation and actions", () => {
   it("offers every built-in language and routes ,a to Code actions", async () => {
     expect(CODE_LANGUAGE_CATALOG.length).toBeGreaterThan(190);
     expect(filterCodeLanguageCatalog("abnf")).toMatchObject([{ id: "abnf" }]);
+    expect(filterCodeLanguageCatalog("toml")).toMatchObject([
+      { id: "toml", name: "TOML" },
+    ]);
 
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");
