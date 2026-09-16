@@ -2,7 +2,7 @@ import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { AllSelection } from "@tiptap/pm/state";
 import type { UndoManager } from "yjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import {
   blockToYXml,
@@ -1616,6 +1616,93 @@ describe("Memoka Section editor semantics", () => {
     );
 
     persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("changes replicated Section depth while a preceding edit commit is in flight", async () => {
+    const persistence = new PausedReplicatedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const rootBlockId = createUuidV7();
+    const firstSectionId = createUuidV7();
+    const secondSectionId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [
+          {
+            type: "paragraph",
+            attrs: { blockId: rootBlockId },
+            content: [],
+          },
+        ],
+        children: [
+          {
+            sectionId: firstSectionId,
+            title: "First",
+            tags: [],
+            body: [],
+            children: [],
+          },
+          {
+            sectionId: secondSectionId,
+            title: "Second",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-16T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === rootBlockId,
+      ),
+    );
+
+    const editCommitHeld = persistence.pauseNextWorkspaceCommit();
+    editor.commands.insertContent("x");
+    await editCommitHeld;
+    const materialize = vi.spyOn(
+      runtime.noteDocument.replicated!,
+      "sectionSnapshot",
+    );
+    const shifted = runtime.shiftSectionDepth(
+      runtime.noteId,
+      runtime.noteId,
+      [secondSectionId],
+      "deeper",
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(materialize).not.toHaveBeenCalled();
+    materialize.mockRestore();
+
+    const snapshot = runtime.noteDocument.replicated!.sectionSnapshot();
+    expect(snapshot.children.map(({ sectionId }) => sectionId)).toEqual([
+      firstSectionId,
+    ]);
+    expect(
+      snapshot.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([secondSectionId]);
+
+    persistence.releaseWorkspaceCommit();
+    await shifted;
     await settle(runtime);
     adapter.destroy();
     runtime.destroy();
