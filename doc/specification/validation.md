@@ -145,8 +145,10 @@ IME OFF結果を記録する。本文、入力文字そのもの、Note/Section 
    子List後方にParagraphなどがあっても既存の親子関係・表示順・IDが変わらないこと、
    追加先のList種別（番号付きの開始番号も含む）を維持すること、空の既存Itemを再利用しないこと、
    Undo/RedoとIME composition優先も確認する。`O`、List外の`o`/`Ctrl-Enter`の動作は変えない。
-   リスト項目の`yy`/Visual Line `y`→`p`も同じ位置へ追加し、コピーした子孫の相対階層を保つ。
-   `P`、文字単位の`p`、Table Cellのputは変わらないことも確認する。
+   リスト項目の`yy`/Visual Line `y`→`p`も同じ位置へ追加し、コピー元の絶対深度と子孫の相対階層を可能な限り保つ。
+   子孫を含む浅いItemを既存子孫の直前へ`p/P`した場合は、後続子孫が貼り付けた末尾側のItemへ接続されること、
+   単一Itemのpasteでは既存子孫の親が変わらないことも確認する。
+   文字単位の`p`とTable Cellのputは変わらないことも確認する。
 4. 直接Paragraphに複数行のplain textをInsert paste/Normal `p/P`し、改行ごとの兄弟Itemになることを確認する。
    CRLF、途中の空行、末尾改行1個の除去、caret後方のtext・後続block・子Listが最後のItemへ残ることも確認する。
 5. Markdown/HTML/内部Clipboardでは複数blockの構造を保ち、Code/Table内部へのplain pasteは既存の挙動を保つ。

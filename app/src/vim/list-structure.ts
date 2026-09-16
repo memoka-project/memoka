@@ -110,14 +110,20 @@ function shiftListsInsideBlock(
   node: ProseMirrorNode,
   selectedItemIds: ReadonlySet<string>,
   direction: ListDepthDirection,
+  preserveOwnerBlocksAfterLift = false,
 ): { node: ProseMirrorNode; changed: boolean } {
   if (isList(node))
     return direction === "deeper"
       ? indentList(node, selectedItemIds)
-      : outdentList(node, selectedItemIds);
+      : outdentList(node, selectedItemIds, preserveOwnerBlocksAfterLift);
   let changed = false;
   const content = children(node).map((child) => {
-    const result = shiftListsInsideBlock(child, selectedItemIds, direction);
+    const result = shiftListsInsideBlock(
+      child,
+      selectedItemIds,
+      direction,
+      preserveOwnerBlocksAfterLift,
+    );
     changed ||= result.changed;
     return result.node;
   });
@@ -166,13 +172,15 @@ interface OutdentNestedListResult {
 function outdentItem(
   item: ProseMirrorNode,
   selectedItemIds: ReadonlySet<string>,
+  preserveOwnerBlocksAfterLift: boolean,
 ): OutdentItemResult {
   const content: ProseMirrorNode[] = [];
   const lifted: ProseMirrorNode[] = [];
   let changed = false;
   const appendContent = (child: ProseMirrorNode): void => {
-    if (lifted.length === 0) content.push(child);
-    else {
+    if (lifted.length === 0 || preserveOwnerBlocksAfterLift) {
+      content.push(child);
+    } else {
       const last = lifted.at(-1)!;
       lifted[lifted.length - 1] = last.copy(
         last.content.append(Fragment.from(child)),
@@ -185,12 +193,17 @@ function outdentItem(
         child,
         selectedItemIds,
         "shallower",
+        preserveOwnerBlocksAfterLift,
       );
       appendContent(transformed.node);
       changed ||= transformed.changed;
       continue;
     }
-    const transformed = outdentNestedList(child, selectedItemIds);
+    const transformed = outdentNestedList(
+      child,
+      selectedItemIds,
+      preserveOwnerBlocksAfterLift,
+    );
     if (transformed.remaining) appendContent(transformed.remaining);
     lifted.push(...transformed.lifted);
     changed ||= transformed.changed;
@@ -205,6 +218,7 @@ function outdentItem(
 function outdentNestedList(
   list: ProseMirrorNode,
   selectedItemIds: ReadonlySet<string>,
+  preserveOwnerBlocksAfterLift: boolean,
 ): OutdentNestedListResult {
   const listItems = children(list);
   const firstSelected = listItems.findIndex((item) => {
@@ -216,7 +230,11 @@ function outdentNestedList(
     const remaining: ProseMirrorNode[] = [];
     let changed = false;
     for (const item of listItems) {
-      const transformed = outdentItem(item, selectedItemIds);
+      const transformed = outdentItem(
+        item,
+        selectedItemIds,
+        preserveOwnerBlocksAfterLift,
+      );
       remaining.push(...transformed.items);
       changed ||= transformed.changed;
     }
@@ -235,7 +253,11 @@ function outdentNestedList(
     const id = listItemId(item);
     const selected = id !== null && selectedItemIds.has(id);
     if (index < firstSelected) {
-      const transformed = outdentItem(item, selectedItemIds);
+      const transformed = outdentItem(
+        item,
+        selectedItemIds,
+        preserveOwnerBlocksAfterLift,
+      );
       remaining.push(...transformed.items);
       changed ||= transformed.changed;
       continue;
@@ -247,7 +269,11 @@ function outdentNestedList(
       continue;
     }
 
-    const transformed = outdentItem(item, selectedItemIds);
+    const transformed = outdentItem(
+      item,
+      selectedItemIds,
+      preserveOwnerBlocksAfterLift,
+    );
     const previous = lifted.pop();
     if (!previous) {
       remaining.push(...transformed.items);
@@ -271,13 +297,18 @@ function outdentNestedList(
 function outdentList(
   list: ProseMirrorNode,
   selectedItemIds: ReadonlySet<string>,
+  preserveOwnerBlocksAfterLift = false,
 ): { node: ProseMirrorNode; changed: boolean } {
   const result: ProseMirrorNode[] = [];
   let changed = false;
   for (const item of children(list)) {
     // Direct children of an outer list are already at the shallowest list
     // depth. They stay put, while applicable selected descendants may lift.
-    const transformed = outdentItem(item, selectedItemIds);
+    const transformed = outdentItem(
+      item,
+      selectedItemIds,
+      preserveOwnerBlocksAfterLift,
+    );
     result.push(...transformed.items);
     changed ||= transformed.changed;
   }
@@ -291,6 +322,7 @@ export function shiftSelectedListItemDepth(
   list: ProseMirrorNode,
   selectedItemIds: ReadonlySet<string>,
   direction: ListDepthDirection,
+  options: { readonly preserveOwnerBlocksAfterLift?: boolean } = {},
 ): ListNodeTransformResult {
   if (!isList(list) || selectedItemIds.size === 0) {
     return { node: list, changed: false };
@@ -298,7 +330,11 @@ export function shiftSelectedListItemDepth(
   const transformed =
     direction === "deeper"
       ? indentList(list, selectedItemIds)
-      : outdentList(list, selectedItemIds);
+      : outdentList(
+          list,
+          selectedItemIds,
+          options.preserveOwnerBlocksAfterLift,
+        );
   return { node: transformed.node, changed: transformed.changed };
 }
 

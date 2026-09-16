@@ -7,8 +7,11 @@
 Clipboardは一時的なversion付きtransportであり、NoteDocとは別の正本ではない。
 内部構造を保持できる場合は保持し、外部application向けにHTML、Markdown、plain textなどを同時に公開する。
 
-Memoka内部MIMEは`application/x-memoka-structured-blocks+json`、schemaは7である。
+Memoka内部MIMEは`application/x-memoka-structured-blocks+json`、schemaは8である。
 payload kindはtext、block-lines、structure、section、table-cellsを持つ。
+
+schema 8のListItem structureは、コピーしたslice rootの0始まりのList深度を任意の`sourceListDepth`として持つ。
+schema 7以前のpayloadにはこの情報がないものとして従来の貼り付け規則を使う。
 
 未知schema、不正なnode、invalid ID、範囲外属性はそのままNoteDocへ取り込まない。
 安全に別形式へfallbackできる場合だけfallbackする。
@@ -75,7 +78,11 @@ plain text貼付けは従来どおりで、`[ ]`を暗黙の状態設定command�
 
 ListItemを`yy`やVisual Lineの`y`でコピーしたregisterのNormal `p`は、現在Itemに直接子Listがあれば
 最初の子Listの先頭へ貼り、なければ現在Itemの次の兄弟として貼る。`Ctrl-Enter`/Normal `o`と同じ挿入位置を使う。
-追加先のList種別を保ち、コピーしたItem内の相対的な階層も保つ。既存の子孫や後続Blockは移動しない。
+内部Clipboardを使うInsert pasteも含め、コピー元の絶対List深度を可能な限り保つ。ただし指定された貼り付け位置を優先し、
+直前のItemから1段を超えて深くならない範囲へ深度をclampする。接続するListは追加先の種別と開始番号を使い、
+コピーしたItem内の相対的な階層と入れ子List種別は保つ。浅いItemを既存の子孫直前へ貼る場合は表示順を優先し、
+コピーしたItemが子孫を含むときに限り、後続の深いItemを貼り付けた末尾側のItemへ接続する。
+子孫を含まない単一Itemのpasteは従来どおり既存の子Listへ追加し、既存子孫の親を変えない。
 `P`は従来どおり前側へ貼る。文字単位register、Code line、Table Cellのputは固有規則を維持する。
 
 ListItem直下Paragraphへの通常の複数行plain textは、Insert paste・Normalの`p/P`ともに改行ごとに兄弟Itemへ分割する。

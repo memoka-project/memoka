@@ -25,7 +25,7 @@ export const MEMOKA_CLIPBOARD_MIME =
 export const MARKDOWN_CLIPBOARD_MIME = "text/markdown";
 export const UTF8_PLAIN_CLIPBOARD_MIME = "text/plain;charset=utf-8";
 export const TSV_CLIPBOARD_MIME = "text/tab-separated-values";
-export const MEMOKA_CLIPBOARD_SCHEMA_VERSION = 7;
+export const MEMOKA_CLIPBOARD_SCHEMA_VERSION = 8;
 
 /** Prefer Firefox's original UTF-8 text over its unqualified ASCII target. */
 export function preferredPlainClipboardMime(
@@ -38,7 +38,7 @@ export function preferredPlainClipboardMime(
 }
 
 interface TextClipboardPayload {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "text";
   text: string;
   slice?: {
@@ -49,7 +49,7 @@ interface TextClipboardPayload {
 }
 
 interface BlockLinesClipboardPayload {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "block-lines";
   text: string;
   lineCount: number;
@@ -64,11 +64,12 @@ interface BlockLinesClipboardPayload {
 }
 
 interface StructureClipboardPayload {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "structure";
   text: string;
   structureKind: "block" | "list-item" | "table-row";
   nodeNames: string[];
+  sourceListDepth?: number;
   slice: {
     content: unknown;
     openStart: number;
@@ -77,7 +78,7 @@ interface StructureClipboardPayload {
 }
 
 interface SectionClipboardPayload {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "section";
   text: string;
   transfer: "copy" | "cut";
@@ -91,7 +92,7 @@ interface SectionClipboardPayload {
 }
 
 interface TableCellsClipboardPayload {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "table-cells";
   text: string;
   width: number;
@@ -590,6 +591,7 @@ function payloadForRegister(register: VimRegister): MemokaClipboardPayload {
     text: register.text,
     structureKind: register.structureKind,
     nodeNames: register.nodeNames,
+    sourceListDepth: register.sourceListDepth,
     slice: {
       content: register.slice.content.toJSON(),
       openStart: register.slice.openStart,
@@ -641,6 +643,7 @@ export function decodeVimClipboard(
         payload.schemaVersion !== 4 &&
         payload.schemaVersion !== 5 &&
         payload.schemaVersion !== 6 &&
+        payload.schemaVersion !== 7 &&
         payload.schemaVersion !== MEMOKA_CLIPBOARD_SCHEMA_VERSION) ||
       typeof payload.kind !== "string" ||
       typeof payload.text !== "string"
@@ -651,6 +654,7 @@ export function decodeVimClipboard(
       let slice: Slice | undefined;
       if (
         (payload.schemaVersion === 6 ||
+          payload.schemaVersion === 7 ||
           payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
         payload.slice !== undefined
       ) {
@@ -687,6 +691,7 @@ export function decodeVimClipboard(
         payload.schemaVersion === 4 ||
         payload.schemaVersion === 5 ||
         payload.schemaVersion === 6 ||
+        payload.schemaVersion === 7 ||
         payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
       payload.kind === "block-lines" &&
       Number.isInteger(payload.lineCount) &&
@@ -739,6 +744,7 @@ export function decodeVimClipboard(
     if (
       (payload.schemaVersion === 5 ||
         payload.schemaVersion === 6 ||
+        payload.schemaVersion === 7 ||
         payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
       payload.kind === "section" &&
       (payload.transfer === "copy" || payload.transfer === "cut") &&
@@ -773,7 +779,8 @@ export function decodeVimClipboard(
       };
     }
     if (
-      payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION &&
+      (payload.schemaVersion === 7 ||
+        payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
       payload.kind === "table-cells" &&
       Number.isInteger(payload.width) &&
       Number(payload.width) > 0 &&
@@ -834,6 +841,7 @@ export function decodeVimClipboard(
         ((payload.schemaVersion === 4 ||
           payload.schemaVersion === 5 ||
           payload.schemaVersion === 6 ||
+          payload.schemaVersion === 7 ||
           payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION) &&
           payload.structureKind === "table-row")) &&
       Array.isArray(payload.nodeNames) &&
@@ -848,6 +856,19 @@ export function decodeVimClipboard(
         Number(payload.slice.openEnd),
       );
       if (!sliceHasSafeExternalLinks(slice)) return null;
+      const sourceListDepth =
+        payload.schemaVersion === MEMOKA_CLIPBOARD_SCHEMA_VERSION &&
+        payload.sourceListDepth !== undefined
+          ? payload.sourceListDepth
+          : undefined;
+      if (
+        sourceListDepth !== undefined &&
+        (payload.structureKind !== "list-item" ||
+          !Number.isInteger(sourceListDepth) ||
+          Number(sourceListDepth) < 0)
+      ) {
+        return null;
+      }
       if (payload.structureKind === "table-row") {
         let containsOnlyRows = slice.content.childCount > 0;
         slice.content.forEach((node) => {
@@ -863,6 +884,9 @@ export function decodeVimClipboard(
         structureKind: payload.structureKind,
         nodeNames: payload.nodeNames,
         slice,
+        ...(sourceListDepth === undefined
+          ? {}
+          : { sourceListDepth: Number(sourceListDepth) }),
       };
     }
     return null;

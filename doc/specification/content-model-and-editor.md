@@ -130,7 +130,9 @@ Memokaがblock種別に応じて処理する。
   直接子Listがあれば最初の子Listの先頭に新しい子Itemを追加し、なければ元Itemの次の兄弟として追加する。
   元ItemのBlockをcaret位置で分割せず、既存子孫・後続Blockの親子関係・順序・IDも変えない。
   追加先のList種別と開始番号を維持し、既存の空Itemは再利用しない。変更は1 Undo単位とする。`O`とList外の`o`は従来どおり。
-  ListItem registerのNormal `p`も同じ挿入位置を使い、コピーしたItem内の相対的な階層を保つ。`P`は元Itemの前のままとする。
+  ListItem registerのNormal `p`も同じ挿入位置を使い、コピー元の絶対深度とItem内の相対的な階層を可能な限り保つ。
+  子孫を含む浅いItemを既存子孫の直前へ入れる場合、後続子孫は表示順に従って貼り付けた末尾側のItemへ接続する。
+  子孫を含まない単一Itemでは既存子孫の親を変えない。`P`も同じ深度規則で元Itemの前へ貼る。
   例外としてDetails内のListでは、`Ctrl-Enter`はそのDetails内の最外側List直後へ新しいParagraphを作る（§11）。Normalの`o`はItem追加のままとする。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。

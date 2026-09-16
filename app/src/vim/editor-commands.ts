@@ -109,6 +109,8 @@ export type VimRegister =
       structureKind: "block" | "list-item" | "table-row";
       nodeNames: string[];
       slice: Slice;
+      /** Zero-based nesting depth of the copied list slice root. */
+      sourceListDepth?: number;
     }
   | {
       kind: "section";
@@ -1739,6 +1741,14 @@ function registerForUnits(
             .join("\n"),
           nodeNames: [list.type.name, "listItem"],
           slice: new Slice(Fragment.from(copy), 1, 1),
+          sourceListDepth:
+            Array.from({ length: depth + 1 }, (_, index) =>
+              $first.node(index),
+            ).filter(
+              (node) =>
+                node.type.name === "bulletList" ||
+                node.type.name === "orderedList",
+            ).length - 1,
         };
     }
   }
@@ -2341,8 +2351,15 @@ function pasteStructure(
   try {
     const slice = structureSliceForRange(view, register, from, to);
     if (!slice) return false;
+    const copied =
+      register.structureKind === "list-item" ? copiedListItemIds(slice) : null;
     const transaction = view.state.tr.replace(from, to, slice);
-    const cursor = Math.min(from + slice.size, transaction.doc.content.size);
+    adjustPastedListDepth(transaction, copied, register.sourceListDepth);
+    const cursor = Math.min(
+      pastedListCursor(transaction.doc, copied?.roots ?? []) ??
+        from + slice.size,
+      transaction.doc.content.size,
+    );
     transaction.setSelection(
       Selection.near(transaction.doc.resolve(cursor), -1),
     );
@@ -2381,6 +2398,233 @@ function copyStructureWithFreshBlockIds(slice: Slice): Slice {
     nodes.push(copyNodeWithFreshBlockIds(node));
   });
   return new Slice(Fragment.fromArray(nodes), slice.openStart, slice.openEnd);
+}
+
+function isListNode(node: ProseMirrorNode): boolean {
+  return node.type.name === "bulletList" || node.type.name === "orderedList";
+}
+
+interface CopiedListItemIds {
+  readonly roots: readonly string[];
+  readonly all: ReadonlySet<string>;
+}
+
+function copiedListItemIds(slice: Slice): CopiedListItemIds | null {
+  const list =
+    slice.content.childCount === 1 && isListNode(slice.content.firstChild!)
+      ? slice.content.firstChild
+      : null;
+  if (!list) return null;
+  const roots: string[] = [];
+  const all = new Set<string>();
+  list.forEach((item) => {
+    const id = String(item.attrs.blockId ?? "");
+    if (item.type.name === "listItem" && id) roots.push(id);
+  });
+  list.descendants((node) => {
+    if (node.type.name === "listItem") {
+      const id = String(node.attrs.blockId ?? "");
+      if (id) all.add(id);
+    }
+    return true;
+  });
+  return roots.length > 0 && all.size > 0 ? { roots, all } : null;
+}
+
+interface PositionedListItem {
+  readonly id: string;
+  readonly position: number;
+  readonly node: ProseMirrorNode;
+  readonly depth: number;
+  readonly list: ProseMirrorNode;
+  readonly listPosition: number;
+}
+
+interface ListTreeAtItem {
+  readonly position: number;
+  readonly node: ProseMirrorNode;
+  readonly items: readonly PositionedListItem[];
+}
+
+function listTreeAtItemId(
+  document: ProseMirrorNode,
+  requestedId: string,
+): ListTreeAtItem | null {
+  let itemPosition = -1;
+  document.descendants((node, position) => {
+    if (node.type.name === "listItem" && node.attrs.blockId === requestedId) {
+      itemPosition = position;
+      return false;
+    }
+    return itemPosition < 0;
+  });
+  if (itemPosition < 0) return null;
+  const $item = document.resolve(itemPosition + 1);
+  let itemDepth = $item.depth;
+  while (itemDepth > 0 && $item.node(itemDepth).type.name !== "listItem") {
+    itemDepth -= 1;
+  }
+  if (itemDepth <= 0 || !isListNode($item.node(itemDepth - 1))) return null;
+  let rootDepth = itemDepth - 1;
+  while (
+    rootDepth >= 2 &&
+    $item.node(rootDepth - 1).type.name === "listItem" &&
+    isListNode($item.node(rootDepth - 2))
+  ) {
+    rootDepth -= 2;
+  }
+  const root = $item.node(rootDepth);
+  const rootPosition = $item.before(rootDepth);
+  const items: PositionedListItem[] = [];
+  const visit = (
+    list: ProseMirrorNode,
+    listPosition: number,
+    depth: number,
+  ): void => {
+    list.forEach((item, itemOffset) => {
+      if (item.type.name !== "listItem") return;
+      const position = listPosition + 1 + itemOffset;
+      const id = String(item.attrs.blockId ?? "");
+      if (id)
+        items.push({
+          id,
+          position,
+          node: item,
+          depth,
+          list,
+          listPosition,
+        });
+      item.forEach((child, childOffset) => {
+        if (isListNode(child)) {
+          visit(child, position + 1 + childOffset, depth + 1);
+        }
+      });
+    });
+  };
+  visit(root, rootPosition, 0);
+  return { position: rootPosition, node: root, items };
+}
+
+function pastedListCursor(
+  document: ProseMirrorNode,
+  rootIds: readonly string[],
+): number | null {
+  const lastId = rootIds.at(-1);
+  if (!lastId) return null;
+  const tree = listTreeAtItemId(document, lastId);
+  const item = tree?.items.find(({ id }) => id === lastId);
+  return item ? item.position + item.node.nodeSize : null;
+}
+
+function adjustPastedListDepth(
+  transaction: Transaction,
+  copied: CopiedListItemIds | null,
+  sourceListDepth: number | undefined,
+): void {
+  const firstId = copied?.roots[0];
+  if (!copied || !firstId || sourceListDepth === undefined) return;
+  const initialTree = listTreeAtItemId(transaction.doc, firstId);
+  if (!initialTree) return;
+  const copiedIndexes = initialTree.items.flatMap(({ id }, index) =>
+    copied.all.has(id) ? [index] : [],
+  );
+  if (copiedIndexes.length === 0) return;
+  const firstIndex = Math.min(...copiedIndexes);
+  const lastIndex = Math.max(...copiedIndexes);
+  let previous: PositionedListItem | undefined;
+  for (let index = firstIndex - 1; index >= 0; index -= 1) {
+    const candidate = initialTree.items[index];
+    if (candidate && !copied.all.has(candidate.id)) {
+      previous = candidate;
+      break;
+    }
+  }
+  const next = initialTree.items
+    .slice(lastIndex + 1)
+    .find(({ id }) => !copied.all.has(id));
+  const includesCopiedDescendants = copied.all.size > copied.roots.length;
+  const minimum = includesCopiedDescendants ? 0 : (next?.depth ?? 0);
+  const maximum = previous ? previous.depth + 1 : 0;
+  const targetDepth = Math.max(minimum, Math.min(maximum, sourceListDepth));
+  const selected = new Set(copied.roots);
+
+  for (;;) {
+    const tree = listTreeAtItemId(transaction.doc, firstId);
+    const current = tree?.items.find(({ id }) => id === firstId);
+    if (!tree || !current || current.depth === targetDepth) break;
+    const transformed = shiftSelectedListItemDepth(
+      tree.node,
+      selected,
+      current.depth < targetDepth ? "deeper" : "shallower",
+      { preserveOwnerBlocksAfterLift: includesCopiedDescendants },
+    );
+    if (!transformed.changed || !transformed.node) return;
+    transaction.replaceWith(
+      tree.position,
+      tree.position + tree.node.nodeSize,
+      transformed.node,
+    );
+  }
+
+  normalizePastedListKind(transaction, copied, firstId);
+}
+
+function normalizePastedListKind(
+  transaction: Transaction,
+  copied: CopiedListItemIds,
+  firstId: string,
+): void {
+  const tree = listTreeAtItemId(transaction.doc, firstId);
+  const currentIndex = tree?.items.findIndex(({ id }) => id === firstId) ?? -1;
+  const current = currentIndex >= 0 ? tree?.items[currentIndex] : undefined;
+  if (!tree || !current) return;
+  let parentIndex = -1;
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    const candidate = tree.items[index];
+    if (
+      candidate &&
+      !copied.all.has(candidate.id) &&
+      candidate.depth === current.depth - 1
+    ) {
+      parentIndex = index;
+      break;
+    }
+  }
+  const parent = parentIndex >= 0 ? tree.items[parentIndex] : undefined;
+  const siblingEndOffset = tree.items
+    .slice(currentIndex + 1)
+    .findIndex(({ depth }) => depth < current.depth);
+  const siblingEnd =
+    siblingEndOffset < 0
+      ? tree.items.length
+      : currentIndex + 1 + siblingEndOffset;
+  const sameDepthBefore = tree.items
+    .slice(parentIndex + 1, currentIndex)
+    .reverse()
+    .find(({ id, depth }) => !copied.all.has(id) && depth === current.depth);
+  const sameDepthAfter = tree.items
+    .slice(currentIndex + 1, siblingEnd)
+    .find(({ id, depth }) => !copied.all.has(id) && depth === current.depth);
+  const template =
+    sameDepthBefore?.list ?? sameDepthAfter?.list ?? parent?.list;
+  if (!template || current.list.type === template.type) return;
+
+  let containsOnlyCopiedRoots = current.list.childCount > 0;
+  current.list.forEach((item) => {
+    const id = String(item.attrs.blockId ?? "");
+    containsOnlyCopiedRoots &&= copied.roots.includes(id);
+  });
+  if (!containsOnlyCopiedRoots) return;
+  const replacement = template.type.create(
+    template.attrs,
+    current.list.content,
+    current.list.marks,
+  );
+  transaction.replaceWith(
+    current.listPosition,
+    current.listPosition + current.list.nodeSize,
+    replacement,
+  );
 }
 
 function sectionIdsInDocument(document: ProseMirrorNode): Set<string> {
@@ -5830,8 +6074,16 @@ export function pasteVimRegisterAtSelection(
     } else {
       const slice = structureSliceForRange(view, register, from, to);
       if (!slice) return false;
+      const copied =
+        register.structureKind === "list-item"
+          ? copiedListItemIds(slice)
+          : null;
       transaction.replaceRange(from, to, slice);
-      insertedSize = slice.size;
+      adjustPastedListDepth(transaction, copied, register.sourceListDepth);
+      insertedSize = Math.max(
+        slice.size,
+        (pastedListCursor(transaction.doc, copied?.roots ?? []) ?? from) - from,
+      );
     }
     transaction.setSelection(
       Selection.near(

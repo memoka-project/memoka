@@ -192,7 +192,12 @@ InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同�
 内部Blockの種類を問わず、直接子Listがあれば最初の子Listの先頭の子、なければ次の兄弟となる。
 追加先のList種別・開始番号を保ち、既存子孫と後続Blockの親子関係・順序・IDを変えない。
 caret位置で本文は分割せず、既存の空Itemを再利用しない。新ParagraphへInsertで移動し、1 Undo単位とする。
-ListItem registerのNormal `p`も同じ挿入位置を使う。`P`、文字単位のput、Table Cellのputは従来のままとする。
+ListItem registerのNormal `p`も同じ挿入位置を使う。`p/P`と内部ClipboardのInsert pasteではコピー元の
+List深度を可能な限り保つが、指定した挿入位置を優先し、直前のItemから1段を超えて深くならない範囲へclampする。
+子孫を含む浅いItemを既存の子孫直前へ貼る場合、後続の深いItemは表示順を維持したまま貼り付けた末尾側のItemへ接続する。
+子孫を含まない単一Itemでは従来どおり既存子孫の親子関係を維持する。
+接続部分は貼り付け先のList種別・開始番号を使い、コピーしたItem内部の相対階層とList種別は維持する。
+文字単位のput、Table Cellのputは従来のままとする。
 ただしDetails本文内のListでは、`Ctrl-Enter`で最も近いDetails内の最外側Listを抜け、その直後へ新しいParagraphを作る。
 Details内にとどまり、既存Paragraphを再利用しない。Normalの`o`はこの場合もItem追加のままとする。
 

@@ -128,6 +128,23 @@ describe("Memoka application appearance", () => {
     }
   });
 
+  it("uses one vertical gap for sibling and nested ListItems at every depth", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toContain("--memoka-list-item-gap: 0.2em");
+    expect(css).toMatch(
+      /\.memoka-editor :is\(ul, ol\) :is\(ul, ol\)\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-editor :is\(ul, ol\) > li \+ li\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
+    );
+    expect(css).not.toMatch(
+      /\.memoka-editor :is\(ul, ol\) > li \+ li\s*\{[^}]*margin-top:/su,
+    );
+  });
+
   it("caps and centers the complete editor canvas without changing block overflow", () => {
     const css = readFileSync(
       resolve(process.cwd(), "app/src/styles.css"),
@@ -163,6 +180,9 @@ describe("Memoka application appearance", () => {
     );
     expect(css).toMatch(
       /ul\[data-memoka-bullet-marker="6"\] > li::before\s*\{[^}]*background: transparent;[^}]*rotate\(45deg\)/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-editor ul > li::before\s*\{[^}]*inset-block-start: calc\(0\.875em - 0\.24em\);/su,
     );
     expect(css).toContain("margin-left: var(--memoka-indent-guide-offset)");
     expect(css).toMatch(

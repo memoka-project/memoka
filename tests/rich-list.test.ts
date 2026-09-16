@@ -513,7 +513,7 @@ describe("rich ListItem editing", () => {
   });
 
   it.each(["bulletList", "orderedList"])(
-    "puts copied list items first in an existing child %s without moving descendants",
+    "preserves copied list depth before an existing child %s",
     async (listType) => {
       const { editor, adapter } = await harness([
         list(
@@ -540,7 +540,7 @@ describe("rich ListItem editing", () => {
       const before = editor.state.doc;
       expect(key(editor, "p").defaultPrevented).toBe(true);
       const outer = editor.state.doc.firstChild!;
-      expect(outer.childCount).toBe(3);
+      expect(outer.childCount).toBe(4);
       const parent = outer.child(1);
       expect(parent.attrs).toEqual(before.firstChild!.child(1).attrs);
       expect(
@@ -549,18 +549,27 @@ describe("rich ListItem editing", () => {
       expect(parent.lastChild!.eq(before.firstChild!.child(1).lastChild!)).toBe(
         true,
       );
-      const children = parent.child(1);
+      expect(parent.childCount).toBe(2);
+      const pasted = outer.child(2);
+      expect(pasted.firstChild!.textContent).toBe("copy");
+      expect(pasted.attrs.blockId).not.toBe(outer.firstChild!.attrs.blockId);
       const oldChildren = before.firstChild!.child(1).child(1);
-      expect(children.attrs).toEqual(oldChildren.attrs);
-      expect(children.type.name).toBe(listType);
-      expect(children.childCount).toBe(3);
-      expect(children.firstChild!.textContent).toBe("copycopied child");
-      expect(children.firstChild!.lastChild!.type.name).toBe("bulletList");
-      expect(children.firstChild!.attrs.blockId).not.toBe(
-        outer.firstChild!.attrs.blockId,
-      );
-      expect(children.child(1).eq(oldChildren.child(0))).toBe(true);
-      expect(children.child(2).eq(oldChildren.child(1))).toBe(true);
+      const copiedChildren = pasted.child(1);
+      expect(copiedChildren.type.name).toBe("bulletList");
+      expect(copiedChildren.firstChild!.textContent).toBe("copied child");
+      if (listType === "bulletList") {
+        expect(copiedChildren.childCount).toBe(3);
+        expect(copiedChildren.child(1).eq(oldChildren.child(0))).toBe(true);
+        expect(copiedChildren.child(2).eq(oldChildren.child(1))).toBe(true);
+      } else {
+        expect(copiedChildren.childCount).toBe(1);
+        const reconnected = pasted.child(2);
+        expect(reconnected.type.name).toBe("orderedList");
+        expect(reconnected.attrs).toEqual(oldChildren.attrs);
+        expect(reconnected.child(0).eq(oldChildren.child(0))).toBe(true);
+        expect(reconnected.child(1).eq(oldChildren.child(1))).toBe(true);
+      }
+      expect(outer.child(3).eq(before.firstChild!.child(2))).toBe(true);
       const after = editor.state.doc;
       editor.state.doc.check();
       key(editor, "u");

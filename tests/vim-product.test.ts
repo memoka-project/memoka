@@ -4879,11 +4879,21 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     );
     press(editor, "p");
     await runtime.flush();
-    expect(editor.state.doc.firstChild?.childCount).toBe(1);
-    const insertedParent =
-      editor.state.doc.firstChild?.firstChild?.lastChild?.firstChild;
-    expect(insertedParent?.textContent).toBe("parent itemchild item");
-    expect(insertedParent?.childCount).toBe(2);
+    expect(editor.state.doc.firstChild?.childCount).toBe(2);
+    const originalAfterWholePut = editor.state.doc.firstChild?.child(0);
+    const pastedParent = editor.state.doc.firstChild?.child(1);
+    const insertedChildren = pastedParent?.child(1);
+    expect(originalAfterWholePut?.textContent).toBe("parent item");
+    expect(originalAfterWholePut?.childCount).toBe(1);
+    expect(pastedParent?.firstChild?.textContent).toBe("parent item");
+    expect(pastedParent?.childCount).toBe(2);
+    expect(insertedChildren?.childCount).toBe(3);
+    expect(
+      Array.from(
+        { length: insertedChildren?.childCount ?? 0 },
+        (_, index) => insertedChildren?.child(index).textContent,
+      ),
+    ).toEqual(["child item", "child item", "second child"]);
     press(editor, "u");
     await runtime.flush();
     expect(editor.state.doc.eq(beforePut)).toBe(true);
@@ -5299,6 +5309,289 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     expect(editor.state.doc.firstChild?.type.name).toBe("orderedList");
     expect(editor.state.doc.firstChild?.attrs.start).toBe(4);
     expect(editor.state.doc.firstChild?.childCount).toBe(2);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("preserves copied ListItem depth when the paste boundary allows it", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const paragraph = (text: string) => ({
+      type: "paragraph",
+      content: [{ type: "text", text }],
+    });
+    const item = (
+      text: string,
+      children: object[] = [],
+      checked: boolean | null = null,
+    ) => ({
+      type: "listItem",
+      attrs: { checked },
+      content: [paragraph(text), ...children],
+    });
+    const list = (type: "bulletList" | "orderedList", content: object[]) => ({
+      type,
+      content,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        list("bulletList", [
+          item("source root", [
+            list("bulletList", [
+              item("source parent", [
+                list("bulletList", [
+                  item(
+                    "copied task",
+                    [list("bulletList", [item("copied child")])],
+                    false,
+                  ),
+                ]),
+              ]),
+            ]),
+          ]),
+        ]),
+        paragraph("separator"),
+        list("orderedList", [
+          item("target root", [list("orderedList", [item("target child")])]),
+          item("target after"),
+        ]),
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "copied task"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "y");
+
+    editor.commands.setTextSelection(textPosition(editor, "target child"));
+    press(editor, "p");
+    await runtime.flush();
+
+    const target = editor.state.doc.child(2);
+    const depthOne = target.firstChild?.child(1);
+    const pastedOwner = depthOne?.firstChild;
+    const depthTwo = pastedOwner?.child(1);
+    const pasted = depthTwo?.firstChild;
+    expect(target.type.name).toBe("orderedList");
+    expect(depthOne?.type.name).toBe("orderedList");
+    expect(depthTwo?.type.name).toBe("orderedList");
+    expect(pastedOwner?.firstChild?.textContent).toBe("target child");
+    expect(pasted?.firstChild?.textContent).toBe("copied task");
+    expect(pasted?.attrs.checked).toBe(false);
+    expect(pasted?.child(1).type.name).toBe("bulletList");
+    expect(pasted?.child(1).firstChild?.textContent).toBe("copied child");
+    expect(target.child(1).textContent).toBe("target after");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("puts a copied list before existing descendants with p and P", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const content = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "aaa" }],
+                },
+                {
+                  type: "bulletList",
+                  content: [
+                    {
+                      type: "listItem",
+                      content: [
+                        {
+                          type: "paragraph",
+                          content: [{ type: "text", text: "bbb" }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    editor.commands.setContent(content);
+    editor.commands.setTextSelection(textPosition(editor, "aaa"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V");
+    press(editor, "j");
+    press(editor, "y");
+    const undoManager = editorUndoManager(editor);
+    undoManager.clear();
+    undoManager.stopCapturing();
+
+    const expectRequestedShape = () => {
+      const list = editor.state.doc.firstChild;
+      const original = list?.child(0);
+      const pasted = list?.child(1);
+      const pastedChildren = pasted?.child(1);
+      expect(list?.childCount).toBe(2);
+      expect(original?.firstChild?.textContent).toBe("aaa");
+      expect(original?.childCount).toBe(1);
+      expect(pasted?.firstChild?.textContent).toBe("aaa");
+      expect(pastedChildren?.type.name).toBe("bulletList");
+      expect(pastedChildren?.childCount).toBe(2);
+      expect(pastedChildren?.child(0).textContent).toBe("bbb");
+      expect(pastedChildren?.child(1).textContent).toBe("bbb");
+    };
+
+    editor.commands.setTextSelection(textPosition(editor, "aaa"));
+    press(editor, "p");
+    await runtime.flush();
+    expectRequestedShape();
+
+    press(editor, "u");
+    await runtime.flush();
+    undoManager.stopCapturing();
+    editor.commands.setTextSelection(textPosition(editor, "bbb"));
+    press(editor, "P");
+    await runtime.flush();
+    expectRequestedShape();
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("clamps copied ListItem depth to the nearest legal paste depth", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const paragraph = (text: string) => ({
+      type: "paragraph",
+      content: [{ type: "text", text }],
+    });
+    const item = (text: string, children: object[] = []) => ({
+      type: "listItem",
+      content: [paragraph(text), ...children],
+    });
+    const list = (type: "bulletList" | "orderedList", content: object[]) => ({
+      type,
+      content,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        list("bulletList", [
+          item("source root", [
+            list("bulletList", [
+              item("source parent", [
+                list("bulletList", [item("copied deep")]),
+              ]),
+            ]),
+          ]),
+        ]),
+        paragraph("separator"),
+        list("orderedList", [item("target anchor"), item("target after")]),
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "copied deep"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "y");
+    press(editor, "y");
+    const undoManager = editorUndoManager(editor);
+    undoManager.clear();
+    undoManager.stopCapturing();
+
+    editor.commands.setTextSelection(textPosition(editor, "target anchor"));
+    press(editor, "p");
+    await runtime.flush();
+
+    const target = editor.state.doc.child(2);
+    const anchor = target.firstChild;
+    const nested = anchor?.child(1);
+    expect(target.type.name).toBe("orderedList");
+    expect(anchor?.firstChild?.textContent).toBe("target anchor");
+    expect(nested?.type.name).toBe("orderedList");
+    expect(nested?.firstChild?.textContent).toBe("copied deep");
+    expect(target.child(1).textContent).toBe("target after");
+
+    press(editor, "u");
+    await runtime.flush();
+    const restored = editor.state.doc.child(2);
+    expect(restored.firstChild?.childCount).toBe(1);
+    expect(restored.childCount).toBe(2);
+    expect(restored.child(1).textContent).toBe("target after");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps following children in place for a single shallower ListItem", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const paragraph = (text: string) => ({
+      type: "paragraph",
+      content: [{ type: "text", text }],
+    });
+    const item = (text: string, children: object[] = []) => ({
+      type: "listItem",
+      content: [paragraph(text), ...children],
+    });
+    const list = (type: "bulletList" | "orderedList", content: object[]) => ({
+      type,
+      content,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        list("bulletList", [item("copied root")]),
+        paragraph("separator"),
+        list("orderedList", [
+          item("target parent", [
+            list("orderedList", [item("existing child")]),
+          ]),
+          item("target after"),
+        ]),
+      ],
+    });
+    editor.commands.setTextSelection(textPosition(editor, "copied root"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V");
+    press(editor, "y");
+
+    editor.commands.setTextSelection(textPosition(editor, "target parent"));
+    press(editor, "p");
+    await runtime.flush();
+
+    const target = editor.state.doc.child(2);
+    const parent = target.firstChild;
+    const children = parent?.child(1);
+    expect(target.childCount).toBe(2);
+    expect(parent?.firstChild?.textContent).toBe("target parent");
+    expect(children?.type.name).toBe("orderedList");
+    expect(children?.childCount).toBe(2);
+    expect(children?.child(0).textContent).toBe("copied root");
+    expect(children?.child(1).textContent).toBe("existing child");
+    expect(target.child(1).textContent).toBe("target after");
 
     adapter.destroy();
     runtime.destroy();

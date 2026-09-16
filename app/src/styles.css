@@ -11,6 +11,7 @@
   --memoka-list-marker-text-offset: 1.2em;
   --memoka-ordered-list-text-gap: 0.5em;
   --memoka-list-inline-shift: 0.375em;
+  --memoka-list-item-gap: 0.2em;
 
   font-family: var(--memoka-font-family);
   color: var(--memoka-color-text);
@@ -1022,6 +1023,7 @@ textarea {
  * and text position still advances by exactly --memoka-indent-width.
  */
 .memoka-editor :is(ul, ol) :is(ul, ol) {
+  margin-block-start: var(--memoka-list-item-gap);
   margin-inline-start: calc(
     var(--memoka-indent-width) - var(--memoka-indent-guide-offset) -
       var(--memoka-list-marker-text-offset)
@@ -1041,7 +1043,8 @@ textarea {
 
 .memoka-editor ul > li::before {
   content: "";
-  inset-block-start: calc(0.825em - 0.24em);
+  /* The font's visible glyph center sits below the line box center. */
+  inset-block-start: calc(0.875em - 0.24em);
   width: 0.48em;
   height: 0.48em;
   background: currentColor;
@@ -1091,7 +1094,7 @@ textarea {
 }
 
 .memoka-editor :is(ul, ol) > li + li {
-  margin-top: 0.25em;
+  margin-block-start: var(--memoka-list-item-gap);
 }
 
 .memoka-section-header {
