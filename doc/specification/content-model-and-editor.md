@@ -52,6 +52,7 @@ Paragraph、ListItem、Table Cellなどのinline contentで次を扱う。
 
 Visual Charでtextを選択して`m`を押すと、共通検索paneからmarkを適用できる。
 太字、斜体、打ち消し、inline code、highlight、外部link、全装飾解除を提供する。
+inline codeは本文の85%のfont sizeで表示し、縮小分の8分の1（本文font sizeの1.875%）だけbaselineから上へ補正して中央寄りに揃える。補正量は行間設定に依存しない。
 同じmarkの再適用はtoggleせず変更なしとし、確定全体を1 Undo単位にする。
 取消時はVisual selectionを維持する。
 

@@ -1061,7 +1061,8 @@ textarea {
 
 .memoka-editor ul > li::before {
   content: "";
-  inset-block-start: calc(0.825em - 0.24em);
+  /* Center on the first text line, including when the item wraps. */
+  inset-block-start: calc(var(--memoka-note-line-height) * 0.5em - 0.24em);
   width: 0.48em;
   height: 0.48em;
   background: currentColor;
@@ -1330,6 +1331,9 @@ textarea {
   background: var(--memoka-color-code-surface);
   font-family: var(--memoka-note-font-monospace);
   font-size: 0.85em;
+  /* Raise by an eighth of the font-size reduction: (1 - 0.85) / 8 / 0.85.
+   * em here is relative to code's reduced font, not the surrounding prose. */
+  vertical-align: 0.022059em;
   text-autospace: no-autospace;
 }
 

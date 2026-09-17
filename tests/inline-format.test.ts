@@ -77,18 +77,21 @@ describe("Memoka inline formatting", () => {
     strike.textContent = "日本語";
     const code = document.createElement("code");
     code.textContent = "日本語";
+    const paragraph = document.createElement("p");
+    paragraph.append(code);
     const externalLink = document.createElement("a");
     externalLink.href = "https://example.com";
     externalLink.textContent = "外部リンク";
     const internalLink = document.createElement("span");
     internalLink.className = "internal-section-link";
     internalLink.textContent = "内部リンク";
-    editor.append(bold, italic, strike, code, externalLink, internalLink);
+    editor.append(bold, italic, strike, paragraph, externalLink, internalLink);
     document.head.append(style);
     document.body.append(editor);
     try {
       const css = style.textContent ?? "";
       expect(getComputedStyle(editor).fontSynthesis).toBe("weight style");
+      expect(getComputedStyle(code).verticalAlign).toBe("0.022059em");
       expect(getComputedStyle(bold).fontWeight).toBe("700");
       expect(getComputedStyle(italic).fontStyle).toBe("oblique 12deg");
       expect(getComputedStyle(italic).textDecorationStyle).toBe("dotted");
