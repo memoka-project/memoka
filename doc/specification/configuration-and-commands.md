@@ -290,6 +290,8 @@ Help Noteは利用者向け操作情報の正本表示であり、user-visible�
 
 ## 12. CLIからの設定変更
 
+`note_section_title_gap_before_em`（`:section-title-gap-before`）の既定値は`0.4`emとする。
+
 `memoka-cli config get`は`config.toml`のpath・有効値・file revisionを読み、`config schema`は機械可読な契約を返す。
 `config set --input FILE|- [--dry-run]`はJSONの`set`/`unset`をまとめて適用する。いずれも`--format json`に対応する。
 設定はOSユーザーのapplication全体に適用し、`--workspace`は受理しない。

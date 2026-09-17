@@ -87,7 +87,7 @@ describe("Memoka application appearance", () => {
     expect(DEFAULT_NOTE_APPEARANCE).toMatchObject({
       lineHeight: 1.5,
       listItemGapEm: 0.1,
-      sectionTitleGapBeforeEm: 1,
+      sectionTitleGapBeforeEm: 0.4,
       sectionTitleGapAfterEm: 0.4,
     });
     expect(normalizeNoteLineHeight(1)).toBe(1);

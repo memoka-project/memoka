@@ -8,7 +8,7 @@
   --memoka-note-font-monospace: var(--memoka-font-monospace);
   --memoka-note-line-height: 1.5;
   --memoka-note-block-gap: 0.8em;
-  --memoka-section-title-gap-before: 1em;
+  --memoka-section-title-gap-before: 0.4em;
   --memoka-section-title-gap-after: 0.4em;
   --memoka-section-title-size: 1.26em;
   --memoka-table-cell-padding-block: 7.273px;

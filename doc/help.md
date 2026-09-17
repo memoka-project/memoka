@@ -600,7 +600,7 @@ MemokaのCommand-lineは完全なVim Ex parserではありません。
 | `:note-line-height [1.00..2.50]`                  | Note本文の行間を確認、変更します。                                                 |
 | `:block-gap [0.00..3.00]`                         | Noteのblock間隔をem値で確認、変更します。                                          |
 | `:list-item-gap [0.00..3.00]`                     | List item間隔をem値で確認、変更します。                                            |
-| `:section-title-gap-before [0.00..3.00]`          | Section title前の間隔をem値で確認、変更します。                                    |
+| `:section-title-gap-before [0.00..3.00]`          | Section title前の間隔をem値で確認、変更します。既定値は0.4です。                   |
 | `:section-title-gap-after [0.00..3.00]`           | Section title後の間隔をem値で確認、変更します。                                    |
 | `:section-title-size [0.80..3.00]`                | Section titleの相対sizeを確認、変更します。                                        |
 | `:zoom [50..200]`                                 | Zoomを確認、変更します。                                                           |

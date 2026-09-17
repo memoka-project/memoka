@@ -63,7 +63,7 @@ const DEFAULT_NOTE_MONOSPACE_FONT_FAMILY: &str =
 const DEFAULT_NOTE_LINE_HEIGHT: f64 = 1.5;
 const DEFAULT_NOTE_BLOCK_GAP_EM: f64 = 0.8;
 const DEFAULT_NOTE_LIST_ITEM_GAP_EM: f64 = 0.1;
-const DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM: f64 = 1.0;
+const DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM: f64 = 0.4;
 const DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM: f64 = 0.4;
 const DEFAULT_NOTE_SECTION_TITLE_SIZE_EM: f64 = 1.26;
 const DEFAULT_APPLICATION_ZOOM_PERCENT: u16 = 100;
@@ -1044,7 +1044,7 @@ mod tests {
         assert_eq!(absent.font_family, DEFAULT_APPLICATION_FONT_FAMILY);
         assert_eq!(absent.note_line_height, 1.5);
         assert_eq!(absent.note_list_item_gap_em, 0.1);
-        assert_eq!(absent.note_section_title_gap_before_em, 1.0);
+        assert_eq!(absent.note_section_title_gap_before_em, 0.4);
         assert_eq!(absent.note_section_title_gap_after_em, 0.4);
         assert_eq!(absent.zoom_percent, DEFAULT_APPLICATION_ZOOM_PERCENT);
         assert_eq!(
