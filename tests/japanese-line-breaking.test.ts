@@ -3,6 +3,11 @@ import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import { MAX_BUDOUX_TEXT_LENGTH } from "../app/src/vim/word-semantics";
 import { setJapaneseSegmentationConfiguration } from "../app/src/core/japanese-segmentation";
+import {
+  needsTextAutospaceBetween,
+  TEXT_AUTOSPACE_AFTER_CLASS,
+  TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+} from "../app/src/editor/text-autospace";
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -26,6 +31,15 @@ async function lineBreakingEditor() {
 }
 
 describe("Japanese display line breaking", () => {
+  it("recognizes Japanese and alphanumeric autospace boundaries", () => {
+    expect(needsTextAutospaceBetween("日", "A")).toBe(true);
+    expect(needsTextAutospaceBetween("9", "語")).toBe(true);
+    expect(needsTextAutospaceBetween("日", "語")).toBe(false);
+    expect(needsTextAutospaceBetween("A", "9")).toBe(false);
+    expect(needsTextAutospaceBetween("`", "語")).toBe(false);
+    expect(needsTextAutospaceBetween("。", "A")).toBe(false);
+  });
+
   it("switches fine, BudouX, and native display splitting without changing the document", async () => {
     const { destroy, editor, root } = await lineBreakingEditor();
     const value =
@@ -124,6 +138,120 @@ describe("Japanese display line breaking", () => {
     expect(editor.getJSON()).toEqual(before);
     expect(editor.state.doc.textContent).not.toContain("\u200b");
     destroy();
+  });
+
+  it("adds model-neutral corrections to plain and marked prose boundaries", async () => {
+    document.documentElement.setAttribute(
+      TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      "broken",
+    );
+    const { destroy, editor, root } = await lineBreakingEditor();
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Code Block上部と日本語" },
+            {
+              type: "text",
+              marks: [{ type: "bold" }],
+              text: "true",
+            },
+            { type: "text", text: "では" },
+          ],
+        },
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              marks: [{ type: "code" }],
+              text: "code",
+            },
+            { type: "text", text: "本文" },
+          ],
+        },
+      ],
+    });
+    const before = editor.getJSON();
+    await nextFrame();
+    await nextFrame();
+
+    const corrections = root.querySelectorAll(`.${TEXT_AUTOSPACE_AFTER_CLASS}`);
+    expect(
+      Array.from(corrections).every((element) => !element.textContent),
+    ).toBe(true);
+    expect(
+      root.querySelectorAll(`.${TEXT_AUTOSPACE_AFTER_CLASS}`),
+    ).toHaveLength(3);
+    expect(
+      root
+        .querySelectorAll("p")[1]
+        ?.querySelector(`.${TEXT_AUTOSPACE_AFTER_CLASS}`),
+    ).toBeNull();
+    expect(editor.getJSON()).toEqual(before);
+    destroy();
+    document.documentElement.removeAttribute(
+      TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+    );
+  });
+
+  it("rebuilds autospace after replacing content with the same boundary offsets", async () => {
+    document.documentElement.setAttribute(
+      TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      "broken",
+    );
+    const { destroy, editor, root } = await lineBreakingEditor();
+    try {
+      for (const html of ["日A日", "日<strong>A</strong>日", "語9語"]) {
+        editor.commands.setContent(`<p>${html}</p>`);
+        const before = editor.getJSON();
+        await nextFrame();
+        await nextFrame();
+        expect(
+          root.querySelectorAll(`.${TEXT_AUTOSPACE_AFTER_CLASS}`),
+        ).toHaveLength(2);
+        expect(editor.getJSON()).toEqual(before);
+      }
+    } finally {
+      destroy();
+      document.documentElement.removeAttribute(
+        TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      );
+    }
+  });
+
+  it("resolves character DOM positions past autospace widgets", async () => {
+    document.documentElement.setAttribute(
+      TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      "broken",
+    );
+    const { destroy, editor } = await lineBreakingEditor();
+    try {
+      for (const html of [
+        "日A日",
+        "日<strong>A</strong>日",
+        "日本語IMEの変換中はEditor内",
+      ]) {
+        editor.commands.setContent(`<p>${html}</p>`);
+        await nextFrame();
+        await nextFrame();
+        editor.state.doc.descendants((node, position) => {
+          if (!node.isText) return;
+          for (let offset = 0; offset < node.nodeSize; offset++) {
+            const dom = editor.view.domAtPos(position + offset, 1);
+            expect(dom.node.nodeType).toBe(Node.TEXT_NODE);
+            expect(dom.node.nodeValue?.[dom.offset]).toBe(node.text?.[offset]);
+          }
+        });
+      }
+    } finally {
+      destroy();
+      document.documentElement.removeAttribute(
+        TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      );
+    }
   });
 
   it("uses native wrapping for oversized single textblocks", async () => {

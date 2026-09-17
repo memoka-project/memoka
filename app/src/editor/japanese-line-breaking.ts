@@ -13,6 +13,10 @@ import {
   japanesePhraseBoundaries,
   MAX_BUDOUX_TEXT_LENGTH,
 } from "../vim/word-semantics";
+import {
+  TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+  textAutospaceCompensationForTextblock,
+} from "./text-autospace";
 
 const JAPANESE_LINE_BREAK_CLASS = "memoka-budoux-textblock";
 const JAPANESE_LINE_BREAK_ATTRIBUTE = "data-memoka-budoux-break";
@@ -38,7 +42,11 @@ const lineBreakPlanCache = new WeakMap<
 >();
 
 function isRenderedProseTextblock(node: ProseMirrorNode): boolean {
-  return node.type.name === "paragraph" || node.type.name === "sectionHeader";
+  return (
+    node.type.name === "paragraph" ||
+    node.type.name === "sectionHeader" ||
+    node.type.name === "detailsSummary"
+  );
 }
 
 function hasCodeMark(node: ProseMirrorNode): boolean {
@@ -292,9 +300,13 @@ class JapaneseLineBreakingView {
   #refresh(): void {
     if (this.#destroyed || this.#composing || this.#view.isDestroyed) return;
     const mode = getJapaneseSegmentationConfiguration().lineBreakSegmentation;
+    const compensateAutospace =
+      this.#view.dom.ownerDocument.documentElement.getAttribute(
+        TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE,
+      ) === "broken";
     const positions = new Set<number>();
     for (const element of this.#view.dom.querySelectorAll<HTMLElement>(
-      "p, header[data-section-header]",
+      "p, header[data-section-header], .memoka-details-summary",
     )) {
       if (!intersectsViewport(element, this.#viewport)) continue;
       const position = textblockPositionAtDOM(this.#view, element);
@@ -307,11 +319,19 @@ class JapaneseLineBreakingView {
       const node = this.#view.state.doc.nodeAt(position);
       if (!node) continue;
       const result = decorationsForTextblock(node, position, mode);
-      if (!result) continue;
-      decorations.push(...result.decorations);
-      signatures.push(result.signature);
+      if (result) {
+        decorations.push(...result.decorations);
+        signatures.push(result.signature);
+      }
+      const autospace = compensateAutospace
+        ? textAutospaceCompensationForTextblock(node, position)
+        : null;
+      if (autospace) {
+        decorations.push(...autospace.decorations);
+        signatures.push(`autospace:${position}:${autospace.signature}`);
+      }
     }
-    const signature = `${mode}|${signatures.join("|")}`;
+    const signature = `${mode}:${compensateAutospace ? "broken" : "native"}|${signatures.join("|")}`;
     const current = japaneseLineBreakingKey.getState(this.#view.state);
     if (current?.signature === signature) return;
     const meta: JapaneseLineBreakingMeta = {
@@ -349,7 +369,9 @@ export const JapaneseLineBreaking = Extension.create({
                 transaction.mapping,
                 transaction.doc,
               ),
-              signature: current.signature,
+              // Mapping may drop widgets even when the rebuilt plan has the
+              // same offsets (for example, replacing equally long text).
+              signature: "",
             };
           },
         },

@@ -18,9 +18,11 @@ import {
   createDefaultApplicationZoomPort,
 } from "./platform/application-appearance";
 import { setJapaneseSegmentationConfiguration } from "./core/japanese-segmentation";
+import { applyTextAutospaceCompatibility } from "./editor/text-autospace";
 import "./styles.css";
 
 applyApplicationTheme(document.documentElement, DEFAULT_APPLICATION_THEME_ID);
+applyTextAutospaceCompatibility(document);
 const root = ReactDOM.createRoot(document.getElementById("root")!);
 const applicationConfig = createDefaultApplicationConfigPort();
 const applicationZoom = createDefaultApplicationZoomPort();

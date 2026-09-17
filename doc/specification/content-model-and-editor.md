@@ -313,6 +313,11 @@ inline code、Code/Source Block、8,192 UTF-16 code unitを超える単一text b
 
 通常本文ではCSSの`text-autospace`を使い、CJK文字と英数字の境界へ表示上の間隔を付ける。
 この間隔も文書data、検索offset、Vim word、Clipboard、Markdownには含めない。
+browserがinline要素の境界で自動間隔を欠落させる場合は、互いに独立したinline formatting contextで起動時に表示計測して検出する。
+該当環境では本文のnative自動間隔を無効にし、表示中の本文のCJK・英数字境界へmodel-neutralなdecorationで間隔を付ける。
+これにより表示専用の`wbr`やinline装飾で分断された境界も補正する。inline codeは既存のpaddingを使い、内部と前後へ補正を追加しない。
+plain textで表示する非active BodyChunkとInternal Link内部はnative自動間隔を使う。
+補正用decorationは後続文字のDOM位置より前に置き、Normal/Insert caretは間隔用要素ではなく実際の文字を計測する。
 
 ## 13. 大規模文書
 

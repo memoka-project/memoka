@@ -1334,6 +1334,29 @@ textarea {
   text-autospace: no-autospace;
 }
 
+/* WebKitGTK 2.52 applies text-autospace inconsistently across inline boxes and
+ * display-only WBRs. The startup probe switches visible prose to model-neutral
+ * widgets while static plain-text chunks retain safe native spacing. */
+:root[data-memoka-text-autospace-inline-end="broken"]
+  :is(.memoka-editor, .workspace-search-preview-document) {
+  text-autospace: no-autospace;
+}
+
+:root[data-memoka-text-autospace-inline-end="broken"]
+  :is(.memoka-body-chunk__static-content, .internal-section-link) {
+  text-autospace: normal;
+}
+
+:root[data-memoka-text-autospace-inline-end="broken"]
+  .memoka-text-autospace-after {
+  display: inline-block;
+  width: 0.125ic;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
 .memoka-editor a {
   color: var(--memoka-color-markup-link-url);
   cursor: text;

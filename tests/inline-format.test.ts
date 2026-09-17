@@ -108,6 +108,12 @@ describe("Memoka inline formatting", () => {
       expect(css).toMatch(
         /:is\(\.memoka-editor, \.workspace-search-preview-document\) pre\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
       );
+      expect(css).toMatch(
+        /data-memoka-text-autospace-inline-end="broken"[^}]*\.memoka-text-autospace-after\s*\{[^}]*width: 0\.125ic;/su,
+      );
+      expect(css).toMatch(
+        /data-memoka-text-autospace-inline-end="broken"[^}]*:is\(\.memoka-editor, \.workspace-search-preview-document\)\s*\{[^}]*text-autospace: no-autospace;/su,
+      );
     } finally {
       editor.remove();
       style.remove();
