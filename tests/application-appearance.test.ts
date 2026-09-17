@@ -195,6 +195,22 @@ describe("Memoka application appearance", () => {
     }
   });
 
+  it("gives rich List blocks equal leading and trailing spacing", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\)\s+:is\(li, \.memoka-task-content\)\s+> :is\(\s*pre,[^}]*blockquote,[^}]*\.memoka-details,[^}]*\)\s*\{[^}]*margin-block: calc\(2 \* var\(--memoka-list-item-gap\)\);/su,
+    );
+    expect(css).toMatch(
+      /> :where\(:not\(ul, ol, \.memoka-task-checkbox\)\)\s+\+ :where\(:not\(ul, ol, \.memoka-task-content\)\)\s*\{\s*margin-top: var\(--memoka-list-item-gap\);/su,
+    );
+    expect(css).toMatch(
+      /li:has\([^{}]+\+ li:has\([^{}]+\{\s*margin-top: calc\(4 \* var\(--memoka-list-item-gap\)\);/su,
+    );
+  });
+
   it("uses one vertical gap for sibling and nested ListItems at every depth", () => {
     const css = readFileSync(
       resolve(process.cwd(), "app/src/styles.css"),

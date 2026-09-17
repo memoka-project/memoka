@@ -997,7 +997,7 @@ textarea {
   > .memoka-task-content
   > p
   + p {
-  margin-top: var(--memoka-note-block-gap);
+  margin-top: var(--memoka-list-item-gap);
 }
 .memoka-editor :is(ul, ol) > li[data-task-checked]::before {
   display: none;
@@ -1108,7 +1108,7 @@ textarea {
 }
 
 .memoka-editor :is(ul, ol) > li > p + p {
-  margin-top: var(--memoka-note-block-gap);
+  margin-top: var(--memoka-list-item-gap);
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) :is(ul, ol) > li + li {
@@ -3132,8 +3132,82 @@ textarea {
     hr
   ) {
   width: 100%;
+  margin-block: calc(2 * var(--memoka-list-item-gap));
   margin-inline-start: 0;
   max-width: 100%;
+}
+
+/* Consecutive rich blocks retain both 2x gaps instead of collapsing to 2x. */
+:is(.memoka-editor, .workspace-search-preview-document)
+  :is(li, .memoka-task-content)
+  > :is(
+    pre,
+    .memoka-code-block,
+    .tableWrapper,
+    .memoka-image-node,
+    .memoka-attachment-card,
+    blockquote,
+    .memoka-details,
+    hr
+  )
+  + :is(
+    pre,
+    .memoka-code-block,
+    .tableWrapper,
+    .memoka-image-node,
+    .memoka-attachment-card,
+    blockquote,
+    .memoka-details,
+    hr
+  ),
+:is(.memoka-editor, .workspace-search-preview-document)
+  li:has(
+    > :is(
+        pre,
+        .memoka-code-block,
+        .tableWrapper,
+        .memoka-image-node,
+        .memoka-attachment-card,
+        blockquote,
+        .memoka-details,
+        hr
+      ):last-child,
+    > .memoka-task-content:last-child
+      > :is(
+        pre,
+        .memoka-code-block,
+        .tableWrapper,
+        .memoka-image-node,
+        .memoka-attachment-card,
+        blockquote,
+        .memoka-details,
+        hr
+      ):last-child
+  )
+  + li:has(
+    > :is(
+        pre,
+        .memoka-code-block,
+        .tableWrapper,
+        .memoka-image-node,
+        .memoka-attachment-card,
+        blockquote,
+        .memoka-details,
+        hr
+      ):first-child,
+    > .memoka-task-content
+      > :is(
+        pre,
+        .memoka-code-block,
+        .tableWrapper,
+        .memoka-image-node,
+        .memoka-attachment-card,
+        blockquote,
+        .memoka-details,
+        hr
+      ):first-child
+  ) {
+  margin-top: calc(4 * var(--memoka-list-item-gap));
 }
 
 /* Keep text/list edges compact without stripping rich blocks' own spacing. */
@@ -3145,11 +3219,11 @@ textarea {
   margin-bottom: 0;
 }
 
-.memoka-editor
+:is(.memoka-editor, .workspace-search-preview-document)
   :is(li, .memoka-task-content)
-  > :not(ul, ol, .memoka-task-checkbox)
-  + :not(ul, ol, .memoka-task-content) {
-  margin-top: var(--memoka-note-block-gap);
+  > :where(:not(ul, ol, .memoka-task-checkbox))
+  + :where(:not(ul, ol, .memoka-task-content)) {
+  margin-top: var(--memoka-list-item-gap);
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-table {

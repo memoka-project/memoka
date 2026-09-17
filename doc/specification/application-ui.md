@@ -205,6 +205,7 @@ Table、Code Block、Alert、Details、画像、添付など幅を持つblockの
 List markerは深さに応じて`●、○、■、□、◆、◇`を循環する。Numbered Listはperiodの右端を縦に揃え、
 桁数が増えた場合は本文側ではなく左へ伸ばす。Bullet/numberから本文までの間隔と本文開始位置は両Listで揃える。
 Bulletの中心は本文の先頭行のline box中央に置き、行間設定に追従する。折り返しや子ListでListItemが高くなっても、先頭行を基準にする。
+List内のCode Block、Table、Alert、Details、画像、添付、引用、水平線には上下とも`list-item-gap`の2倍の余白を設ける。これらのblockが連続する場合は間隔を4倍とし、通常text同士の間隔は`list-item-gap`を使う。
 
 ## 11. 色とfont
 
