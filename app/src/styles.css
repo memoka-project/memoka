@@ -1061,8 +1061,7 @@ textarea {
 
 .memoka-editor ul > li::before {
   content: "";
-  /* The font's visible glyph center sits below the line box center. */
-  inset-block-start: calc(0.875em - 0.24em);
+  inset-block-start: calc(0.825em - 0.24em);
   width: 0.48em;
   height: 0.48em;
   background: currentColor;

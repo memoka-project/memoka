@@ -204,6 +204,7 @@ Table、Code Block、Alert、Details、画像、添付など幅を持つblockの
 
 List markerは深さに応じて`●、○、■、□、◆、◇`を循環する。Numbered Listはperiodの右端を縦に揃え、
 桁数が増えた場合は本文側ではなく左へ伸ばす。Bullet/numberから本文までの間隔と本文開始位置は両Listで揃える。
+Bulletの縦位置は中心をListItem上端から`0.825em`に置き、特定font向けの下方向補正を加えない。
 
 ## 11. 色とfont
 

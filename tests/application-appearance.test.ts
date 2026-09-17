@@ -257,7 +257,7 @@ describe("Memoka application appearance", () => {
       /ul\[data-memoka-bullet-marker="6"\] > li::before\s*\{[^}]*background: transparent;[^}]*rotate\(45deg\)/su,
     );
     expect(css).toMatch(
-      /\.memoka-editor ul > li::before\s*\{[^}]*inset-block-start: calc\(0\.875em - 0\.24em\);/su,
+      /\.memoka-editor ul > li::before\s*\{[^}]*inset-block-start: calc\(0\.825em - 0\.24em\);/su,
     );
     expect(css).toMatch(
       /margin-left:\s*calc\(\s*var\(--memoka-indent-width\) - var\(--memoka-indent-guide-offset\)\s*\)/su,
