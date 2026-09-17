@@ -14,6 +14,7 @@ import {
   applyApplicationIndentWidth,
   applyApplicationFont,
   applyApplicationNoteMaxWidth,
+  applyNoteAppearance,
   createDefaultApplicationZoomPort,
 } from "./platform/application-appearance";
 import { setJapaneseSegmentationConfiguration } from "./core/japanese-segmentation";
@@ -29,6 +30,7 @@ void loadApplicationConfig().then(
     theme,
     customThemes,
     fontFamily,
+    noteAppearance,
     zoomPercent,
     noteMaxWidthPx,
     lineNumberMinWidthPx,
@@ -40,6 +42,7 @@ void loadApplicationConfig().then(
     setCustomApplicationThemes(customThemes ?? {});
     applyApplicationTheme(document.documentElement, theme);
     applyApplicationFont(document.documentElement, fontFamily);
+    applyNoteAppearance(document.documentElement, noteAppearance);
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
     applyApplicationIndentWidth(document.documentElement, indentWidthPx);
     setJapaneseSegmentationConfiguration({
@@ -61,6 +64,7 @@ void loadApplicationConfig().then(
         applicationZoom={applicationZoom}
         initialTheme={theme}
         initialFontFamily={fontFamily}
+        initialNoteAppearance={noteAppearance}
         initialZoomPercent={appliedZoomPercent}
         initialNoteMaxWidthPx={noteMaxWidthPx}
         initialLineNumberMinWidthPx={lineNumberMinWidthPx}

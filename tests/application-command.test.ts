@@ -77,6 +77,30 @@ describe("Memoka Application Command-line", () => {
       command: { id: "application.font" },
       argument: null,
     });
+    expect(parseApplicationCommand(":ui-font Inter, sans-serif")).toMatchObject(
+      {
+        kind: "command",
+        command: { id: "application.font" },
+        argument: "Inter, sans-serif",
+      },
+    );
+    expect(parseApplicationCommand(":note-font-ja Noto Sans JP")).toMatchObject(
+      {
+        kind: "command",
+        command: { id: "application.note_font_japanese" },
+        argument: "Noto Sans JP",
+      },
+    );
+    expect(parseApplicationCommand(":note-line-height 1.8")).toMatchObject({
+      kind: "command",
+      command: { id: "application.note_line_height" },
+      argument: "1.8",
+    });
+    expect(parseApplicationCommand(":section-title-size 1.4")).toMatchObject({
+      kind: "command",
+      command: { id: "application.note_section_title_size" },
+      argument: "1.4",
+    });
     expect(parseApplicationCommand(":zoom 120")).toMatchObject({
       kind: "command",
       command: { id: "application.zoom" },
@@ -136,7 +160,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: backup-status",
     });
     expect(applicationCommandHelp()).toBe(
-      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :font · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :ui-font · :note-font-ja · :note-font-latin · :note-font-mono · :note-line-height · :block-gap · :list-item-gap · :section-title-gap-before · :section-title-gap-after · :section-title-size · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

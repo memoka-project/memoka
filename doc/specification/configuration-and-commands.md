@@ -18,7 +18,16 @@ themeなどをCommandから確定した場合は、既存commentと無関係な�
 | 設定                               | 既定値                                   | 範囲/候補                                 |
 | ---------------------------------- | ---------------------------------------- | ----------------------------------------- |
 | `theme`                            | `nightfox`                               | 収録7テーマまたは定義済みカスタムテーマID |
-| `font_family`                      | Interを先頭とするsystem sans-serif stack | validなCSS font-family                    |
+| `ui_font_family`                   | Interを先頭とするsystem sans-serif stack | validなCSS font-family                    |
+| `note_japanese_font_family`        | Noto Sans CJK JP等のsans-serif stack     | validなCSS font-family                    |
+| `note_latin_font_family`           | Interを先頭とするsystem sans-serif stack | validなCSS font-family                    |
+| `note_monospace_font_family`       | system monospace stack                   | validなCSS font-family                    |
+| `note_line_height`                 | 1.50                                     | 1.00〜2.50、小数第2位まで                 |
+| `note_block_gap_em`                | 0.80                                     | 0.00〜3.00em、小数第2位まで               |
+| `note_list_item_gap_em`            | 0.10                                     | 0.00〜3.00em、小数第2位まで               |
+| `note_section_title_gap_before_em` | 1.00                                     | 0.00〜3.00em、小数第2位まで               |
+| `note_section_title_gap_after_em`  | 0.40                                     | 0.00〜3.00em、小数第2位まで               |
+| `note_section_title_size_em`       | 1.26                                     | 0.80〜3.00em、小数第2位まで               |
 | `zoom_percent`                     | 100                                      | 50〜200、10刻み                           |
 | `note_max_width_px`                | 1000                                     | 320〜4096、0で無効                        |
 | `line_number_min_width_px`         | 480                                      | 240〜4096、0で常時表示                    |
@@ -60,7 +69,11 @@ tokenやパスワードを`config.toml`へ記載してはならない。
 通常cloudの転送・検証・整理は1単位1時間の固定上限を持つ。通常終了はCore保存後に処理を中断し、未完了分を次回へ回す。
 切替・更新は追加先の転送を待ち、待機全体の時間上限は設けない。未開始のDrive検証・整理は後回しにする。
 
-既定font stackは次である。
+旧`font_family`は`ui_font_family`のaliasとして読み込む。両方がある場合は`ui_font_family`を優先してwarningを表示し、
+次にUI fontを保存すると旧keyを削除する。Noteの英数fontを先、Japanese fontを後に並べた通常のCSS fallback stackを本文へ適用し、
+monospaceはinline codeとCode/Source Blockへ適用する。fontにUnicode rangeによる振り分けは行わない。
+
+既定UI/Note英数font stackは次である。
 
 ```text
 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
@@ -70,7 +83,16 @@ Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", 
 
 ```toml
 theme = "nightfox"
-font_family = 'Noto Sans CJK JP, system-ui, sans-serif'
+ui_font_family = 'Inter, system-ui, sans-serif'
+note_japanese_font_family = 'Noto Sans CJK JP, sans-serif'
+note_latin_font_family = 'Inter, system-ui, sans-serif'
+note_monospace_font_family = 'ui-monospace, monospace'
+note_line_height = 1.5
+note_block_gap_em = 0.8
+note_list_item_gap_em = 0.1
+note_section_title_gap_before_em = 1.0
+note_section_title_gap_after_em = 0.4
+note_section_title_size_em = 1.26
 zoom_percent = 110
 note_max_width_px = 1000
 line_number_min_width_px = 480
@@ -260,6 +282,8 @@ validなmodeを指定すると即時反映して`config.toml`へ保存する。
 SectionとblockにはNote ID、見出しpath、block位置から導出した安定IDを使う。同じ原稿を再同期してもidentityを
 維持し、Help Noteへの手動編集は端末内に限り、次回`:help`で原稿の内容へ置き換える。原稿のH1不一致、重複見出しanchor、
 未解決anchor、未対応Markdown blockは同期errorとして扱い、不完全なHelpへ黙って置き換えない。
+原稿更新で過去に削除済みとなった管理Help自身の決定的IDが再び必要になった場合は、管理Help同期を明示的な復旧経路として扱う。
+通常Noteの保護されたidentityをこの経路で復旧してはならず、利用者へRecovery操作を要求しない。
 
 Help Noteは利用者向け操作情報の正本表示であり、user-visibleなkey、command、設定、制約を変更した場合は
 この仕様と`doc/help.md`を実装と同じcommitで更新する。
@@ -275,7 +299,16 @@ Help Noteは利用者向け操作情報の正本表示であり、user-visible�
 | CLIの設定key                       | GUI command                                |
 | ---------------------------------- | ------------------------------------------ |
 | `theme`                            | `:colorscheme`                             |
-| `font_family`                      | `:font`                                    |
+| `ui_font_family`                   | `:ui-font`（`:font`はalias）               |
+| `note_japanese_font_family`        | `:note-font-ja`                            |
+| `note_latin_font_family`           | `:note-font-latin`                         |
+| `note_monospace_font_family`       | `:note-font-mono`                          |
+| `note_line_height`                 | `:note-line-height`                        |
+| `note_block_gap_em`                | `:block-gap`                               |
+| `note_list_item_gap_em`            | `:list-item-gap`                           |
+| `note_section_title_gap_before_em` | `:section-title-gap-before`                |
+| `note_section_title_gap_after_em`  | `:section-title-gap-after`                 |
+| `note_section_title_size_em`       | `:section-title-size`                      |
 | `zoom_percent`                     | `:zoom`                                    |
 | `note_max_width_px`                | `:note-width`                              |
 | `line_number_min_width_px`         | `:line-number-min-width`                   |
@@ -283,6 +316,10 @@ Help Noteは利用者向け操作情報の正本表示であり、user-visible�
 | `japanese.word_segmentation`       | `:word-segmentation`                       |
 | `japanese.line_break_segmentation` | `:line-break-segmentation`                 |
 | `themes.<id>`                      | カスタムテーマの定義。選択は`:colorscheme` |
+
+旧CLI key `font_family`は取得結果にも残すが、set時は`ui_font_family`へ正規化する。同じrequestで両keyは指定できない。
+行間は単位なし、gapとtitle sizeはem値である。本文行間に連動してTable cellの縦paddingを`8px × line-height / 1.65`で算出し、
+横paddingは10pxのままにする。これらはEditorと構造化Note previewへ同じ値を適用する。
 
 GUIは1秒間隔およびOS windowへのfocus復帰時に小さい設定fileのhashを確認し、変更時のみ再parseする。
 上表の設定をEditorの再mount・Noteの編集・focusやkeymapの変更なしに再適用する。font/幅変更で必要なlayout再計算は行う。

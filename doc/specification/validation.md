@@ -189,7 +189,10 @@ IME OFF結果を記録する。本文、入力文字そのもの、Note/Section 
 - TabPageごとのTree/Outline表示、幅、選択、fold復元
 - Outlineの内部scroll、caret追従、fold/focus反映
 - 相対行番号と現在absolute番号、大Note/static chunk、狭いWindowでの省略
-- Note最大幅、indent grid、theme、font、Zoom
+- Note最大幅、indent grid、theme、UI/日本語/英数/等幅font、Zoom
+- Noteのline-height、block/List/Section title間隔、Section title sizeがEditorと構造化previewへ即時反映され、再起動後も保持されること
+- line-heightに比例してTable cellの縦paddingだけが変わり、設定範囲、小数精度、不正font、旧`font_family`移行を検証すること
+- Note等幅fontがCode Block内の`code`要素まで継承されること
 - wheel/touch/scrollbarでcaretが上下端の途中で欠ける場合に、余白を避けて表示行全体が見える位置へ補正すること
 - 通常/分割Window、折返し・装飾のあるParagraph/List、Table/Code/画像で、補正によるscrollの引戻しや点滅がないこと
 - 手動scrollの補正・viewport observerによるBodyChunk切替は表示中の内容を基準にanchoringし、画面外の古いcaretを基準にしないこと

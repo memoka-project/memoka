@@ -106,7 +106,7 @@ describe("Memoka inline formatting", () => {
         /\.memoka-editor :not\(pre\) > code\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
       );
       expect(css).toMatch(
-        /\.memoka-editor pre\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
+        /:is\(\.memoka-editor, \.workspace-search-preview-document\) pre\s*\{[^}]*font-size: 0\.85em;[^}]*text-autospace: no-autospace;/su,
       );
     } finally {
       editor.remove();

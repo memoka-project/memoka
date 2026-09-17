@@ -5108,6 +5108,7 @@ export class CoreRuntime {
             helpSnapshot,
             synchronizedAt,
             CORE_TRANSACTION_ORIGIN,
+            { recoverProtectedIdentities: true },
           );
         },
       );

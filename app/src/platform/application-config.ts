@@ -19,11 +19,14 @@ import {
   DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
+  DEFAULT_NOTE_APPEARANCE,
   normalizeApplicationFontFamily,
   normalizeApplicationIndentWidthPx,
   normalizeApplicationLineNumberMinWidthPx,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
+  normalizeNoteAppearance,
+  type NoteAppearanceSettings,
 } from "../core/application-appearance";
 import { validateVimKeyConfig } from "../vim/input";
 import {
@@ -42,6 +45,15 @@ interface ApplicationKeyConfigLoadWire {
   readonly theme: string;
   readonly customThemes?: CustomApplicationThemes;
   readonly fontFamily: string;
+  readonly noteJapaneseFontFamily?: string;
+  readonly noteLatinFontFamily?: string;
+  readonly noteMonospaceFontFamily?: string;
+  readonly noteLineHeight?: number;
+  readonly noteBlockGapEm?: number;
+  readonly noteListItemGapEm?: number;
+  readonly noteSectionTitleGapBeforeEm?: number;
+  readonly noteSectionTitleGapAfterEm?: number;
+  readonly noteSectionTitleSizeEm?: number;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
   readonly lineNumberMinWidthPx: number;
@@ -59,6 +71,7 @@ export interface LoadedApplicationConfig {
   readonly theme: ApplicationThemeId;
   readonly customThemes?: CustomApplicationThemes;
   readonly fontFamily: string;
+  readonly noteAppearance: NoteAppearanceSettings;
   readonly zoomPercent: number;
   readonly noteMaxWidthPx: number;
   readonly lineNumberMinWidthPx: number;
@@ -75,6 +88,9 @@ export interface ApplicationConfigPort {
   ) => () => void;
   readonly saveTheme: (theme: ApplicationThemeId) => Promise<void>;
   readonly saveFontFamily: (fontFamily: string) => Promise<void>;
+  readonly saveNoteAppearance?: (
+    appearance: Partial<NoteAppearanceSettings>,
+  ) => Promise<void>;
   readonly saveZoomPercent: (zoomPercent: number) => Promise<void>;
   readonly saveNoteMaxWidthPx: (noteMaxWidthPx: number) => Promise<void>;
   readonly saveLineNumberMinWidthPx: (
@@ -109,6 +125,10 @@ export function createDefaultApplicationConfigPort(): ApplicationConfigPort {
     saveFontFamily: async (fontFamily) => {
       if (!isTauriRuntime()) return;
       await save("application_font_family_save", { fontFamily });
+    },
+    saveNoteAppearance: async (appearance) => {
+      if (!isTauriRuntime()) return;
+      await save("application_note_appearance_save", { appearance });
     },
     saveZoomPercent: async (zoomPercent) => {
       if (!isTauriRuntime()) return;
@@ -149,6 +169,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       configPath: null,
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
+      noteAppearance: DEFAULT_NOTE_APPEARANCE,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -172,6 +193,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       configPath: null,
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
+      noteAppearance: DEFAULT_NOTE_APPEARANCE,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -189,6 +211,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       configPath: loaded.configPath,
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
+      noteAppearance: DEFAULT_NOTE_APPEARANCE,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -218,6 +241,30 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
     if (!fontFamily) {
       throw new Error(`不正なfont-familyです: ${loaded.fontFamily}`);
     }
+    const noteAppearance = normalizeNoteAppearance({
+      japaneseFontFamily:
+        loaded.noteJapaneseFontFamily ??
+        DEFAULT_NOTE_APPEARANCE.japaneseFontFamily,
+      latinFontFamily:
+        loaded.noteLatinFontFamily ?? DEFAULT_NOTE_APPEARANCE.latinFontFamily,
+      monospaceFontFamily:
+        loaded.noteMonospaceFontFamily ??
+        DEFAULT_NOTE_APPEARANCE.monospaceFontFamily,
+      lineHeight: loaded.noteLineHeight ?? DEFAULT_NOTE_APPEARANCE.lineHeight,
+      blockGapEm: loaded.noteBlockGapEm ?? DEFAULT_NOTE_APPEARANCE.blockGapEm,
+      listItemGapEm:
+        loaded.noteListItemGapEm ?? DEFAULT_NOTE_APPEARANCE.listItemGapEm,
+      sectionTitleGapBeforeEm:
+        loaded.noteSectionTitleGapBeforeEm ??
+        DEFAULT_NOTE_APPEARANCE.sectionTitleGapBeforeEm,
+      sectionTitleGapAfterEm:
+        loaded.noteSectionTitleGapAfterEm ??
+        DEFAULT_NOTE_APPEARANCE.sectionTitleGapAfterEm,
+      sectionTitleSizeEm:
+        loaded.noteSectionTitleSizeEm ??
+        DEFAULT_NOTE_APPEARANCE.sectionTitleSizeEm,
+    });
+    if (!noteAppearance) throw new Error("不正なNote表示設定です");
     const zoomPercent = normalizeApplicationZoomPercent(loaded.zoomPercent);
     if (zoomPercent === null) {
       throw new Error(`不正なZoom倍率です: ${loaded.zoomPercent}%`);
@@ -267,6 +314,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       revision: loaded.revision,
       customThemes,
       fontFamily,
+      noteAppearance,
       zoomPercent,
       noteMaxWidthPx,
       lineNumberMinWidthPx,
@@ -284,6 +332,7 @@ export async function loadApplicationConfig(): Promise<LoadedApplicationConfig> 
       configPath: loaded.configPath,
       theme: DEFAULT_APPLICATION_THEME_ID,
       fontFamily: DEFAULT_APPLICATION_FONT_FAMILY,
+      noteAppearance: DEFAULT_NOTE_APPEARANCE,
       zoomPercent: DEFAULT_APPLICATION_ZOOM_PERCENT,
       noteMaxWidthPx: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
       lineNumberMinWidthPx: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,

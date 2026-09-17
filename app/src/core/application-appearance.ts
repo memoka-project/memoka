@@ -1,5 +1,47 @@
 export const DEFAULT_APPLICATION_FONT_FAMILY =
   'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+export const DEFAULT_NOTE_LATIN_FONT_FAMILY =
+  'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+export const DEFAULT_NOTE_JAPANESE_FONT_FAMILY =
+  '"Noto Sans CJK JP", "Yu Gothic", "Hiragino Sans", sans-serif';
+export const DEFAULT_NOTE_MONOSPACE_FONT_FAMILY =
+  "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+export const DEFAULT_NOTE_LINE_HEIGHT = 1.5;
+export const DEFAULT_NOTE_BLOCK_GAP_EM = 0.8;
+export const DEFAULT_NOTE_LIST_ITEM_GAP_EM = 0.1;
+export const DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM = 1;
+export const DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM = 0.4;
+export const DEFAULT_NOTE_SECTION_TITLE_SIZE_EM = 1.26;
+export const MIN_NOTE_LINE_HEIGHT = 1;
+export const MAX_NOTE_LINE_HEIGHT = 2.5;
+export const MIN_NOTE_GAP_EM = 0;
+export const MAX_NOTE_GAP_EM = 3;
+export const MIN_NOTE_SECTION_TITLE_SIZE_EM = 0.8;
+export const MAX_NOTE_SECTION_TITLE_SIZE_EM = 3;
+
+export interface NoteAppearanceSettings {
+  readonly japaneseFontFamily: string;
+  readonly latinFontFamily: string;
+  readonly monospaceFontFamily: string;
+  readonly lineHeight: number;
+  readonly blockGapEm: number;
+  readonly listItemGapEm: number;
+  readonly sectionTitleGapBeforeEm: number;
+  readonly sectionTitleGapAfterEm: number;
+  readonly sectionTitleSizeEm: number;
+}
+
+export const DEFAULT_NOTE_APPEARANCE: NoteAppearanceSettings = {
+  japaneseFontFamily: DEFAULT_NOTE_JAPANESE_FONT_FAMILY,
+  latinFontFamily: DEFAULT_NOTE_LATIN_FONT_FAMILY,
+  monospaceFontFamily: DEFAULT_NOTE_MONOSPACE_FONT_FAMILY,
+  lineHeight: DEFAULT_NOTE_LINE_HEIGHT,
+  blockGapEm: DEFAULT_NOTE_BLOCK_GAP_EM,
+  listItemGapEm: DEFAULT_NOTE_LIST_ITEM_GAP_EM,
+  sectionTitleGapBeforeEm: DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM,
+  sectionTitleGapAfterEm: DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM,
+  sectionTitleSizeEm: DEFAULT_NOTE_SECTION_TITLE_SIZE_EM,
+};
 
 export const DEFAULT_APPLICATION_ZOOM_PERCENT = 100;
 export const MIN_APPLICATION_ZOOM_PERCENT = 50;
@@ -77,6 +119,86 @@ export function normalizeApplicationFontFamily(value: string): string | null {
     return null;
   }
   return normalized;
+}
+
+function normalizeDecimalInRange(
+  value: number,
+  minimum: number,
+  maximum: number,
+): number | null {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    return null;
+  }
+  const rounded = Math.round(value * 100) / 100;
+  return Math.abs(value - rounded) < Number.EPSILON * 100 ? rounded : null;
+}
+
+export function normalizeNoteLineHeight(value: number): number | null {
+  return normalizeDecimalInRange(
+    value,
+    MIN_NOTE_LINE_HEIGHT,
+    MAX_NOTE_LINE_HEIGHT,
+  );
+}
+
+export function normalizeNoteGapEm(value: number): number | null {
+  return normalizeDecimalInRange(value, MIN_NOTE_GAP_EM, MAX_NOTE_GAP_EM);
+}
+
+export function normalizeNoteSectionTitleSizeEm(value: number): number | null {
+  return normalizeDecimalInRange(
+    value,
+    MIN_NOTE_SECTION_TITLE_SIZE_EM,
+    MAX_NOTE_SECTION_TITLE_SIZE_EM,
+  );
+}
+
+export function normalizeNoteAppearance(
+  value: NoteAppearanceSettings,
+): NoteAppearanceSettings | null {
+  const japaneseFontFamily = normalizeApplicationFontFamily(
+    value.japaneseFontFamily,
+  );
+  const latinFontFamily = normalizeApplicationFontFamily(value.latinFontFamily);
+  const monospaceFontFamily = normalizeApplicationFontFamily(
+    value.monospaceFontFamily,
+  );
+  const lineHeight = normalizeNoteLineHeight(value.lineHeight);
+  const blockGapEm = normalizeNoteGapEm(value.blockGapEm);
+  const listItemGapEm = normalizeNoteGapEm(value.listItemGapEm);
+  const sectionTitleGapBeforeEm = normalizeNoteGapEm(
+    value.sectionTitleGapBeforeEm,
+  );
+  const sectionTitleGapAfterEm = normalizeNoteGapEm(
+    value.sectionTitleGapAfterEm,
+  );
+  const sectionTitleSizeEm = normalizeNoteSectionTitleSizeEm(
+    value.sectionTitleSizeEm,
+  );
+  if (
+    !japaneseFontFamily ||
+    !latinFontFamily ||
+    !monospaceFontFamily ||
+    lineHeight === null ||
+    blockGapEm === null ||
+    listItemGapEm === null ||
+    sectionTitleGapBeforeEm === null ||
+    sectionTitleGapAfterEm === null ||
+    sectionTitleSizeEm === null
+  ) {
+    return null;
+  }
+  return {
+    japaneseFontFamily,
+    latinFontFamily,
+    monospaceFontFamily,
+    lineHeight,
+    blockGapEm,
+    listItemGapEm,
+    sectionTitleGapBeforeEm,
+    sectionTitleGapAfterEm,
+    sectionTitleSizeEm,
+  };
 }
 
 export function normalizeApplicationZoomPercent(value: number): number | null {

@@ -1173,10 +1173,16 @@ export function replaceNoteSectionTree(
   snapshot: SectionSnapshot,
   updatedAt: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
+  options: { readonly recoverProtectedIdentities?: boolean } = {},
 ): void {
   if (note.replicated) {
     note.replicated.transact(() => {
-      applyReplicatedSectionSnapshot(note.replicated!, snapshot, origin);
+      applyReplicatedSectionSnapshot(
+        note.replicated!,
+        snapshot,
+        origin,
+        options,
+      );
       note.meta.set("updated_at", updatedAt);
     }, origin);
     return;

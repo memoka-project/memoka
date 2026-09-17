@@ -198,7 +198,9 @@ mode、Visualのanchor、文書、Undo履歴、他Windowのfocusは変更しな�
 - List markerの基準grid
 
 Root本文はindentせずguideを出さない。Root以外のSection titleは同じsize/styleで、親本文と同じ位置へ表示する。
-Section本文と子Sectionにはdepthを示す縦guideを表示する。
+Section本文と子Sectionにはdepthを示す縦guideを表示する。guideから本文までのoffsetはindent幅の60%とし、本文はindent幅の終端に置く。
+Section titleとその直属本文の開始位置を揃える。行番号表示時のRoot本文開始位置は、行番号gutterとguide offsetの和とする。
+Table、Code Block、Alert、Details、画像、添付など幅を持つblockの左端は、本文から残り40%進めた次のguide gridに揃える。
 
 List markerは深さに応じて`●、○、■、□、◆、◇`を循環する。Numbered Listはperiodの右端を縦に揃え、
 桁数が増えた場合は本文側ではなく左へ伸ばす。Bullet/numberから本文までの間隔と本文開始位置は両Listで揃える。
@@ -214,8 +216,13 @@ Section titleはNoteからの絶対depth（Root H1〜H6）で色を決める。`
 H7以降のSectionは作れず、古いデータにも無検証の色循環で対応しない。
 Visual CharとVisual Lineのselection背景は同じsemantic selection色を使う。
 
-Application fontは本文と通常UIに適用する。code、行番号、Command-line、debug lineは等幅fontを維持する。
-inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当で表示する。
+Application UI fontとNote fontは分離する。Noteは英数、日本語、等幅のfont-familyを個別に持ち、英数から日本語への
+通常のCSS fallback stackを本文へ適用する。等幅fontはinline codeとCode/Source Blockへ適用し、行番号、Command-line、
+debug lineはUI既定の等幅fontを維持する。inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当で表示する。
+
+Note本文のline-height、全block間隔、List item間隔、Section title前後の間隔、全depth共通のSection title相対sizeを
+application設定で変更できる。Table cellの縦paddingは本文line-heightへ比例させ、横paddingは固定する。
+同じ外観値をEditorと構造化Note previewへ適用し、NoteDoc、selection、Undo履歴は変更しない。
 
 ## 12. 保存待ちと履歴
 

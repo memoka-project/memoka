@@ -55,6 +55,17 @@ fn custom_theme_id(id: &str) -> bool {
 const DEFAULT_APPLICATION_THEME: ApplicationTheme = ApplicationTheme::Nightfox;
 const DEFAULT_APPLICATION_FONT_FAMILY: &str =
     r#"Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif"#;
+const DEFAULT_NOTE_LATIN_FONT_FAMILY: &str = DEFAULT_APPLICATION_FONT_FAMILY;
+const DEFAULT_NOTE_JAPANESE_FONT_FAMILY: &str =
+    r#""Noto Sans CJK JP", "Yu Gothic", "Hiragino Sans", sans-serif"#;
+const DEFAULT_NOTE_MONOSPACE_FONT_FAMILY: &str =
+    "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const DEFAULT_NOTE_LINE_HEIGHT: f64 = 1.5;
+const DEFAULT_NOTE_BLOCK_GAP_EM: f64 = 0.8;
+const DEFAULT_NOTE_LIST_ITEM_GAP_EM: f64 = 0.1;
+const DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM: f64 = 1.0;
+const DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM: f64 = 0.4;
+const DEFAULT_NOTE_SECTION_TITLE_SIZE_EM: f64 = 1.26;
 const DEFAULT_APPLICATION_ZOOM_PERCENT: u16 = 100;
 const MIN_APPLICATION_ZOOM_PERCENT: u16 = 50;
 const MAX_APPLICATION_ZOOM_PERCENT: u16 = 200;
@@ -175,6 +186,16 @@ struct ApplicationConfigFile {
     #[serde(default)]
     themes: BTreeMap<String, CustomTheme>,
     font_family: Option<String>,
+    ui_font_family: Option<String>,
+    note_japanese_font_family: Option<String>,
+    note_latin_font_family: Option<String>,
+    note_monospace_font_family: Option<String>,
+    note_line_height: Option<f64>,
+    note_block_gap_em: Option<f64>,
+    note_list_item_gap_em: Option<f64>,
+    note_section_title_gap_before_em: Option<f64>,
+    note_section_title_gap_after_em: Option<f64>,
+    note_section_title_size_em: Option<f64>,
     zoom_percent: Option<u16>,
     note_max_width_px: Option<u16>,
     line_number_min_width_px: Option<u16>,
@@ -235,6 +256,15 @@ pub struct ApplicationKeyConfigLoadResult {
     theme: String,
     custom_themes: BTreeMap<String, CustomTheme>,
     font_family: String,
+    note_japanese_font_family: String,
+    note_latin_font_family: String,
+    note_monospace_font_family: String,
+    note_line_height: f64,
+    note_block_gap_em: f64,
+    note_list_item_gap_em: f64,
+    note_section_title_gap_before_em: f64,
+    note_section_title_gap_after_em: f64,
+    note_section_title_size_em: f64,
     zoom_percent: u16,
     note_max_width_px: u16,
     line_number_min_width_px: u16,
@@ -256,6 +286,15 @@ pub fn application_key_config_load(app: AppHandle) -> ApplicationKeyConfigLoadRe
                 theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
                 custom_themes: BTreeMap::new(),
                 font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+                note_japanese_font_family: DEFAULT_NOTE_JAPANESE_FONT_FAMILY.to_owned(),
+                note_latin_font_family: DEFAULT_NOTE_LATIN_FONT_FAMILY.to_owned(),
+                note_monospace_font_family: DEFAULT_NOTE_MONOSPACE_FONT_FAMILY.to_owned(),
+                note_line_height: DEFAULT_NOTE_LINE_HEIGHT,
+                note_block_gap_em: DEFAULT_NOTE_BLOCK_GAP_EM,
+                note_list_item_gap_em: DEFAULT_NOTE_LIST_ITEM_GAP_EM,
+                note_section_title_gap_before_em: DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM,
+                note_section_title_gap_after_em: DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM,
+                note_section_title_size_em: DEFAULT_NOTE_SECTION_TITLE_SIZE_EM,
                 zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
                 note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
                 line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -300,6 +339,61 @@ pub fn application_font_family_save(app: AppHandle, font_family: String) -> Resu
         .app_config_dir()
         .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
     save_application_font_family(&directory.join("config.toml"), &font_family)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NoteAppearancePatch {
+    japanese_font_family: Option<String>,
+    latin_font_family: Option<String>,
+    monospace_font_family: Option<String>,
+    line_height: Option<f64>,
+    block_gap_em: Option<f64>,
+    list_item_gap_em: Option<f64>,
+    section_title_gap_before_em: Option<f64>,
+    section_title_gap_after_em: Option<f64>,
+    section_title_size_em: Option<f64>,
+}
+
+#[tauri::command]
+pub fn application_note_appearance_save(
+    app: AppHandle,
+    appearance: NoteAppearancePatch,
+) -> Result<(), String> {
+    validate_note_appearance_patch(&appearance)?;
+    let directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))?;
+    update_application_config(&directory.join("config.toml"), |document| {
+        if let Some(value_) = appearance.japanese_font_family {
+            document["note_japanese_font_family"] = value(value_);
+        }
+        if let Some(value_) = appearance.latin_font_family {
+            document["note_latin_font_family"] = value(value_);
+        }
+        if let Some(value_) = appearance.monospace_font_family {
+            document["note_monospace_font_family"] = value(value_);
+        }
+        if let Some(value_) = appearance.line_height {
+            document["note_line_height"] = value(value_);
+        }
+        if let Some(value_) = appearance.block_gap_em {
+            document["note_block_gap_em"] = value(value_);
+        }
+        if let Some(value_) = appearance.list_item_gap_em {
+            document["note_list_item_gap_em"] = value(value_);
+        }
+        if let Some(value_) = appearance.section_title_gap_before_em {
+            document["note_section_title_gap_before_em"] = value(value_);
+        }
+        if let Some(value_) = appearance.section_title_gap_after_em {
+            document["note_section_title_gap_after_em"] = value(value_);
+        }
+        if let Some(value_) = appearance.section_title_size_em {
+            document["note_section_title_size_em"] = value(value_);
+        }
+    })
 }
 
 #[tauri::command]
@@ -393,6 +487,15 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
             custom_themes: BTreeMap::new(),
             font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+            note_japanese_font_family: DEFAULT_NOTE_JAPANESE_FONT_FAMILY.to_owned(),
+            note_latin_font_family: DEFAULT_NOTE_LATIN_FONT_FAMILY.to_owned(),
+            note_monospace_font_family: DEFAULT_NOTE_MONOSPACE_FONT_FAMILY.to_owned(),
+            note_line_height: DEFAULT_NOTE_LINE_HEIGHT,
+            note_block_gap_em: DEFAULT_NOTE_BLOCK_GAP_EM,
+            note_list_item_gap_em: DEFAULT_NOTE_LIST_ITEM_GAP_EM,
+            note_section_title_gap_before_em: DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM,
+            note_section_title_gap_after_em: DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM,
+            note_section_title_size_em: DEFAULT_NOTE_SECTION_TITLE_SIZE_EM,
             zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
             note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
             line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -420,13 +523,67 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
     let theme = parsed
         .theme
         .unwrap_or_else(|| DEFAULT_APPLICATION_THEME.as_str().to_owned());
-    let font_family = match parsed.font_family.as_deref() {
+    let legacy_font_conflict = parsed.ui_font_family.is_some() && parsed.font_family.is_some();
+    let font_family = match parsed
+        .ui_font_family
+        .as_deref()
+        .or(parsed.font_family.as_deref())
+    {
         Some(value) => match validate_application_font_family(value) {
             Ok(value) => value.to_owned(),
             Err(error) => return warning_result(path, error),
         },
         None => DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
     };
+    macro_rules! font_or_default {
+        ($value:expr, $default:expr) => {
+            match $value {
+                Some(value) => match validate_application_font_family(value) {
+                    Ok(value) => value.to_owned(),
+                    Err(error) => return warning_result(path, error),
+                },
+                None => $default.to_owned(),
+            }
+        };
+    }
+    let note_japanese_font_family = font_or_default!(
+        parsed.note_japanese_font_family.as_deref(),
+        DEFAULT_NOTE_JAPANESE_FONT_FAMILY
+    );
+    let note_latin_font_family = font_or_default!(
+        parsed.note_latin_font_family.as_deref(),
+        DEFAULT_NOTE_LATIN_FONT_FAMILY
+    );
+    let note_monospace_font_family = font_or_default!(
+        parsed.note_monospace_font_family.as_deref(),
+        DEFAULT_NOTE_MONOSPACE_FONT_FAMILY
+    );
+    let note_line_height = parsed.note_line_height.unwrap_or(DEFAULT_NOTE_LINE_HEIGHT);
+    let note_block_gap_em = parsed
+        .note_block_gap_em
+        .unwrap_or(DEFAULT_NOTE_BLOCK_GAP_EM);
+    let note_list_item_gap_em = parsed
+        .note_list_item_gap_em
+        .unwrap_or(DEFAULT_NOTE_LIST_ITEM_GAP_EM);
+    let note_section_title_gap_before_em = parsed
+        .note_section_title_gap_before_em
+        .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM);
+    let note_section_title_gap_after_em = parsed
+        .note_section_title_gap_after_em
+        .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM);
+    let note_section_title_size_em = parsed
+        .note_section_title_size_em
+        .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_SIZE_EM);
+    if let Err(error) = validate_note_numbers(
+        note_line_height,
+        note_block_gap_em,
+        note_list_item_gap_em,
+        note_section_title_gap_before_em,
+        note_section_title_gap_after_em,
+        note_section_title_size_em,
+    ) {
+        return warning_result(path, error);
+    }
     let zoom_percent = parsed
         .zoom_percent
         .unwrap_or(DEFAULT_APPLICATION_ZOOM_PERCENT);
@@ -466,12 +623,20 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         .as_mut()
         .and_then(|value| value.table.as_mut())
         .and_then(|table| table.remove("table.action_picker"));
-    let warning = ignored_table_action_picker.map(|_| {
-        format!(
+    let mut warnings = Vec::new();
+    if legacy_font_conflict {
+        warnings.push(
+            "ui_font_familyと旧font_familyが同時に指定されています; ui_font_familyを使用します"
+                .to_owned(),
+        );
+    }
+    if ignored_table_action_picker.is_some() {
+        warnings.push(format!(
             "{}: [keymap.table].table.action_pickerは廃止されました; Context ActionsはLeader aに固定されます",
             path.display()
-        )
-    });
+        ));
+    }
+    let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     ApplicationKeyConfigLoadResult {
         config_path,
         revision: Some(command::revision(&source)),
@@ -488,6 +653,15 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
         theme,
         custom_themes: parsed.themes,
         font_family,
+        note_japanese_font_family,
+        note_latin_font_family,
+        note_monospace_font_family,
+        note_line_height,
+        note_block_gap_em,
+        note_list_item_gap_em,
+        note_section_title_gap_before_em,
+        note_section_title_gap_after_em,
+        note_section_title_size_em,
         zoom_percent,
         note_max_width_px,
         line_number_min_width_px,
@@ -507,7 +681,8 @@ fn save_application_theme(path: &Path, theme: ApplicationTheme) -> Result<(), St
 
 fn save_application_font_family(path: &Path, font_family: &str) -> Result<(), String> {
     update_application_config(path, |document| {
-        document["font_family"] = value(font_family);
+        document["ui_font_family"] = value(font_family);
+        document.remove("font_family");
     })
 }
 
@@ -638,6 +813,37 @@ fn validate_source(source: &str) -> Result<ApplicationConfigFile, String> {
     if let Some(font) = &parsed.font_family {
         validate_application_font_family(font)?;
     }
+    if let Some(font) = &parsed.ui_font_family {
+        validate_application_font_family(font)?;
+    }
+    for font in [
+        parsed.note_japanese_font_family.as_deref(),
+        parsed.note_latin_font_family.as_deref(),
+        parsed.note_monospace_font_family.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        validate_application_font_family(font)?;
+    }
+    validate_note_numbers(
+        parsed.note_line_height.unwrap_or(DEFAULT_NOTE_LINE_HEIGHT),
+        parsed
+            .note_block_gap_em
+            .unwrap_or(DEFAULT_NOTE_BLOCK_GAP_EM),
+        parsed
+            .note_list_item_gap_em
+            .unwrap_or(DEFAULT_NOTE_LIST_ITEM_GAP_EM),
+        parsed
+            .note_section_title_gap_before_em
+            .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM),
+        parsed
+            .note_section_title_gap_after_em
+            .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM),
+        parsed
+            .note_section_title_size_em
+            .unwrap_or(DEFAULT_NOTE_SECTION_TITLE_SIZE_EM),
+    )?;
     if let Some(value) = parsed.zoom_percent {
         validate_application_zoom_percent(value)?;
     }
@@ -664,6 +870,80 @@ fn validate_application_font_family(value: &str) -> Result<&str, String> {
         return Err("font_familyは1〜256文字の有効なCSS font-familyで指定してください".to_owned());
     }
     Ok(normalized)
+}
+
+fn validate_two_decimal_range(
+    name: &str,
+    value: f64,
+    minimum: f64,
+    maximum: f64,
+) -> Result<(), String> {
+    if !value.is_finite()
+        || value < minimum
+        || value > maximum
+        || ((value * 100.0).round() - value * 100.0).abs() > 1e-9
+    {
+        return Err(format!(
+            "{name}は{minimum:.2}〜{maximum:.2}の小数第2位までで指定してください"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_note_numbers(
+    line_height: f64,
+    block_gap_em: f64,
+    list_item_gap_em: f64,
+    title_gap_before_em: f64,
+    title_gap_after_em: f64,
+    title_size_em: f64,
+) -> Result<(), String> {
+    validate_two_decimal_range("note_line_height", line_height, 1.0, 2.5)?;
+    for (name, value) in [
+        ("note_block_gap_em", block_gap_em),
+        ("note_list_item_gap_em", list_item_gap_em),
+        ("note_section_title_gap_before_em", title_gap_before_em),
+        ("note_section_title_gap_after_em", title_gap_after_em),
+    ] {
+        validate_two_decimal_range(name, value, 0.0, 3.0)?;
+    }
+    validate_two_decimal_range("note_section_title_size_em", title_size_em, 0.8, 3.0)
+}
+
+fn validate_note_appearance_patch(value: &NoteAppearancePatch) -> Result<(), String> {
+    for family in [
+        value.japanese_font_family.as_deref(),
+        value.latin_font_family.as_deref(),
+        value.monospace_font_family.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        validate_application_font_family(family)?;
+    }
+    if let Some(value) = value.line_height {
+        validate_two_decimal_range("note_line_height", value, 1.0, 2.5)?;
+    }
+    for (name, value) in [
+        ("note_block_gap_em", value.block_gap_em),
+        ("note_list_item_gap_em", value.list_item_gap_em),
+        (
+            "note_section_title_gap_before_em",
+            value.section_title_gap_before_em,
+        ),
+        (
+            "note_section_title_gap_after_em",
+            value.section_title_gap_after_em,
+        ),
+    ] {
+        if let Some(value) = value {
+            validate_two_decimal_range(name, value, 0.0, 3.0)?;
+        }
+    }
+    if let Some(value) = value.section_title_size_em {
+        validate_two_decimal_range("note_section_title_size_em", value, 0.8, 3.0)?;
+    }
+    Ok(())
 }
 
 fn validate_application_zoom_percent(value: u16) -> Result<(), String> {
@@ -717,6 +997,15 @@ fn warning_result(path: &Path, detail: String) -> ApplicationKeyConfigLoadResult
         theme: DEFAULT_APPLICATION_THEME.as_str().to_owned(),
         custom_themes: BTreeMap::new(),
         font_family: DEFAULT_APPLICATION_FONT_FAMILY.to_owned(),
+        note_japanese_font_family: DEFAULT_NOTE_JAPANESE_FONT_FAMILY.to_owned(),
+        note_latin_font_family: DEFAULT_NOTE_LATIN_FONT_FAMILY.to_owned(),
+        note_monospace_font_family: DEFAULT_NOTE_MONOSPACE_FONT_FAMILY.to_owned(),
+        note_line_height: DEFAULT_NOTE_LINE_HEIGHT,
+        note_block_gap_em: DEFAULT_NOTE_BLOCK_GAP_EM,
+        note_list_item_gap_em: DEFAULT_NOTE_LIST_ITEM_GAP_EM,
+        note_section_title_gap_before_em: DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM,
+        note_section_title_gap_after_em: DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM,
+        note_section_title_size_em: DEFAULT_NOTE_SECTION_TITLE_SIZE_EM,
         zoom_percent: DEFAULT_APPLICATION_ZOOM_PERCENT,
         note_max_width_px: DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
         line_number_min_width_px: DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -753,6 +1042,10 @@ mod tests {
         assert!(absent.config.is_none());
         assert_eq!(absent.theme, "nightfox");
         assert_eq!(absent.font_family, DEFAULT_APPLICATION_FONT_FAMILY);
+        assert_eq!(absent.note_line_height, 1.5);
+        assert_eq!(absent.note_list_item_gap_em, 0.1);
+        assert_eq!(absent.note_section_title_gap_before_em, 1.0);
+        assert_eq!(absent.note_section_title_gap_after_em, 0.4);
         assert_eq!(absent.zoom_percent, DEFAULT_APPLICATION_ZOOM_PERCENT);
         assert_eq!(
             absent.note_max_width_px,
@@ -888,7 +1181,12 @@ wait_for_mirror = false
         assert!(updated.contains("leader = \";\""));
         assert!(updated.contains("wait_for_mirror = false"));
         assert!(updated.contains("theme = \"dayfox\""));
-        assert!(updated.contains("font_family = \"Noto Serif CJK JP, serif\""));
+        assert!(updated.contains("ui_font_family = \"Noto Serif CJK JP, serif\""));
+        assert!(
+            !updated
+                .lines()
+                .any(|line| line.starts_with("font_family ="))
+        );
         assert!(updated.contains("zoom_percent = 130"));
         assert!(updated.contains("note_max_width_px = 880"));
         assert!(updated.contains("line_number_min_width_px = 540"));

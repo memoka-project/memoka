@@ -18,6 +18,7 @@ export function applyReplicatedSectionSnapshot(
   note: ReplicatedNote,
   snapshot: SectionSnapshot,
   origin: unknown,
+  options: { readonly recoverProtectedIdentities?: boolean } = {},
 ): void {
   if (snapshot.sectionId !== note.noteId)
     throw new Error("Root Section ID must equal Note ID");
@@ -58,7 +59,11 @@ export function applyReplicatedSectionSnapshot(
     const identity = (id: string) => identities.get(id) ?? id;
     const nextIds = new Set([...candidate.entities.keys()].map(identity));
     for (const id of nextIds) {
-      if (note.entities.has(id) && !current.visible.has(id))
+      if (
+        !options.recoverProtectedIdentities &&
+        note.entities.has(id) &&
+        !current.visible.has(id)
+      )
         throw new Error("Protected identities require explicit recovery");
     }
     const positions = new Map<string, string>();
@@ -142,7 +147,12 @@ export function applyReplicatedSectionSnapshot(
               ]
             : [];
         });
-        target.moveMany(moves, current.visible);
+        target.moveMany(
+          moves,
+          options.recoverProtectedIdentities
+            ? new Set([...current.visible, ...nextIds])
+            : current.visible,
+        );
         for (const source of ordered) {
           const id = identity(source),
             attrs = candidate.attributes(source).toJSON();

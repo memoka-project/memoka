@@ -622,7 +622,7 @@ describe("Memoka Application utilities", () => {
       document.documentElement.style.getPropertyValue(
         APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
       ),
-    ).toBe("14px");
+    ).toBe("16.8px");
     expect(
       document.documentElement.style.getPropertyValue(
         APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,

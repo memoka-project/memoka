@@ -6,6 +6,7 @@ import {
   DEFAULT_APPLICATION_INDENT_WIDTH_PX,
   DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
+  DEFAULT_NOTE_APPEARANCE,
   clampApplicationZoomPercent,
   filterApplicationFontPresets,
   normalizeApplicationFontFamily,
@@ -13,11 +14,17 @@ import {
   normalizeApplicationLineNumberMinWidthPx,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
+  normalizeNoteAppearance,
+  normalizeNoteGapEm,
+  normalizeNoteLineHeight,
+  normalizeNoteSectionTitleSizeEm,
   shouldHideApplicationLineNumbers,
 } from "../app/src/core/application-appearance";
 import {
+  APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
   APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
   applyApplicationIndentWidth,
+  applyNoteAppearance,
 } from "../app/src/platform/application-appearance";
 
 describe("Memoka application appearance", () => {
@@ -76,14 +83,74 @@ describe("Memoka application appearance", () => {
     expect(shouldHideApplicationLineNumbers(0, 480)).toBe(false);
   });
 
-  it("scales the List alignment correction from 0.5em at 32px", () => {
+  it("validates and applies the complete Note appearance as CSS variables", () => {
+    expect(DEFAULT_NOTE_APPEARANCE).toMatchObject({
+      lineHeight: 1.5,
+      listItemGapEm: 0.1,
+      sectionTitleGapBeforeEm: 1,
+      sectionTitleGapAfterEm: 0.4,
+    });
+    expect(normalizeNoteLineHeight(1)).toBe(1);
+    expect(normalizeNoteLineHeight(2.5)).toBe(2.5);
+    expect(normalizeNoteLineHeight(2.501)).toBeNull();
+    expect(normalizeNoteGapEm(0)).toBe(0);
+    expect(normalizeNoteGapEm(3)).toBe(3);
+    expect(normalizeNoteGapEm(3.01)).toBeNull();
+    expect(normalizeNoteSectionTitleSizeEm(0.8)).toBe(0.8);
+    expect(normalizeNoteSectionTitleSizeEm(3.001)).toBeNull();
+    expect(
+      normalizeNoteAppearance({
+        ...DEFAULT_NOTE_APPEARANCE,
+        lineHeight: 1.555,
+      }),
+    ).toBeNull();
+
     const target = document.createElement("div");
-    for (const [indentWidthPx, expectedShift] of [
-      [16, "0.25em"],
-      [32, "0.5em"],
-      [64, "1em"],
+    applyNoteAppearance(target, {
+      ...DEFAULT_NOTE_APPEARANCE,
+      japaneseFontFamily: '"Yu Gothic", sans-serif',
+      latinFontFamily: "Inter, sans-serif",
+      monospaceFontFamily: "monospace",
+      lineHeight: 1.8,
+      blockGapEm: 1.1,
+      listItemGapEm: 0.25,
+      sectionTitleGapBeforeEm: 0.6,
+      sectionTitleGapAfterEm: 0.4,
+      sectionTitleSizeEm: 1.4,
+    });
+    expect(target.style.getPropertyValue("--memoka-note-font-family")).toBe(
+      'Inter, sans-serif, "Yu Gothic", sans-serif',
+    );
+    expect(target.style.getPropertyValue("--memoka-note-font-monospace")).toBe(
+      "monospace",
+    );
+    expect(target.style.getPropertyValue("--memoka-note-line-height")).toBe(
+      "1.8",
+    );
+    expect(target.style.getPropertyValue("--memoka-note-block-gap")).toBe(
+      "1.1em",
+    );
+    expect(target.style.getPropertyValue("--memoka-list-item-gap")).toBe(
+      "0.25em",
+    );
+    expect(
+      target.style.getPropertyValue("--memoka-table-cell-padding-block"),
+    ).toBe("8.727px");
+  });
+
+  it("places the guide at 60% and scales the List alignment correction", () => {
+    const target = document.createElement("div");
+    for (const [indentWidthPx, expectedGuide, expectedShift] of [
+      [16, "9.6px", "0.25em"],
+      [32, "19.2px", "0.5em"],
+      [64, "38.4px", "1em"],
     ] as const) {
       applyApplicationIndentWidth(target, indentWidthPx);
+      expect(
+        target.style.getPropertyValue(
+          APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
+        ),
+      ).toBe(expectedGuide);
       expect(
         target.style.getPropertyValue(
           APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
@@ -133,15 +200,15 @@ describe("Memoka application appearance", () => {
       resolve(process.cwd(), "app/src/styles.css"),
       "utf8",
     );
-    expect(css).toContain("--memoka-list-item-gap: 0.2em");
+    expect(css).toContain("--memoka-list-item-gap: 0.1em");
     expect(css).toMatch(
-      /\.memoka-editor :is\(ul, ol\) :is\(ul, ol\)\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\)[^{]*:is\(ul, ol\)\s+:is\(ul, ol\)\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
     );
     expect(css).toMatch(
-      /\.memoka-editor :is\(ul, ol\) > li \+ li\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\)[^{]*:is\(ul, ol\) > li \+ li\s*\{[^}]*margin-block-start: var\(--memoka-list-item-gap\);/su,
     );
     expect(css).not.toMatch(
-      /\.memoka-editor :is\(ul, ol\) > li \+ li\s*\{[^}]*margin-top:/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\)[^{]*:is\(ul, ol\) > li \+ li\s*\{[^}]*margin-top:/su,
     );
   });
 
@@ -156,18 +223,26 @@ describe("Memoka application appearance", () => {
     expect(css).toMatch(/body\s*\{[^}]*min-width: 0;/su);
     expect(css).not.toContain("min-width: 800px");
     expect(css).toMatch(
-      /\.memoka-editor \.tableWrapper\s*\{[^}]*overflow-x: auto;/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\) \.tableWrapper\s*\{[^}]*overflow-x: auto;/su,
     );
-    expect(css).toMatch(/\.memoka-editor pre\s*\{[^}]*overflow-x: auto;/su);
     expect(css).toMatch(
-      /\.memoka-editor :is\(ul, ol\)\s*\{[^}]*margin-inline-start: calc\(-1 \* var\(--memoka-list-inline-shift\)\);[^}]*padding-inline-start:\s*calc\(\s*var\(--memoka-indent-guide-offset\) \+ var\(--memoka-list-marker-text-offset\)\s*\)/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\) pre\s*\{[^}]*overflow-x: auto;/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-code-block\s+code\s*\{[^}]*font-family: inherit;/su,
+    );
+    expect(css).toMatch(
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\) :is\(ul, ol\)\s*\{[^}]*margin-inline-start: calc\(-1 \* var\(--memoka-list-inline-shift\)\);[^}]*padding-inline-start:\s*calc\(\s*var\(--memoka-indent-guide-offset\) \+ var\(--memoka-list-marker-text-offset\)\s*\)/su,
     );
     expect(css).toContain("--memoka-list-inline-shift: 0.375em");
+    expect(css).toMatch(
+      /--memoka-block-grid-offset:\s*calc\(\s*var\(--memoka-indent-width\) - var\(--memoka-indent-guide-offset\)\s*\)/su,
+    );
     expect(css).toMatch(
       /\.memoka-editor :is\(ul, ol\) > li::before\s*\{[^}]*inset-inline-start: calc\(-1 \* var\(--memoka-list-marker-text-offset\)\)/su,
     );
     expect(css).toMatch(
-      /\.memoka-editor :is\(ul, ol\) :is\(ul, ol\)\s*\{[^}]*margin-inline-start:\s*calc\(\s*var\(--memoka-indent-width\) - var\(--memoka-indent-guide-offset\) -\s*var\(--memoka-list-marker-text-offset\)/su,
+      /:is\(\.memoka-editor, \.workspace-search-preview-document\)[^{]*:is\(ul, ol\)\s+:is\(ul, ol\)\s*\{[^}]*margin-inline-start:\s*calc\(\s*var\(--memoka-indent-width\) - var\(--memoka-indent-guide-offset\) -\s*var\(--memoka-list-marker-text-offset\)/su,
     );
     expect(css).toMatch(
       /\.memoka-editor ol > li::before\s*\{[^}]*content: counter\(list-item\) "\.";[^}]*inset-inline-start: calc\(-1 \* var\(--memoka-ordered-list-text-gap\)\);[^}]*width: max-content;[^}]*text-align: end;[^}]*transform: translateX\(-100%\);/su,
@@ -184,9 +259,20 @@ describe("Memoka application appearance", () => {
     expect(css).toMatch(
       /\.memoka-editor ul > li::before\s*\{[^}]*inset-block-start: calc\(0\.875em - 0\.24em\);/su,
     );
-    expect(css).toContain("margin-left: var(--memoka-indent-guide-offset)");
     expect(css).toMatch(
-      /\.memoka-editor\s*\{[^}]*padding:[^;}]*var\(--memoka-line-number-gutter-width\)[^;}]*\+ var\(--memoka-indent-width\)[^;}]*-\s*var\(--memoka-indent-guide-offset\)/su,
+      /margin-left:\s*calc\(\s*var\(--memoka-indent-width\) - var\(--memoka-indent-guide-offset\)\s*\)/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-editor\s*\{[^}]*padding:[^;}]*var\(--memoka-line-number-gutter-width\)[^;}]*\+\s*var\(--memoka-indent-guide-offset\)/su,
+    );
+    expect(css).toMatch(
+      /\.tableWrapper\s*\{[^}]*margin:[^;}]*var\(--memoka-block-grid-offset\)/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-code-block\s*\{[^}]*margin:[^;}]*var\(--memoka-block-grid-offset\)/su,
+    );
+    expect(css).toMatch(
+      /blockquote\[data-memoka-alert-type\]\s*\{[^}]*margin:[^;}]*var\(--memoka-block-grid-offset\)/su,
     );
     expect(css).toMatch(
       /\.memoka-logical-line-gutter\s*\{[^}]*width: var\(--memoka-line-number-gutter-width\)/su,

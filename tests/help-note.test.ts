@@ -6,6 +6,7 @@ import {
   listNoteMetadata,
   noteSectionCatalog,
   readNotePlainText,
+  replaceNoteSectionTree,
   type NoteDocument,
 } from "../app/src/core/documents";
 import {
@@ -248,6 +249,35 @@ describe("managed Memoka help note", () => {
       noteId: created.noteId,
       mode: "normal",
     });
+    runtime.destroy();
+  });
+
+  it("explicitly restores protected managed Help identities during synchronization", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock,
+    });
+    const created = await runtime.openHelpNote("window-1");
+    const note = runtime.getNoteHandle(created.noteId).current as NoteDocument;
+    const complete = sectionSnapshot(note.rootSection);
+    const removedBlockId = String(
+      (complete.body[0] as { attrs?: { blockId?: unknown } }).attrs?.blockId ??
+        "",
+    );
+    expect(removedBlockId).not.toBe("");
+    replaceNoteSectionTree(
+      note,
+      { ...complete, body: complete.body.slice(1) },
+      clock(),
+      CORE_TRANSACTION_ORIGIN,
+    );
+    expect(collectBlockIds(note)).not.toContain(removedBlockId);
+
+    await expect(runtime.openHelpNote("window-1")).resolves.toMatchObject({
+      noteId: created.noteId,
+      created: false,
+    });
+    expect(collectBlockIds(note)).toContain(removedBlockId);
     runtime.destroy();
   });
 

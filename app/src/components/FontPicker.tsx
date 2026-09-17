@@ -10,6 +10,7 @@ import { SearchPane } from "./SearchPane";
 export interface FontPickerSession {
   readonly initialFontFamily: string;
   readonly restoreFocus: () => void;
+  readonly label?: string;
 }
 
 export function FontPicker({
@@ -69,7 +70,7 @@ export function FontPicker({
 
   return (
     <SearchPane
-      ariaLabel="アプリケーションフォントを選択"
+      ariaLabel={`${session.label ?? "アプリケーション"}フォントを選択`}
       inputAriaLabel="フォント名またはfont-familyを入力"
       focusSurface="font-picker"
       query={query}
@@ -88,7 +89,7 @@ export function FontPicker({
         </span>
       )}
       renderPreview={(font) => <FontPreview font={font} />}
-      prompt="font›"
+      prompt={`${session.label ?? "font"}›`}
       countLabel={`${fonts.length} fonts`}
       onAccept={(font) => void accept(font)}
       onClose={onCancel}

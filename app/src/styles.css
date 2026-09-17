@@ -4,14 +4,25 @@
     "Segoe UI", sans-serif;
   --memoka-font-monospace:
     ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --memoka-note-font-family: var(--memoka-font-family);
+  --memoka-note-font-monospace: var(--memoka-font-monospace);
+  --memoka-note-line-height: 1.5;
+  --memoka-note-block-gap: 0.8em;
+  --memoka-section-title-gap-before: 1em;
+  --memoka-section-title-gap-after: 0.4em;
+  --memoka-section-title-size: 1.26em;
+  --memoka-table-cell-padding-block: 7.273px;
   --memoka-note-max-width: 1000px;
   --memoka-line-number-gutter-width: 58px;
   --memoka-indent-width: 24px;
-  --memoka-indent-guide-offset: 12px;
+  --memoka-indent-guide-offset: 14.4px;
+  --memoka-block-grid-offset: calc(
+    var(--memoka-indent-width) - var(--memoka-indent-guide-offset)
+  );
   --memoka-list-marker-text-offset: 1.2em;
   --memoka-ordered-list-text-gap: 0.5em;
   --memoka-list-inline-shift: 0.375em;
-  --memoka-list-item-gap: 0.2em;
+  --memoka-list-item-gap: 0.1em;
 
   font-family: var(--memoka-font-family);
   color: var(--memoka-color-text);
@@ -748,12 +759,11 @@ textarea {
   min-height: 100%;
   padding: 38px 42px 120px
     calc(
-      var(--memoka-line-number-gutter-width) + var(--memoka-indent-width) -
-        var(--memoka-indent-guide-offset)
+      var(--memoka-line-number-gutter-width) + var(--memoka-indent-guide-offset)
     );
   outline: none;
   color: var(--memoka-color-text);
-  font-family: var(--memoka-font-family);
+  font-family: var(--memoka-note-font-family);
   font-size: 17px;
   /*
    * Most Linux installations only provide an upright regular face for the
@@ -761,7 +771,7 @@ textarea {
    * strong/em marks remain visible without requiring a particular CJK font.
    */
   font-synthesis: weight style;
-  line-height: 1.65;
+  line-height: var(--memoka-note-line-height);
   caret-color: transparent;
   text-autospace: normal;
 }
@@ -965,25 +975,29 @@ textarea {
   box-shadow: none;
 }
 
-.memoka-editor p,
-.memoka-editor h1,
-.memoka-editor h2,
-.memoka-editor h3 {
-  margin: 0 0 0.8em;
+:is(.memoka-editor, .workspace-search-preview-document) :is(p, h1, h2, h3) {
+  margin: 0 0 var(--memoka-note-block-gap);
 }
 
-.memoka-editor :is(ul, ol) > li > p {
+:is(.memoka-editor, .workspace-search-preview-document) :is(ul, ol) > li > p {
   margin-bottom: 0;
 }
 
 .memoka-task-content {
   display: contents;
 }
-.memoka-editor li > .memoka-task-content > p {
+:is(.memoka-editor, .workspace-search-preview-document)
+  li
+  > .memoka-task-content
+  > p {
   margin-bottom: 0;
 }
-.memoka-editor li > .memoka-task-content > p + p {
-  margin-top: 0.8em;
+:is(.memoka-editor, .workspace-search-preview-document)
+  li
+  > .memoka-task-content
+  > p
+  + p {
+  margin-top: var(--memoka-note-block-gap);
 }
 .memoka-editor :is(ul, ol) > li[data-task-checked]::before {
   display: none;
@@ -1006,8 +1020,9 @@ textarea {
   cursor: pointer;
 }
 
-.memoka-editor :is(ul, ol) {
+:is(.memoka-editor, .workspace-search-preview-document) :is(ul, ol) {
   list-style: none;
+  margin-block: 0 var(--memoka-note-block-gap);
   margin-inline-start: calc(-1 * var(--memoka-list-inline-shift));
   padding-inline-start: calc(
     var(--memoka-indent-guide-offset) + var(--memoka-list-marker-text-offset)
@@ -1016,14 +1031,17 @@ textarea {
 
 /*
  * Keep list nesting on the same configurable grid as Sections without using
- * the full indent step as the marker-to-text gap. A Section body already
- * begins half a step beyond its guide, so the marker advances the remaining
- * half step to the next grid line. The text then starts at a stable typographic
- * offset. Nested lists compensate for that offset so each additional marker
- * and text position still advances by exactly --memoka-indent-width.
+ * the full indent step as the marker-to-text gap. A Section guide leaves 60%
+ * of the step between itself and the body at the next grid line. The List
+ * marker and text use the same grid. Nested lists compensate for
+ * the marker offset so each additional marker and text position still advances
+ * by exactly --memoka-indent-width.
  */
-.memoka-editor :is(ul, ol) :is(ul, ol) {
+:is(.memoka-editor, .workspace-search-preview-document)
+  :is(ul, ol)
+  :is(ul, ol) {
   margin-block-start: var(--memoka-list-item-gap);
+  margin-block-end: 0;
   margin-inline-start: calc(
     var(--memoka-indent-width) - var(--memoka-indent-guide-offset) -
       var(--memoka-list-marker-text-offset)
@@ -1090,19 +1108,19 @@ textarea {
 }
 
 .memoka-editor :is(ul, ol) > li > p + p {
-  margin-top: 0.8em;
+  margin-top: var(--memoka-note-block-gap);
 }
 
-.memoka-editor :is(ul, ol) > li + li {
+:is(.memoka-editor, .workspace-search-preview-document) :is(ul, ol) > li + li {
   margin-block-start: var(--memoka-list-item-gap);
 }
 
 .memoka-section-header {
   position: relative;
   min-height: 1.5em;
-  margin: 0 0 0.5em;
+  margin: 0 0 var(--memoka-section-title-gap-after);
   color: var(--memoka-color-markup-heading-1);
-  font-size: 1.26em;
+  font-size: var(--memoka-section-title-size);
   font-weight: 700;
   line-height: 1.35;
 }
@@ -1219,7 +1237,7 @@ textarea {
 }
 
 .memoka-section .memoka-section-header {
-  margin-top: 0.55em;
+  margin-top: var(--memoka-section-title-gap-before);
 }
 
 /* Non-Root Section titles align with their own direct body content. */
@@ -1246,7 +1264,7 @@ textarea {
 .memoka-body-chunk__static-content {
   overflow-wrap: anywhere;
   color: inherit;
-  font-family: var(--memoka-font-family);
+  font-family: var(--memoka-note-font-family);
   font-size: inherit;
   font-style: inherit;
   font-variant: inherit;
@@ -1295,15 +1313,15 @@ textarea {
  */
 .memoka-section > .memoka-section-body,
 .memoka-section > .memoka-section-children {
-  margin-left: var(--memoka-indent-guide-offset);
-  padding-left: calc(
-    var(--memoka-indent-width) - var(--memoka-indent-guide-offset) - 1px
+  margin-left: calc(
+    var(--memoka-indent-width) - var(--memoka-indent-guide-offset)
   );
+  padding-left: var(--memoka-indent-guide-offset);
 }
 
 .memoka-section > .memoka-section-body,
 .memoka-section > .memoka-section-children {
-  border-left: 1px solid var(--memoka-color-border-subtle);
+  box-shadow: inset 1px 0 var(--memoka-color-border-subtle);
 }
 
 .memoka-editor :not(pre) > code {
@@ -1311,7 +1329,7 @@ textarea {
   border-radius: 3px;
   color: var(--memoka-color-markup-raw);
   background: var(--memoka-color-code-surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--memoka-note-font-monospace);
   font-size: 0.85em;
   text-autospace: no-autospace;
 }
@@ -1323,19 +1341,21 @@ textarea {
   text-underline-offset: 3px;
 }
 
-.memoka-editor blockquote {
-  margin: 0.4em 0 1em;
+:is(.memoka-editor, .workspace-search-preview-document) blockquote {
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   padding: 0.15em 0 0.15em 14px;
   border-left: 3px solid var(--memoka-color-quote);
   color: var(--memoka-color-quote);
 }
 
-.memoka-editor blockquote > :last-child {
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote
+  > :last-child {
   margin-bottom: 0;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-details {
-  margin: 0.6em 0 0.8em;
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   border: 1px solid var(--memoka-color-border);
   border-radius: 4px;
   padding: 0.5em 0.75em;
@@ -1392,7 +1412,7 @@ textarea {
   --memoka-alert-color: var(--memoka-color-info);
   --memoka-alert-surface: var(--memoka-color-surface-raised);
 
-  margin: 0.4em 0 1em;
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   padding: 0.65em 0.8em 0.7em 14px;
   border-left: 3px solid var(--memoka-alert-color);
   border-radius: 0 5px 5px 0;
@@ -1466,12 +1486,12 @@ textarea {
   --memoka-alert-color: var(--memoka-color-quote);
 }
 
-.memoka-editor hr {
+:is(.memoka-editor, .workspace-search-preview-document) hr {
   --memoka-horizontal-rule-line-color: var(--memoka-color-horizontal-rule);
 
   box-sizing: border-box;
   height: 18px;
-  margin: 1.25em 0;
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   border: 0;
   background: linear-gradient(
     to bottom,
@@ -1501,8 +1521,8 @@ textarea {
 .memoka-image-node,
 .memoka-attachment-card {
   box-sizing: border-box;
-  width: 100%;
-  margin: 0.65em 0;
+  width: calc(100% - var(--memoka-block-grid-offset));
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   border: 1px solid var(--memoka-color-border);
   border-radius: 7px;
   background: var(--memoka-color-surface-raised);
@@ -1511,11 +1531,10 @@ textarea {
 .memoka-image-node {
   position: relative;
   display: flex;
-  max-width: calc(100% - var(--memoka-indent-guide-offset));
+  max-width: calc(100% - var(--memoka-block-grid-offset));
   min-height: 64px;
   align-items: center;
   justify-content: center;
-  margin-left: var(--memoka-indent-guide-offset);
   padding: 0;
   border: 0;
   border-radius: 1px;
@@ -1669,31 +1688,37 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--memoka-color-selection-border);
 }
 
-.memoka-editor pre {
-  max-width: calc(100% - var(--memoka-indent-guide-offset));
-  margin-left: var(--memoka-indent-guide-offset);
+:is(.memoka-editor, .workspace-search-preview-document) pre {
+  max-width: calc(100% - var(--memoka-block-grid-offset));
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   padding: 14px 16px;
   overflow-x: auto;
   border: 1px solid var(--memoka-color-border);
   border-radius: 8px;
   background: var(--memoka-color-code-surface);
-  font-family: var(--memoka-font-monospace);
+  font-family: var(--memoka-note-font-monospace);
   font-size: 0.85em;
   text-autospace: no-autospace;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-code-block {
   position: relative;
-  max-width: calc(100% - var(--memoka-indent-guide-offset));
-  margin-left: var(--memoka-indent-guide-offset);
+  max-width: calc(100% - var(--memoka-block-grid-offset));
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-code-block pre {
   max-width: 100%;
-  margin-left: 0;
+  margin: 0;
   padding-top: 36px;
   line-height: 1.5;
   box-sizing: border-box;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-code-block
+  code {
+  font-family: inherit;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document)
@@ -2472,8 +2497,8 @@ textarea {
   overflow: auto;
   padding: 22px 28px;
   color: var(--memoka-color-text-muted);
-  font-family: var(--memoka-font-family);
-  line-height: 1.65;
+  font-family: var(--memoka-note-font-family);
+  line-height: var(--memoka-note-line-height);
 }
 
 .workspace-search-preview-root--centerable {
@@ -2488,6 +2513,7 @@ textarea {
 
 .workspace-search-preview-document :not(pre) > code,
 .workspace-search-preview-document pre {
+  font-family: var(--memoka-note-font-monospace);
   font-size: 0.85em;
   text-autospace: no-autospace;
 }
@@ -3060,9 +3086,9 @@ textarea {
   font-size: 9px;
 }
 
-.memoka-editor .tableWrapper {
-  max-width: calc(100% - var(--memoka-indent-guide-offset));
-  margin: 20px 0 20px var(--memoka-indent-guide-offset);
+:is(.memoka-editor, .workspace-search-preview-document) .tableWrapper {
+  max-width: calc(100% - var(--memoka-block-grid-offset));
+  margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   overflow-x: auto;
 }
 
@@ -3071,11 +3097,15 @@ textarea {
   :is(li, .memoka-task-content)
   > :is(
     pre,
+    .memoka-code-block,
     .tableWrapper,
     .memoka-image-node,
     .memoka-attachment-card,
-    blockquote
+    blockquote,
+    .memoka-details,
+    hr
   ) {
+  width: 100%;
   margin-inline-start: 0;
   max-width: 100%;
 }
@@ -3093,35 +3123,35 @@ textarea {
   :is(li, .memoka-task-content)
   > :not(ul, ol, .memoka-task-checkbox)
   + :not(ul, ol, .memoka-task-content) {
-  margin-top: 0.8em;
+  margin-top: var(--memoka-note-block-gap);
 }
 
-.memoka-editor .memoka-table {
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table {
   width: 100%;
   min-width: 420px;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
-.memoka-editor .memoka-table-cell,
-.memoka-editor .memoka-table-header {
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table-cell,
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table-header {
   min-width: 80px;
-  padding: 8px 10px;
+  padding: var(--memoka-table-cell-padding-block) 10px;
   border: 1px solid var(--memoka-color-border);
   vertical-align: top;
 }
 
-.memoka-editor .memoka-table-header {
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table-header {
   color: var(--memoka-color-text);
   background: var(--memoka-color-surface-raised);
   font-weight: 600;
 }
 
-.memoka-editor .memoka-table-cell {
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table-cell {
   background: var(--memoka-color-surface);
 }
 
-.memoka-editor .memoka-table p {
+:is(.memoka-editor, .workspace-search-preview-document) .memoka-table p {
   margin: 0;
 }
 

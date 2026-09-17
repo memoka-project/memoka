@@ -593,7 +593,16 @@ MemokaのCommand-lineは完全なVim Ex parserではありません。
 | `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。                                      |
 | `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                                              |
 | `:colorscheme [name]` / `:colo`                   | 収録テーマやカスタムテーマを選択、変更します。                                     |
-| `:font`                                           | Application全体のfontを選択します。                                                |
+| `:ui-font [font-family]` / `:font`                | Application UIのfontを選択、変更します。                                           |
+| `:note-font-ja [font-family]`                     | Noteの日本語fontを選択、変更します。                                               |
+| `:note-font-latin [font-family]`                  | Noteの英数fontを選択、変更します。                                                 |
+| `:note-font-mono [font-family]`                   | Noteのcode用等幅fontを選択、変更します。                                           |
+| `:note-line-height [1.00..2.50]`                  | Note本文の行間を確認、変更します。                                                 |
+| `:block-gap [0.00..3.00]`                         | Noteのblock間隔をem値で確認、変更します。                                          |
+| `:list-item-gap [0.00..3.00]`                     | List item間隔をem値で確認、変更します。                                            |
+| `:section-title-gap-before [0.00..3.00]`          | Section title前の間隔をem値で確認、変更します。                                    |
+| `:section-title-gap-after [0.00..3.00]`           | Section title後の間隔をem値で確認、変更します。                                    |
+| `:section-title-size [0.80..3.00]`                | Section titleの相対sizeを確認、変更します。                                        |
 | `:zoom [50..200]`                                 | Zoomを確認、変更します。                                                           |
 | `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。                                         |
 | `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。                                   |
@@ -612,7 +621,10 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 主な設定値は次のとおりです。
 
 - `theme`はNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxまたは自分で定義したテーマから選びます。
-- `font_family`は通常UIと本文のCSS font-familyです。
+- `ui_font_family`は通常UIのCSS font-familyです。旧`font_family`も読み込めますが、新規保存ではcanonical keyへ移行します。
+- `note_japanese_font_family`、`note_latin_font_family`、`note_monospace_font_family`はNote本文を用途別に設定します。
+- `note_line_height`は本文の折返し・改行の行間で、Table cellの縦paddingも連動します。
+- `note_block_gap_em`、`note_list_item_gap_em`、`note_section_title_gap_before_em`、`note_section_title_gap_after_em`、`note_section_title_size_em`はNoteの間隔とSection titleの相対sizeをem値で設定します。
 - `zoom_percent`は50〜200の10%刻みです。
 - `note_max_width_px`はNote canvasの最大幅で、`0`は上限なしです。
 - `line_number_min_width_px`より狭いWindowでは行番号を隠します。`0`は常時表示です。
