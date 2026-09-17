@@ -13,6 +13,8 @@ mappingは未対応である。
 
 ## 2. Modeとcaret
 
+Table Cell内のtextをクリックすると、Normal/Insertともクリック位置へcaretを移す。座標から対象Cell内の位置を取得できない場合だけCell先頭へfallbackする。
+
 | Mode         | 主な用途        | caret/statusline                            |
 | ------------ | --------------- | ------------------------------------------- |
 | Normal       | 移動とcommand   | 文字またはatomic nodeを覆う四角、青系NORMAL |

@@ -393,6 +393,8 @@ Markdownの`- [ ] 未完了`、`- [x] 完了`を貼り付けても作れます�
 
 ### Cell間を移動する
 
+Cell内の文字をクリックすると、その位置へcaretを移します。
+
 - Normalの`h`と`l`はCell内を移動し、Cell端ではTabと同じrow-major順で前後Cellへ進みます。
 - `whichwrap`が有効なら、Table先頭と末尾から前後の論理行へ移動します。
 - `j`と`k`は同じ列の前後rowへ移動し、Table境界では前後の論理行へ移動します。

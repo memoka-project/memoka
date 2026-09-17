@@ -595,7 +595,7 @@ export class ProductVimSession {
               if (event.button !== 0) return false;
               const position = this.tableSelectionPositionFromTarget(
                 view,
-                event.target,
+                event,
               );
               if (position === null) return false;
               event.preventDefault();
@@ -930,10 +930,7 @@ export class ProductVimSession {
 
   private readonly handleNativePointerDown = (event: MouseEvent): void => {
     if (!this.view || event.button !== 0) return;
-    const position = this.tableSelectionPositionFromTarget(
-      this.view,
-      event.target,
-    );
+    const position = this.tableSelectionPositionFromTarget(this.view, event);
     if (position !== null) this.ignoreStaleDomTableSelection = false;
     this.domTableSelectionPosition = position;
   };
@@ -1648,7 +1645,8 @@ export class ProductVimSession {
   ): boolean {
     const tablePosition = this.tableSelectionPositionFromTarget(
       view,
-      event.target,
+      event,
+      position,
     );
     if (tablePosition !== null) this.ignoreStaleDomTableSelection = false;
     this.domTableSelectionPosition =
@@ -1685,11 +1683,33 @@ export class ProductVimSession {
 
   private tableSelectionPositionFromTarget(
     view: EditorView,
-    target: EventTarget | null,
+    event: MouseEvent,
+    clickPosition?: number,
   ): number | null {
+    const target = event.target;
     const cell = target instanceof Element ? target.closest("th, td") : null;
     const blockId = cell?.getAttribute("data-block-id");
     if (!cell || !view.dom.contains(cell) || !blockId) return null;
+    try {
+      const position =
+        clickPosition ??
+        view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+      if (position !== undefined) {
+        const resolved = view.state.doc.resolve(position);
+        for (let depth = resolved.depth; depth > 0; depth -= 1) {
+          const node = resolved.node(depth);
+          if (
+            (node.type.name === "tableCell" ||
+              node.type.name === "tableHeader") &&
+            node.attrs.blockId === blockId
+          ) {
+            return position;
+          }
+        }
+      }
+    } catch {
+      // Detached/stale layout can fail hit testing. Recover in the target Cell.
+    }
     let result: number | null = null;
     view.state.doc.descendants((node, position) => {
       if (
