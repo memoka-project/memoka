@@ -256,6 +256,7 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - `details`は`detailsSummary`と`detailsBody`を1つずつ持つ。いずれにもstable block IDを割り当てる。
 - Summaryは本文と同じ基本fontを使い、inline textと明示的な文字装飾を保持する。空なら文字を表示せず、placeholderは設けない。
 - 本文は非空の`Block+`。Paragraph、List、引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Rule、入れ子Detailsを許す。
+- InsertでDetails本文直下の最後の空ParagraphにBackspaceすると、同じblock IDのParagraphをそのDetails直後の兄弟へ移し、Insert caretも移す。唯一の本文blockだった場合は文書もcaretも変更せず、標準Backspace処理も抑止する。移動は1 Undo単位とし、入れ子やListItem内でも対象Detailsの直後へ移す。
 - 展開本文の末尾がCode/Source、Table、画像、添付、引用、Alert、Details、水平線の場合、その下端からDetails下枠線の外端までを`block-gap`とする。下paddingは枠線の1pxを差し引き、最小0とする。折り畳み時や通常本文で終わる場合は標準の下paddingを使う。
 - 外枠の内側余白はDetailsが管理する（上下`0.5em`、Summaryから本文へ`0.65em`）。左枠線の外端から本文までをindent幅の60%、本文直下のCode/Source、Table、画像、添付、引用、Alert、Details、水平線の左端までをindent幅とし、Sectionのguide gridに揃える。内容の右端から右枠線の外端までもindent幅とする。左右paddingは枠線の1pxを差し引く。先頭・末尾の外側余白は0、本文直下のblock同士は`block-gap`とする。
 - `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。

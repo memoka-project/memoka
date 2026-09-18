@@ -798,6 +798,45 @@ export function runEditorEnterInsertFromHorizontalRule(
   };
 }
 
+function moveEmptyDetailsParagraphAfter(
+  view: VimEditorView,
+): EditorVimResult | null {
+  const { $from } = view.state.selection;
+  const paragraph = $from.parent;
+  const bodyDepth = $from.depth - 1;
+  const detailsDepth = bodyDepth - 1;
+  if (
+    detailsDepth < 1 ||
+    paragraph.type.name !== "paragraph" ||
+    paragraph.content.size !== 0 ||
+    $from.node(bodyDepth).type.name !== "detailsBody" ||
+    $from.node(detailsDepth).type.name !== "details" ||
+    $from.index(bodyDepth) !== $from.node(bodyDepth).childCount - 1
+  )
+    return null;
+  if ($from.node(bodyDepth).childCount === 1) {
+    return {
+      handled: false,
+      preventDefault: true,
+      detail: "details:keep-only-paragraph",
+    };
+  }
+  const parent = $from.node(detailsDepth - 1);
+  const index = $from.indexAfter(detailsDepth - 1);
+  if (!parent.canReplaceWith(index, index, paragraph.type, paragraph.marks))
+    return null;
+  const from = $from.before();
+  const afterDetails = $from.after(detailsDepth);
+  const tr = view.state.tr;
+  tr.delete(from, from + paragraph.nodeSize);
+  const destination = tr.mapping.map(afterDetails);
+  tr.insert(destination, paragraph);
+  tr.setSelection(TextSelection.create(tr.doc, destination + 1));
+  view.dispatch(scrollWhenLayoutIsAvailable(tr));
+  view.focus();
+  return { handled: true, detail: "details:move-empty-paragraph-after" };
+}
+
 export function runEditorInsertBoundaryDelete(
   view: VimEditorView,
   direction: "backward" | "forward",
@@ -842,6 +881,11 @@ export function runEditorInsertBoundaryDelete(
       handled: false,
       detail: `insert:delete-${direction}`,
     };
+  }
+
+  if (direction === "backward") {
+    const detailsResult = moveEmptyDetailsParagraphAfter(view);
+    if (detailsResult) return detailsResult;
   }
 
   const boundary = directSiblingBoundary(view, direction);

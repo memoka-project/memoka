@@ -96,6 +96,8 @@ GitHubまたはObsidian互換のAlert typeを選択します。
 
 ### 折り畳みblock（Details）
 
+本文の最後の空ParagraphでInsert中に`Backspace`を押すと、そのParagraphをDetails直後へ移して入力を続けられます。本文がそのParagraphだけなら、何も変更しません。
+
 空のParagraphで`/`を押し、`details`と入力して候補を選びます。まず見出しを入力し、`Enter`で本文へ移ります。
 本文には通常の文章のほか、リスト・画像・テーブル・引用・コードなどを置けます。本文の空Paragraphでも`/`を使えます。
 見出しは本文と同じフォントで表示し、太字などの文字装飾も使えます。空の見出しには代わりの文字を表示しません。
