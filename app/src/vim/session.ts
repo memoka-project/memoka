@@ -45,8 +45,8 @@ import {
   pasteVimRegisterAtSelection,
   runEditorEnterInsertFromHorizontalRule,
   runEditorExitBlock,
-  runEditorInsertBoundaryDelete,
   runEditorInsertBackspace,
+  runEditorInsertForwardDelete,
   runEditorInsertEnter,
   runEditorListDepthShift,
   runEditorReplaceCharacter,
@@ -1927,10 +1927,10 @@ export class ProductVimSession {
       !event.metaKey &&
       !event.altKey
     ) {
-      const result = runEditorInsertBoundaryDelete(
-        view,
-        event.key === "Backspace" ? "backward" : "forward",
-      );
+      const result =
+        event.key === "Backspace"
+          ? runEditorInsertBackspace(view)
+          : runEditorInsertForwardDelete(view);
       if (result.handled || result.preventDefault) {
         event.preventDefault();
         this.action = `${result.detail}:${result.handled ? "changed" : "boundary"}`;

@@ -565,7 +565,7 @@ describe("Visual Char edits and text objects", () => {
         h.runtime.vimRegister.set({ kind: "text", text: "unchanged register" });
         const before = h.editor.getJSON();
         h.select("日😀語", backward ? 3 : 0);
-        h.press("v", ...(backward ? ["h", "h", "h"] : ["l", "l", "l"]), "r");
+        h.press("v", ...(backward ? ["h", "h"] : ["l", "l"]), "r");
         expect(h.editor.getJSON()).toEqual(before);
         h.press("🦊");
         expect(h.adapter.vimSnapshot.mode).toBe("normal");
@@ -584,6 +584,28 @@ describe("Visual Char edits and text objects", () => {
       }
     },
   );
+
+  it("replaces a grapheme spanning formatting boundaries only once", async () => {
+    const h = await harness([
+      {
+        type: "paragraph",
+        content: [
+          text("a👨"),
+          { type: "text", text: "‍👩‍👧‍👦", marks: [{ type: "bold" }] },
+          text("b"),
+        ],
+      },
+    ]);
+    try {
+      h.select("a👨", 1);
+      h.press("v", "r", "Z");
+      expect(h.editor.getText()).toBe("aZb");
+      h.press("u");
+      expect(h.editor.getText()).toBe("a👨‍👩‍👧‍👦b");
+    } finally {
+      h.destroy();
+    }
+  });
 
   it("preserves Hard Breaks, Code newlines and container identities in multi-block r", async () => {
     const h = await harness([

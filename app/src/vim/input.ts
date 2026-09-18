@@ -1,3 +1,4 @@
+import { graphemes } from "./graphemes";
 import { DeclarativeKeymap, type KeyBinding } from "../core/keymap";
 import {
   WINDOW_SHORTCUTS,
@@ -740,7 +741,7 @@ export function advanceVimInput(
         action: { kind: "execute", command: "mode.normal" },
       };
     }
-    if (Array.from(key).length === 1) {
+    if (graphemes(key).length === 1) {
       return {
         state: createVimInputState(),
         sequence,

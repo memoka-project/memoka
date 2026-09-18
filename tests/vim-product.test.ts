@@ -504,6 +504,68 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     secondRoot.remove();
   });
 
+  it.each(["😀", "👍🏽", "🇯🇵", "👨‍👩‍👧‍👦", "❤️", "e\u0301"])(
+    "moves and edits a whole grapheme: %s",
+    async (emoji) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+        idFactory: deterministicIds(),
+      });
+      const root = document.createElement("div");
+      document.body.append(root);
+      const { adapter, editor } = runtime.editorForTesting("window-1", root);
+      try {
+        editor.commands.setContent({
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: `a${emoji}b` }],
+            },
+          ],
+        });
+        editor.commands.focus();
+        await runtime.flush();
+        const start = textPosition(editor, `a${emoji}b`);
+        editor.commands.setTextSelection(start);
+        press(editor, "Escape");
+        press(editor, "l");
+        expect(editor.state.selection.from).toBe(start + 1);
+        press(editor, "l");
+        expect(editor.state.selection.from).toBe(start + 1 + emoji.length);
+        press(editor, "h");
+        expect(editor.state.selection.from).toBe(start + 1);
+        press(editor, "x");
+        expect(editor.getText()).toBe("ab");
+        press(editor, "u");
+        expect(editor.getText()).toBe(`a${emoji}b`);
+        editor.commands.setTextSelection(start + 1);
+        press(editor, "v");
+        expect(editor.state.selection.to - editor.state.selection.from).toBe(
+          emoji.length,
+        );
+        press(editor, "d");
+        expect(editor.getText()).toBe("ab");
+        press(editor, "u");
+        expect(editor.getText()).toBe(`a${emoji}b`);
+        editor.commands.setTextSelection(start + 1);
+        press(editor, "r");
+        press(editor, "Z");
+        expect(editor.getText()).toBe("aZb");
+        press(editor, "u");
+        expect(editor.getText()).toBe(`a${emoji}b`);
+        editor.commands.setTextSelection(start + 1);
+        press(editor, "a");
+        expect(editor.state.selection.from).toBe(start + 1 + emoji.length);
+        press(editor, "Backspace");
+        expect(editor.getText()).toBe("ab");
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
   it("puts the Normal block cursor on the character before the Insert caret", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

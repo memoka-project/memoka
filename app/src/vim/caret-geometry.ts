@@ -1,3 +1,4 @@
+import { graphemeEnd } from "./graphemes";
 import type { EditorView } from "@tiptap/pm/view";
 import { NodeSelection } from "@tiptap/pm/state";
 import { defaultVimBlockSemantics } from "./block-semantics";
@@ -222,14 +223,11 @@ function measureVimCharacterRange(
     if (node.nodeType !== Node.TEXT_NODE) return null;
     const text = node.nodeValue ?? "";
     if (offset >= text.length || text[offset] === "\n") return null;
-    const characterLength =
-      /[\uD800-\uDBFF]/u.test(text[offset]) &&
-      /[\uDC00-\uDFFF]/u.test(text[offset + 1] ?? "")
-        ? 2
-        : 1;
     const range = document.createRange();
     range.setStart(node, offset);
-    range.setEnd(node, offset + characterLength);
+    const characterLength = graphemeEnd(view.state.doc, position) - position;
+    const end = view.domAtPos(position + characterLength, -1);
+    range.setEnd(end.node, end.offset);
     const bounding = range.getBoundingClientRect();
     let fragments: VimCharacterCellRect[] = [];
     try {

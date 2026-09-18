@@ -62,6 +62,9 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 小文字のwordでは、Vim標準と同様にkeyword文字（Unicodeの文字・数字と`_`）の連続、および空白以外の
 非keyword記号の連続をそれぞれ1 wordとする。日本語は設定された分割方式を適用する。
 
+文字単位の移動・選択・削除・置換とNormal caretはUnicode書記素クラスタを単位とする。
+肌色修飾、国旗、ZWJ結合絵文字、結合文字を途中で分割しない。ProseMirrorの位置はUTF-16 offsetを維持する。
+
 `whichwrap`がtrueの場合、Normalの`h/l/w/b/e/ge/W/B/E/gE`は論理行端から前後の論理行へ続く。
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 

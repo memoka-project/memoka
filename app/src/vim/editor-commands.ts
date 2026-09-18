@@ -1,3 +1,4 @@
+import { graphemes, graphemeEnd, previousGraphemeStart } from "./graphemes";
 import {
   Fragment,
   Slice,
@@ -544,11 +545,11 @@ export function runEditorInsertBackspace(view: VimEditorView): EditorVimResult {
   const before = selection.$from.nodeBefore;
   if (!before) return { handled: false, detail };
   if (before.isText && before.text) {
-    const character = Array.from(before.text).at(-1);
+    const character = graphemes(before.text).at(-1);
     return character
       ? deleteInsertRange(
           view,
-          selection.from - character.length,
+          previousGraphemeStart(view.state.doc, selection.from),
           selection.from,
           detail,
         )
@@ -563,6 +564,29 @@ export function runEditorInsertBackspace(view: VimEditorView): EditorVimResult {
     );
   }
   return { handled: false, detail };
+}
+
+export function runEditorInsertForwardDelete(
+  view: VimEditorView,
+): EditorVimResult {
+  const boundary = runEditorInsertBoundaryDelete(view, "forward");
+  if (boundary.handled || boundary.preventDefault) return boundary;
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection)) return boundary;
+  if (!selection.empty)
+    return deleteInsertRange(
+      view,
+      selection.from,
+      selection.to,
+      "insert:delete",
+    );
+  if (!selection.$from.nodeAfter?.isText) return boundary;
+  return deleteInsertRange(
+    view,
+    selection.from,
+    graphemeEnd(view.state.doc, selection.from),
+    "insert:delete",
+  );
 }
 
 interface InsertBackwardUnit {
@@ -591,7 +615,7 @@ function insertBackwardUnits(
         toOffset - childOffset,
       );
       let position = parentStart + fromOffset;
-      for (const character of Array.from(slice)) {
+      for (const character of graphemes(slice)) {
         units.push({
           from: position,
           to: position + character.length,
@@ -4299,18 +4323,14 @@ function moveCharacter(
     for (let index = 0; index < normalizedCount(count); index += 1) {
       const $next = view.state.doc.resolve(next);
       const adjacent = direction > 0 ? $next.nodeAfter : $next.nodeBefore;
-      // ProseMirror text nodes are also leaves/atoms. Step over one code point,
-      // not the whole remaining text node, while keeping inline links atomic.
-      const character = adjacent?.isText
+      // Keep both graphemes and inline links indivisible in Insert movement.
+      const distance = adjacent?.isText
         ? direction > 0
-          ? Array.from(adjacent.text!.slice(0, 2))[0]
-          : Array.from(adjacent.text!.slice(-2)).at(-1)
-        : undefined;
-      const distance =
-        character?.length ??
-        (adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
+          ? graphemeEnd(view.state.doc, next) - next
+          : next - previousGraphemeStart(view.state.doc, next)
+        : adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
           ? adjacent.nodeSize
-          : 1);
+          : 1;
       // Table rows end at their last Normal cursor, not the insertion boundary.
       // Insert movement (including `a`) stays inside the current Cell textblock.
       const inTableTextblock =
@@ -4376,7 +4396,7 @@ function characterAt(
   if (from === undefined) return "";
   const to = positions[index + 1] ?? lineTo;
   return (
-    Array.from(
+    graphemes(
       view.state.doc.textBetween(from, Math.max(from + 1, to), "", "\uFFFC"),
     )[0] ?? ""
   );
@@ -4393,7 +4413,8 @@ function wordClasses(
   );
   const hardBoundaryBefore = positions.map(
     (position, index) =>
-      index > 0 && position !== (positions[index - 1] ?? 0) + 1,
+      index > 0 &&
+      position !== exclusiveCharacterPosition(view, positions[index - 1] ?? 0),
   );
   const segments =
     granularity === "WORD"
@@ -4706,7 +4727,7 @@ function exclusiveCharacterPosition(
   const nodeAfter = view.state.doc.resolve(bounded).nodeAfter;
   if (nodeAfter?.isText) {
     return Math.min(
-      bounded + (Array.from(nodeAfter.text ?? "")[0]?.length ?? 1),
+      graphemeEnd(view.state.doc, bounded),
       view.state.doc.content.size,
     );
   }
@@ -6699,8 +6720,7 @@ function textPutPosition(
   const $cursor = view.state.doc.resolve(normalized);
   const nodeAfter = $cursor.nodeAfter;
   if (nodeAfter?.isText) {
-    const firstCharacter = Array.from(nodeAfter.text ?? "")[0];
-    return normalized + (firstCharacter?.length ?? 0);
+    return graphemeEnd(view.state.doc, normalized);
   }
   if (nodeAfter?.isInline && (nodeAfter.isAtom || nodeAfter.isLeaf)) {
     return normalized + nodeAfter.nodeSize;
@@ -6709,7 +6729,7 @@ function textPutPosition(
 }
 
 function pastedTextCursor(from: number, text: string): number {
-  const lastCharacter = Array.from(text).at(-1);
+  const lastCharacter = graphemes(text).at(-1);
   return from + text.length - (lastCharacter?.length ?? 1);
 }
 
@@ -6816,7 +6836,7 @@ function putOnce(
       if (transaction) {
         const end = transaction.selection.from;
         const $end = transaction.doc.resolve(end);
-        const last = Array.from($end.nodeBefore?.text ?? "").at(-1);
+        const last = graphemes($end.nodeBefore?.text ?? "").at(-1);
         transaction.setSelection(
           TextSelection.create(
             transaction.doc,
@@ -7507,7 +7527,7 @@ function replaceTextAtCursor(
 
   let to = from;
   let consumed = 0;
-  const replacementLength = Array.from(text).length;
+  const replacementLength = graphemes(text).length;
   if (startIndex >= 0 && line.from !== line.to) {
     for (
       let index = startIndex;
@@ -7578,7 +7598,7 @@ export function replaceVisualCharacters(
 ): EditorVimResult {
   const detail = "selection:replace";
   const { from, to } = range;
-  if (from === to || Array.from(character).length !== 1)
+  if (from === to || graphemes(character).length !== 1)
     return { handled: false, detail };
   const edits: { from: number; to: number; node: ProseMirrorNode }[] = [];
   const hidden = [
@@ -7615,19 +7635,22 @@ export function replaceVisualCharacters(
         });
       }
       for (const visible of ranges) {
-        const original = node.text!.slice(
-          visible.from - position,
-          visible.to - position,
-        );
-        // Code/Source newlines, Hard Breaks and container boundaries are not
-        // characters to flatten. Keep each text run's marks and identities.
-        const replacement = original.replace(/[^\r\n]/gu, () => character);
-        if (replacement)
-          edits.push({
-            from: visible.from,
-            to: visible.to,
-            node: view.state.schema.text(replacement, node.marks),
-          });
+        // A cluster may cross mark boundaries. Replace it once with the marks
+        // of its first character, and skip continuation nodes of that cluster.
+        for (let start = visible.from; start < visible.to;) {
+          const end = graphemeEnd(view.state.doc, start);
+          if (end <= start) break;
+          const boundary =
+            previousGraphemeStart(view.state.doc, start + 1) === start;
+          const original = view.state.doc.textBetween(start, end);
+          if (boundary && end <= to && !/^[\r\n]+$/.test(original))
+            edits.push({
+              from: start,
+              to: end,
+              node: view.state.schema.text(character, node.marks),
+            });
+          start = end;
+        }
       }
     } else if (
       node.isInline &&
@@ -7685,7 +7708,7 @@ export function runEditorVisualCharChange(
     const selection = Selection.near(transaction.doc.resolve(end), -1);
     const before = selection.$from.nodeBefore;
     const cursor = before?.isText
-      ? selection.from - (Array.from(before.text!).at(-1)?.length ?? 0)
+      ? previousGraphemeStart(transaction.doc, selection.from)
       : before?.isInline && before.type.name !== "hardBreak"
         ? selection.from - before.nodeSize
         : selection.from;
