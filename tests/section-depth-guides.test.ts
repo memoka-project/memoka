@@ -91,13 +91,13 @@ describe("Section depth guides", () => {
     expect(rootHeader.matches(indentedHeaderSelector)).toBe(false);
     expect(header.matches(indentedHeaderSelector)).toBe(true);
     expect(style.textContent).toContain(
-      "border-left: 1px solid var(--memoka-color-border-subtle)",
+      "box-shadow: inset 1px 0 var(--memoka-color-border-subtle)",
     );
     expect(style.textContent).toContain(
-      "margin-left: var(--memoka-indent-guide-offset)",
+      "var(--memoka-indent-width) - var(--memoka-indent-guide-offset)",
     );
     expect(style.textContent).toContain(
-      "var(--memoka-indent-width) - var(--memoka-indent-guide-offset) - 1px",
+      "padding-left: var(--memoka-indent-guide-offset)",
     );
     expect(style.textContent).toMatch(
       /\.memoka-section\s*>\s*\.memoka-section-header\s*\{[^}]*margin-inline-start:\s*var\(--memoka-indent-width\)/su,

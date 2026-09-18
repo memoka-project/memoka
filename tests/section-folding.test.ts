@@ -180,9 +180,9 @@ describe("Window-local Section folding", () => {
         ),
       );
       runSectionFoldCommand(editor.view, "close");
-      expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([
-        note.noteId,
-      ]);
+      expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+        [childId, siblingId].sort(),
+      );
       expect(note.undoManager.undoStack).toHaveLength(undoDepth);
       expect(readNotePlainText(note)).toBe(textBefore);
     } finally {
@@ -190,6 +190,50 @@ describe("Window-local Section folding", () => {
       note.doc.destroy();
     }
   });
+
+  it.each(["title", "body"])(
+    "applies Root %s folds to Sections only",
+    async (target) => {
+      const { note, childId, grandchildId, siblingId } = createNestedNote();
+      const editor = new Editor({
+        extensions: productEditorExtensions(note, {
+          collapsedSectionIds: [note.noteId],
+        }),
+      });
+      try {
+        await Promise.resolve();
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([]);
+        const pos =
+          target === "title"
+            ? sectionHeaderTextPosition(editor, note.noteId)
+            : textPosition(editor, "root body");
+        editor.commands.setTextSelection(pos);
+        runSectionFoldCommand(editor.view, "close");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, siblingId].sort(),
+        );
+        expect(editor.state.selection.from).toBe(pos);
+        runSectionFoldCommand(editor.view, "close-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, grandchildId, siblingId].sort(),
+        );
+        runSectionFoldCommand(editor.view, "toggle");
+        runSectionFoldCommand(editor.view, "toggle-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, grandchildId, siblingId].sort(),
+        );
+        runSectionFoldCommand(editor.view, "open");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([
+          grandchildId,
+        ]);
+        runSectionFoldCommand(editor.view, "open-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([]);
+      } finally {
+        editor.destroy();
+        note.doc.destroy();
+      }
+    },
+  );
 
   it("keeps hidden content out of caret motion while retaining it in Note search", async () => {
     const { note, childId } = createNestedNote();
@@ -342,6 +386,57 @@ describe("Window-local Section folding", () => {
     }
   });
 
+  it("toggles the clicked Section chevron and excludes the Note title", async () => {
+    const { note, childId } = createNestedNote();
+    const onSectionFoldsChange = vi.fn();
+    const editor = new Editor({
+      extensions: productEditorExtensions(note, { onSectionFoldsChange }),
+    });
+    try {
+      await Promise.resolve();
+      const root = editor.view.dom.querySelector<HTMLElement>(
+        `[data-section-id="${note.noteId}"]`,
+      )!;
+      expect(root.classList.contains("memoka-note-title")).toBe(true);
+      const header = editor.view.dom.querySelector<HTMLElement>(
+        `[data-section-id="${childId}"]`,
+      )!;
+      header.style.fontSize = "24px";
+      editor.view.dom.style.setProperty(
+        "--memoka-indent-guide-offset",
+        "14.4px",
+      );
+      vi.spyOn(header, "getBoundingClientRect").mockReturnValue({
+        left: 100,
+        top: 20,
+      } as DOMRect);
+      const click = () => {
+        const event = new MouseEvent("mousedown", {
+          button: 0,
+          clientX: 86,
+          clientY: 32,
+          cancelable: true,
+        });
+        Object.defineProperty(event, "target", { value: header });
+        editor.view.someProp("handleDOMEvents", (handlers) =>
+          handlers.mousedown?.(editor.view, event),
+        );
+        expect(event.defaultPrevented).toBe(true);
+      };
+      click();
+      expect(sectionFoldCollapsedSectionIds(editor.state)).toContain(childId);
+      expect(onSectionFoldsChange).toHaveBeenLastCalledWith([childId], childId);
+      click();
+      expect(sectionFoldCollapsedSectionIds(editor.state)).not.toContain(
+        childId,
+      );
+      expect(onSectionFoldsChange).toHaveBeenLastCalledWith([], childId);
+    } finally {
+      editor.destroy();
+      note.doc.destroy();
+    }
+  });
+
   it("marks closed Headers and hides only their body and child container", async () => {
     const { note, childId } = createNestedNote();
     const editor = new Editor({
@@ -387,6 +482,13 @@ describe("Window-local Section folding", () => {
       );
       expect(css).toContain("~ .memoka-section-body");
       expect(css).toContain("~ .memoka-section-children");
+      expect(
+        editor.view.dom.style.getPropertyValue("--memoka-chevron-down"),
+      ).toContain("data:image/svg+xml");
+      expect(
+        editor.view.dom.style.getPropertyValue("--memoka-chevron-right"),
+      ).toContain("data:image/svg+xml");
+      expect(css).toContain("mask-image: var(--memoka-chevron-right)");
     } finally {
       editor.view.dom.remove();
       editor.destroy();

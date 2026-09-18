@@ -622,7 +622,7 @@ describe("Memoka Application utilities", () => {
       document.documentElement.style.getPropertyValue(
         APPLICATION_INDENT_GUIDE_OFFSET_CSS_VARIABLE,
       ),
-    ).toBe("14px");
+    ).toBe("16.8px");
     expect(
       document.documentElement.style.getPropertyValue(
         APPLICATION_LIST_INLINE_SHIFT_CSS_VARIABLE,
@@ -1834,6 +1834,15 @@ describe("Memoka Application utilities", () => {
     expect(rows[0]?.getAttribute("aria-level")).toBe("1");
     expect(rows[1]?.getAttribute("aria-level")).toBe("2");
     expect(rows[2]?.getAttribute("aria-level")).toBe("3");
+    fireEvent.keyDown(outline, { key: "G" });
+    expect(rows[2]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "o", ctrlKey: true, code: "KeyO" });
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "i", ctrlKey: true, code: "KeyI" });
+    expect(rows[2]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "g" });
+    fireEvent.keyDown(outline, { key: "g" });
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
     expect(rows[0]?.dataset.memokaMarkupHeading).toBe("1");
     expect(rows[1]?.dataset.memokaMarkupHeading).toBe("2");
     expect(rows[2]?.dataset.memokaMarkupHeading).toBe("3");
@@ -1899,9 +1908,18 @@ describe("Memoka Application utilities", () => {
       .closest<HTMLElement>('[role="treeitem"]');
     expect(parentRow?.getAttribute("aria-expanded")).toBe("false");
     expect(parentRow?.getAttribute("aria-selected")).toBe("true");
-    expect(parentRow?.querySelector(".outline-fold-state")?.textContent).toBe(
-      "▸",
-    );
+    expect(
+      parentRow?.querySelector('[data-tree-icon="chevron-right"]'),
+    ).not.toBeNull();
+    expect(
+      view.container.querySelector(`[data-outline-guide="${parentId}"]`),
+    ).toBeNull();
+    expect(
+      screen
+        .getByText("Visible sibling")
+        .closest('[role="treeitem"]')
+        ?.querySelector('[data-tree-icon="chevron-down"]'),
+    ).not.toBeNull();
     expect(view.container.querySelector(".outline-level")).toBeNull();
 
     view.rerender(
@@ -1918,8 +1936,139 @@ describe("Memoka Application utilities", () => {
       screen
         .getByRole("tree", { name: "Sectionアウトライン" })
         .querySelectorAll('[role="treeitem"]'),
-    ).toHaveLength(1);
+    ).toHaveLength(4);
 
+    view.unmount();
+    note.doc.destroy();
+  });
+
+  it("operates on child Sections instead of folding the Note Root from Outline", async () => {
+    const noteId = createUuidV7();
+    const childId = createUuidV7();
+    const nestedId = createUuidV7();
+    const siblingId = createUuidV7();
+    const note = createOutlineNote(noteId, [
+      { sectionId: childId, title: "Child" },
+      { sectionId: nestedId, title: "Nested", parentSectionId: childId },
+      { sectionId: siblingId, title: "Sibling" },
+    ]);
+    const onFoldsChange = vi
+      .fn<(ids: readonly string[]) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const props = {
+      note,
+      focusRequest: 1,
+      onJump: async () => {},
+      onFoldsChange,
+      onClose: () => {},
+      onFocus: () => {},
+    };
+    const view = render(<WorkspaceOutline {...props} />);
+    const tree = screen.getByRole("tree", { name: "Sectionアウトライン" });
+    const fold = (key: string) => {
+      fireEvent.keyDown(tree, { key: "z" });
+      fireEvent.keyDown(tree, { key });
+    };
+    fold("a");
+    fold("A");
+    expect(onFoldsChange).not.toHaveBeenCalled();
+    fold("c");
+    await waitFor(() =>
+      expect(onFoldsChange).toHaveBeenLastCalledWith(
+        [childId, siblingId].sort(),
+      ),
+    );
+    view.rerender(
+      <WorkspaceOutline
+        {...props}
+        collapsedSectionIds={[childId, siblingId]}
+      />,
+    );
+    fold("C");
+    await waitFor(() =>
+      expect(onFoldsChange).toHaveBeenLastCalledWith(
+        [childId, nestedId, siblingId].sort(),
+      ),
+    );
+    view.rerender(
+      <WorkspaceOutline
+        {...props}
+        collapsedSectionIds={[childId, nestedId, siblingId]}
+      />,
+    );
+    fold("o");
+    await waitFor(() =>
+      expect(onFoldsChange).toHaveBeenLastCalledWith([nestedId]),
+    );
+    view.rerender(
+      <WorkspaceOutline {...props} collapsedSectionIds={[nestedId]} />,
+    );
+    fold("O");
+    await waitFor(() => expect(onFoldsChange).toHaveBeenLastCalledWith([]));
+    expect(document.activeElement).toBe(tree);
+    view.unmount();
+    note.doc.destroy();
+  });
+
+  it("folds leaf Sections from Outline keys while retaining Sidebar focus", async () => {
+    const noteId = createUuidV7();
+    const leafId = createUuidV7();
+    const note = createOutlineNote(noteId, [
+      { sectionId: leafId, title: "Leaf" },
+    ]);
+    const onJump = vi.fn(async () => {});
+    const onFoldsChange = vi
+      .fn<(ids: readonly string[]) => Promise<void>>()
+      .mockResolvedValue(undefined);
+    const props = {
+      note,
+      focusRequest: 1,
+      onJump,
+      onFoldsChange,
+      onClose: () => {},
+      onFocus: () => {},
+      viewState: { noteId, selectedSectionId: leafId },
+    };
+    const view = render(<WorkspaceOutline {...props} />);
+    const tree = screen.getByRole("tree", { name: "Sectionアウトライン" });
+    fireEvent.keyDown(tree, { key: "z" });
+    fireEvent.keyDown(tree, { key: "c" });
+    await waitFor(() => expect(onFoldsChange).toHaveBeenCalledWith([leafId]));
+    view.rerender(
+      <WorkspaceOutline {...props} collapsedSectionIds={[leafId]} />,
+    );
+    expect(
+      screen
+        .getByText("Leaf")
+        .closest('[role="treeitem"]')
+        ?.querySelector('[data-tree-icon="chevron-right"]'),
+    ).not.toBeNull();
+    fireEvent.keyDown(tree, { key: "z" });
+    fireEvent.keyDown(tree, { key: "a" });
+    await waitFor(() => expect(onFoldsChange).toHaveBeenLastCalledWith([]));
+    expect(document.activeElement).toBe(tree);
+    expect(onJump).not.toHaveBeenCalled();
+    const rootRow = view.container.querySelector<HTMLElement>(
+      `#outline-section-${noteId}`,
+    )!;
+    fireEvent.mouseDown(rootRow);
+    fireEvent.click(rootRow);
+    expect(rootRow.getAttribute("aria-selected")).toBe("true");
+    expect(onJump).not.toHaveBeenCalled();
+    fireEvent.click(rootRow);
+    await waitFor(() => expect(onJump).toHaveBeenCalledWith(noteId));
+    onFoldsChange.mockClear();
+    const chevron = screen.getByRole("button", { name: "Leafを展開する" });
+    fireEvent.click(chevron);
+    await waitFor(() => expect(onFoldsChange).toHaveBeenCalledWith([]));
+    expect(onJump).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(tree);
+    expect(
+      screen
+        .getByText("Leaf")
+        .closest('[role="treeitem"]')
+        ?.getAttribute("aria-selected"),
+    ).toBe("true");
     view.unmount();
     note.doc.destroy();
   });
@@ -1953,6 +2102,31 @@ describe("Memoka Application utilities", () => {
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
     expect(levels).toEqual(["1", "2", "3", "4", "5", "6"]);
+    const rootGuide = view.container.querySelector<HTMLElement>(
+      `[data-outline-guide="${noteId}"]`,
+    );
+    expect(rootGuide).toBeNull();
+    const outlineRows = [
+      ...view.container.querySelectorAll<HTMLElement>(".outline-row"),
+    ];
+    expect(
+      outlineRows.map((row) => row.style.getPropertyValue("--outline-level")),
+    ).toEqual(["0", "0", "1", "2", "3", "4"]);
+    expect(outlineRows[0]?.querySelector(".tree-disclosure")).toBeNull();
+    expect(
+      view.container
+        .querySelector<HTMLElement>(".tree-guide")
+        ?.style.getPropertyValue("--tree-depth"),
+    ).toBe("0");
+    expect(
+      view.container.querySelector(
+        `#outline-section-${noteId} [data-tree-icon]`,
+      ),
+    ).toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-tree-icon="chevron-down"]'),
+    ).toHaveLength(5);
+    expect(view.container.querySelectorAll(".tree-guide")).toHaveLength(4);
 
     view.rerender(
       <WorkspaceOutline
@@ -1970,6 +2144,15 @@ describe("Memoka Application utilities", () => {
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
     expect(focusedLevels).toEqual(["4", "5", "6"]);
+    expect(
+      [...view.container.querySelectorAll<HTMLElement>(".outline-row")].map(
+        (row) => row.style.getPropertyValue("--outline-level"),
+      ),
+    ).toEqual(["0", "1", "2"]);
+    expect(
+      view.container.querySelectorAll('[data-tree-icon="chevron-down"]'),
+    ).toHaveLength(3);
+    expect(view.container.querySelectorAll(".tree-guide")).toHaveLength(2);
 
     view.unmount();
     note.doc.destroy();

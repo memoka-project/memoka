@@ -1,3 +1,4 @@
+import { graphemes } from "./graphemes";
 import { DeclarativeKeymap, type KeyBinding } from "../core/keymap";
 import {
   WINDOW_SHORTCUTS,
@@ -42,6 +43,7 @@ export const VIM_COMMANDS = [
   "insert.line-start",
   "insert.line-end",
   "insert.backspace",
+  "insert.symbol",
   "insert.newline",
   "insert.delete-line-prefix",
   "insert.delete-word-backward",
@@ -57,6 +59,11 @@ export const VIM_COMMANDS = [
   "cursor.page-down",
   "cursor.half-page-up",
   "cursor.half-page-down",
+  "cursor.screen-top",
+  "cursor.screen-middle",
+  "cursor.screen-bottom",
+  "viewport.scroll-up",
+  "viewport.scroll-down",
   "cursor.document-start",
   "cursor.document-end",
   "cursor.section-previous",
@@ -246,6 +253,17 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
   VimMode,
   VimCommand
 >[] = [
+  ...(
+    ["normal", "visual-char", "visual-line", "visual-block"] as const
+  ).flatMap((mode) =>
+    modeBindings(mode, {
+      H: "cursor.screen-top",
+      M: "cursor.screen-middle",
+      L: "cursor.screen-bottom",
+      "Ctrl+e": "viewport.scroll-down",
+      "Ctrl+y": "viewport.scroll-up",
+    }),
+  ),
   ...modeBindings("normal", {
     Escape: "mode.normal",
     i: "mode.insert",
@@ -343,6 +361,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     ".": "edit.repeat",
   }),
   ...modeBindings("insert", {
+    "Ctrl+e": "insert.symbol",
     Escape: "mode.normal",
     "Ctrl+c": "mode.normal",
     "Ctrl+h": "insert.backspace",
@@ -724,7 +743,7 @@ export function advanceVimInput(
         action: { kind: "execute", command: "mode.normal" },
       };
     }
-    if (Array.from(key).length === 1) {
+    if (graphemes(key).length === 1) {
       return {
         state: createVimInputState(),
         sequence,
@@ -1037,6 +1056,13 @@ function effectiveVimKeymap(
     DEFAULT_APPLICATION_KEY_CONFIG.sharedNavigationBindings!;
   for (const context of sharedNavigationModes) {
     for (const command of SHARED_NAVIGATION_COMMAND_IDS) {
+      // z alignment has always been Normal-only; sharing its Sidebar binding
+      // must not turn a counted alignment into a Visual selection replacement.
+      if (
+        context !== "normal" &&
+        ["viewport.top", "viewport.center", "viewport.bottom"].includes(command)
+      )
+        continue;
       for (const sequence of configured[command]) {
         const normalized = normalizeConfiguredVimSequence(sequence);
         const conflict = bindings.find((binding) => {

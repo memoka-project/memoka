@@ -14,11 +14,13 @@ import {
   SECTION_DEPTH_SHIFT_ORIGIN,
   noteSectionCatalog,
   putNoteSectionSibling,
+  putNoteSectionTitle,
   type ProductDocument,
 } from "../core/documents";
 import {
   findSectionWithDepth,
   SECTION_CHILDREN_NODE,
+  type SectionSnapshot,
 } from "../core/section-model";
 import {
   resolveEditorNavigationDestination,
@@ -64,6 +66,7 @@ import type { VimRegisterStore } from "../vim/register-store";
 import {
   caretFitsViewport,
   findViewportCaretPosition,
+  revealNormalLogicalLine,
 } from "../vim/viewport-caret";
 import { BODY_CHUNK_VIEWPORT_CHANGED_EVENT } from "./body-chunk-viewport-event";
 import type { VimRepeatStore } from "../vim/repeat";
@@ -71,6 +74,7 @@ import type { VimVisualSelectionStore } from "../vim/visual-history";
 import {
   alignVimViewport,
   VIM_VIEWPORT_ALIGNMENT_META,
+  VIM_VIEWPORT_SCROLL_META,
   type VimViewportAlignment,
 } from "../vim/viewport-scroll";
 import type { VimWindowCommand } from "../vim/input";
@@ -92,6 +96,7 @@ import {
   productEditorExtensions,
   refreshInternalSectionLinkNodeViews,
   type InternalLinkTitleResolver,
+  type SectionHashInputRequest,
 } from "./extensions";
 import {
   InternalLinkCompletion,
@@ -155,6 +160,10 @@ export interface InlineFormatPickerRequest {
   readonly apply: (action: InlineFormatAction) => InlineFormatResult;
 }
 
+export interface SymbolPickerRequest {
+  readonly apply: (value: string) => boolean;
+}
+
 export interface TableActionPickerRequest {
   readonly selection: TableActionSelection;
   readonly apply: (action: TableActionId) => TableActionResult;
@@ -163,6 +172,7 @@ export interface TableActionPickerRequest {
 export type CodeActionPickerRequest = CodeBlockActionRequest;
 
 export interface TiptapEditorAdapterOptions {
+  onRecordJump?: (origin: StableEditorPosition) => void;
   /** Internal unit-test harness; production windows always render a Section. */
   directBodyOnly?: boolean;
   registerStore?: VimRegisterStore;
@@ -208,6 +218,7 @@ export interface TiptapEditorAdapterOptions {
   onNoteSearch?: (origin: NoteSearchOrigin) => void;
   onBlockTypePicker?: (request: BlockTypePickerRequest) => void;
   onInlineFormatPicker?: (request: InlineFormatPickerRequest) => void;
+  onSymbolPicker?: (request: SymbolPickerRequest) => void;
   onCodeActionPicker?: (request: CodeActionPickerRequest) => void;
   onTableActionPicker?: (request: TableActionPickerRequest) => void;
   openExternalLink?: (href: string) => void | Promise<void>;
@@ -252,11 +263,21 @@ export interface TiptapEditorAdapterOptions {
     request: SectionParagraphConversionSelection & {
       direction: "deeper" | "shallower";
       mode: "insert" | "normal";
+      joinPreviousUndo?: boolean;
     },
+    onApplied?: (createdSectionId: string) => void,
   ) => Promise<{
     changed: boolean;
     createdSectionId: string | null;
   }>;
+  onSectionCreatedOutsideView?: (
+    sectionId: string,
+    sourceSectionId: string,
+  ) => Promise<void>;
+  onFocusedSectionLineDelete?: (request: {
+    sourceSectionId: string;
+    remaining: SectionSnapshot;
+  }) => void | Promise<void>;
   keyConfig?: ApplicationKeyConfig;
   getInternalLinkCandidates?: () => readonly InternalLinkCandidate[];
   resolveInternalLinkTitle?: InternalLinkTitleResolver;
@@ -344,6 +365,7 @@ export class TiptapEditorAdapter {
   private previousDepthCorrections: readonly string[] | null = null;
   private boundSection: Y.XmlElement | null = null;
   private structuralRebindQueued = false;
+  private optimisticFocusedSectionId: string | null = null;
 
   constructor(
     private readonly handle: ManagedCrdtDocument<ProductDocument>,
@@ -377,6 +399,13 @@ export class TiptapEditorAdapter {
         return current.kind === "note" ? current.noteId : null;
       },
       registerStore: options.registerStore,
+      getSectionDepth: (sectionId) => {
+        const document = this.handle.current;
+        return document.kind === "note"
+          ? (findSectionWithDepth(document.rootSection, sectionId)?.depth ??
+              null)
+          : null;
+      },
       repeatStore: options.repeatStore,
       visualSelectionStore: options.visualSelectionStore,
       captureVisualPosition: (position) => {
@@ -448,6 +477,7 @@ export class TiptapEditorAdapter {
       onNavigate: options.onNavigate
         ? (intent) => this.handleNavigationIntent(intent)
         : undefined,
+      onRecordJump: options.onRecordJump,
       onWorkspaceSearch: options.onWorkspaceSearch
         ? (cursor, scope, target) =>
             this.handleWorkspaceSearch(cursor, scope, target)
@@ -460,6 +490,7 @@ export class TiptapEditorAdapter {
             this.handleNoteSearchRepeat(cursor, direction, count)
         : undefined,
       onInlineFormat: () => this.requestInlineFormatPicker(),
+      onSymbolPicker: () => this.requestSymbolPicker(),
       onCodeBlockActions: (selection) =>
         this.requestCodeActionPicker(selection),
       onTableActions: (selection) => this.requestTableActionPicker(selection),
@@ -518,6 +549,8 @@ export class TiptapEditorAdapter {
       },
       onSectionFromParagraph: async (request) =>
         this.createSectionFromParagraph(request),
+      onFocusedSectionLineDelete: (request) =>
+        options.onFocusedSectionLineDelete?.(request),
       onSectionSiblingPut: (request) => {
         const document = this.handle.current;
         if (document.kind !== "note" || this.currentEditor.isDestroyed) {
@@ -531,6 +564,29 @@ export class TiptapEditorAdapter {
           request.register,
           occupiedSectionIds,
         );
+        if (prepared && request.bodyBoundary !== undefined) {
+          const changed = putNoteSectionTitle(
+            document,
+            request.targetSectionId,
+            prepared.snapshot,
+            request.bodyBoundary,
+            undefined,
+            request.register.sourceSectionDepth,
+          );
+          if (changed) {
+            const position = sectionHeaderPosition(
+              this.currentEditor.view,
+              prepared.snapshot.sectionId,
+              0,
+            );
+            if (position !== null)
+              this.vimSession.applyNavigationPosition(
+                position,
+                "put:title:changed",
+              );
+          }
+          return changed;
+        }
         return prepared
           ? putNoteSectionSibling(
               document,
@@ -765,6 +821,40 @@ export class TiptapEditorAdapter {
       this.vimSession.cancelExternalMutationUndoBoundary();
     }
     return result;
+  }
+
+  private requestSymbolPicker(): boolean {
+    const editor = this.currentEditor;
+    if (
+      editor.isDestroyed ||
+      this.vimSession.snapshot().mode !== "insert" ||
+      !this.options.onSymbolPicker
+    )
+      return false;
+    const { doc, selection } = editor.state;
+    // A changed origin is rejected rather than inserting into a different Note,
+    // remounted Section, or concurrently modified selection.
+    this.options.onSymbolPicker({
+      apply: (value) => {
+        if (
+          editor !== this.currentEditor ||
+          editor.isDestroyed ||
+          editor.state.doc !== doc ||
+          !editor.state.selection.eq(selection) ||
+          this.vimSession.snapshot().mode !== "insert"
+        )
+          return false;
+        this.vimSession.prepareExternalMutationUndoBoundary();
+        editor.view.dispatch(
+          editor.state.tr
+            .insertText(value, selection.from, selection.to)
+            .scrollIntoView(),
+        );
+        this.vimSession.completeExternalInsertMutation();
+        return true;
+      },
+    });
+    return true;
   }
 
   private requestInlineFormatPicker(): boolean {
@@ -1345,7 +1435,12 @@ export class TiptapEditorAdapter {
       this.suppressSelectionUpdate = previousSuppression;
     }
     if (!applied) return null;
-    if (options.reveal !== false) this.revealNavigationSelection();
+    if (options.reveal !== false)
+      this.revealNavigationSelection(
+        destination.kind === "section-start"
+          ? destination.alignment
+          : undefined,
+      );
     return resolvedDetail;
   }
 
@@ -1444,8 +1539,19 @@ export class TiptapEditorAdapter {
     if (document.kind !== "note") {
       throw new Error("TipTap adapter can only bind a NoteDoc");
     }
+    if (
+      this.optimisticFocusedSectionId &&
+      !findSectionWithDepth(
+        document.rootSection,
+        this.optimisticFocusedSectionId,
+      )
+    ) {
+      this.optimisticFocusedSectionId = null;
+    }
     const requestedSectionId =
-      this.options.getWindowState?.().focusedSectionId ?? document.noteId;
+      this.optimisticFocusedSectionId ??
+      this.options.getWindowState?.().focusedSectionId ??
+      document.noteId;
     const focusedSectionId =
       document.replicated?.visibleSectionAncestor(requestedSectionId) ??
       requestedSectionId;
@@ -1461,6 +1567,8 @@ export class TiptapEditorAdapter {
           directBodyOnly: this.options.directBodyOnly,
           attachmentRepository: this.options.attachmentRepository,
           onCopyCodeBlock: (blockId) => this.copyCodeBlock(blockId),
+          onSectionFoldsChange: (ids, activeSectionId) =>
+            this.options.onSectionFoldsChange?.(ids, activeSectionId),
           collapsedSectionIds:
             this.options.getWindowState?.().collapsedSectionIds ?? [],
           collapsedCodeBlockIds:
@@ -1471,6 +1579,15 @@ export class TiptapEditorAdapter {
             this.options.onCodeFoldsChange?.(ids),
           onDetailsFoldOverridesChange: (overrides) =>
             this.options.onDetailsFoldsChange?.(overrides),
+          onSectionHashInput: (request) => {
+            void this.createSectionFromHashInput(request).catch((error) => {
+              this.options.onMessage?.(
+                `Sectionを作成できませんでした: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            });
+          },
         }),
         blockTypeSlashTrigger({
           enabled: () => {
@@ -1517,6 +1634,8 @@ export class TiptapEditorAdapter {
       },
       onTransaction: ({ editor, transaction, appendedTransactions }) => {
         if (editor === this.currentEditor) {
+          if (transaction.getMeta(VIM_VIEWPORT_SCROLL_META))
+            this.handleViewportScrollIntent();
           const alignment = transaction.getMeta(VIM_VIEWPORT_ALIGNMENT_META);
           if (
             alignment === "center" ||
@@ -1538,10 +1657,11 @@ export class TiptapEditorAdapter {
               // A command owns the caret destination. Native scroll events and
               // delayed layout must reveal it, not replace it with a visible line.
               this.viewportScrollIntent = "caret";
+              this.scheduleViewportCaretReconciliation();
             }
           }
-          // Scroll/ResizeObserver schedule reconciliation only if the viewport
-          // actually changes; ordinary in-view motions need no extra DOM reads.
+          // Caret-owned navigation also reveals wrapped logical-line context;
+          // manual scrolling keeps the viewport-owned selection policy.
         }
         this.publishCaretExternalLink(editor);
         const snapshot = this.vimSession.snapshot();
@@ -1801,13 +1921,23 @@ export class TiptapEditorAdapter {
     this.options.onCaretExternalLinkChange?.(href);
   }
 
-  private revealNavigationSelection(): void {
+  private revealNavigationSelection(alignment?: VimViewportAlignment): void {
     const editor = this.currentEditor;
     const reveal = (): void => {
       if (editor !== this.currentEditor || editor.isDestroyed) return;
-      editor.view.dispatch(
-        editor.view.state.tr.setMeta("addToHistory", false).scrollIntoView(),
-      );
+      const transaction = editor.view.state.tr
+        .setMeta("addToHistory", false)
+        .scrollIntoView();
+      if (alignment)
+        transaction.setMeta(VIM_VIEWPORT_ALIGNMENT_META, alignment);
+      editor.view.dispatch(transaction);
+      if (alignment)
+        alignVimViewport(
+          editor.view,
+          this.scrollElement,
+          editor.state.selection.from,
+          alignment,
+        );
     };
     reveal();
     if (this.navigationRevealFrame !== null) {
@@ -1834,7 +1964,18 @@ export class TiptapEditorAdapter {
     request: SectionParagraphConversionSelection & {
       direction: "deeper" | "shallower";
       mode: "insert" | "normal";
+      joinPreviousUndo?: boolean;
     },
+    options: {
+      allowReverse?: boolean;
+      onApplied?: (createdSectionId: string) => void;
+      wasAppliedOutsideView?: () => boolean;
+      onOutsideView?: (
+        sectionId: string,
+        sourceSectionId: string,
+      ) => Promise<void>;
+      detail?: string;
+    } = {},
   ): Promise<{ changed: boolean; createdSectionId: string | null }> {
     const document = this.handle.current;
     if (
@@ -1849,7 +1990,10 @@ export class TiptapEditorAdapter {
     const scrollLock = { scrollTop: this.scrollElement.scrollTop };
     this.beginSectionDepthScrollLock(scrollLock);
     try {
-      const result = await this.options.onSectionFromParagraph(request);
+      const result = await this.options.onSectionFromParagraph(
+        request,
+        options.onApplied,
+      );
       if (!result.changed || !result.createdSectionId) return result;
       await Promise.resolve();
       if (this.currentEditor.isDestroyed) return result;
@@ -1858,18 +2002,72 @@ export class TiptapEditorAdapter {
         result.createdSectionId,
         request.caretOffset,
       );
-      if (position !== null) {
+      if (options.wasAppliedOutsideView?.() && options.onOutsideView) {
+        const focus = options.onOutsideView(
+          result.createdSectionId,
+          request.sourceSectionId,
+        );
+        try {
+          await focus;
+          this.optimisticFocusedSectionId = null;
+        } catch (error) {
+          this.optimisticFocusedSectionId = null;
+          if (!this.syncFocusedSection(request.sourceSectionId)) {
+            this.recreateEditor();
+          }
+          throw error;
+        }
+      } else if (position !== null) {
         this.vimSession.applySectionDepthShiftPosition(
           position,
           request.mode,
-          `section:paragraph-${request.direction}:changed`,
+          options.detail ?? `section:paragraph-${request.direction}:changed`,
           request.mode === "normal" ? request.caretPosition : undefined,
         );
+      } else if (options.onOutsideView) {
+        const focus = options.onOutsideView(
+          result.createdSectionId,
+          request.sourceSectionId,
+        );
+        let rebound = this.syncFocusedSection(result.createdSectionId);
+        if (!rebound && !this.currentEditor.isDestroyed) {
+          this.recreateEditor();
+          rebound =
+            this.currentEditor.view.dom.dataset.sectionId ===
+            result.createdSectionId;
+        }
+        if (rebound && !this.currentEditor.isDestroyed) {
+          const reboundPosition = sectionHeaderPosition(
+            this.currentEditor.view,
+            result.createdSectionId,
+            request.caretOffset,
+          );
+          if (reboundPosition !== null) {
+            this.vimSession.applySectionDepthShiftPosition(
+              reboundPosition,
+              request.mode,
+              options.detail ??
+                `section:paragraph-${request.direction}:changed`,
+              request.mode === "normal" ? request.caretPosition : undefined,
+            );
+          }
+        }
+        try {
+          await focus;
+          this.optimisticFocusedSectionId = null;
+        } catch (error) {
+          this.optimisticFocusedSectionId = null;
+          if (!this.syncFocusedSection(request.sourceSectionId)) {
+            this.recreateEditor();
+          }
+          throw error;
+        }
       }
       const undoItem = document.undoManager.undoStack.find(
         (item) => !priorUndoItems.has(item),
       );
       if (
+        options.allowReverse !== false &&
         request.mode === "insert" &&
         undoItem &&
         document.undoManager.undoStack.at(-1) === undoItem
@@ -1890,6 +2088,66 @@ export class TiptapEditorAdapter {
     } finally {
       this.finishSectionDepthScrollLock(scrollLock);
     }
+  }
+
+  private createSectionFromHashInput(
+    request: SectionHashInputRequest,
+  ): Promise<{ changed: boolean; createdSectionId: string | null }> {
+    const document = this.handle.current;
+    if (document.kind !== "note") {
+      return Promise.resolve({ changed: false, createdSectionId: null });
+    }
+    let appliedOutsideView = false;
+    return this.createSectionFromParagraph(
+      {
+        boundarySectionId: document.noteId,
+        sourceSectionId: request.sourceSectionId,
+        paragraphBlockId: request.paragraphBlockId,
+        paragraphBodyIndex: request.paragraphBodyIndex,
+        title: "",
+        caretOffset: 0,
+        paragraphOffset: 1,
+        caretPosition: request.caretPosition,
+        direction: "shallower",
+        mode: "insert",
+        joinPreviousUndo: true,
+      },
+      {
+        allowReverse: false,
+        onApplied: (createdSectionId) => {
+          queueMicrotask(() => {
+            if (this.currentEditor.isDestroyed) return;
+            let position = sectionHeaderPosition(
+              this.currentEditor.view,
+              createdSectionId,
+              0,
+            );
+            if (position === null) {
+              appliedOutsideView = true;
+              this.optimisticFocusedSectionId = createdSectionId;
+              if (!this.syncFocusedSection(createdSectionId)) {
+                this.recreateEditor();
+              }
+              position = sectionHeaderPosition(
+                this.currentEditor.view,
+                createdSectionId,
+                0,
+              );
+            }
+            if (position !== null) {
+              this.vimSession.applySectionDepthShiftPosition(
+                position,
+                "insert",
+                "section:hash-sibling:changed",
+              );
+            }
+          });
+        },
+        wasAppliedOutsideView: () => appliedOutsideView,
+        onOutsideView: this.options.onSectionCreatedOutsideView,
+        detail: "section:hash-sibling:changed",
+      },
+    );
   }
 
   private reverseSectionParagraph(
@@ -2188,6 +2446,12 @@ export class TiptapEditorAdapter {
       );
       return;
     }
+    if (
+      this.viewportScrollIntent === "caret" &&
+      this.vimSession.snapshot().mode === "normal" &&
+      revealNormalLogicalLine(editor.view, this.scrollElement, cursor)
+    )
+      return;
     const caret = this.vimSession.viewportCaretGeometry(cursor);
     if (!caret || caretFitsViewport(caret, viewport)) return;
     const above = caret.top < viewport.top;

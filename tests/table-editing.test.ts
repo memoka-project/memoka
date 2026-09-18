@@ -109,6 +109,68 @@ function tableFixture() {
 }
 
 describe("keyboard-first Table editing", () => {
+  it.each(["normal", "insert"])(
+    "places a %s caret at the clicked Cell text",
+    async (mode) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const root = document.createElement("div");
+      document.body.append(root);
+      const { adapter, editor } = runtime.editorForTesting("window-1", root);
+      try {
+        editor.commands.setContent(tableFixture());
+        if (mode === "normal") press(editor, "Escape");
+        for (const text of ["H2", "A2"]) {
+          const position = positionOf(editor, text) + 1;
+          const cell = [...root.querySelectorAll("th, td")].find(
+            (el) => el.textContent === text,
+          )!;
+          const hit = vi
+            .spyOn(editor.view, "posAtCoords")
+            .mockReturnValue({ pos: position, inside: position - 1 });
+          try {
+            const event = new MouseEvent("mousedown", {
+              bubbles: true,
+              cancelable: true,
+              clientX: 120,
+              clientY: 80,
+            });
+            cell.querySelector("p")!.dispatchEvent(event);
+            expect(editor.state.selection.head).toBe(position);
+            // ProseMirror's click callback must retain the same position too.
+            editor.view.someProp("handleClick", (handler) =>
+              handler(editor.view, position, event),
+            );
+            expect(editor.state.selection.head).toBe(position);
+            expect(adapter.vimSnapshot.mode).toBe(mode);
+            // Missing or stale coordinates must recover in the clicked Cell,
+            // never in a different Cell reported by stale layout.
+            for (const fallback of [
+              null,
+              { pos: positionOf(editor, "H1"), inside: -1 },
+            ]) {
+              hit.mockReturnValue(fallback);
+              cell.querySelector("p")!.dispatchEvent(
+                new MouseEvent("mousedown", {
+                  bubbles: true,
+                  cancelable: true,
+                }),
+              );
+              expect(editor.state.selection.head).toBe(
+                positionOf(editor, text),
+              );
+            }
+          } finally {
+            hit.mockRestore();
+          }
+        }
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
   it("keeps the GFM grid unchanged when Visual Block meets a merged cell", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");

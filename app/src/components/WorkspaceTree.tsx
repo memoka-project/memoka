@@ -1,3 +1,10 @@
+import { SymbolText } from "./SymbolText";
+import { TreeIcon } from "./tree-presentation";
+import { treeGuides } from "../core/tree-guides";
+import {
+  foldSidebarSubtree,
+  isSidebarFoldCommand,
+} from "../core/sidebar-folding";
 import {
   useEffect,
   useMemo,
@@ -23,8 +30,9 @@ import {
 } from "../core/tree-keymap";
 import type { CoreRuntime, RuntimeSnapshot } from "../core/runtime";
 import { focusSurfaceFromPointer } from "./focus-surface";
+import { navigateSidebar } from "../core/sidebar-navigation";
 
-const TREE_ROW_HEIGHT_PX = 28;
+const TREE_ROW_HEIGHT_PX = 30;
 const TREE_OVERSCAN_ROWS = 8;
 const DEFAULT_VIEWPORT_ROWS = 10;
 
@@ -108,6 +116,16 @@ export function WorkspaceTree({
       TREE_OVERSCAN_ROWS,
   );
   const visibleEntries = entries.slice(firstVisible, lastVisible);
+  const guides = useMemo(
+    () =>
+      treeGuides(entries.map((entry) => ({ ...entry, id: entry.note.noteId }))),
+    [entries],
+  );
+  const namespaceById = useMemo(
+    () =>
+      new Map(snapshot.namespaceEntries.map((entry) => [entry.entryId, entry])),
+    [snapshot.namespaceEntries],
+  );
 
   useEffect(() => {
     if (focusRequest > 0) root.current?.focus();
@@ -171,11 +189,6 @@ export function WorkspaceTree({
     persistTree(selected, [...next].sort());
   };
 
-  const selectIndex = (index: number): void => {
-    const bounded = Math.max(0, Math.min(entries.length - 1, index));
-    persistTree(entries[bounded]?.note.noteId ?? null);
-  };
-
   const selectEntry = (entryId: string): void => {
     inputState.current = createTreeInputState();
     if (entryId !== selectedEntryId) persistTree(entryId);
@@ -190,7 +203,11 @@ export function WorkspaceTree({
     inputState.current = createTreeInputState();
     const noteId = entry.targetNoteId;
     if (!noteId) {
-      setCollapsed(entryId, !collapsed.has(entryId), entryId);
+      if (entries.find((item) => item.note.noteId === entryId)?.hasChildren) {
+        setCollapsed(entryId, !collapsed.has(entryId), entryId);
+      } else {
+        selectEntry(entryId);
+      }
       return;
     }
     if (entryId !== selectedEntryId) persistTree(entryId);
@@ -273,36 +290,63 @@ export function WorkspaceTree({
     countExplicit: boolean,
   ): void => {
     const selected = entries[selectedIndex] ?? null;
-    switch (command) {
-      case "cursor.logical-down":
-        selectIndex(selectedIndex + count);
-        return;
-      case "cursor.logical-up":
-        selectIndex(selectedIndex - count);
-        return;
-      case "cursor.document-start":
-        selectIndex(count - 1);
-        return;
-      case "cursor.document-end":
-        selectIndex(countExplicit ? count - 1 : entries.length - 1);
-        return;
-      case "cursor.page-down":
-      case "cursor.page-up":
-      case "cursor.half-page-down":
-      case "cursor.half-page-up": {
-        const rows = Math.max(
-          1,
-          Math.floor(
-            (root.current?.clientHeight ?? viewportHeight) / TREE_ROW_HEIGHT_PX,
+    if (isSidebarFoldCommand(command)) {
+      if (selectedEntryId)
+        persistTree(
+          selectedEntryId,
+          foldSidebarSubtree(
+            deriveVisibleNoteTree(snapshot.namespaceEntries).map((entry) => ({
+              id: entry.note.noteId,
+              depth: entry.depth,
+              foldable: entry.hasChildren,
+            })),
+            selectedEntryId,
+            localCollapsedNoteIds,
+            command,
           ),
         );
-        const page = command.includes("half")
-          ? Math.max(1, Math.floor(rows / 2))
-          : Math.max(1, rows - 2);
-        const direction = command.endsWith("down") ? 1 : -1;
-        selectIndex(selectedIndex + direction * page * count);
+      return;
+    }
+    if (command !== "cursor.left" && command !== "cursor.right") {
+      const element = root.current;
+      const result = navigateSidebar({
+        command,
+        count,
+        countExplicit,
+        items: entries.map((entry, i) => ({
+          id: entry.note.noteId,
+          parentId: entry.note.parentNoteId,
+          top: i * TREE_ROW_HEIGHT_PX,
+          bottom: (i + 1) * TREE_ROW_HEIGHT_PX,
+        })),
+        selectedId: selectedEntryId,
+        scrollTop: element?.scrollTop ?? scrollTop,
+        height: element?.clientHeight || viewportHeight,
+        scrollHeight: entries.length * TREE_ROW_HEIGHT_PX,
+        history: runtime.sidebarJumpListFor(tab.id, "tree"),
+        resolveHistoryId: (id) => {
+          let entry = snapshot.namespaceEntries.find(
+            (item) => item.entryId === id,
+          );
+          while (entry) {
+            if (entries.some((item) => item.note.noteId === entry!.entryId))
+              return entry.entryId;
+            entry = snapshot.namespaceEntries.find(
+              (item) => item.entryId === entry!.parentNoteId,
+            );
+          }
+          return null;
+        },
+      });
+      if (result) {
+        if (element) element.scrollTop = result.scrollTop;
+        setScrollTop(result.scrollTop);
+        if (result.selectedId !== selectedEntryId)
+          persistTree(result.selectedId);
         return;
       }
+    }
+    switch (command) {
       case "cursor.left":
         if (selected?.hasChildren && selected.expanded) {
           setCollapsed(selected.note.noteId, true);
@@ -388,7 +432,19 @@ export function WorkspaceTree({
         }
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         onKeyDown={(event) => {
-          if (onApplicationKeyDown?.(event)) return;
+          if (
+            event.key === "Escape" &&
+            (inputState.current.pending.length || inputState.current.count)
+          ) {
+            inputState.current = createTreeInputState();
+            event.preventDefault();
+            onApplicationKeyDown?.(event);
+            return;
+          }
+          if (onApplicationKeyDown?.(event)) {
+            inputState.current = createTreeInputState();
+            return;
+          }
           if (busy) return;
           const resolution = advanceTreeInput(
             inputState.current,
@@ -404,6 +460,9 @@ export function WorkspaceTree({
               resolution.countExplicit,
             );
           }
+        }}
+        onBlur={() => {
+          inputState.current = createTreeInputState();
         }}
       >
         <div
@@ -422,8 +481,10 @@ export function WorkspaceTree({
                 aria-level={entry.depth + 1}
                 aria-selected={selected}
                 aria-expanded={entry.hasChildren ? entry.expanded : undefined}
-                onClick={() => selectEntry(entry.note.noteId)}
-                onDoubleClick={() => void openEntry(entry.note.noteId)}
+                onClick={() => {
+                  if (selected) void openEntry(entry.note.noteId);
+                  else selectEntry(entry.note.noteId);
+                }}
                 style={
                   {
                     "--tree-depth": entry.depth,
@@ -432,15 +493,74 @@ export function WorkspaceTree({
                   } as CSSProperties
                 }
               >
-                <span className="tree-disclosure" aria-hidden="true">
-                  {entry.hasChildren ? (entry.expanded ? "▾" : "▸") : "·"}
-                </span>
+                {entry.hasChildren ? (
+                  <button
+                    type="button"
+                    className="tree-disclosure"
+                    tabIndex={-1}
+                    aria-label={`${noteDisplayTitle(entry.note.title)}を${entry.expanded ? "折り畳む" : "展開する"}`}
+                    aria-expanded={entry.expanded}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      inputState.current = createTreeInputState();
+                      setCollapsed(
+                        entry.note.noteId,
+                        entry.expanded,
+                        entry.note.noteId,
+                      );
+                      root.current?.focus();
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <TreeIcon
+                      name={entry.expanded ? "chevron-down" : "chevron-right"}
+                    />
+                  </button>
+                ) : (
+                  <span className="tree-disclosure" aria-hidden="true" />
+                )}
+                <TreeIcon
+                  name={
+                    namespaceById.get(entry.note.noteId)?.targetNoteId
+                      ? "file-text"
+                      : entry.hasChildren && entry.expanded
+                        ? "folder-open"
+                        : "folder-closed"
+                  }
+                />
                 <span className="tree-title">
-                  {noteDisplayTitle(entry.note.title)}
+                  <SymbolText text={noteDisplayTitle(entry.note.title)} />
                 </span>
               </div>
             );
           })}
+          <div className="tree-guides" aria-hidden="true">
+            {guides
+              .filter(
+                (guide) =>
+                  guide.start < lastVisible && guide.end > firstVisible,
+              )
+              .map((guide) => (
+                <span
+                  key={guide.id}
+                  className="tree-guide"
+                  data-tree-guide={guide.id}
+                  style={
+                    {
+                      "--tree-depth": guide.depth,
+                      top:
+                        Math.max(guide.start, firstVisible) *
+                        TREE_ROW_HEIGHT_PX,
+                      height:
+                        (Math.min(guide.end, lastVisible) -
+                          Math.max(guide.start, firstVisible)) *
+                        TREE_ROW_HEIGHT_PX,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+          </div>
         </div>
       </div>
       {error && (

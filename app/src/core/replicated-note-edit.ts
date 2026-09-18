@@ -18,6 +18,7 @@ export function applyReplicatedSectionSnapshot(
   note: ReplicatedNote,
   snapshot: SectionSnapshot,
   origin: unknown,
+  options: { readonly recoverProtectedIdentities?: boolean } = {},
 ): void {
   if (snapshot.sectionId !== note.noteId)
     throw new Error("Root Section ID must equal Note ID");
@@ -58,8 +59,26 @@ export function applyReplicatedSectionSnapshot(
     const identity = (id: string) => identities.get(id) ?? id;
     const nextIds = new Set([...candidate.entities.keys()].map(identity));
     for (const id of nextIds) {
-      if (note.entities.has(id) && !current.visible.has(id))
+      if (
+        !options.recoverProtectedIdentities &&
+        note.entities.has(id) &&
+        !current.visible.has(id)
+      )
         throw new Error("Protected identities require explicit recovery");
+    }
+    // Moving or rewriting an entity does not cancel its remove-wins deletion.
+    // Explicit recovery acknowledges only observed deletes of requested IDs,
+    // never the unrelated entities covered by the same deletion operation.
+    const restorations = new Map<string, string[]>();
+    if (options.recoverProtectedIdentities) {
+      for (const entry of current.recovery) {
+        if (!nextIds.has(entry.entityId)) continue;
+        for (const deletionId of entry.deletionIds) {
+          const ids = restorations.get(deletionId) ?? [];
+          ids.push(entry.entityId);
+          restorations.set(deletionId, ids);
+        }
+      }
     }
     const positions = new Map<string, string>();
     for (const [parent, children] of desired.children) {
@@ -96,6 +115,9 @@ export function applyReplicatedSectionSnapshot(
     // not leave a partial Yjs transaction behind if a move is rejected.
     const apply = (target: ReplicatedNote) =>
       target.transact(() => {
+        for (const [deletionId, ids] of restorations) {
+          target.restore(deletionId, ids);
+        }
         for (const source of ordered) {
           const id = identity(source);
           if (
@@ -142,7 +164,12 @@ export function applyReplicatedSectionSnapshot(
               ]
             : [];
         });
-        target.moveMany(moves, current.visible);
+        target.moveMany(
+          moves,
+          options.recoverProtectedIdentities
+            ? new Set([...current.visible, ...nextIds])
+            : current.visible,
+        );
         for (const source of ordered) {
           const id = identity(source),
             attrs = candidate.attributes(source).toJSON();
@@ -165,9 +192,11 @@ export function applyReplicatedSectionSnapshot(
             );
         }
         const visible = target.project().visible;
-        const removed = [...current.visible].filter(
-          (id) => !nextIds.has(id) && visible.has(id),
-        );
+        // Restoring a parent may also expose previously hidden children that
+        // are not part of the requested managed snapshot.
+        const removed = [
+          ...(options.recoverProtectedIdentities ? visible : current.visible),
+        ].filter((id) => !nextIds.has(id) && visible.has(id));
         if (removed.length) target.deleteMany(removed);
       }, origin);
     const staged = ReplicatedNote.load(

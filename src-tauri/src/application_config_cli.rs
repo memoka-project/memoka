@@ -18,7 +18,17 @@ use std::{
 
 const KEYS: &[&str] = &[
     "theme",
+    "ui_font_family",
     "font_family",
+    "note_japanese_font_family",
+    "note_latin_font_family",
+    "note_monospace_font_family",
+    "note_line_height",
+    "note_block_gap_em",
+    "note_list_item_gap_em",
+    "note_section_title_gap_before_em",
+    "note_section_title_gap_after_em",
+    "note_section_title_size_em",
     "zoom_percent",
     "note_max_width_px",
     "line_number_min_width_px",
@@ -126,9 +136,23 @@ pub(super) fn persist(path: &Path, output: &str) -> Result<(), ReadError> {
 
 fn values(source: &str) -> Result<Value, ReadError> {
     let config = validate_source(source).map_err(invalid_config)?;
+    let ui_font_family = config
+        .ui_font_family
+        .or(config.font_family)
+        .unwrap_or_else(|| DEFAULT_APPLICATION_FONT_FAMILY.to_owned());
     Ok(json!({
         "theme":config.theme.unwrap_or_else(|| DEFAULT_APPLICATION_THEME.as_str().to_owned()),
-        "font_family":config.font_family.unwrap_or_else(|| DEFAULT_APPLICATION_FONT_FAMILY.to_owned()),
+        "ui_font_family":ui_font_family.clone(),
+        "font_family":ui_font_family,
+        "note_japanese_font_family":config.note_japanese_font_family.unwrap_or_else(|| DEFAULT_NOTE_JAPANESE_FONT_FAMILY.to_owned()),
+        "note_latin_font_family":config.note_latin_font_family.unwrap_or_else(|| DEFAULT_NOTE_LATIN_FONT_FAMILY.to_owned()),
+        "note_monospace_font_family":config.note_monospace_font_family.unwrap_or_else(|| DEFAULT_NOTE_MONOSPACE_FONT_FAMILY.to_owned()),
+        "note_line_height":config.note_line_height.unwrap_or(DEFAULT_NOTE_LINE_HEIGHT),
+        "note_block_gap_em":config.note_block_gap_em.unwrap_or(DEFAULT_NOTE_BLOCK_GAP_EM),
+        "note_list_item_gap_em":config.note_list_item_gap_em.unwrap_or(DEFAULT_NOTE_LIST_ITEM_GAP_EM),
+        "note_section_title_gap_before_em":config.note_section_title_gap_before_em.unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_BEFORE_EM),
+        "note_section_title_gap_after_em":config.note_section_title_gap_after_em.unwrap_or(DEFAULT_NOTE_SECTION_TITLE_GAP_AFTER_EM),
+        "note_section_title_size_em":config.note_section_title_size_em.unwrap_or(DEFAULT_NOTE_SECTION_TITLE_SIZE_EM),
         "zoom_percent":config.zoom_percent.unwrap_or(DEFAULT_APPLICATION_ZOOM_PERCENT),
         "note_max_width_px":config.note_max_width_px.unwrap_or(DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX),
         "line_number_min_width_px":config.line_number_min_width_px.unwrap_or(DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX),
@@ -153,7 +177,7 @@ pub(crate) fn schema() -> Value {
         "theme_id":"[a-z][a-z0-9-]{0,47}; built-in IDs are reserved",
         "theme_bases":["nightfox","dayfox","dawnfox","duskfox","nordfox","terafox","carbonfox"],
         "palette_fields":PALETTE_FIELDS,"color":"#RRGGBB; no CSS, scripts, URLs or external files",
-        "constraints":{"zoom_percent":"50..200, step 10","note_max_width_px":"0 or 320..4096","line_number_min_width_px":"0 or 240..4096","indent_width_px":"16..64","font_family":"1..256 UTF-8 bytes; no control characters, semicolons or braces","japanese.word_segmentation":["fine","budoux","unicode"],"japanese.line_break_segmentation":["fine","budoux","native"]},
+        "constraints":{"zoom_percent":"50..200, step 10","note_max_width_px":"0 or 320..4096","line_number_min_width_px":"0 or 240..4096","indent_width_px":"16..64","ui_font_family":"1..256 UTF-8 bytes; no control characters, semicolons or braces","font_family":"deprecated alias of ui_font_family","note_font_families":"1..256 UTF-8 bytes; no control characters, semicolons or braces","note_line_height":"1.00..2.50, at most 2 decimal places","note_gaps_em":"0.00..3.00, at most 2 decimal places","note_section_title_size_em":"0.80..3.00, at most 2 decimal places","japanese.word_segmentation":["fine","budoux","unicode"],"japanese.line_break_segmentation":["fine","budoux","native"]},
         "limits":{"input_bytes":MAX_CONFIG_BYTES,"config_bytes":MAX_CONFIG_BYTES,"edits":128,"themes":64},
         "get":"config get --format json","set":"config set --input FILE|- --format json [--dry-run]",
         "conflict":"expected_revision is SHA-256 of the exact config bytes; reread on conflict, no force or auto-rebase",
@@ -183,11 +207,19 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<ConfigRequest, ReadError> {
     let mut keys = BTreeSet::new();
     for key in request.set.keys().chain(&request.unset) {
         key_parts(key)?;
-        if !keys.insert(key) {
+        if !keys.insert(canonical_key(key)) {
             return Err(invalid("Duplicate or overlapping set/unset key"));
         }
     }
     Ok(request)
+}
+
+fn canonical_key(key: &str) -> &str {
+    if key == "font_family" {
+        "ui_font_family"
+    } else {
+        key
+    }
 }
 
 fn key_parts(key: &str) -> Result<Vec<&str>, ReadError> {
@@ -206,10 +238,15 @@ fn item(value: &Value) -> Result<toml_edit::Item, ReadError> {
     match value {
         Value::String(s) => Ok(toml_edit::value(s)),
         Value::Bool(b) => Ok(toml_edit::value(*b)),
-        Value::Number(n) => n
-            .as_i64()
-            .map(toml_edit::value)
-            .ok_or_else(|| invalid("Expected an integer")),
+        Value::Number(n) => {
+            if let Some(integer) = n.as_i64() {
+                Ok(toml_edit::value(integer))
+            } else {
+                n.as_f64()
+                    .map(toml_edit::value)
+                    .ok_or_else(|| invalid("Expected a finite number"))
+            }
+        }
         Value::Object(map) => {
             let mut table = toml_edit::Table::new();
             for (k, v) in map {
@@ -237,7 +274,13 @@ pub(crate) fn set(path: &Path, request: &ConfigRequest, dry_run: bool) -> Result
     let mut document = source
         .parse::<Document>()
         .map_err(|e| invalid_config(e.to_string()))?;
+    let canonicalized_legacy_font = document.get("font_family").is_some()
+        && request
+            .set
+            .keys()
+            .any(|key| canonical_key(key) == "ui_font_family");
     for (key, value) in &request.set {
+        let key = canonical_key(key);
         let parts = key_parts(key)?;
         let (leaf, parents) = parts.split_last().unwrap();
         let mut target = document.as_item_mut();
@@ -262,10 +305,14 @@ pub(crate) fn set(path: &Path, request: &ConfigRequest, dry_run: bool) -> Result
             *new.decor_mut() = old.decor().clone();
         }
         *target = replacement;
+        if key == "ui_font_family" {
+            document.remove("font_family");
+        }
     }
     let mut removed = Vec::new();
     for key in &request.unset {
-        let parts = key_parts(key)?;
+        let canonical = canonical_key(key);
+        let parts = key_parts(canonical)?;
         let item = if parts.len() == 1 {
             document.remove(parts[0])
         } else {
@@ -277,6 +324,11 @@ pub(crate) fn set(path: &Path, request: &ConfigRequest, dry_run: bool) -> Result
         if item.is_some() {
             removed.push(key);
         }
+        if canonical == "ui_font_family" && document.remove("font_family").is_some() {
+            if !removed.contains(&key) {
+                removed.push(key);
+            }
+        }
     }
     let mut output = document.to_string();
     if !output.ends_with('\n') && !output.is_empty() {
@@ -284,7 +336,7 @@ pub(crate) fn set(path: &Path, request: &ConfigRequest, dry_run: bool) -> Result
     }
     let after = values(&output).map_err(|e| invalid(e.message))?;
     // Setting an already-effective value is a semantic no-op, including omitted defaults.
-    let changed = before != after || !removed.is_empty();
+    let changed = before != after || !removed.is_empty() || canonicalized_legacy_font;
     let revision_after = if changed {
         revision(&output)
     } else {
@@ -404,6 +456,10 @@ mod tests {
             json!({"japanese.word_segmentation":"unknown"}),
             json!({"zoom_percent":"120"}),
             json!({"note_max_width_px":4097}),
+            json!({"note_line_height":0.99}),
+            json!({"note_block_gap_em":3.01}),
+            json!({"note_section_title_size_em":1.234}),
+            json!({"note_monospace_font_family":"monospace; color:red"}),
         ] {
             assert!(set(&path, &request(&path, changes), false).is_err());
             assert_eq!(fs::read(&path).unwrap(), original);
@@ -424,6 +480,53 @@ mod tests {
         assert!(parse(duplicate.as_bytes()).is_err());
         assert!(parse(&vec![b' '; MAX_CONFIG_BYTES + 1]).is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn note_appearance_and_legacy_font_alias_use_canonical_storage() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        fs::write(&path, "font_family = 'serif'\n").unwrap();
+        let before = get(&path).unwrap();
+        assert_eq!(before["values"]["font_family"], "serif");
+        assert_eq!(before["values"]["ui_font_family"], "serif");
+
+        let change = request(
+            &path,
+            json!({
+                "font_family":"Inter, sans-serif",
+                "note_japanese_font_family":"Noto Sans JP, sans-serif",
+                "note_line_height":1.8,
+                "note_block_gap_em":1.1,
+                "note_list_item_gap_em":0.25,
+                "note_section_title_gap_before_em":0.6,
+                "note_section_title_gap_after_em":0.4,
+                "note_section_title_size_em":1.4
+            }),
+        );
+        let result = set(&path, &change, false).unwrap();
+        assert_eq!(result["values"]["note_line_height"], 1.8);
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(source.contains("ui_font_family = \"Inter, sans-serif\""));
+        assert!(!source.lines().any(|line| line.starts_with("font_family =")));
+
+        let revision = revision_at(&path).unwrap();
+        let duplicate_aliases = serde_json::to_vec(&json!({
+            "schema_version":1,
+            "expected_revision":revision,
+            "set":{"font_family":"serif","ui_font_family":"sans-serif"}
+        }))
+        .unwrap();
+        assert!(parse(&duplicate_aliases).is_err());
+
+        let same_path = temp.path().join("same.toml");
+        fs::write(&same_path, "font_family = 'serif'\n").unwrap();
+        let same = request(&same_path, json!({"font_family":"serif"}));
+        assert_eq!(set(&same_path, &same, false).unwrap()["status"], "applied");
+        assert_eq!(
+            fs::read_to_string(&same_path).unwrap(),
+            "ui_font_family = \"serif\"\n"
+        );
     }
 
     #[test]

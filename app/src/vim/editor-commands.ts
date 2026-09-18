@@ -1,3 +1,5 @@
+import { graphemes, graphemeEnd, previousGraphemeStart } from "./graphemes";
+import { textblockIconTokens } from "../core/symbols";
 import {
   Fragment,
   Slice,
@@ -47,6 +49,7 @@ import { expandEmptyLineDeletion } from "./line-deletion";
 import {
   alignVimViewport,
   VIM_VIEWPORT_ALIGNMENT_META,
+  VIM_VIEWPORT_SCROLL_META,
   type VimViewportAlignment,
 } from "./viewport-scroll";
 import {
@@ -109,6 +112,8 @@ export type VimRegister =
       structureKind: "block" | "list-item" | "table-row";
       nodeNames: string[];
       slice: Slice;
+      /** Zero-based nesting depth of the copied list slice root. */
+      sourceListDepth?: number;
     }
   | {
       kind: "section";
@@ -117,6 +122,8 @@ export type VimRegister =
       transfer: "copy" | "cut";
       sourceNoteId: string | null;
       sectionIds: string[];
+      titleOnly?: boolean;
+      sourceSectionDepth?: number;
       slice: Slice;
     }
   | VimTableCellsRegister;
@@ -133,6 +140,12 @@ export interface SectionDepthShiftSelection {
   readonly caretSectionId: string;
   readonly caretOffset: number;
   readonly caretPosition: number;
+}
+
+export interface FocusedSectionLineDeletionSelection {
+  readonly sourceSectionId: string;
+  readonly remaining: SectionSnapshot;
+  readonly register: Extract<VimRegister, { kind: "section" }>;
 }
 
 export interface SectionParagraphConversionSelection {
@@ -288,10 +301,11 @@ export function runEditorTab(
 
 interface InsertExitBlock {
   depth: number;
-  detailPrefix: "blockquote" | "code" | "table" | "details" | "list";
+  detailPrefix:
+    "blockquote" | "code" | "table" | "details" | "list" | "paragraph";
 }
 
-function insertExitListInsideDetails(
+function insertExitListInsideContainer(
   view: VimEditorView,
 ): InsertExitBlock | null {
   const { $from, $to } = view.state.selection;
@@ -299,14 +313,15 @@ function insertExitListInsideDetails(
   for (let depth = $from.depth; depth > 0; depth--) {
     const node = $from.node(depth);
     if ($to.depth < depth || $to.node(depth) !== node) continue;
-    // Stop at the nearest Details body: a surrounding list owns the Details
-    // itself and must not receive a new item when leaving an inner list.
-    if (node.type.name === "detailsBody") return list;
+    // Stop at the nearest enclosing body/quote. A list outside that container
+    // must not receive an item when leaving an inner list.
+    if (node.type.name === "detailsBody" || node.type.name === "blockquote")
+      return list;
     if (node.type.name === "details") return null;
     if (node.type.name === "bulletList" || node.type.name === "orderedList")
       list = { depth, detailPrefix: "list" };
   }
-  return null;
+  return list;
 }
 
 function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
@@ -332,22 +347,19 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
     }
   }
   const inner = blockquote ?? code ?? table;
-  return details && (!inner || details.depth > inner.depth) ? details : inner;
+  const structure =
+    details && (!inner || details.depth > inner.depth) ? details : inner;
+  return (
+    structure ??
+    ($from.parent.type.name === "paragraph" && $from.sameParent($to)
+      ? { depth: $from.depth, detailPrefix: "paragraph" }
+      : null)
+  );
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
-  const detailsList = insertExitListInsideDetails(view);
-  // Inside Details, leave the whole inner list. Elsewhere the nearest ListItem
-  // owns Ctrl+Enter, creating its first child or its next sibling.
-  if (
-    !detailsList &&
-    owningListItemDepth(view.state.selection.$from) !== null
-  ) {
-    const handled = insertListItemAfter(view.state, view.dispatch);
-    if (handled) view.focus();
-    return { handled, detail: "list:created-item-after" };
-  }
-  const target = detailsList ?? insertExitBlock(view);
+  const innerList = insertExitListInsideContainer(view);
+  const target = innerList ?? insertExitBlock(view);
   if (!target) {
     return {
       handled: false,
@@ -536,11 +548,11 @@ export function runEditorInsertBackspace(view: VimEditorView): EditorVimResult {
   const before = selection.$from.nodeBefore;
   if (!before) return { handled: false, detail };
   if (before.isText && before.text) {
-    const character = Array.from(before.text).at(-1);
+    const character = graphemes(before.text).at(-1);
     return character
       ? deleteInsertRange(
           view,
-          selection.from - character.length,
+          previousGraphemeStart(view.state.doc, selection.from),
           selection.from,
           detail,
         )
@@ -555,6 +567,29 @@ export function runEditorInsertBackspace(view: VimEditorView): EditorVimResult {
     );
   }
   return { handled: false, detail };
+}
+
+export function runEditorInsertForwardDelete(
+  view: VimEditorView,
+): EditorVimResult {
+  const boundary = runEditorInsertBoundaryDelete(view, "forward");
+  if (boundary.handled || boundary.preventDefault) return boundary;
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection)) return boundary;
+  if (!selection.empty)
+    return deleteInsertRange(
+      view,
+      selection.from,
+      selection.to,
+      "insert:delete",
+    );
+  if (!selection.$from.nodeAfter?.isText) return boundary;
+  return deleteInsertRange(
+    view,
+    selection.from,
+    graphemeEnd(view.state.doc, selection.from),
+    "insert:delete",
+  );
 }
 
 interface InsertBackwardUnit {
@@ -583,7 +618,7 @@ function insertBackwardUnits(
         toOffset - childOffset,
       );
       let position = parentStart + fromOffset;
-      for (const character of Array.from(slice)) {
+      for (const character of graphemes(slice)) {
         units.push({
           from: position,
           to: position + character.length,
@@ -610,6 +645,23 @@ function insertBackwardUnits(
       });
     }
   });
+  for (const token of [...textblockIconTokens(parent)].reverse()) {
+    if (token.from < lineStartOffset || token.to > caretOffset) continue;
+    const first = units.findIndex(
+      (unit) => unit.from === parentStart + token.from,
+    );
+    if (first < 0) continue;
+    let end = first;
+    while (end < units.length && units[end]!.from < parentStart + token.to)
+      end += 1;
+    units.splice(first, end - first, {
+      from: parentStart + token.from,
+      to: parentStart + token.to,
+      character: " ",
+      kind: "atom",
+      wordClass: null,
+    });
+  }
   const classes = segmentVimWordCharacters(
     units.map((unit) => (unit.kind === "atom" ? " " : unit.character)),
   );
@@ -790,6 +842,45 @@ export function runEditorEnterInsertFromHorizontalRule(
   };
 }
 
+function moveEmptyDetailsParagraphAfter(
+  view: VimEditorView,
+): EditorVimResult | null {
+  const { $from } = view.state.selection;
+  const paragraph = $from.parent;
+  const bodyDepth = $from.depth - 1;
+  const detailsDepth = bodyDepth - 1;
+  if (
+    detailsDepth < 1 ||
+    paragraph.type.name !== "paragraph" ||
+    paragraph.content.size !== 0 ||
+    $from.node(bodyDepth).type.name !== "detailsBody" ||
+    $from.node(detailsDepth).type.name !== "details" ||
+    $from.index(bodyDepth) !== $from.node(bodyDepth).childCount - 1
+  )
+    return null;
+  if ($from.node(bodyDepth).childCount === 1) {
+    return {
+      handled: false,
+      preventDefault: true,
+      detail: "details:keep-only-paragraph",
+    };
+  }
+  const parent = $from.node(detailsDepth - 1);
+  const index = $from.indexAfter(detailsDepth - 1);
+  if (!parent.canReplaceWith(index, index, paragraph.type, paragraph.marks))
+    return null;
+  const from = $from.before();
+  const afterDetails = $from.after(detailsDepth);
+  const tr = view.state.tr;
+  tr.delete(from, from + paragraph.nodeSize);
+  const destination = tr.mapping.map(afterDetails);
+  tr.insert(destination, paragraph);
+  tr.setSelection(TextSelection.create(tr.doc, destination + 1));
+  view.dispatch(scrollWhenLayoutIsAvailable(tr));
+  view.focus();
+  return { handled: true, detail: "details:move-empty-paragraph-after" };
+}
+
 export function runEditorInsertBoundaryDelete(
   view: VimEditorView,
   direction: "backward" | "forward",
@@ -834,6 +925,11 @@ export function runEditorInsertBoundaryDelete(
       handled: false,
       detail: `insert:delete-${direction}`,
     };
+  }
+
+  if (direction === "backward") {
+    const detailsResult = moveEmptyDetailsParagraphAfter(view);
+    if (detailsResult) return detailsResult;
   }
 
   const boundary = directSiblingBoundary(view, direction);
@@ -1739,6 +1835,14 @@ function registerForUnits(
             .join("\n"),
           nodeNames: [list.type.name, "listItem"],
           slice: new Slice(Fragment.from(copy), 1, 1),
+          sourceListDepth:
+            Array.from({ length: depth + 1 }, (_, index) =>
+              $first.node(index),
+            ).filter(
+              (node) =>
+                node.type.name === "bulletList" ||
+                node.type.name === "orderedList",
+            ).length - 1,
         };
     }
   }
@@ -2341,8 +2445,15 @@ function pasteStructure(
   try {
     const slice = structureSliceForRange(view, register, from, to);
     if (!slice) return false;
+    const copied =
+      register.structureKind === "list-item" ? copiedListItemIds(slice) : null;
     const transaction = view.state.tr.replace(from, to, slice);
-    const cursor = Math.min(from + slice.size, transaction.doc.content.size);
+    adjustPastedListDepth(transaction, copied, register.sourceListDepth);
+    const cursor = Math.min(
+      pastedListCursor(transaction.doc, copied?.roots ?? []) ??
+        from + slice.size,
+      transaction.doc.content.size,
+    );
     transaction.setSelection(
       Selection.near(transaction.doc.resolve(cursor), -1),
     );
@@ -2381,6 +2492,233 @@ function copyStructureWithFreshBlockIds(slice: Slice): Slice {
     nodes.push(copyNodeWithFreshBlockIds(node));
   });
   return new Slice(Fragment.fromArray(nodes), slice.openStart, slice.openEnd);
+}
+
+function isListNode(node: ProseMirrorNode): boolean {
+  return node.type.name === "bulletList" || node.type.name === "orderedList";
+}
+
+interface CopiedListItemIds {
+  readonly roots: readonly string[];
+  readonly all: ReadonlySet<string>;
+}
+
+function copiedListItemIds(slice: Slice): CopiedListItemIds | null {
+  const list =
+    slice.content.childCount === 1 && isListNode(slice.content.firstChild!)
+      ? slice.content.firstChild
+      : null;
+  if (!list) return null;
+  const roots: string[] = [];
+  const all = new Set<string>();
+  list.forEach((item) => {
+    const id = String(item.attrs.blockId ?? "");
+    if (item.type.name === "listItem" && id) roots.push(id);
+  });
+  list.descendants((node) => {
+    if (node.type.name === "listItem") {
+      const id = String(node.attrs.blockId ?? "");
+      if (id) all.add(id);
+    }
+    return true;
+  });
+  return roots.length > 0 && all.size > 0 ? { roots, all } : null;
+}
+
+interface PositionedListItem {
+  readonly id: string;
+  readonly position: number;
+  readonly node: ProseMirrorNode;
+  readonly depth: number;
+  readonly list: ProseMirrorNode;
+  readonly listPosition: number;
+}
+
+interface ListTreeAtItem {
+  readonly position: number;
+  readonly node: ProseMirrorNode;
+  readonly items: readonly PositionedListItem[];
+}
+
+function listTreeAtItemId(
+  document: ProseMirrorNode,
+  requestedId: string,
+): ListTreeAtItem | null {
+  let itemPosition = -1;
+  document.descendants((node, position) => {
+    if (node.type.name === "listItem" && node.attrs.blockId === requestedId) {
+      itemPosition = position;
+      return false;
+    }
+    return itemPosition < 0;
+  });
+  if (itemPosition < 0) return null;
+  const $item = document.resolve(itemPosition + 1);
+  let itemDepth = $item.depth;
+  while (itemDepth > 0 && $item.node(itemDepth).type.name !== "listItem") {
+    itemDepth -= 1;
+  }
+  if (itemDepth <= 0 || !isListNode($item.node(itemDepth - 1))) return null;
+  let rootDepth = itemDepth - 1;
+  while (
+    rootDepth >= 2 &&
+    $item.node(rootDepth - 1).type.name === "listItem" &&
+    isListNode($item.node(rootDepth - 2))
+  ) {
+    rootDepth -= 2;
+  }
+  const root = $item.node(rootDepth);
+  const rootPosition = $item.before(rootDepth);
+  const items: PositionedListItem[] = [];
+  const visit = (
+    list: ProseMirrorNode,
+    listPosition: number,
+    depth: number,
+  ): void => {
+    list.forEach((item, itemOffset) => {
+      if (item.type.name !== "listItem") return;
+      const position = listPosition + 1 + itemOffset;
+      const id = String(item.attrs.blockId ?? "");
+      if (id)
+        items.push({
+          id,
+          position,
+          node: item,
+          depth,
+          list,
+          listPosition,
+        });
+      item.forEach((child, childOffset) => {
+        if (isListNode(child)) {
+          visit(child, position + 1 + childOffset, depth + 1);
+        }
+      });
+    });
+  };
+  visit(root, rootPosition, 0);
+  return { position: rootPosition, node: root, items };
+}
+
+function pastedListCursor(
+  document: ProseMirrorNode,
+  rootIds: readonly string[],
+): number | null {
+  const lastId = rootIds.at(-1);
+  if (!lastId) return null;
+  const tree = listTreeAtItemId(document, lastId);
+  const item = tree?.items.find(({ id }) => id === lastId);
+  return item ? item.position + item.node.nodeSize : null;
+}
+
+function adjustPastedListDepth(
+  transaction: Transaction,
+  copied: CopiedListItemIds | null,
+  sourceListDepth: number | undefined,
+): void {
+  const firstId = copied?.roots[0];
+  if (!copied || !firstId || sourceListDepth === undefined) return;
+  const initialTree = listTreeAtItemId(transaction.doc, firstId);
+  if (!initialTree) return;
+  const copiedIndexes = initialTree.items.flatMap(({ id }, index) =>
+    copied.all.has(id) ? [index] : [],
+  );
+  if (copiedIndexes.length === 0) return;
+  const firstIndex = Math.min(...copiedIndexes);
+  const lastIndex = Math.max(...copiedIndexes);
+  let previous: PositionedListItem | undefined;
+  for (let index = firstIndex - 1; index >= 0; index -= 1) {
+    const candidate = initialTree.items[index];
+    if (candidate && !copied.all.has(candidate.id)) {
+      previous = candidate;
+      break;
+    }
+  }
+  const next = initialTree.items
+    .slice(lastIndex + 1)
+    .find(({ id }) => !copied.all.has(id));
+  const includesCopiedDescendants = copied.all.size > copied.roots.length;
+  const minimum = includesCopiedDescendants ? 0 : (next?.depth ?? 0);
+  const maximum = previous ? previous.depth + 1 : 0;
+  const targetDepth = Math.max(minimum, Math.min(maximum, sourceListDepth));
+  const selected = new Set(copied.roots);
+
+  for (;;) {
+    const tree = listTreeAtItemId(transaction.doc, firstId);
+    const current = tree?.items.find(({ id }) => id === firstId);
+    if (!tree || !current || current.depth === targetDepth) break;
+    const transformed = shiftSelectedListItemDepth(
+      tree.node,
+      selected,
+      current.depth < targetDepth ? "deeper" : "shallower",
+      { preserveOwnerBlocksAfterLift: includesCopiedDescendants },
+    );
+    if (!transformed.changed || !transformed.node) return;
+    transaction.replaceWith(
+      tree.position,
+      tree.position + tree.node.nodeSize,
+      transformed.node,
+    );
+  }
+
+  normalizePastedListKind(transaction, copied, firstId);
+}
+
+function normalizePastedListKind(
+  transaction: Transaction,
+  copied: CopiedListItemIds,
+  firstId: string,
+): void {
+  const tree = listTreeAtItemId(transaction.doc, firstId);
+  const currentIndex = tree?.items.findIndex(({ id }) => id === firstId) ?? -1;
+  const current = currentIndex >= 0 ? tree?.items[currentIndex] : undefined;
+  if (!tree || !current) return;
+  let parentIndex = -1;
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
+    const candidate = tree.items[index];
+    if (
+      candidate &&
+      !copied.all.has(candidate.id) &&
+      candidate.depth === current.depth - 1
+    ) {
+      parentIndex = index;
+      break;
+    }
+  }
+  const parent = parentIndex >= 0 ? tree.items[parentIndex] : undefined;
+  const siblingEndOffset = tree.items
+    .slice(currentIndex + 1)
+    .findIndex(({ depth }) => depth < current.depth);
+  const siblingEnd =
+    siblingEndOffset < 0
+      ? tree.items.length
+      : currentIndex + 1 + siblingEndOffset;
+  const sameDepthBefore = tree.items
+    .slice(parentIndex + 1, currentIndex)
+    .reverse()
+    .find(({ id, depth }) => !copied.all.has(id) && depth === current.depth);
+  const sameDepthAfter = tree.items
+    .slice(currentIndex + 1, siblingEnd)
+    .find(({ id, depth }) => !copied.all.has(id) && depth === current.depth);
+  const template =
+    sameDepthBefore?.list ?? sameDepthAfter?.list ?? parent?.list;
+  if (!template || current.list.type === template.type) return;
+
+  let containsOnlyCopiedRoots = current.list.childCount > 0;
+  current.list.forEach((item) => {
+    const id = String(item.attrs.blockId ?? "");
+    containsOnlyCopiedRoots &&= copied.roots.includes(id);
+  });
+  if (!containsOnlyCopiedRoots) return;
+  const replacement = template.type.create(
+    template.attrs,
+    current.list.content,
+    current.list.marks,
+  );
+  transaction.replaceWith(
+    current.listPosition,
+    current.listPosition + current.list.nodeSize,
+    replacement,
+  );
 }
 
 function sectionIdsInDocument(document: ProseMirrorNode): Set<string> {
@@ -2519,6 +2857,138 @@ function sectionSnapshotFromNode(
   };
 }
 
+function selectedSectionProjection(
+  node: ProseMirrorNode,
+  sectionPosition: number,
+  selectedUnits: readonly VimStructuralUnit[],
+): ProseMirrorNode | null {
+  if (
+    node.type.name !== SECTION_NODE ||
+    node.childCount !== 3 ||
+    node.child(0).type.name !== "sectionHeader" ||
+    node.child(1).type.name !== "sectionBody" ||
+    node.child(2).type.name !== "sectionChildren"
+  ) {
+    return null;
+  }
+  const header = node.child(0);
+  const headerPosition = sectionPosition + 1;
+  if (
+    !selectedUnits.some(
+      (unit) =>
+        unit.nodeName === "sectionHeader" &&
+        unit.blockPosition === headerPosition,
+    )
+  ) {
+    return null;
+  }
+  const body = node.child(1);
+  const bodyPosition = headerPosition + header.nodeSize;
+  const projectedBody = body.type.create(
+    body.attrs,
+    Fragment.fromArray(
+      projectSectionBodyChunks(body, bodyPosition, selectedUnits, true),
+    ),
+    body.marks,
+  );
+  const children = node.child(2);
+  const childrenPosition = bodyPosition + body.nodeSize;
+  const projectedChildren: ProseMirrorNode[] = [];
+  children.forEach((child, offset) => {
+    const projected = selectedSectionProjection(
+      child,
+      childrenPosition + 1 + offset,
+      selectedUnits,
+    );
+    if (projected) projectedChildren.push(projected);
+  });
+  return node.type.create(
+    node.attrs,
+    Fragment.fromArray([
+      header,
+      projectedBody,
+      children.type.create(
+        children.attrs,
+        Fragment.fromArray(projectedChildren),
+        children.marks,
+      ),
+    ]),
+    node.marks,
+  );
+}
+
+export function focusedSectionLineDeletionSelection(
+  view: VimEditorView,
+  mode: VimMode,
+  count: number,
+  visualLine: VimVisualLineState | null,
+): FocusedSectionLineDeletionSelection | null {
+  const noteId = view.dom.dataset.noteId ?? null;
+  const focusedSectionId = view.dom.dataset.sectionId ?? null;
+  if (
+    !noteId ||
+    !focusedSectionId ||
+    noteId === focusedSectionId ||
+    view.state.doc.childCount !== 3
+  ) {
+    return null;
+  }
+  const selection =
+    mode === "visual-line" ? visualLine : countedLogicalLine(view, count);
+  if (!selection) return null;
+  const selectedUnits = selectedUnitSlice(view, selection);
+  if (
+    !selectedUnits.some(
+      (unit) => unit.nodeName === "sectionHeader" && unit.blockPosition === 0,
+    )
+  ) {
+    return null;
+  }
+  const rows = collectProjectedSectionRows(view.state.doc, selectedUnits);
+  const rebuilt = rows ? rebuildSectionRows(view.state.doc, rows) : null;
+  const sectionType = view.state.schema.nodes.section;
+  if (!rebuilt || !sectionType || rebuilt.childCount !== 3) return null;
+  const remainingNode = sectionType.create(null, [
+    rebuilt.child(0),
+    rebuilt.child(1),
+    rebuilt.child(2),
+  ]);
+  const remaining = sectionSnapshotFromNode(remainingNode);
+  if (!remaining) return null;
+
+  const originalNode = sectionType.create(null, [
+    view.state.doc.child(0),
+    view.state.doc.child(1),
+    view.state.doc.child(2),
+  ]);
+  const projected = selectedSectionProjection(originalNode, -1, selectedUnits);
+  if (!projected) return null;
+  const sectionIds: string[] = [];
+  projected.descendants((node) => {
+    if (node.type.name === "sectionHeader") {
+      const id = String(node.attrs.sectionId ?? "");
+      if (id) sectionIds.push(id);
+    }
+    return true;
+  });
+  return {
+    sourceSectionId: focusedSectionId,
+    remaining,
+    register: {
+      kind: "section",
+      text: selectedUnits
+        .map((unit) =>
+          view.state.doc.textBetween(unit.textFrom, unit.textTo, "", "\uFFFC"),
+        )
+        .join("\n"),
+      transfer: "cut",
+      sourceNoteId: noteId,
+      sectionIds,
+      slice: new Slice(Fragment.from(projected), 0, 0),
+    },
+  };
+}
+
 /**
  * Materializes a Section register for insertion outside the mounted
  * ProseMirror subtree. This is needed when a Focused Section is the editor
@@ -2543,6 +3013,26 @@ function nearestSectionDepth(view: VimEditorView, position: number): number {
     if ($position.node(depth).type.name === "section") return depth;
   }
   return 0;
+}
+
+export function sectionTitlePutBoundary(
+  view: VimEditorView,
+  direction: PutDirection,
+): number | null | undefined {
+  const $cursor = view.state.doc.resolve(selectionCursor(view));
+  for (let depth = $cursor.depth; depth > 0; depth--) {
+    if ($cursor.node(depth).type.name === "sectionHeader")
+      return direction === "before" ? null : 0;
+    if ($cursor.node(depth).type.name === "bodyChunk") {
+      const body = $cursor.node(depth - 1);
+      if (body.type.name !== "sectionBody") return undefined;
+      let index = 0;
+      for (let chunk = 0; chunk < $cursor.index(depth - 1); chunk++)
+        index += body.child(chunk).childCount;
+      return index + $cursor.index(depth) + (direction === "after" ? 1 : 0);
+    }
+  }
+  return undefined;
 }
 
 function sectionPutPosition(
@@ -3055,53 +3545,293 @@ function deleteSelectedListRowsPreservingDescendants(
   }
 }
 
+interface ProjectedSectionRow {
+  readonly originalDepth: number;
+  readonly sectionId: string;
+  readonly node: ProseMirrorNode | null;
+  header: ProseMirrorNode;
+  readonly body: ProseMirrorNode;
+  readonly children: ProseMirrorNode;
+  readonly headerSelected: boolean;
+  bodyChunks: ProseMirrorNode[];
+  depth: number;
+  rebuilt?: ProseMirrorNode;
+}
+
+function selectedUnitSlice(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+): VimStructuralUnit[] {
+  const units = blockSemantics.visualLineUnits(view);
+  return units.slice(
+    Math.min(visualLine.anchorUnit, visualLine.headUnit),
+    Math.max(visualLine.anchorUnit, visualLine.headUnit) + 1,
+  );
+}
+
+function projectSectionBodyChunks(
+  body: ProseMirrorNode,
+  bodyPosition: number,
+  selectedUnits: readonly VimStructuralUnit[],
+  selected: boolean,
+): ProseMirrorNode[] {
+  const chunks: ProseMirrorNode[] = [];
+  body.forEach((chunk, offset) => {
+    const projected = projectListSelection(
+      chunk,
+      bodyPosition + 1 + offset,
+      selectedUnits,
+      selected,
+    );
+    if (projected) chunks.push(projected);
+  });
+  return chunks;
+}
+
+function collectProjectedSectionRows(
+  document: ProseMirrorNode,
+  selectedUnits: readonly VimStructuralUnit[],
+): ProjectedSectionRow[] | null {
+  if (
+    document.childCount !== 3 ||
+    document.child(0).type.name !== "sectionHeader" ||
+    document.child(1).type.name !== "sectionBody" ||
+    document.child(2).type.name !== "sectionChildren"
+  ) {
+    return null;
+  }
+  const rows: ProjectedSectionRow[] = [];
+  const visit = (
+    node: ProseMirrorNode | null,
+    header: ProseMirrorNode,
+    body: ProseMirrorNode,
+    children: ProseMirrorNode,
+    sectionPosition: number,
+    depth: number,
+    root: boolean,
+  ) => {
+    const headerPosition = root ? 0 : sectionPosition + 1;
+    const bodyPosition = headerPosition + header.nodeSize;
+    const sectionId = String(header.attrs.sectionId ?? "");
+    rows.push({
+      originalDepth: depth,
+      depth,
+      sectionId,
+      node,
+      header,
+      body,
+      children,
+      headerSelected: selectedUnits.some(
+        (unit) =>
+          unit.nodeName === "sectionHeader" &&
+          unit.blockPosition === headerPosition,
+      ),
+      bodyChunks: projectSectionBodyChunks(
+        body,
+        bodyPosition,
+        selectedUnits,
+        false,
+      ),
+    });
+    const childrenPosition = bodyPosition + body.nodeSize;
+    children.forEach((child, offset) => {
+      if (
+        child.type.name !== SECTION_NODE ||
+        child.childCount !== 3 ||
+        child.child(0).type.name !== "sectionHeader" ||
+        child.child(1).type.name !== "sectionBody" ||
+        child.child(2).type.name !== "sectionChildren"
+      ) {
+        return;
+      }
+      visit(
+        child,
+        child.child(0),
+        child.child(1),
+        child.child(2),
+        childrenPosition + 1 + offset,
+        depth + 1,
+        false,
+      );
+    });
+  };
+  visit(
+    null,
+    document.child(0),
+    document.child(1),
+    document.child(2),
+    -1,
+    0,
+    true,
+  );
+  return rows;
+}
+
+function rebuildSectionRows(
+  document: ProseMirrorNode,
+  rows: ProjectedSectionRow[],
+): ProseMirrorNode | null {
+  const survivors: ProjectedSectionRow[] = [];
+  for (const row of rows) {
+    if (row.originalDepth === 0 || !row.headerSelected) {
+      if (row.originalDepth === 0 && row.headerSelected) {
+        row.header = row.header.type.create(row.header.attrs);
+      }
+      const previous = survivors.at(-1);
+      row.depth = previous
+        ? Math.min(row.originalDepth, previous.depth + 1)
+        : 0;
+      survivors.push(row);
+    } else if (row.bodyChunks.length) {
+      const destination = survivors.at(-1);
+      if (!destination) return null;
+      destination.bodyChunks.push(...row.bodyChunks);
+    }
+  }
+  const root = survivors[0];
+  if (!root || root.originalDepth !== 0) return null;
+  const children = new Map<ProjectedSectionRow, ProjectedSectionRow[]>();
+  const ancestors: ProjectedSectionRow[] = [root];
+  for (let index = 1; index < survivors.length; index++) {
+    const row = survivors[index]!;
+    const parent = ancestors[row.depth - 1];
+    if (!parent) return null;
+    const values = children.get(parent) ?? [];
+    values.push(row);
+    children.set(parent, values);
+    ancestors[row.depth] = row;
+    ancestors.length = row.depth + 1;
+  }
+  for (let index = survivors.length - 1; index >= 0; index--) {
+    const row = survivors[index]!;
+    const body = row.body.type.create(
+      row.body.attrs,
+      Fragment.fromArray(row.bodyChunks),
+      row.body.marks,
+    );
+    const childNodes = (children.get(row) ?? []).map((child) => child.rebuilt!);
+    const sectionChildren = row.children.type.create(
+      row.children.attrs,
+      Fragment.fromArray(childNodes),
+      row.children.marks,
+    );
+    row.rebuilt = row.node
+      ? row.node.type.create(
+          row.node.attrs,
+          Fragment.fromArray([row.header, body, sectionChildren]),
+          row.node.marks,
+        )
+      : document.type.create(
+          document.attrs,
+          Fragment.fromArray([row.header, body, sectionChildren]),
+          document.marks,
+        );
+  }
+  return root.rebuilt ?? null;
+}
+
+function sectionRegisterForDeletedLines(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+): Extract<VimRegister, { kind: "section" }> | null {
+  const selectedUnits = selectedUnitSlice(view, visualLine);
+  const headers = selectedUnits.filter(
+    (unit) => unit.nodeName === "sectionHeader",
+  );
+  if (headers.length === 0) return null;
+  const target = sectionTitleTarget(view, {
+    anchorUnit: blockSemantics.visualLineUnits(view).indexOf(headers[0]!),
+    headUnit: blockSemantics.visualLineUnits(view).indexOf(headers[0]!),
+    cursor: headers[0]!.cursorFrom,
+  });
+  if (!target || target.root) return null;
+  if (
+    selectedUnits.some((unit) => unit.from < target.from || unit.to > target.to)
+  ) {
+    return null;
+  }
+  const projected = selectedSectionProjection(
+    target.node,
+    target.from,
+    selectedUnits,
+  );
+  if (!projected) return null;
+  const sectionIds: string[] = [];
+  projected.descendants((node) => {
+    if (node.type.name === "sectionHeader") {
+      const id = String(node.attrs.sectionId ?? "");
+      if (id) sectionIds.push(id);
+    }
+    return true;
+  });
+  return {
+    kind: "section",
+    text: selectedUnits
+      .map((unit) =>
+        view.state.doc.textBetween(unit.textFrom, unit.textTo, "", "\uFFFC"),
+      )
+      .join("\n"),
+    transfer: "cut",
+    sourceNoteId: view.dom.dataset.noteId ?? null,
+    sectionIds,
+    slice: new Slice(Fragment.from(projected), 0, 0),
+  };
+}
+
+function deleteSelectedSectionRowsPreservingStructure(
+  view: VimEditorView,
+  visualLine: VimVisualLineState,
+  register: VimRegister | null,
+): EditorVimResult | null {
+  const selectedUnits = selectedUnitSlice(view, visualLine);
+  if (!selectedUnits.some((unit) => unit.nodeName === "sectionHeader")) {
+    return null;
+  }
+  const rows = collectProjectedSectionRows(view.state.doc, selectedUnits);
+  const rebuilt = rows ? rebuildSectionRows(view.state.doc, rows) : null;
+  if (!rebuilt || rebuilt.type !== view.state.doc.type) return null;
+  const exactRegister = sectionRegisterForDeletedLines(view, visualLine);
+  const deletedRegister =
+    exactRegister ??
+    registerForUnits(
+      view,
+      visualLine,
+      blockSemantics.visualLineUnits(view),
+      true,
+    ) ??
+    register ??
+    undefined;
+  const transaction = view.state.tr.replaceWith(
+    0,
+    view.state.doc.content.size,
+    rebuilt.content,
+  );
+  const cursor = Math.min(selectedUnits[0]!.from, transaction.doc.content.size);
+  transaction.setSelection(Selection.near(transaction.doc.resolve(cursor), -1));
+  view.dispatch(scrollWhenLayoutIsAvailable(transaction));
+  view.focus();
+  return {
+    handled: true,
+    detail: "section:delete-selected-lines",
+    register: deletedRegister,
+    nextMode: "normal",
+  };
+}
+
 function deleteVisualLine(
   view: VimEditorView,
   visualLine: VimVisualLineState,
   register: VimRegister | null,
   nextMode: "normal" | "insert",
   expandDeletionToValidStructure = false,
-  includeSectionSubtree = false,
 ): EditorVimResult {
-  if (includeSectionSubtree) {
-    const target = sectionTitleTarget(view, visualLine);
-    const yanked = sectionRegisterForVisualTitle(view, visualLine);
-    if (target && yanked) {
-      const transaction = view.state.tr;
-      if (target.root) {
-        const headerType = view.state.schema.nodes.sectionHeader;
-        const bodyType = view.state.schema.nodes.sectionBody;
-        const childrenType = view.state.schema.nodes.sectionChildren;
-        if (!headerType || !bodyType || !childrenType) {
-          return { handled: false, detail: "section:delete-root" };
-        }
-        transaction.replaceWith(
-          0,
-          transaction.doc.content.size,
-          Fragment.fromArray([
-            headerType.create(view.state.doc.child(0).attrs),
-            bodyType.create(),
-            childrenType.create(),
-          ]),
-        );
-      } else {
-        transaction.delete(target.from, target.to);
-      }
-      const cursor = target.root
-        ? 0
-        : Math.min(target.from, transaction.doc.content.size);
-      transaction.setSelection(
-        Selection.near(transaction.doc.resolve(cursor), -1),
-      );
-      view.dispatch(scrollWhenLayoutIsAvailable(transaction));
-      view.focus();
-      return {
-        handled: true,
-        detail: target.root ? "section:clear-root" : "section:delete-subtree",
-        register: { ...yanked, transfer: "cut" },
-        nextMode,
-      };
-    }
+  if (nextMode === "normal") {
+    const projected = deleteSelectedSectionRowsPreservingStructure(
+      view,
+      visualLine,
+      register,
+    );
+    if (projected) return projected;
   }
   const units = blockSemantics.visualLineUnits(view);
   const yanked = visualLineRegister(view, visualLine);
@@ -3201,7 +3931,7 @@ const visualLineCommandHandlers: Partial<
     moveVisualLineViewport(view, visualLine, 1, "half-page", count),
   "selection.yank": yankVisualLine,
   "selection.delete": (view, visualLine, register) =>
-    deleteVisualLine(view, visualLine, register, "normal", false, true),
+    deleteVisualLine(view, visualLine, register, "normal"),
   "selection.change": (view, visualLine, register) =>
     deleteVisualLine(view, visualLine, register, "insert"),
   "selection.paste": pasteVisualLine,
@@ -3633,18 +4363,14 @@ function moveCharacter(
     for (let index = 0; index < normalizedCount(count); index += 1) {
       const $next = view.state.doc.resolve(next);
       const adjacent = direction > 0 ? $next.nodeAfter : $next.nodeBefore;
-      // ProseMirror text nodes are also leaves/atoms. Step over one code point,
-      // not the whole remaining text node, while keeping inline links atomic.
-      const character = adjacent?.isText
+      // Keep both graphemes and inline links indivisible in Insert movement.
+      const distance = adjacent?.isText
         ? direction > 0
-          ? Array.from(adjacent.text!.slice(0, 2))[0]
-          : Array.from(adjacent.text!.slice(-2)).at(-1)
-        : undefined;
-      const distance =
-        character?.length ??
-        (adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
+          ? graphemeEnd(view.state.doc, next) - next
+          : next - previousGraphemeStart(view.state.doc, next)
+        : adjacent?.isInline && (adjacent.isAtom || adjacent.isLeaf)
           ? adjacent.nodeSize
-          : 1);
+          : 1;
       // Table rows end at their last Normal cursor, not the insertion boundary.
       // Insert movement (including `a`) stays inside the current Cell textblock.
       const inTableTextblock =
@@ -3710,7 +4436,7 @@ function characterAt(
   if (from === undefined) return "";
   const to = positions[index + 1] ?? lineTo;
   return (
-    Array.from(
+    graphemes(
       view.state.doc.textBetween(from, Math.max(from + 1, to), "", "\uFFFC"),
     )[0] ?? ""
   );
@@ -3727,7 +4453,8 @@ function wordClasses(
   );
   const hardBoundaryBefore = positions.map(
     (position, index) =>
-      index > 0 && position !== (positions[index - 1] ?? 0) + 1,
+      index > 0 &&
+      position !== exclusiveCharacterPosition(view, positions[index - 1] ?? 0),
   );
   const segments =
     granularity === "WORD"
@@ -4040,7 +4767,7 @@ function exclusiveCharacterPosition(
   const nodeAfter = view.state.doc.resolve(bounded).nodeAfter;
   if (nodeAfter?.isText) {
     return Math.min(
-      bounded + (Array.from(nodeAfter.text ?? "")[0]?.length ?? 1),
+      graphemeEnd(view.state.doc, bounded),
       view.state.doc.content.size,
     );
   }
@@ -5267,6 +5994,146 @@ function viewportScrollRoot(view: VimEditorView): HTMLElement | null {
   return view.dom.closest<HTMLElement>(".editor-scroll");
 }
 
+/** Resolve a screen-row motion without replacing Visual anchors or scrolling to selection. */
+export function viewportNavigationTarget(
+  view: VimEditorView,
+  command: string,
+  cursor: number,
+  count: number,
+): number | null {
+  const scroll = viewportScrollRoot(view);
+  const lines = blockSemantics.logicalLines(view);
+  if (!lines.length || !scroll || scroll.clientHeight <= 0) return null;
+  const viewport = scroll.getBoundingClientRect();
+  if (viewport.height <= 0) return null;
+  let source:
+    DOMRect | { left: number; right: number; top: number; bottom: number };
+  try {
+    source = displayedCharacterRect(view, cursor);
+  } catch {
+    return null;
+  }
+  const x = Math.max(
+    viewport.left + 1,
+    Math.min(viewport.right - 1, (source.left + source.right) / 2),
+  );
+  const scrolling = command.startsWith("viewport.scroll-");
+  view.dispatch(
+    view.state.tr
+      .setMeta(VIM_VIEWPORT_SCROLL_META, true)
+      .setMeta("addToHistory", false),
+  );
+  if (scrolling) {
+    const dom = view.domAtPos(cursor).node;
+    const element = dom instanceof HTMLElement ? dom : dom.parentElement;
+    const lineHeight = element
+      ? Number.parseFloat(getComputedStyle(element).lineHeight)
+      : NaN;
+    const distance =
+      (Number.isFinite(lineHeight)
+        ? lineHeight
+        : Math.max(1, source.bottom - source.top)) * normalizedCount(count);
+    scroll.scrollTop = Math.max(
+      0,
+      Math.min(
+        Math.max(0, scroll.scrollHeight - scroll.clientHeight),
+        scroll.scrollTop + (command.endsWith("down") ? distance : -distance),
+      ),
+    );
+    try {
+      const current = displayedCharacterRect(view, cursor);
+      if (current.top >= viewport.top && current.bottom <= viewport.bottom)
+        return cursor;
+    } catch {
+      return null;
+    }
+  }
+  const rows: Array<{ position: number; top: number; bottom: number }> = [];
+  const cache = new Map<number, MeasuredDisplayPosition | null>();
+  for (let y = viewport.top + 1; y < viewport.bottom;) {
+    const hit = view.posAtCoords({ left: x, top: y });
+    if (!hit) {
+      y += 4;
+      continue;
+    }
+    const position = clampCursorInLines(lines, hit.pos);
+    let measured = measuredDisplayPosition(view, position, cache, true);
+    if (!measured) {
+      try {
+        const rect = view.coordsAtPos(position, 1);
+        if (rect.bottom > rect.top)
+          measured = {
+            position,
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: Math.max(1, rect.right - rect.left),
+              height: rect.bottom - rect.top,
+            },
+            centerX: (rect.left + rect.right) / 2,
+            centerY: (rect.top + rect.bottom) / 2,
+          };
+      } catch {
+        /* Detached rows have no geometry. */
+      }
+    }
+    if (!measured) {
+      y += 4;
+      continue;
+    }
+    const { rect } = measured;
+    const bottom = rect.top + rect.height;
+    if (
+      rect.top >= viewport.top - 0.5 &&
+      bottom <= viewport.bottom + 0.5 &&
+      !rows.some((row) => Math.abs(row.top - rect.top) < 1)
+    ) {
+      const line = lines[blockSemantics.currentLineIndex(lines, position)];
+      const seedIndex = line?.cursorPositions.indexOf(position) ?? -1;
+      const boundary =
+        line && seedIndex >= 0
+          ? displayedRowBoundary(
+              view,
+              line.cursorPositions,
+              seedIndex,
+              -1,
+              measured,
+              cache,
+              true,
+            )
+          : null;
+      rows.push({
+        position: scrolling
+          ? position
+          : boundary && line
+            ? line.cursorPositions[boundary.sameIndex]
+            : position,
+        top: rect.top,
+        bottom,
+      });
+    }
+    y = Math.max(y + 4, bottom + 1);
+  }
+  if (!rows.length) return null;
+  if (scrolling) {
+    const current = displayedCharacterRect(view, cursor);
+    return current.top < viewport.top
+      ? rows[0].position
+      : rows.at(-1)!.position;
+  }
+  if (command.endsWith("top"))
+    return rows[Math.min(normalizedCount(count) - 1, rows.length - 1)].position;
+  if (command.endsWith("bottom"))
+    return rows[Math.max(0, rows.length - normalizedCount(count))].position;
+  const center = (viewport.top + viewport.bottom) / 2;
+  return rows.reduce((best, row) =>
+    Math.abs((row.top + row.bottom) / 2 - center) <
+    Math.abs((best.top + best.bottom) / 2 - center)
+      ? row
+      : best,
+  ).position;
+}
+
 function positionViewport(
   view: VimEditorView,
   alignment: VimViewportAlignment,
@@ -5528,7 +6395,28 @@ function countedLogicalLine(
 function yankLine(view: VimEditorView, count = 1): VimRegister | null {
   const visualLine = countedLogicalLine(view, count);
   if (!visualLine) return null;
-  const yanked = visualLineRegister(view, visualLine);
+  const target = sectionTitleTarget(view, visualLine);
+  // A title-only yank still needs a closed Section slice: a bare Header is
+  // otherwise fitted into the target's structure by ProseMirror on put.
+  const titleOnly = target?.node.copy(
+    Fragment.fromArray([
+      target.node.child(0),
+      target.node.child(1).copy(Fragment.empty),
+      target.node.child(2).copy(Fragment.empty),
+    ]),
+  );
+  const yanked: VimRegister | null =
+    target && titleOnly
+      ? {
+          kind: "section",
+          text: target.node.child(0).textContent,
+          transfer: "copy",
+          sourceNoteId: view.dom.dataset.noteId ?? null,
+          sectionIds: [target.sectionId],
+          titleOnly: true,
+          slice: new Slice(Fragment.from(titleOnly), 0, 0),
+        }
+      : visualLineRegister(view, visualLine);
   dispatchSelection(view, visualLine.cursor, "normal");
   return yanked;
 }
@@ -5554,6 +6442,13 @@ function deleteSectionTitleLine(
 ): EditorVimResult | null {
   const target = sectionTitleTarget(view, visualLine);
   if (!target) return null;
+  if (!target.root) {
+    return deleteSelectedSectionRowsPreservingStructure(
+      view,
+      visualLine,
+      register,
+    );
+  }
   const headerPosition = target.root ? 0 : target.from + 1;
   const header = view.state.doc.nodeAt(headerPosition);
   if (!header || header.type.name !== "sectionHeader") return null;
@@ -5830,8 +6725,16 @@ export function pasteVimRegisterAtSelection(
     } else {
       const slice = structureSliceForRange(view, register, from, to);
       if (!slice) return false;
+      const copied =
+        register.structureKind === "list-item"
+          ? copiedListItemIds(slice)
+          : null;
       transaction.replaceRange(from, to, slice);
-      insertedSize = slice.size;
+      adjustPastedListDepth(transaction, copied, register.sourceListDepth);
+      insertedSize = Math.max(
+        slice.size,
+        (pastedListCursor(transaction.doc, copied?.roots ?? []) ?? from) - from,
+      );
     }
     transaction.setSelection(
       Selection.near(
@@ -5878,8 +6781,7 @@ function textPutPosition(
   const $cursor = view.state.doc.resolve(normalized);
   const nodeAfter = $cursor.nodeAfter;
   if (nodeAfter?.isText) {
-    const firstCharacter = Array.from(nodeAfter.text ?? "")[0];
-    return normalized + (firstCharacter?.length ?? 0);
+    return graphemeEnd(view.state.doc, normalized);
   }
   if (nodeAfter?.isInline && (nodeAfter.isAtom || nodeAfter.isLeaf)) {
     return normalized + nodeAfter.nodeSize;
@@ -5888,7 +6790,7 @@ function textPutPosition(
 }
 
 function pastedTextCursor(from: number, text: string): number {
-  const lastCharacter = Array.from(text).at(-1);
+  const lastCharacter = graphemes(text).at(-1);
   return from + text.length - (lastCharacter?.length ?? 1);
 }
 
@@ -5995,7 +6897,7 @@ function putOnce(
       if (transaction) {
         const end = transaction.selection.from;
         const $end = transaction.doc.resolve(end);
-        const last = Array.from($end.nodeBefore?.text ?? "").at(-1);
+        const last = graphemes($end.nodeBefore?.text ?? "").at(-1);
         transaction.setSelection(
           TextSelection.create(
             transaction.doc,
@@ -6686,7 +7588,7 @@ function replaceTextAtCursor(
 
   let to = from;
   let consumed = 0;
-  const replacementLength = Array.from(text).length;
+  const replacementLength = graphemes(text).length;
   if (startIndex >= 0 && line.from !== line.to) {
     for (
       let index = startIndex;
@@ -6757,7 +7659,7 @@ export function replaceVisualCharacters(
 ): EditorVimResult {
   const detail = "selection:replace";
   const { from, to } = range;
-  if (from === to || Array.from(character).length !== 1)
+  if (from === to || graphemes(character).length !== 1)
     return { handled: false, detail };
   const edits: { from: number; to: number; node: ProseMirrorNode }[] = [];
   const hidden = [
@@ -6794,19 +7696,22 @@ export function replaceVisualCharacters(
         });
       }
       for (const visible of ranges) {
-        const original = node.text!.slice(
-          visible.from - position,
-          visible.to - position,
-        );
-        // Code/Source newlines, Hard Breaks and container boundaries are not
-        // characters to flatten. Keep each text run's marks and identities.
-        const replacement = original.replace(/[^\r\n]/gu, () => character);
-        if (replacement)
-          edits.push({
-            from: visible.from,
-            to: visible.to,
-            node: view.state.schema.text(replacement, node.marks),
-          });
+        // A cluster may cross mark boundaries. Replace it once with the marks
+        // of its first character, and skip continuation nodes of that cluster.
+        for (let start = visible.from; start < visible.to;) {
+          const end = graphemeEnd(view.state.doc, start);
+          if (end <= start) break;
+          const boundary =
+            previousGraphemeStart(view.state.doc, start + 1) === start;
+          const original = view.state.doc.textBetween(start, end);
+          if (boundary && end <= to && !/^[\r\n]+$/.test(original))
+            edits.push({
+              from: start,
+              to: end,
+              node: view.state.schema.text(character, node.marks),
+            });
+          start = end;
+        }
       }
     } else if (
       node.isInline &&
@@ -6864,7 +7769,7 @@ export function runEditorVisualCharChange(
     const selection = Selection.near(transaction.doc.resolve(end), -1);
     const before = selection.$from.nodeBefore;
     const cursor = before?.isText
-      ? selection.from - (Array.from(before.text!).at(-1)?.length ?? 0)
+      ? previousGraphemeStart(transaction.doc, selection.from)
       : before?.isInline && before.type.name !== "hardBreak"
         ? selection.from - before.nodeSize
         : selection.from;
@@ -7290,6 +8195,21 @@ export function runEditorVimCommand(
   countExplicit = false,
   keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
 ): EditorVimResult {
+  if (
+    command.startsWith("cursor.screen-") ||
+    command.startsWith("viewport.scroll-")
+  ) {
+    const cursor =
+      mode === "visual-char" ? visualCharCursor(view) : selectionCursor(view);
+    const target = viewportNavigationTarget(view, command, cursor, count);
+    if (target === null) return { handled: false, detail: command };
+    const result = moveVimSelectionToViewportPosition(view, mode, target, null);
+    return {
+      ...result,
+      handled: result.handled || command.startsWith("viewport.scroll-"),
+      detail: command,
+    };
+  }
   const handler = editorVimCommandHandlers[command];
   return handler
     ? handler(

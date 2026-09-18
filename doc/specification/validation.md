@@ -67,6 +67,8 @@ unit/integration試験で次を網羅する。
 - 日本語境界の`J`とrawな`gJ`
 - Section focus/fold/depth変更とList depth変更
 - 未選択List子孫を`dd`/Visual delete/yankへ含めないこと
+- Section titleの`dd`とVisual Line deleteで未選択本文・子Sectionを削除せず、表示順と可能な深度を維持すること
+- Focused Section titleの削除後に直前Sectionまたは親へfocusし、UndoでSection identityとfocusを復元すること
 - 複数block ListItemでHard Breakを論理行として数え、未選択の行・blockをdelete/yankへ含めないこと
 - 同じItemの複数行を選択したdepth変更が1回だけ適用され、後続blockを含む表示順を保つこと
 - Table Cell移動、空Cell、Visual Block、Clipboard、行列action、repeat
@@ -145,8 +147,10 @@ IME OFF結果を記録する。本文、入力文字そのもの、Note/Section 
    子List後方にParagraphなどがあっても既存の親子関係・表示順・IDが変わらないこと、
    追加先のList種別（番号付きの開始番号も含む）を維持すること、空の既存Itemを再利用しないこと、
    Undo/RedoとIME composition優先も確認する。`O`、List外の`o`/`Ctrl-Enter`の動作は変えない。
-   リスト項目の`yy`/Visual Line `y`→`p`も同じ位置へ追加し、コピーした子孫の相対階層を保つ。
-   `P`、文字単位の`p`、Table Cellのputは変わらないことも確認する。
+   リスト項目の`yy`/Visual Line `y`→`p`も同じ位置へ追加し、コピー元の絶対深度と子孫の相対階層を可能な限り保つ。
+   子孫を含む浅いItemを既存子孫の直前へ`p/P`した場合は、後続子孫が貼り付けた末尾側のItemへ接続されること、
+   単一Itemのpasteでは既存子孫の親が変わらないことも確認する。
+   文字単位の`p`とTable Cellのputは変わらないことも確認する。
 4. 直接Paragraphに複数行のplain textをInsert paste/Normal `p/P`し、改行ごとの兄弟Itemになることを確認する。
    CRLF、途中の空行、末尾改行1個の除去、caret後方のtext・後続block・子Listが最後のItemへ残ることも確認する。
 5. Markdown/HTML/内部Clipboardでは複数blockの構造を保ち、Code/Table内部へのplain pasteは既存の挙動を保つ。
@@ -185,7 +189,10 @@ IME OFF結果を記録する。本文、入力文字そのもの、Note/Section 
 - TabPageごとのTree/Outline表示、幅、選択、fold復元
 - Outlineの内部scroll、caret追従、fold/focus反映
 - 相対行番号と現在absolute番号、大Note/static chunk、狭いWindowでの省略
-- Note最大幅、indent grid、theme、font、Zoom
+- Note最大幅、indent grid、theme、UI/日本語/英数/等幅font、Zoom
+- Noteのline-height、block/List/Section title間隔、Section title sizeがEditorと構造化previewへ即時反映され、再起動後も保持されること
+- line-heightに比例してTable cellの縦paddingだけが変わり、設定範囲、小数精度、不正font、旧`font_family`移行を検証すること
+- Note等幅fontがCode Block内の`code`要素まで継承されること
 - wheel/touch/scrollbarでcaretが上下端の途中で欠ける場合に、余白を避けて表示行全体が見える位置へ補正すること
 - 通常/分割Window、折返し・装飾のあるParagraph/List、Table/Code/画像で、補正によるscrollの引戻しや点滅がないこと
 - 手動scrollの補正・viewport observerによるBodyChunk切替は表示中の内容を基準にanchoringし、画面外の古いcaretを基準にしないこと

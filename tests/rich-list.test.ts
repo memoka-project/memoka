@@ -289,10 +289,10 @@ describe("rich ListItem editing", () => {
     ]);
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     key(editor, "Enter", { ctrlKey: true });
-    expect(editor.state.doc.childCount).toBe(1);
-    expect(editor.state.doc.firstChild!.childCount).toBe(2);
-    expect(editor.state.doc.firstChild!.lastChild!.firstChild!.type.name).toBe(
-      "paragraph",
+    expect(editor.state.doc.childCount).toBe(2);
+    expect(editor.state.doc.firstChild!.childCount).toBe(1);
+    expect(editor.state.selection.$from.parent).toBe(
+      editor.state.doc.lastChild,
     );
   });
 
@@ -340,7 +340,8 @@ describe("rich ListItem editing", () => {
       p("existing"),
     ]);
     editor.commands.setTextSelection(position(editor, "inside"));
-    key(editor, "Enter", { ctrlKey: true });
+    key(editor, "Escape");
+    key(editor, "o");
     expect(
       editor.state.doc.content.content.map((node) => node.type.name),
     ).toEqual(["bulletList", "paragraph"]);
@@ -381,7 +382,7 @@ describe("rich ListItem editing", () => {
   ])(
     "creates a first child before existing children from $type, with Undo/Redo",
     async (block) => {
-      for (const opening of ["Ctrl-Enter", "o"]) {
+      for (const opening of ["o"]) {
         const { editor, adapter } = await harness([
           list(item(block, p("tail"), list(item(p("child")))), item(p("next"))),
         ]);
@@ -434,7 +435,7 @@ describe("rich ListItem editing", () => {
     },
   );
 
-  it.each(["Ctrl-Enter", "o"])(
+  it.each(["o"])(
     "preserves the display order of multiple child lists and trailing blocks with %s",
     async (opening) => {
       const { editor } = await harness([
@@ -503,7 +504,8 @@ describe("rich ListItem editing", () => {
     editor.commands.setTextSelection(3);
     const oldFirst = editor.state.doc.firstChild!.firstChild!;
     const oldNext = editor.state.doc.firstChild!.lastChild!;
-    key(editor, "Enter", { ctrlKey: true });
+    key(editor, "Escape");
+    key(editor, "o");
     const result = editor.state.doc.firstChild!;
     expect(result.childCount).toBe(3);
     expect(result.firstChild!.eq(oldFirst)).toBe(true);
@@ -513,7 +515,7 @@ describe("rich ListItem editing", () => {
   });
 
   it.each(["bulletList", "orderedList"])(
-    "puts copied list items first in an existing child %s without moving descendants",
+    "preserves copied list depth before an existing child %s",
     async (listType) => {
       const { editor, adapter } = await harness([
         list(
@@ -540,7 +542,7 @@ describe("rich ListItem editing", () => {
       const before = editor.state.doc;
       expect(key(editor, "p").defaultPrevented).toBe(true);
       const outer = editor.state.doc.firstChild!;
-      expect(outer.childCount).toBe(3);
+      expect(outer.childCount).toBe(4);
       const parent = outer.child(1);
       expect(parent.attrs).toEqual(before.firstChild!.child(1).attrs);
       expect(
@@ -549,18 +551,27 @@ describe("rich ListItem editing", () => {
       expect(parent.lastChild!.eq(before.firstChild!.child(1).lastChild!)).toBe(
         true,
       );
-      const children = parent.child(1);
+      expect(parent.childCount).toBe(2);
+      const pasted = outer.child(2);
+      expect(pasted.firstChild!.textContent).toBe("copy");
+      expect(pasted.attrs.blockId).not.toBe(outer.firstChild!.attrs.blockId);
       const oldChildren = before.firstChild!.child(1).child(1);
-      expect(children.attrs).toEqual(oldChildren.attrs);
-      expect(children.type.name).toBe(listType);
-      expect(children.childCount).toBe(3);
-      expect(children.firstChild!.textContent).toBe("copycopied child");
-      expect(children.firstChild!.lastChild!.type.name).toBe("bulletList");
-      expect(children.firstChild!.attrs.blockId).not.toBe(
-        outer.firstChild!.attrs.blockId,
-      );
-      expect(children.child(1).eq(oldChildren.child(0))).toBe(true);
-      expect(children.child(2).eq(oldChildren.child(1))).toBe(true);
+      const copiedChildren = pasted.child(1);
+      expect(copiedChildren.type.name).toBe("bulletList");
+      expect(copiedChildren.firstChild!.textContent).toBe("copied child");
+      if (listType === "bulletList") {
+        expect(copiedChildren.childCount).toBe(3);
+        expect(copiedChildren.child(1).eq(oldChildren.child(0))).toBe(true);
+        expect(copiedChildren.child(2).eq(oldChildren.child(1))).toBe(true);
+      } else {
+        expect(copiedChildren.childCount).toBe(1);
+        const reconnected = pasted.child(2);
+        expect(reconnected.type.name).toBe("orderedList");
+        expect(reconnected.attrs).toEqual(oldChildren.attrs);
+        expect(reconnected.child(0).eq(oldChildren.child(0))).toBe(true);
+        expect(reconnected.child(1).eq(oldChildren.child(1))).toBe(true);
+      }
+      expect(outer.child(3).eq(before.firstChild!.child(2))).toBe(true);
       const after = editor.state.doc;
       editor.state.doc.check();
       key(editor, "u");

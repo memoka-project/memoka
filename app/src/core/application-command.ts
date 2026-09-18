@@ -35,6 +35,15 @@ export type ApplicationCommandId =
   | "application.diagnostics"
   | "application.colorscheme"
   | "application.font"
+  | "application.note_font_japanese"
+  | "application.note_font_latin"
+  | "application.note_font_monospace"
+  | "application.note_line_height"
+  | "application.note_block_gap"
+  | "application.note_list_item_gap"
+  | "application.note_section_title_gap_before"
+  | "application.note_section_title_gap_after"
+  | "application.note_section_title_size"
   | "application.zoom"
   | "application.note_width"
   | "application.line_number_min_width"
@@ -266,10 +275,73 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
   },
   {
     id: "application.font",
-    name: "font",
+    name: "ui-font",
+    aliases: ["font"],
+    description: "アプリケーションUIのフォントを選択・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_font_japanese",
+    name: "note-font-ja",
     aliases: [],
-    description: "アプリケーション全体のフォントを選択・変更する",
-    argument: "none",
+    description: "Noteの日本語フォントを選択・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_font_latin",
+    name: "note-font-latin",
+    aliases: [],
+    description: "Noteの英数フォントを選択・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_font_monospace",
+    name: "note-font-mono",
+    aliases: [],
+    description: "Noteの等幅フォントを選択・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_line_height",
+    name: "note-line-height",
+    aliases: [],
+    description: "Note本文の行間倍率を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_block_gap",
+    name: "block-gap",
+    aliases: [],
+    description: "Note本文のブロック間隔を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_list_item_gap",
+    name: "list-item-gap",
+    aliases: [],
+    description: "Note本文のリスト項目間隔を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_section_title_gap_before",
+    name: "section-title-gap-before",
+    aliases: [],
+    description: "Section title前の間隔を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_section_title_gap_after",
+    name: "section-title-gap-after",
+    aliases: [],
+    description: "Section title後の間隔を表示・変更する",
+    argument: "optional",
+  },
+  {
+    id: "application.note_section_title_size",
+    name: "section-title-size",
+    aliases: [],
+    description: "Section titleの相対サイズを表示・変更する",
+    argument: "optional",
   },
   {
     id: "application.zoom",
@@ -356,6 +428,21 @@ export function parseApplicationCommand(
     return {
       kind: "error",
       message: `引数を受け付けないCommandです: ${name}`,
+    };
+  }
+  if (
+    arguments_.length > 0 &&
+    [
+      "application.font",
+      "application.note_font_japanese",
+      "application.note_font_latin",
+      "application.note_font_monospace",
+    ].includes(command.id)
+  ) {
+    return {
+      kind: "command",
+      command,
+      argument: source.slice(name.length).trim(),
     };
   }
   if (arguments_.length > 1) {

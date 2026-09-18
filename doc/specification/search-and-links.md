@@ -115,7 +115,7 @@ Insert modeで`[[`を入力すると、Section title候補を共通検索paneで
 - Note/Section renameはすべての表示へ反映するが、link target IDは変えない。
 - link内の1文字単位編集、`h/l`移動を許さない。
 - clickはlink先を開かずcaretを置く。
-- Normal `gf`でtarget NoteDocを現在Windowへ開き、target Sectionへfocusする。
+- Normal `gf`でtarget NoteDoc全体を現在Windowへ開き、focusを解除してtarget Sectionタイトル先頭へ移動する。タイトルがWindow上部になるようスクロールして本文を表示する（末尾付近ではスクロール可能な範囲まで）。
 - 移動前位置をWindow-local Jump Listへ追加する。
 - target欠損時は文書を変更せず通知する。
 
@@ -136,9 +136,15 @@ Note内検索はURLではなく表示labelを対象にする。
 
 ## 10. Jump List
 
-Jump ListはWindow-localで、`Ctrl-o/Ctrl-i`により戻る/進む。
+本文のJump ListはWindow-localで、`Ctrl-o/Ctrl-i`により戻る/進む。
 Internal Linkの`gf`、Workspace検索結果、Outline移動、Tree/Buffer検索からの明示openを記録する。
 
 entryはNote/Section ID、Yjs Relative Position、block ID、offset、前後context fallbackを持つ。
-同じNoteの再open、失敗したopen、通常motion、Editor clickはentryを増やさない。
+単独の`gg/G`・`H/M/L`、count付き`zt/zz/zb`で位置が変わった場合も移動前位置を記録する（operatorの一部は除く）。
+同じNoteの再open、失敗したopen、その他の通常motion、scroll、Editor click、focus移動はentryを増やさない。
 削除済みNoteや解決不能entryはskipする。
+
+Tree/OutlineにはTabPage内でそれぞれ独立したJump Listを持ち、本文と共有しない。同じjump motionを記録し、`[count]Ctrl-o/i`で戻る/進む。
+TreeのentryはEntry ID、Outlineは表示NoteごとのSection ID。削除済み項目はskipし、foldに隠れた項目は最寄りの表示祖先へ復元する。
+Outlineは表示Note変更時にresetし、Focused Section subtree外の履歴はskipする。
+最大100件、新しいjumpでforward履歴を破棄する。同位置・失敗は記録しない。Sidebarを閉じても保持し、TabPage close/アプリ終了で破棄する。永続化はしない。

@@ -1,4 +1,9 @@
 import {
+  SymbolPicker,
+  type SymbolPickerSession,
+} from "./components/SymbolPicker";
+import { SymbolText } from "./components/SymbolText";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -126,6 +131,7 @@ import {
   DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   DEFAULT_APPLICATION_ZOOM_PERCENT,
+  DEFAULT_NOTE_APPEARANCE,
   DISABLED_APPLICATION_NOTE_MAX_WIDTH_PX,
   DISABLED_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
   MAX_APPLICATION_INDENT_WIDTH_PX,
@@ -136,9 +142,15 @@ import {
   MIN_APPLICATION_NOTE_MAX_WIDTH_PX,
   clampApplicationZoomPercent,
   normalizeApplicationIndentWidthPx,
+  normalizeApplicationFontFamily,
   normalizeApplicationLineNumberMinWidthPx,
   normalizeApplicationNoteMaxWidthPx,
   normalizeApplicationZoomPercent,
+  normalizeNoteAppearance,
+  normalizeNoteGapEm,
+  normalizeNoteLineHeight,
+  normalizeNoteSectionTitleSizeEm,
+  type NoteAppearanceSettings,
   shouldHideApplicationLineNumbers,
 } from "./core/application-appearance";
 import {
@@ -218,6 +230,7 @@ import {
   applyApplicationIndentWidth,
   applyApplicationFont,
   applyApplicationNoteMaxWidth,
+  applyNoteAppearance,
   createDefaultApplicationZoomPort,
   refreshApplicationLayout,
   type ApplicationZoomPort,
@@ -226,6 +239,7 @@ import {
 export interface AppProps {
   initialTheme?: ApplicationThemeId;
   initialFontFamily?: string;
+  initialNoteAppearance?: NoteAppearanceSettings;
   initialZoomPercent?: number;
   initialNoteMaxWidthPx?: number;
   initialLineNumberMinWidthPx?: number;
@@ -250,6 +264,7 @@ type VimCommandOrigin = "window" | "left-sidebar" | "right-sidebar";
 export function App({
   initialTheme = DEFAULT_APPLICATION_THEME_ID,
   initialFontFamily = DEFAULT_APPLICATION_FONT_FAMILY,
+  initialNoteAppearance = DEFAULT_NOTE_APPEARANCE,
   initialZoomPercent = DEFAULT_APPLICATION_ZOOM_PERCENT,
   initialNoteMaxWidthPx = DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
   initialLineNumberMinWidthPx = DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX,
@@ -280,6 +295,7 @@ export function App({
   const [themeId, setThemeId] = useState<ApplicationThemeId>(initialTheme);
   const [themeRegistryRevision, setThemeRegistryRevision] = useState(0);
   const [fontFamily, setFontFamily] = useState(initialFontFamily);
+  const [noteAppearance, setNoteAppearance] = useState(initialNoteAppearance);
   const [zoomPercent, setZoomPercent] = useState(initialZoomPercent);
   const [noteMaxWidthPx, setNoteMaxWidthPx] = useState(initialNoteMaxWidthPx);
   const [lineNumberMinWidthPx, setLineNumberMinWidthPx] = useState(
@@ -337,6 +353,9 @@ export function App({
     useState<BlockTypePickerSession | null>(null);
   const [inlineFormatPicker, setInlineFormatPicker] =
     useState<InlineFormatPickerSession | null>(null);
+  const [symbolPicker, setSymbolPicker] = useState<SymbolPickerSession | null>(
+    null,
+  );
   const [tableActionPicker, setTableActionPicker] =
     useState<TableActionPickerSession | null>(null);
   const [codeActionPicker, setCodeActionPicker] =
@@ -372,7 +391,15 @@ export function App({
     return () =>
       window.removeEventListener("memoka-editor-error", reportEditorError);
   }, []);
-  const [fontPicker, setFontPicker] = useState<FontPickerSession | null>(null);
+  const [fontPicker, setFontPicker] = useState<
+    | (FontPickerSession & {
+        target: "ui" | "japanese" | "latin" | "monospace";
+        command: string;
+      })
+    | null
+  >(null);
+  const persistedNoteAppearance = useRef(initialNoteAppearance);
+  const noteAppearanceRequestGeneration = useRef(0);
   const [availableUpdate, setAvailableUpdate] =
     useState<ApplicationRelease | null>(null);
   const [updatePrompt, setUpdatePrompt] = useState<{
@@ -487,6 +514,9 @@ export function App({
       }
       setThemeId(loaded.theme);
       setFontFamily(loaded.fontFamily);
+      persistedNoteAppearance.current = loaded.noteAppearance;
+      noteAppearanceRequestGeneration.current += 1;
+      setNoteAppearance(loaded.noteAppearance);
       noteMaxWidthPxRef.current = persistedNoteMaxWidthPx.current =
         loaded.noteMaxWidthPx;
       noteMaxWidthRequestGeneration.current += 1;
@@ -562,6 +592,10 @@ export function App({
     applyApplicationFont(document.documentElement, fontFamily);
     refreshApplicationLayout();
   }, [fontFamily]);
+  useLayoutEffect(() => {
+    applyNoteAppearance(document.documentElement, noteAppearance);
+    refreshApplicationLayout();
+  }, [noteAppearance]);
   useLayoutEffect(() => {
     applyApplicationNoteMaxWidth(document.documentElement, noteMaxWidthPx);
     refreshApplicationLayout();
@@ -737,6 +771,40 @@ export function App({
       }
     },
     [applicationConfig],
+  );
+
+  const changeNoteAppearance = useCallback(
+    async (
+      update: Partial<NoteAppearanceSettings>,
+      command: string,
+      label: string,
+    ): Promise<void> => {
+      const requested = normalizeNoteAppearance({
+        ...persistedNoteAppearance.current,
+        ...noteAppearance,
+        ...update,
+      });
+      if (!requested) {
+        setCommandMessage(`:${command} · 不正な値です: ${label}`);
+        return;
+      }
+      const previous = persistedNoteAppearance.current;
+      const generation = ++noteAppearanceRequestGeneration.current;
+      setNoteAppearance(requested);
+      setCommandMessage(`:${command} · ${label}`);
+      try {
+        await applicationConfig.saveNoteAppearance?.(update);
+        if (generation !== noteAppearanceRequestGeneration.current) return;
+        persistedNoteAppearance.current = requested;
+      } catch (cause) {
+        if (generation !== noteAppearanceRequestGeneration.current) return;
+        setNoteAppearance(previous);
+        setCommandMessage(
+          `:${command} · 変更を保存できませんでした: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+    },
+    [applicationConfig, noteAppearance],
   );
 
   const changeJapaneseWordSegmentation = useCallback(
@@ -981,6 +1049,7 @@ export function App({
 
   const openCommandLine = useCallback(
     (session: ApplicationCommandLineSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setNoteSearch(null);
@@ -996,6 +1065,7 @@ export function App({
 
   const openWorkspaceSearch = useCallback(
     (session: WorkspaceSearchSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setCommandLine(null);
       setCommandPicker(null);
@@ -1011,6 +1081,7 @@ export function App({
 
   const openNoteSearch = useCallback(
     (session: ApplicationNoteSearchSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1026,6 +1097,7 @@ export function App({
 
   const openBlockTypePicker = useCallback(
     (session: BlockTypePickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1044,6 +1116,7 @@ export function App({
 
   const openInlineFormatPicker = useCallback(
     (session: InlineFormatPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1057,8 +1130,25 @@ export function App({
     [clearEditorFocusRequests],
   );
 
+  const openSymbolPicker = useCallback(
+    (session: SymbolPickerSession): void => {
+      clearEditorFocusRequests();
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setCommandPicker(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setTableActionPicker(null);
+      setCodeActionPicker(null);
+      setInlineFormatPicker(null);
+      setSymbolPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
   const openTableActionPicker = useCallback(
     (session: TableActionPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1074,6 +1164,7 @@ export function App({
 
   const openCodeActionPicker = useCallback(
     (session: CodeActionPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1089,6 +1180,7 @@ export function App({
 
   const openCommandPicker = useCallback(
     (session: ApplicationCommandPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1798,6 +1890,14 @@ export function App({
         ?.focus();
       return;
     }
+    if (symbolPicker) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>(
+          "[data-memoka-focus-surface='symbol-picker'] input",
+        )
+        ?.focus();
+      return;
+    }
     if (themePicker) {
       appRoot.current
         ?.querySelector<HTMLInputElement>(
@@ -1899,6 +1999,7 @@ export function App({
     groupName,
     historySession,
     workspaceSearch,
+    symbolPicker,
   ]);
 
   useEffect(() => {
@@ -2165,6 +2266,11 @@ export function App({
       ({ windowId }) => windowId === effectiveTargetWindowId,
     ) ?? visibleWindows[0];
   const outlineNoteId = targetWindow?.noteId ?? null;
+  const outlineJumpList = runtime.sidebarJumpListFor(
+    activeTabPage.id,
+    "outline",
+    outlineNoteId,
+  );
   const outlineDocument = outlineNoteId
     ? (runtime.getNoteHandle(outlineNoteId).current as NoteDocument)
     : null;
@@ -2174,6 +2280,7 @@ export function App({
   const { leftSidebar, rightSidebar } = activeTabPage;
   const transientFocus =
     modalFocusSurface ??
+    (symbolPicker ? "symbol-picker" : null) ??
     (historySession
       ? "history"
       : groupName
@@ -2446,6 +2553,10 @@ export function App({
   const handleSidebarApplicationKeyDown = (
     event: KeyboardEvent<HTMLElement>,
   ): boolean => {
+    if (event.defaultPrevented) {
+      sidebarInputState.current = createSidebarInputState();
+      return false;
+    }
     const target = event.target;
     if (
       target instanceof HTMLElement &&
@@ -2590,6 +2701,30 @@ export function App({
     const session = commandLine;
     setCommandLine(null);
     setCommandMessage(message);
+    const commandRestoreFocus =
+      session?.restoreFocus ??
+      (() => requestEditorFocus(effectiveTargetWindowId));
+    const openFontPicker = (
+      target: "ui" | "japanese" | "latin" | "monospace",
+      initialFontFamily: string,
+      commandName: string,
+    ): void => {
+      const label = {
+        ui: "アプリケーション",
+        japanese: "Note日本語",
+        latin: "Note英数",
+        monospace: "Note等幅",
+      }[target];
+      clearEditorFocusRequests();
+      setFontPicker({
+        initialFontFamily,
+        restoreFocus: commandRestoreFocus,
+        target,
+        command: commandName,
+        label,
+      });
+      setCommandMessage(`:${commandName} · フォントを選択`);
+    };
     switch (command) {
       case "workspace.sync":
       case "workspace.sync_settings": {
@@ -2938,12 +3073,145 @@ export function App({
         return;
       }
       case "application.font": {
-        const restoreFocus =
-          session?.restoreFocus ??
-          (() => requestEditorFocus(effectiveTargetWindowId));
-        clearEditorFocusRequests();
-        setFontPicker({ initialFontFamily: fontFamily, restoreFocus });
-        setCommandMessage(":font · フォントを選択");
+        const requested = argument
+          ? normalizeApplicationFontFamily(argument)
+          : null;
+        if (argument === null) {
+          openFontPicker("ui", fontFamily, "ui-font");
+        } else if (!requested) {
+          setCommandMessage(`:ui-font · 不正なfont-familyです: ${argument}`);
+          queueMicrotask(commandRestoreFocus);
+        } else {
+          const previous = fontFamily;
+          setFontFamily(requested);
+          void applicationConfig.saveFontFamily(requested).then(
+            () => setCommandMessage(`:ui-font · ${requested}`),
+            (cause) => {
+              setFontFamily(previous);
+              setCommandMessage(
+                `:ui-font · 保存できませんでした: ${String(cause)}`,
+              );
+            },
+          );
+          queueMicrotask(commandRestoreFocus);
+        }
+        return;
+      }
+      case "application.note_font_japanese":
+      case "application.note_font_latin":
+      case "application.note_font_monospace": {
+        const target =
+          command === "application.note_font_japanese"
+            ? "japanese"
+            : command === "application.note_font_latin"
+              ? "latin"
+              : "monospace";
+        const commandName =
+          target === "japanese"
+            ? "note-font-ja"
+            : target === "latin"
+              ? "note-font-latin"
+              : "note-font-mono";
+        const field =
+          target === "japanese"
+            ? "japaneseFontFamily"
+            : target === "latin"
+              ? "latinFontFamily"
+              : "monospaceFontFamily";
+        if (argument === null) {
+          openFontPicker(target, noteAppearance[field], commandName);
+          return;
+        }
+        const requested = normalizeApplicationFontFamily(argument);
+        if (!requested) {
+          setCommandMessage(
+            `:${commandName} · 不正なfont-familyです: ${argument}`,
+          );
+          queueMicrotask(commandRestoreFocus);
+          return;
+        }
+        void changeNoteAppearance(
+          { [field]: requested },
+          commandName,
+          requested,
+        );
+        queueMicrotask(commandRestoreFocus);
+        return;
+      }
+      case "application.note_line_height":
+      case "application.note_block_gap":
+      case "application.note_list_item_gap":
+      case "application.note_section_title_gap_before":
+      case "application.note_section_title_gap_after":
+      case "application.note_section_title_size": {
+        const definitions = {
+          "application.note_line_height": [
+            "note-line-height",
+            "lineHeight",
+            noteAppearance.lineHeight,
+            normalizeNoteLineHeight,
+            "",
+          ],
+          "application.note_block_gap": [
+            "block-gap",
+            "blockGapEm",
+            noteAppearance.blockGapEm,
+            normalizeNoteGapEm,
+            "em",
+          ],
+          "application.note_list_item_gap": [
+            "list-item-gap",
+            "listItemGapEm",
+            noteAppearance.listItemGapEm,
+            normalizeNoteGapEm,
+            "em",
+          ],
+          "application.note_section_title_gap_before": [
+            "section-title-gap-before",
+            "sectionTitleGapBeforeEm",
+            noteAppearance.sectionTitleGapBeforeEm,
+            normalizeNoteGapEm,
+            "em",
+          ],
+          "application.note_section_title_gap_after": [
+            "section-title-gap-after",
+            "sectionTitleGapAfterEm",
+            noteAppearance.sectionTitleGapAfterEm,
+            normalizeNoteGapEm,
+            "em",
+          ],
+          "application.note_section_title_size": [
+            "section-title-size",
+            "sectionTitleSizeEm",
+            noteAppearance.sectionTitleSizeEm,
+            normalizeNoteSectionTitleSizeEm,
+            "em",
+          ],
+        } as const;
+        const [commandName, field, current, normalize, suffix] =
+          definitions[command];
+        if (argument === null) {
+          setCommandMessage(`:${commandName} · ${current}${suffix}`);
+          queueMicrotask(commandRestoreFocus);
+          return;
+        }
+        const parsed = /^\d+(?:\.\d{1,2})?$/u.test(argument)
+          ? Number(argument)
+          : Number.NaN;
+        const requested = normalize(parsed);
+        if (requested === null) {
+          setCommandMessage(
+            `:${commandName} · 範囲外または不正な値です: ${argument}`,
+          );
+          queueMicrotask(commandRestoreFocus);
+          return;
+        }
+        void changeNoteAppearance(
+          { [field]: requested },
+          commandName,
+          `${requested}${suffix}`,
+        );
+        queueMicrotask(commandRestoreFocus);
         return;
       }
       case "application.zoom": {
@@ -3233,6 +3501,7 @@ export function App({
         onWorkspaceSearch={openWorkspaceSearch}
         onBlockTypePicker={openBlockTypePicker}
         onInlineFormatPicker={openInlineFormatPicker}
+        onSymbolPicker={openSymbolPicker}
         onCodeActionPicker={openCodeActionPicker}
         onTableActionPicker={openTableActionPicker}
         onMessage={setCommandMessage}
@@ -3363,8 +3632,22 @@ export function App({
           <WorkspaceOutline
             key={`${activeTabPage.id}:${outlineNoteId}`}
             note={outlineDocument}
+            keyConfig={keyConfig}
+            jumpList={outlineJumpList}
             scopeSectionId={outlineScopeSectionId ?? undefined}
             collapsedSectionIds={targetWindow?.collapsedSectionIds ?? []}
+            onFoldsChange={async (ids) => {
+              await runtime.executeCommand({
+                name: "window.update_view",
+                operationId: createUuidV7(),
+                source: "editor",
+                payload: {
+                  windowId: effectiveTargetWindowId,
+                  noteId: outlineNoteId,
+                  update: { collapsedSectionIds: [...ids] },
+                },
+              });
+            }}
             viewState={rightSidebar.outline}
             onViewStateChange={(outline) => {
               void runtime
@@ -3579,16 +3862,53 @@ export function App({
       ) : fontPicker ? (
         <FontPicker
           session={fontPicker}
-          onPreview={setFontFamily}
+          onPreview={(selectedFontFamily) => {
+            if (fontPicker.target === "ui") {
+              setFontFamily(selectedFontFamily);
+              return;
+            }
+            const field =
+              fontPicker.target === "japanese"
+                ? "japaneseFontFamily"
+                : fontPicker.target === "latin"
+                  ? "latinFontFamily"
+                  : "monospaceFontFamily";
+            setNoteAppearance((current) => ({
+              ...current,
+              [field]: selectedFontFamily,
+            }));
+          }}
           onAccept={async (selectedFontFamily) => {
-            await applicationConfig.saveFontFamily(selectedFontFamily);
-            setFontFamily(selectedFontFamily);
-            setCommandMessage(`:font · ${selectedFontFamily}`);
+            if (fontPicker.target === "ui") {
+              await applicationConfig.saveFontFamily(selectedFontFamily);
+              setFontFamily(selectedFontFamily);
+            } else {
+              const field =
+                fontPicker.target === "japanese"
+                  ? "japaneseFontFamily"
+                  : fontPicker.target === "latin"
+                    ? "latinFontFamily"
+                    : "monospaceFontFamily";
+              const updated = {
+                ...noteAppearance,
+                [field]: selectedFontFamily,
+              };
+              await applicationConfig.saveNoteAppearance?.({
+                [field]: selectedFontFamily,
+              });
+              persistedNoteAppearance.current = updated;
+              setNoteAppearance(updated);
+            }
+            setCommandMessage(`:${fontPicker.command} · ${selectedFontFamily}`);
             setFontPicker(null);
             queueMicrotask(fontPicker.restoreFocus);
           }}
           onCancel={() => {
-            setFontFamily(fontPicker.initialFontFamily);
+            if (fontPicker.target === "ui") {
+              setFontFamily(fontPicker.initialFontFamily);
+            } else {
+              setNoteAppearance(persistedNoteAppearance.current);
+            }
             setFontPicker(null);
           }}
           focused
@@ -3599,6 +3919,11 @@ export function App({
           onClose={() => setBlockTypePicker(null)}
           onMessage={setCommandMessage}
           focused
+        />
+      ) : symbolPicker ? (
+        <SymbolPicker
+          session={symbolPicker}
+          onClose={() => setSymbolPicker(null)}
         />
       ) : inlineFormatPicker ? (
         <InlineFormatPicker
@@ -3723,7 +4048,9 @@ function windowResizeMetrics(pane: HTMLElement): {
   const measured = sample.getBoundingClientRect().width / (scale || 1) / 10;
   sample.remove();
   return {
-    line: Number.parseFloat(style.lineHeight) || fontSize * 1.65,
+    line:
+      Number.parseFloat(style.lineHeight) ||
+      fontSize * DEFAULT_NOTE_APPEARANCE.lineHeight,
     character: measured || fontSize * 0.5,
   };
 }
@@ -4274,6 +4601,7 @@ function EditorWindow({
   onWorkspaceSearch,
   onBlockTypePicker,
   onInlineFormatPicker,
+  onSymbolPicker,
   onCodeActionPicker,
   onTableActionPicker,
   onMessage,
@@ -4305,6 +4633,7 @@ function EditorWindow({
   onWorkspaceSearch: (session: WorkspaceSearchSession) => void;
   onBlockTypePicker: (session: BlockTypePickerSession) => void;
   onInlineFormatPicker: (session: InlineFormatPickerSession) => void;
+  onSymbolPicker: (session: SymbolPickerSession) => void;
   onCodeActionPicker: (session: CodeActionPickerSession) => void;
   onTableActionPicker: (session: TableActionPickerSession) => void;
   onMessage: (message: string) => void;
@@ -4428,6 +4757,33 @@ function EditorWindow({
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
+      onSymbolPicker: (request) =>
+        onSymbolPicker({
+          windowId,
+          apply: (value) => {
+            const current = runtime.snapshot();
+            const tab = current.applicationWindow.tabs.find(
+              ({ id }) => id === current.applicationWindow.activeTabId,
+            );
+            if (
+              tab?.activeWindowId !== windowId ||
+              current.windows.find((window) => window.windowId === windowId)
+                ?.noteId !== noteId ||
+              adapterRef.current !== adapter
+            )
+              return false;
+            return request.apply(value);
+          },
+          restoreFocus: () => {
+            const current = runtime.snapshot().applicationWindow;
+            if (
+              current.tabs.find(({ id }) => id === current.activeTabId)
+                ?.activeWindowId === windowId &&
+              adapterRef.current === adapter
+            )
+              adapter.editor.commands.focus();
+          },
+        }),
       onCodeActionPicker: (request) =>
         onCodeActionPicker({
           windowId,
@@ -4501,6 +4857,7 @@ function EditorWindow({
     onWorkspaceSearch,
     onBlockTypePicker,
     onInlineFormatPicker,
+    onSymbolPicker,
     onCodeActionPicker,
     onTableActionPicker,
     onMessage,
@@ -4676,7 +5033,9 @@ function EditorWindow({
                     <span className="window-breadcrumb__separator">/</span>
                   )}
                   {index === sectionBreadcrumb.length - 1 ? (
-                    <span aria-current="page">{entry.title}</span>
+                    <span aria-current="page">
+                      <SymbolText text={entry.title} />
+                    </span>
                   ) : (
                     <button
                       type="button"
@@ -4685,7 +5044,7 @@ function EditorWindow({
                         moveCaretToBreadcrumbSection(entry.sectionId)
                       }
                     >
-                      {entry.title}
+                      <SymbolText text={entry.title} />
                     </button>
                   )}
                 </span>

@@ -1,7 +1,7 @@
 {
   "name": "memoka",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "packageManager": "pnpm@10.15.1",
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -69,6 +69,7 @@
     "jittered-fractional-indexing": "1.0.1",
     "lib0": "0.2.117",
     "lowlight": "3.3.0",
+    "lucide": "1.47.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "remark-gfm": "4.0.1",

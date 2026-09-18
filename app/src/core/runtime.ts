@@ -45,20 +45,24 @@ import {
   EXTERNAL_AGENT_EDIT_ORIGIN,
   REPLICATED_PUBLICATION_ORIGIN,
   SECTION_DEPTH_SHIFT_ORIGIN,
+  SECTION_LINE_DELETION_ORIGIN,
   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
   addNoteMetadata,
   applyNoteSectionDepthShift,
+  applyReplicatedNoteSectionDepthShift,
   createNoteDocument,
   createNoteSectionFromParagraph,
   createWorkspaceDocument,
   createReplicatedWorkspaceDocument,
   createReplicatedNoteDocumentFromSectionSnapshot,
+  deleteNoteSectionSelectedLines,
   listNoteMetadata,
   loadNoteDocumentWithSectionIdentityRecovery,
   loadProductDocument,
   noteSectionCatalog,
   noteDisplayTitle,
   planNoteSectionDepthShift,
+  planReplicatedNoteSectionDepthShift,
   readNoteMetadata,
   readNoteTitle,
   readNotePlainText,
@@ -86,6 +90,7 @@ import {
   findSectionById,
   sectionId,
   sectionTitle,
+  type SectionSnapshot,
 } from "./section-model";
 import { assertUuidV7, createUuidV7 } from "./ids";
 import {
@@ -150,7 +155,11 @@ import {
   type EditorNavigationRequest,
   type EditorNavigationResult,
 } from "./editor-navigation";
-import { WindowJumpList } from "./jump-list";
+import {
+  WindowJumpList,
+  createSidebarJumpList,
+  type JumpHistory,
+} from "./jump-list";
 import {
   deriveNoteSearchProjection,
   selectNoteSearchMatch,
@@ -360,10 +369,42 @@ export class CoreRuntime {
     PendingSectionIdentityRepair
   >();
   private readonly jumpLists = new Map<string, WindowJumpList>();
+  private readonly sidebarJumpLists = new Map<
+    string,
+    {
+      tree: JumpHistory<string>;
+      outline: JumpHistory<string>;
+      noteId: string | null;
+    }
+  >();
   private readonly imageReturnOrigins = new Map<string, StableEditorPosition>();
   private readonly pendingNavigations = new Map<
     string,
     { destination: EditorNavigationDestination; detail: string }
+  >();
+  private readonly optimisticSectionFocuses = new Map<
+    string,
+    { noteId: string; sectionId: string }
+  >();
+  private readonly sectionParagraphAppliedCallbacks = new Map<
+    string,
+    (createdSectionId: string) => void
+  >();
+  private readonly sectionCreationFocusOrigins = new Map<
+    string,
+    {
+      createdSectionId: string;
+      sourceSectionId: string;
+      dispose: () => void;
+    }
+  >();
+  private readonly sectionDeletionFocusOrigins = new Map<
+    string,
+    {
+      sourceSectionId: string;
+      fallbackSectionId: string;
+      dispose: () => void;
+    }
   >();
   private readonly repeatStores = new Map<string, VimRepeatStore>();
   private readonly visualSelectionStores = new Map<
@@ -1885,16 +1926,42 @@ export class CoreRuntime {
       paragraphBodyIndex: number;
       title: string;
       direction: "deeper" | "shallower";
+      joinPreviousUndo?: boolean;
     },
+    onApplied?: (createdSectionId: string) => void,
   ): Promise<CoreCommandResults["section.create_from_paragraph"]> {
+    const operationId = this.idFactory();
+    if (onApplied) {
+      this.sectionParagraphAppliedCallbacks.set(operationId, onApplied);
+    }
     return this.executeCommand({
       name: "section.create_from_paragraph",
-      operationId: this.idFactory(),
+      operationId,
       source: "editor",
       payload: {
         noteId,
         ...request,
         newSectionId: this.idFactory(),
+        updatedAt: this.clock(),
+      },
+    }).finally(() => {
+      this.sectionParagraphAppliedCallbacks.delete(operationId);
+    });
+  }
+
+  deleteFocusedSectionSelectedLines(
+    noteId: string,
+    sourceSectionId: string,
+    remaining: SectionSnapshot,
+  ): Promise<CoreCommandResults["section.delete_selected_lines"]> {
+    return this.executeCommand({
+      name: "section.delete_selected_lines",
+      operationId: this.idFactory(),
+      source: "editor",
+      payload: {
+        noteId,
+        sourceSectionId,
+        remaining,
         updatedAt: this.clock(),
       },
     });
@@ -1985,6 +2052,27 @@ export class CoreRuntime {
     return jumpList;
   }
 
+  sidebarJumpListFor(
+    tabId: string,
+    kind: "tree" | "outline",
+    noteId: string | null = null,
+  ): JumpHistory<string> {
+    let state = this.sidebarJumpLists.get(tabId);
+    if (!state) {
+      state = {
+        tree: createSidebarJumpList(),
+        outline: createSidebarJumpList(),
+        noteId,
+      };
+      this.sidebarJumpLists.set(tabId, state);
+    }
+    if (kind === "outline" && state.noteId !== noteId) {
+      state.outline.clear();
+      state.noteId = noteId;
+    }
+    return state[kind];
+  }
+
   /**
    * Completes a navigation after the destination Section has been bound to an
    * Editor. A same-Section jump can reuse the current adapter, while a Section
@@ -2022,13 +2110,25 @@ export class CoreRuntime {
       if (!target || !this.isLiveNote(target.noteId)) {
         return { handled: false, detail: "jump:gf:missing-note" };
       }
-      return this.focusNavigationSection(
+      const destination: EditorNavigationDestination = {
+        kind: "section-start",
+        ...target,
+        alignment: "top",
+      };
+      // The full-note editor stays mounted for links within the same Note.
+      // Return the destination directly instead of waiting for an attach.
+      if (
+        target.noteId === request.current.noteId &&
+        !windowState.focusedSectionId
+      ) {
+        jumpList.recordOrigin(request.current);
+        return { handled: true, detail: "jump:gf:changed", destination };
+      }
+      return this.openNavigationDestination(
         windowId,
-        target.noteId,
-        target.sectionId,
-        { kind: "section-start", ...target },
+        destination,
         "jump:gf:changed",
-        request.current,
+        () => jumpList.recordOrigin(request.current),
       );
     }
 
@@ -2616,6 +2716,7 @@ export class CoreRuntime {
       kind: "section-start",
       noteId,
       sectionId: targetSectionId,
+      alignment: "top",
     };
     const handle = await this.ensureNoteLoaded(noteId);
     if (handle.current.kind !== "note") {
@@ -2742,6 +2843,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onSymbolPicker"
       | "onCodeActionPicker"
       | "onTableActionPicker"
       | "onCommandLine"
@@ -2804,12 +2906,14 @@ export class CoreRuntime {
       readExplicitClipboard: options.readExplicitClipboard,
       scrollElement: options.scrollElement,
       onNavigate: (request) => this.navigateEditor(windowId, request),
+      onRecordJump: (origin) => this.jumpListFor(windowId).recordOrigin(origin),
       onNavigationDestination: options.onNavigationDestination,
       onOpenImage: options.onOpenImage,
       onWorkspaceSearch: options.onWorkspaceSearch,
       onNoteSearch: options.onNoteSearch,
       onBlockTypePicker: options.onBlockTypePicker,
       onInlineFormatPicker: options.onInlineFormatPicker,
+      onSymbolPicker: options.onSymbolPicker,
       onCodeActionPicker: options.onCodeActionPicker,
       onTableActionPicker: options.onTableActionPicker,
       openExternalLink: options.openExternalLink,
@@ -2823,7 +2927,12 @@ export class CoreRuntime {
           payload: {
             windowId,
             noteId: attachedNoteId,
-            sectionId,
+            sectionId:
+              this.sectionCreationFocusOrigins.get(windowId)
+                ?.createdSectionId === previousSectionId
+                ? this.sectionCreationFocusOrigins.get(windowId)!
+                    .sourceSectionId
+                : sectionId,
             expectedSectionId: previousSectionId,
             preserveView: true,
             selection,
@@ -2892,15 +3001,114 @@ export class CoreRuntime {
           [...request.sectionIds],
           request.direction,
         ),
-      onSectionFromParagraph: (request) =>
-        this.createSectionFromParagraph(attachedNoteId, {
-          boundarySectionId: request.boundarySectionId,
+      onSectionFromParagraph: (request, onApplied) =>
+        this.createSectionFromParagraph(
+          attachedNoteId,
+          {
+            boundarySectionId: request.boundarySectionId,
+            sourceSectionId: request.sourceSectionId,
+            paragraphBlockId: request.paragraphBlockId,
+            paragraphBodyIndex: request.paragraphBodyIndex,
+            title: request.title,
+            direction: request.direction,
+            joinPreviousUndo: request.joinPreviousUndo,
+          },
+          onApplied,
+        ),
+      onFocusedSectionLineDelete: async (request) => {
+        const result = await this.deleteFocusedSectionSelectedLines(
+          attachedNoteId,
+          request.sourceSectionId,
+          request.remaining,
+        );
+        if (!result.changed || !result.fallbackSectionId) return;
+        this.sectionDeletionFocusOrigins.get(windowId)?.dispose();
+        const observedDocument = handle.current.doc;
+        const observeUndo = (): void => {
+          queueMicrotask(() => {
+            const pending = this.sectionDeletionFocusOrigins.get(windowId);
+            const note = handle.current;
+            if (pending?.sourceSectionId !== request.sourceSectionId) return;
+            if (
+              note.kind !== "note" ||
+              this.windows.get(windowId)?.focusedSectionId !==
+                result.fallbackSectionId
+            ) {
+              pending.dispose();
+              this.sectionDeletionFocusOrigins.delete(windowId);
+              return;
+            }
+            if (!findSectionById(note.rootSection, request.sourceSectionId)) {
+              return;
+            }
+            pending.dispose();
+            this.sectionDeletionFocusOrigins.delete(windowId);
+            void this.focusSection(
+              windowId,
+              attachedNoteId,
+              request.sourceSectionId,
+            ).catch((error) => this.reportError(error));
+          });
+        };
+        observedDocument.on("afterTransaction", observeUndo);
+        this.sectionDeletionFocusOrigins.set(windowId, {
           sourceSectionId: request.sourceSectionId,
-          paragraphBlockId: request.paragraphBlockId,
-          paragraphBodyIndex: request.paragraphBodyIndex,
-          title: request.title,
-          direction: request.direction,
-        }),
+          fallbackSectionId: result.fallbackSectionId,
+          dispose: () => observedDocument.off("afterTransaction", observeUndo),
+        });
+        await this.focusSection(
+          windowId,
+          attachedNoteId,
+          result.fallbackSectionId,
+        );
+      },
+      onSectionCreatedOutsideView: async (sectionId, sourceSectionId) => {
+        this.sectionCreationFocusOrigins.get(windowId)?.dispose();
+        const observedDocument = handle.current.doc;
+        const observeUndo = (): void => {
+          queueMicrotask(() => {
+            const pending = this.sectionCreationFocusOrigins.get(windowId);
+            const note = handle.current;
+            if (pending?.createdSectionId !== sectionId) return;
+            if (
+              note.kind !== "note" ||
+              this.windows.get(windowId)?.focusedSectionId !== sectionId
+            ) {
+              pending.dispose();
+              this.sectionCreationFocusOrigins.delete(windowId);
+              return;
+            }
+            if (
+              findSectionById(note.rootSection, sectionId) ||
+              !findSectionById(note.rootSection, sourceSectionId)
+            ) {
+              return;
+            }
+            pending.dispose();
+            this.sectionCreationFocusOrigins.delete(windowId);
+            void this.focusSection(
+              windowId,
+              attachedNoteId,
+              sourceSectionId,
+            ).catch((error) => this.reportError(error));
+          });
+        };
+        observedDocument.on("afterTransaction", observeUndo);
+        this.sectionCreationFocusOrigins.set(windowId, {
+          createdSectionId: sectionId,
+          sourceSectionId,
+          dispose: () => observedDocument.off("afterTransaction", observeUndo),
+        });
+        const optimisticFocus = { noteId: attachedNoteId, sectionId };
+        this.optimisticSectionFocuses.set(windowId, optimisticFocus);
+        try {
+          await this.focusSection(windowId, attachedNoteId, sectionId);
+        } finally {
+          if (this.optimisticSectionFocuses.get(windowId) === optimisticFocus) {
+            this.optimisticSectionFocuses.delete(windowId);
+          }
+        }
+      },
       keyConfig: options.keyConfig,
       getInternalLinkCandidates: () => this.internalLinkCandidates(),
       resolveInternalLinkTitle: (targetSectionId) =>
@@ -2926,6 +3134,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onSymbolPicker"
       | "onCodeActionPicker"
       | "onTableActionPicker"
       | "onOpenImage"
@@ -2989,6 +3198,16 @@ export class CoreRuntime {
   }
 
   destroy(): void {
+    for (const pending of this.sectionCreationFocusOrigins.values()) {
+      pending.dispose();
+    }
+    this.sectionCreationFocusOrigins.clear();
+    for (const pending of this.sectionDeletionFocusOrigins.values()) {
+      pending.dispose();
+    }
+    this.sectionDeletionFocusOrigins.clear();
+    this.optimisticSectionFocuses.clear();
+    this.sectionParagraphAppliedCallbacks.clear();
     if (this.windowViewUpdateFrame !== null) {
       cancelAnimationFrame(this.windowViewUpdateFrame);
       this.windowViewUpdateFrame = null;
@@ -3024,6 +3243,7 @@ export class CoreRuntime {
     for (const handle of this.notes.values()) handle.current.doc.destroy();
     this.workspace.current.doc.destroy();
     this.jumpLists.clear();
+    this.sidebarJumpLists.clear();
     this.imageReturnOrigins.clear();
     this.pendingNavigations.clear();
     this.pendingSectionIdentityRepairs.clear();
@@ -3564,6 +3784,80 @@ export class CoreRuntime {
       } = envelope.payload;
       this.requireLiveMetadata(noteId);
       const handle = await this.ensureNoteLoaded(noteId);
+      if (
+        !fault &&
+        handle.current.kind === "note" &&
+        handle.current.replicated
+      ) {
+        const plan = planReplicatedNoteSectionDepthShift(
+          handle.current,
+          boundarySectionId,
+          sectionIds,
+          direction,
+        );
+        if (!plan.changed) {
+          return { noteId, changed: false, affectedSectionIds: [] };
+        }
+        handle.current.undoManager.stopCapturing();
+        const before = Y.encodeStateVector(handle.current.doc);
+        applyReplicatedNoteSectionDepthShift(
+          handle.current,
+          plan,
+          updatedAt,
+          SECTION_DEPTH_SHIFT_ORIGIN,
+        );
+        handle.current.undoManager.stopCapturing();
+        const appliedUpdate = Y.encodeStateAsUpdate(handle.current.doc, before);
+        return this.runWithNotePersistenceLock(noteId, async () => {
+          this.setSaving();
+          const workspaceBaseRevision = this.workspace.revision;
+          try {
+            await this.transactions.commitAppliedUpdateTransaction(
+              handle,
+              [this.workspace],
+              envelope.operationId,
+              appliedUpdate,
+              () => {
+                if (handle.current.kind !== "note") {
+                  throw new Error("Section depth target is not a NoteDoc");
+                }
+                renameNoteMetadata(
+                  this.workspaceDocument,
+                  noteId,
+                  readNoteTitle(handle.current),
+                  updatedAt,
+                  CORE_TRANSACTION_ORIGIN,
+                );
+              },
+              noteId,
+            );
+            await this.advanceWorkspaceSearchIndexMetadataRevision({
+              schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+              workspaceId: this.workspaceDocument.workspaceId,
+              baseRevision: workspaceBaseRevision,
+              workspaceRevision: this.workspace.revision,
+              noteId,
+            });
+            if (handle.current.kind === "note") {
+              handle.current.undoManager.stopCapturing();
+            }
+            this.changedNoteRevisions.set(noteId, handle.revision);
+            this.noteContentRevision += 1;
+            this.sectionCatalogRevision += 1;
+            this.internalLinkLabelRevision += 1;
+            this.queueWorkspaceSearchIndexDocument(noteId);
+            this.setReady();
+            return {
+              noteId,
+              changed: true,
+              affectedSectionIds: [...plan.affectedSectionIds],
+            };
+          } catch (error) {
+            this.reportError(error);
+            throw error;
+          }
+        });
+      }
       return this.runWithNotePersistenceLock(noteId, async () => {
         if (handle.current.kind !== "note") {
           throw new Error("Section depth target is not a NoteDoc");
@@ -3641,15 +3935,89 @@ export class CoreRuntime {
     this.commands.register(
       "section.create_from_paragraph",
       async (envelope) => {
-        const { noteId, updatedAt, fault, ...request } = envelope.payload;
+        const {
+          noteId,
+          updatedAt,
+          fault,
+          joinPreviousUndo = false,
+          ...request
+        } = envelope.payload;
         this.requireLiveMetadata(noteId);
         const handle = await this.ensureNoteLoaded(noteId);
+        if (
+          joinPreviousUndo &&
+          !fault &&
+          handle.current.kind === "note" &&
+          handle.current.replicated
+        ) {
+          const before = Y.encodeStateVector(handle.current.doc);
+          const result = createNoteSectionFromParagraph(
+            handle.current,
+            { ...request, updatedAt },
+            SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+          );
+          if (result.changed && result.createdSectionId) {
+            this.sectionParagraphAppliedCallbacks.get(envelope.operationId)?.(
+              result.createdSectionId,
+            );
+          }
+          handle.current.undoManager.stopCapturing();
+          if (!result.changed) return { noteId, ...result };
+          const appliedUpdate = Y.encodeStateAsUpdate(
+            handle.current.doc,
+            before,
+          );
+          return this.runWithNotePersistenceLock(noteId, async () => {
+            this.setSaving();
+            const workspaceBaseRevision = this.workspace.revision;
+            try {
+              await this.transactions.commitAppliedUpdateTransaction(
+                handle,
+                [this.workspace],
+                envelope.operationId,
+                appliedUpdate,
+                () => {
+                  if (handle.current.kind !== "note") {
+                    throw new Error(
+                      "Paragraph conversion target is not a NoteDoc",
+                    );
+                  }
+                  renameNoteMetadata(
+                    this.workspaceDocument,
+                    noteId,
+                    readNoteTitle(handle.current),
+                    updatedAt,
+                    CORE_TRANSACTION_ORIGIN,
+                  );
+                },
+                noteId,
+              );
+              await this.advanceWorkspaceSearchIndexMetadataRevision({
+                schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+                workspaceId: this.workspaceDocument.workspaceId,
+                baseRevision: workspaceBaseRevision,
+                workspaceRevision: this.workspace.revision,
+                noteId,
+              });
+              this.changedNoteRevisions.set(noteId, handle.revision);
+              this.noteContentRevision += 1;
+              this.sectionCatalogRevision += 1;
+              this.internalLinkLabelRevision += 1;
+              this.queueWorkspaceSearchIndexDocument(noteId);
+              this.setReady();
+              return { noteId, ...result };
+            } catch (error) {
+              this.reportError(error);
+              throw error;
+            }
+          });
+        }
         return this.runWithNotePersistenceLock(noteId, async () => {
           if (handle.current.kind !== "note") {
             throw new Error("Paragraph conversion target is not a NoteDoc");
           }
           this.setSaving();
-          handle.current.undoManager.stopCapturing();
+          if (!joinPreviousUndo) handle.current.undoManager.stopCapturing();
           const workspaceBaseRevision = this.workspace.revision;
           let result = {
             changed: false,
@@ -3674,6 +4042,88 @@ export class CoreRuntime {
                   handle.current,
                   { ...request, updatedAt },
                   SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+                );
+                if (result.changed && result.createdSectionId) {
+                  this.sectionParagraphAppliedCallbacks.get(
+                    envelope.operationId,
+                  )?.(result.createdSectionId);
+                }
+                handle.current.undoManager.stopCapturing();
+                if (result.changed) {
+                  renameNoteMetadata(
+                    this.workspaceDocument,
+                    noteId,
+                    readNoteTitle(handle.current),
+                    updatedAt,
+                    CORE_TRANSACTION_ORIGIN,
+                  );
+                }
+              },
+            );
+            handle.current.undoManager.stopCapturing();
+            if (!result.changed) {
+              this.setReady();
+              return { noteId, ...result };
+            }
+            await this.advanceWorkspaceSearchIndexMetadataRevision({
+              schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
+              workspaceId: this.workspaceDocument.workspaceId,
+              baseRevision: workspaceBaseRevision,
+              workspaceRevision: this.workspace.revision,
+              noteId,
+            });
+            this.changedNoteRevisions.set(noteId, handle.revision);
+            this.noteContentRevision += 1;
+            this.sectionCatalogRevision += 1;
+            this.internalLinkLabelRevision += 1;
+            this.queueWorkspaceSearchIndexDocument(noteId);
+            this.setReady();
+            return { noteId, ...result };
+          } catch (error) {
+            this.reportError(error);
+            throw error;
+          }
+        });
+      },
+    );
+
+    this.commands.register(
+      "section.delete_selected_lines",
+      async (envelope) => {
+        const { noteId, sourceSectionId, remaining, updatedAt, fault } =
+          envelope.payload;
+        this.requireLiveMetadata(noteId);
+        const handle = await this.ensureNoteLoaded(noteId);
+        return this.runWithNotePersistenceLock(noteId, async () => {
+          if (handle.current.kind !== "note") {
+            throw new Error("Section deletion target is not a NoteDoc");
+          }
+          this.setSaving();
+          handle.current.undoManager.stopCapturing();
+          const workspaceBaseRevision = this.workspace.revision;
+          let result = {
+            changed: false,
+            fallbackSectionId: null as string | null,
+          };
+          try {
+            await this.transactions.transact(
+              {
+                operationId: envelope.operationId,
+                scope: "workspace-structure",
+                documents: [this.workspace, handle],
+                searchIndexMetadataOnlyNoteId: noteId,
+                fault,
+              },
+              () => {
+                if (handle.current.kind !== "note") {
+                  throw new Error("Section deletion target is not a NoteDoc");
+                }
+                result = deleteNoteSectionSelectedLines(
+                  handle.current,
+                  sourceSectionId,
+                  remaining,
+                  updatedAt,
+                  SECTION_LINE_DELETION_ORIGIN,
                 );
                 handle.current.undoManager.stopCapturing();
                 if (result.changed) {
@@ -4510,11 +4960,16 @@ export class CoreRuntime {
     previous: ApplicationWindowState,
     next: ApplicationWindowState,
   ): void {
+    for (const tabId of this.sidebarJumpLists.keys()) {
+      if (!next.tabs.some((tab) => tab.id === tabId))
+        this.sidebarJumpLists.delete(tabId);
+    }
     for (const windowId of Object.keys(previous.windows)) {
       if (next.windows[windowId]) continue;
       this.jumpLists.delete(windowId);
       this.imageReturnOrigins.delete(windowId);
       this.pendingNavigations.delete(windowId);
+      this.optimisticSectionFocuses.delete(windowId);
       this.repeatStores.delete(windowId);
       this.visualSelectionStores.delete(windowId);
       this.noteSearchStates.delete(windowId);
@@ -4708,6 +5163,7 @@ export class CoreRuntime {
             helpSnapshot,
             synchronizedAt,
             CORE_TRANSACTION_ORIGIN,
+            { recoverProtectedIdentities: true },
           );
         },
       );
@@ -5695,6 +6151,10 @@ export class CoreRuntime {
       this.pendingWindowViewUpdates.get(windowId),
     ]) {
       if (projected?.noteId === noteId) Object.assign(view, projected.update);
+    }
+    const optimisticFocus = this.optimisticSectionFocuses.get(windowId);
+    if (optimisticFocus?.noteId === noteId) {
+      view.focusedSectionId = optimisticFocus.sectionId;
     }
     return {
       windowId,

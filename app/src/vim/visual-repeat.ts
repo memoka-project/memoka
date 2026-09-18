@@ -1,12 +1,13 @@
 import type { Slice, Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { EditorState } from "@tiptap/pm/state";
+import { graphemeEnd } from "./graphemes";
 import {
   defaultVimBlockSemantics as semantics,
   type VimLogicalLine,
 } from "./block-semantics";
 
 /** Relative, document-independent geometry, not the motion/text object used to
- * make the selection. Columns count code points and indivisible inline atoms. */
+ * make the selection. Columns count graphemes and indivisible inline atoms. */
 export interface VimVisualCharShape {
   lines: number;
   columns: number;
@@ -25,8 +26,7 @@ function cellBounds(doc: ProseMirrorNode, position: number) {
 
 function characterEnd(doc: ProseMirrorNode, position: number): number {
   const node = doc.resolve(position).nodeAfter;
-  if (node?.isText)
-    return position + ((node.text!.codePointAt(0) ?? 0) > 0xffff ? 2 : 1);
+  if (node?.isText) return graphemeEnd(doc, position);
   if (node?.isInline) return position + node.nodeSize;
   return position;
 }

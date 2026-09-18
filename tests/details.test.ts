@@ -83,6 +83,84 @@ function harness(source = markdown) {
 }
 
 describe("Details blocks", () => {
+  it.each(["multiple", "only", "nested", "list"])(
+    "handles Backspace on the empty trailing Details Paragraph: %s",
+    async (variant) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const element = document.createElement("div");
+      document.body.append(element);
+      const { editor, adapter } = runtime.editorForTesting(
+        "window-1",
+        element,
+        { directBodyOnly: false },
+      );
+      try {
+        let source = `<details open>\n<summary>対象</summary>\n\n${variant === "only" ? "" : "本文\n\n"}末尾\n\n</details>`;
+        if (variant === "nested")
+          source = `<details open>\n<summary>外側</summary>\n\n${source}\n\n</details>`;
+        if (variant === "list") source = inList(source);
+        editor.commands.setContent(
+          parseMarkdownNote(
+            `# Note\n\n${source}`,
+            editor.schema,
+            editor.state.doc.firstChild!.attrs.sectionId,
+          )!.root.toJSON(),
+        );
+        let position = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === "末尾") position = pos;
+        });
+        const setup = editor.state.tr.delete(position, position + 2);
+        setup.setSelection(TextSelection.create(setup.doc, position));
+        editor.view.dispatch(setup);
+        editor.commands.focus();
+        const before = editor.state.doc;
+        const original = editor.state.selection.$from.parent;
+        const press = (key: string, options: KeyboardEventInit = {}) =>
+          editor.view.dom.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              bubbles: true,
+              cancelable: true,
+              ...options,
+            }),
+          );
+        // Separate fixture edits from the actual Insert operation's Undo unit.
+        press("Escape");
+        press("i");
+        const selectionBefore = editor.state.selection;
+        press("Backspace");
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        if (variant === "only") {
+          expect(editor.state.doc.eq(before)).toBe(true);
+          expect(editor.state.selection.eq(selectionBefore)).toBe(true);
+          press("Backspace");
+          expect(editor.state.doc.eq(before)).toBe(true);
+          expect(editor.state.selection.eq(selectionBefore)).toBe(true);
+          return;
+        }
+        const { $from } = editor.state.selection;
+        expect($from.parent.attrs.blockId).toBe(original.attrs.blockId);
+        expect(
+          $from.node($from.depth - 1).child($from.index($from.depth - 1) - 1)
+            .type.name,
+        ).toBe("details");
+        expect($from.parent.content.size).toBe(0);
+        editor.state.doc.check();
+        const after = editor.state.doc;
+        press("Escape");
+        press("u");
+        expect(editor.state.doc.eq(before)).toBe(true);
+        press("r", { ctrlKey: true });
+        expect(editor.state.doc.eq(after)).toBe(true);
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        element.remove();
+      }
+    },
+  );
+
   it("leaves an empty Summary blank without placeholder text", () => {
     const { editor, destroy } = harness(
       "<details open>\n<summary></summary>\n\n本文\n\n</details>",
@@ -426,6 +504,13 @@ describe("Details blocks", () => {
       press("Enter");
       expect(editor.state.doc.toJSON()).toEqual(unchanged);
       expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(0);
+      press("z");
+      press("c");
+      expect(adapter.vimSnapshot.action).toContain("details:fold-close");
+      expect(detailsFoldHiddenEntries(editor.state).length).toBeGreaterThan(0);
+      press("z");
+      press("o");
+      expect(adapter.vimSnapshot.action).toContain("details:fold-open");
       editor.commands.setTextSelection(summary);
       press("z");
       press("C");

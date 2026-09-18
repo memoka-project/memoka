@@ -20,6 +20,7 @@ import {
   findSectionById,
   insertChildSection,
   planSectionDepthShift,
+  planSectionTitlePut,
   sectionBody,
   sectionBodyBlocks,
   sectionBodyChunks,
@@ -29,6 +30,94 @@ import {
   validateSectionTree,
   type SectionSnapshot,
 } from "../app/src/core/section-model";
+
+describe("title put depth planning", () => {
+  const node = (
+    sectionId: string,
+    children: SectionSnapshot[] = [],
+    body: unknown[] = [],
+  ): SectionSnapshot => ({
+    sectionId,
+    title: sectionId,
+    tags: [],
+    body,
+    children,
+  });
+  function rows(root: SectionSnapshot, depth = 0): Array<[string, number]> {
+    return [
+      [root.sectionId, depth],
+      ...root.children.flatMap((child) => rows(child, depth + 1)),
+    ];
+  }
+  it.each([
+    [1, 2],
+    [2, 2],
+    [3, 3],
+    [5, 3],
+  ])(
+    "clamps copied depth %s to %s without changing existing depths",
+    (preferred, expected) => {
+      const root = node("root", [
+        node("A", [node("B", [node("C")], ["before", "after"])]),
+        node("D"),
+      ]);
+      const result = planSectionTitlePut(
+        root,
+        "B",
+        node("copy"),
+        1,
+        preferred,
+      )!;
+      expect(rows(result).filter(([id]) => id !== "copy")).toEqual(rows(root));
+      expect(rows(result).find(([id]) => id === "copy")?.[1]).toBe(expected);
+      expect(rows(result).map(([id]) => id)).toEqual([
+        "root",
+        "A",
+        "B",
+        "copy",
+        "C",
+        "D",
+      ]);
+      expect(root.children[0]!.children[0]!.body).toEqual(["before", "after"]);
+    },
+  );
+  it("can return to a shallower depth when the following hierarchy permits it", () => {
+    const root = node("root", [
+      node("A", [node("B", [], ["body"])]),
+      node("D"),
+    ]);
+    const result = planSectionTitlePut(root, "B", node("copy"), 0, 1)!;
+    expect(rows(result)).toEqual([
+      ["root", 0],
+      ["A", 1],
+      ["B", 2],
+      ["copy", 1],
+      ["D", 1],
+    ]);
+    expect(result.children[1]!.body).toEqual(["body"]);
+  });
+  it("keeps P before the target title and preserves that title's body", () => {
+    const root = node("root", [node("A", [node("B", [], ["body"])])]);
+    const result = planSectionTitlePut(root, "B", node("copy"), null, 1)!;
+    expect(rows(result)).toEqual([
+      ["root", 0],
+      ["A", 1],
+      ["copy", 1],
+      ["B", 2],
+    ]);
+    expect(result.children[1]!.children[0]!.body).toEqual(["body"]);
+  });
+  it("does not synthesize missing parents at Root", () => {
+    const root = node("root", [node("S")], ["body"]);
+    expect(
+      rows(planSectionTitlePut(root, "root", node("copy"), 0, 5)!),
+    ).toEqual([
+      ["root", 0],
+      ["copy", 1],
+      ["S", 1],
+    ]);
+  });
+});
 
 function deterministicIds(start = 0) {
   let counter = start;

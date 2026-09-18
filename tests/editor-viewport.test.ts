@@ -145,6 +145,98 @@ async function harness() {
 }
 
 describe("Editor viewport scroll intent", () => {
+  it.each(["v", "V"])(
+    "preserves %s mode during screen-row motions",
+    async (key) => {
+      const h = await harness();
+      try {
+        h.editor.commands.setTextSelection(h.start(7));
+        h.press(key);
+        h.scroll.scrollTop = 100;
+        const anchor = h.editor.state.selection.anchor;
+        const before = h.editor.state.doc;
+        const note = h.runtime.getNoteHandle(h.runtime.noteId).current;
+        if (note.kind !== "note") throw new Error("Expected NoteDoc");
+        const undoDepth = note.undoManager.undoStack.length;
+        h.press("L");
+        expect(h.adapter.vimSnapshot.mode).toBe(
+          key === "v" ? "visual-char" : "visual-line",
+        );
+        expect(h.adapter.vimSnapshot.action).toBe(
+          "cursor.screen-bottom:changed",
+        );
+        if (key === "v") expect(h.editor.state.selection.anchor).toBe(anchor);
+        h.press("H");
+        expect(h.adapter.vimSnapshot.action).toBe("cursor.screen-top:changed");
+        expect(h.editor.state.doc).toBe(before);
+        expect(note.undoManager.undoStack).toHaveLength(undoDepth);
+        expect(h.scroll.scrollTop).toBe(100);
+      } finally {
+        h.destroy();
+      }
+    },
+  );
+  it("moves H/M/L within the viewport and records jumps without document changes", async () => {
+    const h = await harness();
+    try {
+      h.runtime.jumpListFor("window-1").clear();
+      h.editor.commands.setTextSelection(h.start(7));
+      h.scroll.scrollTop = 100;
+      const before = h.editor.state.doc;
+      h.press("H");
+      expect(h.adapter.vimSnapshot.action).toBe("cursor.screen-top:changed");
+      expect(h.editor.state.selection.head).toBe(h.start(5));
+      h.press("M");
+      expect(h.editor.state.selection.head).toBe(h.start(7));
+      h.press("L");
+      expect(h.editor.state.selection.head).toBe(h.start(9));
+      h.press("2", "H");
+      expect(h.editor.state.selection.head).toBe(h.start(6));
+      expect(h.scroll.scrollTop).toBe(100);
+      expect(h.runtime.jumpListFor("window-1").snapshot().back).toHaveLength(4);
+      expect(h.editor.state.doc).toBe(before);
+    } finally {
+      h.destroy();
+    }
+  });
+
+  it("scrolls Ctrl-e/y without adding jumps or changing document content", async () => {
+    const h = await harness();
+    try {
+      h.editor.commands.setTextSelection(h.start(7));
+      h.scroll.scrollTop = 100;
+      h.runtime.jumpListFor("window-1").clear();
+      const before = h.editor.state.doc;
+      const control = (key: string) =>
+        h.editor.view.dom.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key,
+            code: `Key${key.toUpperCase()}`,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      control("e");
+      expect(h.adapter.vimSnapshot.action).toBe("viewport.scroll-down:changed");
+      expect(h.scroll.scrollTop).toBeGreaterThan(100);
+      expect(h.editor.state.selection.head).toBe(h.start(7));
+      control("y");
+      expect(h.scroll.scrollTop).toBe(100);
+      h.press("z", "z");
+      const aligned = h.scroll.scrollTop;
+      control("e");
+      const scrolled = h.scroll.scrollTop;
+      expect(scrolled).toBeGreaterThan(aligned);
+      h.reflow(0, "scroll");
+      await frame();
+      expect(h.scroll.scrollTop).toBe(scrolled);
+      expect(h.runtime.jumpListFor("window-1").snapshot().back).toEqual([]);
+      expect(h.editor.state.doc).toBe(before);
+    } finally {
+      h.destroy();
+    }
+  });
   it.each(["above", "below"] as const)(
     "skips partially clipped rows when scrolling the caret %s the viewport",
     async (edge) => {

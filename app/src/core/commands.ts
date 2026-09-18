@@ -3,6 +3,7 @@ import type { WindowLayoutEdit } from "./window-layout";
 import type {
   SectionDepthShiftDirection,
   SectionProperties,
+  SectionSnapshot,
 } from "./section-model";
 import type { VimMode, WindowSelection } from "./window-state";
 import type {
@@ -109,6 +110,14 @@ export interface CoreCommandPayloads {
     newSectionId: string;
     title: string;
     direction: SectionDepthShiftDirection;
+    joinPreviousUndo?: boolean;
+    updatedAt: string;
+    fault?: CommitFault;
+  };
+  "section.delete_selected_lines": {
+    noteId: string;
+    sourceSectionId: string;
+    remaining: SectionSnapshot;
     updatedAt: string;
     fault?: CommitFault;
   };
@@ -265,6 +274,11 @@ export interface CoreCommandResults {
     noteId: string;
     changed: boolean;
     createdSectionId: string | null;
+  };
+  "section.delete_selected_lines": {
+    noteId: string;
+    changed: boolean;
+    fallbackSectionId: string | null;
   };
   "note.move_to_trash": {
     noteId: string;

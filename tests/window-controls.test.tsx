@@ -13,6 +13,7 @@ import {
   createApplicationWindowState,
   type SplitNode,
 } from "../app/src/core/application-state";
+import { DEFAULT_NOTE_APPEARANCE } from "../app/src/core/application-appearance";
 import { CoreRuntime } from "../app/src/core/runtime";
 
 afterEach(() => {
@@ -124,14 +125,16 @@ describe("Window controls", () => {
         expect.objectContaining({
           kind: "resize",
           direction: "horizontal",
-          deltaPx: expect.closeTo(84.15),
+          deltaPx: expect.closeTo(17 * DEFAULT_NOTE_APPEARANCE.lineHeight * 3),
         }),
       ),
     );
     await windowKey("-", "2");
     expect(resize).toHaveBeenLastCalledWith(
       expect.any(String),
-      expect.objectContaining({ deltaPx: expect.closeTo(-56.1) }),
+      expect.objectContaining({
+        deltaPx: expect.closeTo(-17 * DEFAULT_NOTE_APPEARANCE.lineHeight * 2),
+      }),
     );
     await windowKey("<", "4");
     expect(resize).toHaveBeenLastCalledWith(

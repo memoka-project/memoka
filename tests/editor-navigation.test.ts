@@ -143,6 +143,51 @@ function press(editor: Editor, key: string, options: KeyboardEventInit = {}) {
 }
 
 describe("Memoka Section Link and Jump List navigation", () => {
+  it("records gg/G and restores positions with Ctrl-o/i without recording ordinary motion", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = editorRoot();
+    const { editor, adapter } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      editor.commands.setContent(
+        noteContent(runtime.noteId, "Title", [
+          paragraph("first"),
+          paragraph("middle"),
+          paragraph("last"),
+        ]),
+      );
+      editor.commands.focus();
+      press(editor, "Escape");
+      editor.commands.setTextSelection(1);
+      await settle(runtime);
+      const history = runtime.jumpListFor("window-1");
+      history.clear();
+      const before = editor.state.doc;
+      press(editor, "G");
+      const end = editor.state.selection.head;
+      expect(history.snapshot().back).toHaveLength(1);
+      press(editor, "G");
+      expect(history.snapshot().back).toHaveLength(1);
+      press(editor, "g");
+      press(editor, "g");
+      expect(editor.state.selection.head).toBe(1);
+      expect(history.snapshot().back).toHaveLength(2);
+      press(editor, "o", { ctrlKey: true });
+      await settle(runtime);
+      expect(editor.state.selection.head).toBe(end);
+      press(editor, "i", { ctrlKey: true });
+      await settle(runtime);
+      expect(editor.state.selection.head).toBe(1);
+      press(editor, "j");
+      expect(history.snapshot().back).toHaveLength(2);
+      expect(editor.state.doc).toBe(before);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
   it("falls back to the Section-local logical line when a legacy block ID is ambiguous", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
@@ -394,6 +439,7 @@ describe("Memoka Section Link and Jump List navigation", () => {
         kind: "section-start",
         noteId: note.noteId,
         sectionId: childId,
+        alignment: "top",
       },
     });
     expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
@@ -465,6 +511,87 @@ describe("Memoka Section Link and Jump List navigation", () => {
     full.adapter.destroy();
     fullRoot.remove();
     runtime.destroy();
+  });
+
+  it.each([false, true])(
+    "opens the whole note for gf from a focused section (same note: %s)",
+    async (sameNote) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+        idFactory: deterministicIds(),
+        initialTitle: "source",
+      });
+      const sourceId = runtime.noteId;
+      const targetId = sameNote
+        ? sourceId
+        : (await runtime.createNoteAtEnd("window-1", "target")).noteId;
+      const note = runtime.getNoteHandle(targetId).current;
+      if (note.kind !== "note") throw new Error("Expected NoteDoc");
+      const childId = createUuidV7();
+      note.doc.transact(() =>
+        insertChildSection(
+          note.rootSection,
+          createSectionXml(childId, "child"),
+        ),
+      );
+      await runtime.focusSection("window-1", targetId, childId);
+      const result = await runtime.navigateEditor("window-1", {
+        kind: "follow-link",
+        current: { ...stablePosition(targetId, 0), sectionId: childId },
+        target: { sectionId: sameNote ? childId : sourceId },
+      });
+      expect(result.handled).toBe(true);
+      expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+      const root = editorRoot();
+      const attached = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      runtime.applyPendingNavigation("window-1", attached.adapter);
+      expect(attached.editor.state.selection.from).toBe(
+        sectionHeaderStart(attached.editor, sameNote ? childId : sourceId),
+      );
+      expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
+      attached.adapter.destroy();
+      root.remove();
+      runtime.destroy();
+    },
+  );
+
+  it("follows gf from the Help contents without remounting the full-note editor", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+    });
+    await runtime.openHelpNote("window-1");
+    const root = editorRoot();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      let linkPosition = -1;
+      let targetId = "";
+      editor.state.doc.descendants((node, position) => {
+        if (linkPosition < 0 && node.type.name === "internalSectionLink") {
+          linkPosition = position;
+          targetId = node.attrs.targetSectionId;
+        }
+      });
+      expect(linkPosition).toBeGreaterThan(0);
+      editor.commands.setTextSelection(linkPosition);
+      editor.commands.focus();
+      press(editor, "Escape");
+      press(editor, "g");
+      press(editor, "f");
+      await settle(runtime);
+      expect(editor.state.selection.from).toBe(
+        sectionHeaderStart(editor, targetId),
+      );
+      expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+      expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
+      expect(runtime.applyPendingNavigation("window-1", adapter)).toBeNull();
+    } finally {
+      adapter.destroy();
+      root.remove();
+      runtime.destroy();
+    }
   });
 
   it("treats an Internal Section Link as one atomic target and follows gf", async () => {

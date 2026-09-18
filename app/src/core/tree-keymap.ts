@@ -1,19 +1,19 @@
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   type ApplicationKeyConfig,
+  SHARED_NAVIGATION_COMMAND_IDS,
+  type SharedNavigationCommandId,
 } from "./application-key-config";
+import {
+  SIDEBAR_FOLD_BINDINGS,
+  type SidebarFoldCommand,
+} from "./sidebar-folding";
 
 export type TreeCommandId =
-  | "cursor.left"
-  | "cursor.right"
-  | "cursor.logical-up"
-  | "cursor.logical-down"
-  | "cursor.document-start"
-  | "cursor.document-end"
-  | "cursor.page-up"
-  | "cursor.page-down"
-  | "cursor.half-page-up"
-  | "cursor.half-page-down"
+  | SidebarFoldCommand
+  | SharedNavigationCommandId
+  | "navigation.jump-back"
+  | "navigation.jump-forward"
   | "note.open"
   | "note.create_sibling_after"
   | "note.create_child"
@@ -27,16 +27,9 @@ export type TreeCommandId =
   | "sidebar.close";
 
 export const TREE_COMMAND_IDS: readonly TreeCommandId[] = [
-  "cursor.left",
-  "cursor.right",
-  "cursor.logical-up",
-  "cursor.logical-down",
-  "cursor.document-start",
-  "cursor.document-end",
-  "cursor.page-up",
-  "cursor.page-down",
-  "cursor.half-page-up",
-  "cursor.half-page-down",
+  ...SHARED_NAVIGATION_COMMAND_IDS,
+  "navigation.jump-back",
+  "navigation.jump-forward",
   "note.open",
   "note.create_sibling_after",
   "note.create_child",
@@ -84,6 +77,7 @@ export function advanceTreeInput(
   state: TreeInputState,
   event: TreeKeyInput,
   keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
+  navigationOnly = false,
 ): TreeInputResolution {
   if (isModifierOnlyInput(event)) {
     return {
@@ -116,7 +110,17 @@ export function advanceTreeInput(
   }
 
   const pending = [...state.pending, key];
-  const bindings = effectiveTreeBindings(keyConfig);
+  if (key === "Escape" && (state.pending.length > 0 || state.count)) {
+    return { kind: "unmapped", state: createTreeInputState(), consume: true };
+  }
+  const bindings = effectiveTreeBindings(keyConfig).filter(
+    ({ command }) =>
+      !navigationOnly ||
+      command.startsWith("cursor.") ||
+      command.startsWith("viewport.") ||
+      command.startsWith("fold.") ||
+      command.startsWith("navigation."),
+  );
   const exact = bindings.find(({ keys }) => sameKeys(keys, pending));
   const hasLonger = bindings.some(
     ({ keys }) => keys.length > pending.length && startsWithKeys(keys, pending),
@@ -174,10 +178,16 @@ function effectiveTreeBindings(
   // Native Tree navigation supplements the configurable Vim bindings without
   // changing how arrow keys move the caret in Editor buffers.
   const result: Array<{ command: TreeCommandId; keys: string[] }> = [
+    ...Object.entries(SIDEBAR_FOLD_BINDINGS).map(([command, sequence]) => ({
+      command: command as SidebarFoldCommand,
+      keys: Array.from(sequence),
+    })),
     { command: "cursor.left", keys: ["ArrowLeft"] },
     { command: "cursor.right", keys: ["ArrowRight"] },
     { command: "cursor.logical-up", keys: ["ArrowUp"] },
     { command: "cursor.logical-down", keys: ["ArrowDown"] },
+    { command: "navigation.jump-back", keys: ["Ctrl+o"] },
+    { command: "navigation.jump-forward", keys: ["Ctrl+i"] },
   ];
   const treeBindings =
     config.treeBindings ?? DEFAULT_APPLICATION_KEY_CONFIG.treeBindings!;
@@ -224,6 +234,8 @@ function canonicalEventKey(event: TreeKeyInput): string | null {
 function supportsCount(command: TreeCommandId): boolean {
   return (
     command.startsWith("cursor.") ||
+    command.startsWith("viewport.") ||
+    command.startsWith("navigation.") ||
     command === "note.move_up" ||
     command === "note.move_down" ||
     command === "note.move_outdent" ||

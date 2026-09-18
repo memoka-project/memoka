@@ -13,6 +13,15 @@ const wire = {
   theme: "nightfox",
   customThemes: {},
   fontFamily: "serif",
+  noteJapaneseFontFamily: "Noto Sans JP, sans-serif",
+  noteLatinFontFamily: "Inter, sans-serif",
+  noteMonospaceFontFamily: "monospace",
+  noteLineHeight: 1.8,
+  noteBlockGapEm: 1.1,
+  noteListItemGapEm: 0.25,
+  noteSectionTitleGapBeforeEm: 0.6,
+  noteSectionTitleGapAfterEm: 0.4,
+  noteSectionTitleSizeEm: 1.4,
   zoomPercent: 100,
   noteMaxWidthPx: 1000,
   lineNumberMinWidthPx: 480,
@@ -56,6 +65,17 @@ describe("application configuration reload", () => {
       valid: true,
       theme: "mine",
       customThemes: loaded.customThemes,
+      noteAppearance: {
+        japaneseFontFamily: "Noto Sans JP, sans-serif",
+        latinFontFamily: "Inter, sans-serif",
+        monospaceFontFamily: "monospace",
+        lineHeight: 1.8,
+        blockGapEm: 1.1,
+        listItemGapEm: 0.25,
+        sectionTitleGapBeforeEm: 0.6,
+        sectionTitleGapAfterEm: 0.4,
+        sectionTitleSizeEm: 1.4,
+      },
     });
     await vi.advanceTimersByTimeAsync(3000);
     expect(

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-19
+
+- Insertの`Ctrl-e`で絵文字・Lucideアイコンを共通検索して入力できるようになりました。`Ctrl-1/2/3`で対象を切り替え、絵文字・アイコン前後の表示間隔も調整します。
+- TreeとOutlineの階層表示をLucide chevron・縦線で統一。選択済み項目の再クリックでNoteを開く／Sectionへ移動し、Outlineからの移動は見出しを画面上部へ揃えます。Sidebarの移動・スクロール・Jump Listと`zo/zc/za`・再帰的な折り畳み操作を拡充しました。
+- Sectionのchevronをクリックで開閉可能に変更。ノート全体の折り畳みを廃止し、ルートの`zc/zo`は直下の全Section、`zC/zO`は全Sectionを対象にします。ルートの`za/zA`は何もしません。
+- Alertの種類別Lucideアイコンと選択画面のプレビューを追加。本文の詳細な外観設定、CJKと英数字の間隔、Listのbullet・Inline Codeの位置、List内のblock間隔、Detailsの余白を改善しました。
+- Normal/Insertの`Ctrl-Enter`によるblock脱出を統一。通常ListではList直後にParagraphを作り、Details末尾の空ParagraphはBackspaceで外へ移動できます（唯一の本文Paragraphを除く）。
+- 絵文字を含む文字移動・編集、Vim word移動、折り返し行のスクロール、Table内クリック位置、Section titleの貼り付け位置と深さ、構造化内容の削除・List貼り付けを修正。Section作成・階層変更の応答を改善し、大規模ノートの移動時に不要なアイコン全文走査を抑制しました。
+- `gf`によるSectionリンク移動をNote全体表示のまま見出し上端へ揃える動作に変更し、`:help`再生成時の欠けた内容の復元を修正。Code/Detailsの折り畳み状態の保存とTOML highlightにも対応しました。
+- **既知の問題:** 端末間同期は登録したLAN／VPNアドレスへ直接到達できる構成が必要です。Windows向け配布は引き続きソースコードのみです。
+
 ## [0.3.1] - 2026-09-16
 
 - Code Blockに言語設定とLowlightによるsyntax highlight、本文copy button、`,a`の共通操作paneを追加。11行以上は先頭5行を残してWindowごとに折り畳めます。

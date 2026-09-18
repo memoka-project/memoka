@@ -53,7 +53,11 @@ async function openNewWorkspace(
     <App dataArea={dataArea} backup={backup} desktopWindow={null} />,
   );
   await screen.findByRole("tree", { name: "ノートツリー" });
-  const editor = view.container.querySelector<HTMLElement>(".memoka-editor")!;
+  const editor = await waitFor(() => {
+    const element = view.container.querySelector<HTMLElement>(".memoka-editor");
+    expect(element).not.toBeNull();
+    return element!;
+  });
   editor.focus();
   fireEvent.keyDown(editor, { key: "Escape" });
   fireEvent.keyDown(editor, { key: ":" });

@@ -122,14 +122,33 @@ application keyをWindowと共通に利用できる。
 
 Sidebarが縦に長い場合はSidebar内部だけをscrollし、Tab line、statusline、Command-lineを画面外へ押し出さない。
 
+Tree/Outlineはcount付き`j/k`・上下矢印、`gg/G`、`Ctrl-f/b/d/u`、`H/M/L`、`Ctrl-e/y`、`zt/zz/zb`を共有する。
+移動対象は折り畳みを除いた表示項目。`H/L`のcountは画面上端/下端からの項目数、`M`はcountを無視して中央とする。
+ページ操作は選択行の画面内位置を保つ。`Ctrl-e/y`は行単位でscrollし、選択が画面外になった場合だけ最寄りの表示項目へ移す。
+`zt/zz/zb`は選択項目の上端/中央/下端配置、count付きでは指定番号の項目へ移動して配置する。
+Outlineの`h/l`・左右矢印は親/最初の表示中の子への移動とし、本文foldは変更しない。
+Tree/Outlineは本文と同じ`zo/zc/za`で選択項目を展開・折り畳み・toggleし、`zO/zC/zA`は非表示の子孫も含めて再帰的に操作する。再帰toggleの方向は選択項目の状態で決める。Countは受け付けない。
+Treeは子を持つEntryのTabPage-local fold、OutlineはSection本文のWindow-local foldを操作し、Sidebar focus・選択を維持する。空Tree項目は何もしない。Enterの既存のopen/jump動作は変更しない。
+OutlineのNote title選択時は`zc/zo`を直下の全Section、`zC/zO`を全Sectionに適用し、`za/zA`は何もしない。Note自身はfoldしない。TreeのNote Entryは引き続き通常の階層foldを行う。
+Sidebarではラベル内の文字移動や編集operatorは扱わない。入力途中のEscapeはcount/prefix取消、通常のEscapeは既存のcloseとする。
+
 ## 7. Tree
 
+Tree/Outline共通で、選択背景は親の階層縦線位置より4px右から右端の既存余白までとする。最上位では左端の既存余白からとする。
+この範囲から上下左右それぞれ2px内側に選択背景を描画する。行高・文字位置・click領域は変えない。
+選択枠線は表示しない。focus中はselection色、非focus時はsurface-hover色の背景を表示する。文字・アイコンの位置と色は変更しない。
+
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
+親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
+Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/再clickでは開閉しない。
+chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Noteを開かず、double clickも行へ伝播させない。
+展開した親のchevron中心から、最後の表示子孫の行末まで、本文のSection縦線と同じ1px・border-subtle色の縦線を表示する。仮想scrollで親が画面外にある場合も線を維持し、兄弟subtreeへ延長しない。
+タイトル14px、アイコン16px、行高30px、階層indent 20pxとし、既存themeの配色・選択表示を維持する。
 選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
-Entryの行をsingle clickすると、そのEntryを選択してTreeにDOM focusを保つ。Noteの行をdouble clickすると
-現在WindowへNoteを開き、EditorへDOM focusを移す。すでに選択中のNoteのdouble clickでもEditorへfocusを戻す。
+未選択Entryの行をclickすると、そのEntryを選択してTreeにDOM focusを保ち、Windowは変更しない。選択済みNoteの行を再度clickすると
+現在WindowへNoteを開き、EditorへDOM focusを移す。
 mouse hoverだけでは選択を変更しない。
 mouseによる並べ替え、作成、inline renameは提供しない。
 
@@ -137,7 +156,7 @@ mouseによる並べ替え、作成、inline renameは提供しない。
 `→`は閉じた親を展開し、展開済みなら最初の子へ移動する。折り畳まれた子孫は移動先から除外する。
 先頭/末尾では移動を止め、矢印操作中はTreeにfocusを保持してbrowserの既定scrollを防ぐ。
 
-Noteなしgroupはfolderとして表示し、Enterまたはdouble clickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
+Noteなしgroupはfolderとして表示し、Enterまたは選択済み行のclickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
 `:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
 削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
 
@@ -147,13 +166,20 @@ Outlineはactive Windowで実際に表示しているFocused Section subtreeだ�
 Root表示中はNoteDoc全体、深いfocus中はそのsubtreeだけを対象にする。
 
 - Root titleもOutlineに表示する。
+- Note titleにはchevronと、その項目から伸びる階層縦線を表示しない。Sectionをfocusした場合は、表示先頭でも通常どおりchevronと縦線を表示する。
+- Note titleのchevron空欄は設けず、Note全体のOutlineでは子Section以下の表示indentを1段詰める。論理階層・見出し色・キー操作は変えない。Section focus中の表示indentは変更しない。
 - Section深さに応じてEditorと同じ循環title色を使う。
 - Section番号や`§`記号を表示しない。
-- EditorでfoldしたSectionは`▸`、展開中は`▾`で示す。
+- Note title以外の全Sectionは、子Sectionの有無によらずEditorでfold中ならLucide chevron-right、展開中ならchevron-downで示す。
+- Treeと同じタイトル14px・chevron 16px・行高30px・indent 20pxとし、展開した親のchevron下から最後の表示子孫まで1pxのborder-subtle色の縦線を表示する。既存のSection title色は維持する。
 - foldされたSectionの子孫をOutlineでも隠す。
 - Editor caretがSection間を移動したらOutline選択も追従し、内部scrollで可視にする。
-- EnterまたはclickはSection Header先頭へcaretとEditor scrollを移すが、`zf`を実行しない。
+- 未選択行のclickはOutline選択だけを変更し、Windowのcaret・scrollは変更しない。選択済み行の再clickまたはEnterはSection Header先頭へcaretを移し、画面上部へscrollするが、`zf`を実行しない。
+- chevronのclickは対象を選択して本文のSection foldをtoggleし、Outlineにfocusを保つ。行のjump処理へ伝播しない。
 - Empty Bufferでは説明textを表示しない。
+
+本文のSection折り畳み表示はTree/Outlineと同じLucide chevron-down（展開中）・chevron-right（折り畳み中）を使う。サイズはSection titleの1emとし、左右中央をSectionの縦線中央に揃える。Note titleには表示しない。
+chevronの左clickで対象Headerへcaretを移し、既存のSection fold toggleを実行する。Window-local fold状態とOutline表示に反映し、文書内容やundo履歴は変更しない。
 
 ## 9. 行番号
 
@@ -198,10 +224,14 @@ mode、Visualのanchor、文書、Undo履歴、他Windowのfocusは変更しな�
 - List markerの基準grid
 
 Root本文はindentせずguideを出さない。Root以外のSection titleは同じsize/styleで、親本文と同じ位置へ表示する。
-Section本文と子Sectionにはdepthを示す縦guideを表示する。
+Section本文と子Sectionにはdepthを示す縦guideを表示する。guideから本文までのoffsetはindent幅の60%とし、本文はindent幅の終端に置く。
+Section titleとその直属本文の開始位置を揃える。行番号表示時のRoot本文開始位置は、行番号gutterとguide offsetの和とする。
+Table、Code Block、Alert、Details、画像、添付など幅を持つblockの左端は、本文から残り40%進めた次のguide gridに揃える。
 
 List markerは深さに応じて`●、○、■、□、◆、◇`を循環する。Numbered Listはperiodの右端を縦に揃え、
 桁数が増えた場合は本文側ではなく左へ伸ばす。Bullet/numberから本文までの間隔と本文開始位置は両Listで揃える。
+Bulletの中心は本文の先頭行のline box中央に置き、行間設定に追従する。折り返しや子ListでListItemが高くなっても、先頭行を基準にする。
+List内のCode Block、Table、Alert、Details、画像、添付、引用、水平線には上下とも`list-item-gap`の2倍の余白を設ける。これらのblockが連続する場合は間隔を4倍とし、通常text同士の間隔は`list-item-gap`を使う。
 
 ## 11. 色とfont
 
@@ -214,8 +244,13 @@ Section titleはNoteからの絶対depth（Root H1〜H6）で色を決める。`
 H7以降のSectionは作れず、古いデータにも無検証の色循環で対応しない。
 Visual CharとVisual Lineのselection背景は同じsemantic selection色を使う。
 
-Application fontは本文と通常UIに適用する。code、行番号、Command-line、debug lineは等幅fontを維持する。
-inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当で表示する。
+Application UI fontとNote fontは分離する。Noteは英数、日本語、等幅のfont-familyを個別に持ち、英数から日本語への
+通常のCSS fallback stackを本文へ適用する。等幅fontはinline codeとCode/Source Blockへ適用し、行番号、Command-line、
+debug lineはUI既定の等幅fontを維持する。inline codeとCode/Source Blockは通常本文16px相当に対して13.6px相当で表示する。
+
+Note本文のline-height、全block間隔、List item間隔、Section title前後の間隔、全depth共通のSection title相対sizeを
+application設定で変更できる。Table cellの縦paddingは本文line-heightへ比例させ、横paddingは固定する。
+同じ外観値をEditorと構造化Note previewへ適用し、NoteDoc、selection、Undo履歴は変更しない。
 
 ## 12. 保存待ちと履歴
 

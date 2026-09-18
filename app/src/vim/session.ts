@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { isJumpMotion } from "../core/sidebar-navigation";
 import {
   revealDetailsFoldsAtPosition,
   runDetailsFoldCommand,
@@ -38,19 +39,22 @@ import {
   beginVisualChar,
   beginVisualLine,
   clampVimBlockCursor,
+  focusedSectionLineDeletionSelection,
+  sectionTitlePutBoundary,
   moveVimSelectionToViewportPosition,
   resolveVimViewportCaretPosition,
   pasteVimRegisterAtSelection,
   runEditorEnterInsertFromHorizontalRule,
   runEditorExitBlock,
-  runEditorInsertBoundaryDelete,
   runEditorInsertBackspace,
+  runEditorInsertForwardDelete,
   runEditorInsertEnter,
   runEditorListDepthShift,
   runEditorReplaceCharacter,
   runEditorReplaceText,
   runEditorTab,
   runEditorVimCommand,
+  viewportNavigationTarget,
   runEditorVimOperator,
   runVisualLineCommand,
   restoreVisualCharSelection,
@@ -62,6 +66,7 @@ import {
   vimBlockCursorBeforeInsertCaret,
   vimRegisterLabel,
   type EditorVimResult,
+  type FocusedSectionLineDeletionSelection,
   type VimEditorView,
   type VimRegister,
   type VimVisualLineState,
@@ -258,9 +263,11 @@ export interface VimNativeFilePutRequest {
 }
 
 export interface ProductVimSessionOptions {
+  onRecordJump?: (origin: StableEditorPosition) => void;
   initialMode: VimMode;
   /** The persisted Note ID; a Focused child Section never matches this ID. */
   getRootNoteId?: () => string | null;
+  getSectionDepth?: (sectionId: string) => number | null;
   registerStore?: VimRegisterStore;
   repeatStore?: VimRepeatStore;
   visualSelectionStore?: VimVisualSelectionStore;
@@ -300,6 +307,7 @@ export interface ProductVimSessionOptions {
     count: number,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
   onInlineFormat?: () => boolean;
+  onSymbolPicker?: () => boolean;
   onCodeBlockActions?: (selection: CodeBlockActionSelection) => boolean;
   onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
@@ -347,7 +355,11 @@ export interface ProductVimSessionOptions {
         changed: boolean;
         createdSectionId: string | null;
       } | void>;
+  onFocusedSectionLineDelete?: (
+    request: Omit<FocusedSectionLineDeletionSelection, "register">,
+  ) => void | Promise<void>;
   onSectionSiblingPut?: (request: {
+    bodyBoundary?: number | null;
     targetSectionId: string;
     direction: "after" | "before";
     register: Extract<VimRegister, { kind: "section" }>;
@@ -590,7 +602,7 @@ export class ProductVimSession {
               if (event.button !== 0) return false;
               const position = this.tableSelectionPositionFromTarget(
                 view,
-                event.target,
+                event,
               );
               if (position === null) return false;
               event.preventDefault();
@@ -925,10 +937,7 @@ export class ProductVimSession {
 
   private readonly handleNativePointerDown = (event: MouseEvent): void => {
     if (!this.view || event.button !== 0) return;
-    const position = this.tableSelectionPositionFromTarget(
-      this.view,
-      event.target,
-    );
+    const position = this.tableSelectionPositionFromTarget(this.view, event);
     if (position !== null) this.ignoreStaleDomTableSelection = false;
     this.domTableSelectionPosition = position;
   };
@@ -1643,7 +1652,8 @@ export class ProductVimSession {
   ): boolean {
     const tablePosition = this.tableSelectionPositionFromTarget(
       view,
-      event.target,
+      event,
+      position,
     );
     if (tablePosition !== null) this.ignoreStaleDomTableSelection = false;
     this.domTableSelectionPosition =
@@ -1680,11 +1690,33 @@ export class ProductVimSession {
 
   private tableSelectionPositionFromTarget(
     view: EditorView,
-    target: EventTarget | null,
+    event: MouseEvent,
+    clickPosition?: number,
   ): number | null {
+    const target = event.target;
     const cell = target instanceof Element ? target.closest("th, td") : null;
     const blockId = cell?.getAttribute("data-block-id");
     if (!cell || !view.dom.contains(cell) || !blockId) return null;
+    try {
+      const position =
+        clickPosition ??
+        view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+      if (position !== undefined) {
+        const resolved = view.state.doc.resolve(position);
+        for (let depth = resolved.depth; depth > 0; depth -= 1) {
+          const node = resolved.node(depth);
+          if (
+            (node.type.name === "tableCell" ||
+              node.type.name === "tableHeader") &&
+            node.attrs.blockId === blockId
+          ) {
+            return position;
+          }
+        }
+      }
+    } catch {
+      // Detached/stale layout can fail hit testing. Recover in the target Cell.
+    }
     let result: number | null = null;
     view.state.doc.descendants((node, position) => {
       if (
@@ -1838,23 +1870,39 @@ export class ProductVimSession {
     }
     if (
       !isComposing &&
-      this.mode === "insert" &&
+      (this.mode === "insert" || this.mode === "normal") &&
       event.ctrlKey &&
       event.key === "Enter"
     ) {
+      const fromNormal = this.mode === "normal";
       const undoManager = findUndoManager(view);
+      const undoStackDepth = undoManager?.undoStack.length ?? 0;
+      const cursorBefore = selectionCursor(view);
       const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
-      if (standaloneUndo) undoManager?.stopCapturing();
+      if (fromNormal || standaloneUndo) undoManager?.stopCapturing();
       const result = runEditorExitBlock(view);
       if (result.handled) {
         event.preventDefault();
         this.armInsertBreakSuppression();
         this.ignoreStaleDomTableSelection = true;
         this.domTableSelectionPosition = null;
-        if (standaloneUndo) undoManager?.stopCapturing();
+        if (fromNormal) {
+          this.beginChangeUndoCapture(
+            undoManager,
+            undoStackDepth,
+            cursorBefore,
+          );
+          this.changeMode(view, "insert");
+        } else if (standaloneUndo) undoManager?.stopCapturing();
         this.action = `${result.detail}:changed`;
         this.emit();
         this.scheduleCaretRefresh(view);
+        return true;
+      }
+      // Never let Normal Ctrl-Enter fall through to a native Hard Break.
+      if (fromNormal) {
+        event.preventDefault();
+        this.input = createVimInputState();
         return true;
       }
     }
@@ -1883,10 +1931,10 @@ export class ProductVimSession {
       !event.metaKey &&
       !event.altKey
     ) {
-      const result = runEditorInsertBoundaryDelete(
-        view,
-        event.key === "Backspace" ? "backward" : "forward",
-      );
+      const result =
+        event.key === "Backspace"
+          ? runEditorInsertBackspace(view)
+          : runEditorInsertForwardDelete(view);
       if (result.handled || result.preventDefault) {
         event.preventDefault();
         this.action = `${result.detail}:${result.handled ? "changed" : "boundary"}`;
@@ -2243,6 +2291,14 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "insert.symbol") {
+      event.preventDefault();
+      const opened = this.options.onSymbolPicker?.() ?? false;
+      this.action = opened ? "insert:symbol:open" : "insert:symbol:unavailable";
+      this.emit();
+      return true;
+    }
+
     if (command === "selection.format") {
       event.preventDefault();
       const opened = this.options.onInlineFormat?.() ?? false;
@@ -2424,6 +2480,26 @@ export class ProductVimSession {
           ? this.captureVisualSelection(view)
           : undefined;
       const currentRegister = this.registerStore.read(view.state.schema);
+      const focusedSectionDeletion =
+        this.options.onFocusedSectionLineDelete &&
+        ((this.mode === "normal" && command === "line.delete") ||
+          (this.mode === "visual-line" && command === "selection.delete"))
+          ? focusedSectionLineDeletionSelection(
+              view,
+              this.mode,
+              resolution.count,
+              this.visualLine,
+            )
+          : null;
+      if (focusedSectionDeletion) {
+        const request = {
+          sourceSectionId: focusedSectionDeletion.sourceSectionId,
+          remaining: focusedSectionDeletion.remaining,
+        };
+        Promise.resolve(
+          this.options.onFocusedSectionLineDelete?.(request),
+        ).catch(() => undefined);
+      }
       const undoManager = findUndoManager(view);
       const cursorBeforeCommand =
         this.mode === "visual-char"
@@ -2447,45 +2523,102 @@ export class ProductVimSession {
               manager: undoManager,
             }
           : null;
-      const result = resolution.operator
-        ? runEditorVimOperator(
-            view,
-            resolution.operator,
-            command,
-            resolution.count,
-          )
-        : command === "replace.character" && resolution.argument
-          ? runEditorReplaceCharacter(
+      const jumpMotion =
+        !resolution.operator && isJumpMotion(command, resolution.countExplicit);
+      const jumpCursor =
+        this.mode === "visual-line"
+          ? (this.visualLine?.cursor ?? selectionCursor(view))
+          : this.mode === "visual-block"
+            ? visualBlockCursor(view)
+            : this.mode === "visual-char"
+              ? visualCharCursor(view)
+              : selectionCursor(view);
+      const jumpOrigin = jumpMotion
+        ? this.options.captureVisualPosition?.(jumpCursor)
+        : null;
+      const screenMotion =
+        !resolution.operator &&
+        (command.startsWith("cursor.screen-") ||
+          command.startsWith("viewport.scroll-"));
+      const result: EditorVimResult = screenMotion
+        ? (() => {
+            const target = viewportNavigationTarget(
               view,
-              resolution.argument,
+              command,
+              jumpCursor,
               resolution.count,
-              this.mode,
-            )
-          : this.mode === "visual-line" && this.visualLine
-            ? runVisualLineCommand(
+            );
+            if (target === null) return { handled: false, detail: command };
+            const moved =
+              this.mode === "visual-block"
+                ? moveVisualBlockHeadToPosition(view, target)
+                : moveVimSelectionToViewportPosition(
+                    view,
+                    this.mode,
+                    target,
+                    this.visualLine,
+                  );
+            return {
+              ...moved,
+              handled: moved.handled || command.startsWith("viewport.scroll-"),
+              detail: command,
+            };
+          })()
+        : focusedSectionDeletion
+          ? {
+              handled: true,
+              detail: "section:delete-focused-selected-lines",
+              register: focusedSectionDeletion.register,
+              nextMode: "normal",
+            }
+          : resolution.operator
+            ? runEditorVimOperator(
                 view,
+                resolution.operator,
                 command,
-                this.visualLine,
-                currentRegister,
                 resolution.count,
-                resolution.countExplicit,
               )
-            : this.mode === "visual-block"
-              ? runVisualBlockCommand(
+            : command === "replace.character" && resolution.argument
+              ? runEditorReplaceCharacter(
                   view,
-                  command,
-                  currentRegister,
+                  resolution.argument,
                   resolution.count,
-                )
-              : runEditorVimCommand(
-                  view,
-                  command,
                   this.mode,
-                  currentRegister,
-                  resolution.count,
-                  resolution.countExplicit,
-                  this.options.keyConfig,
-                );
+                )
+              : this.mode === "visual-line" && this.visualLine
+                ? runVisualLineCommand(
+                    view,
+                    command,
+                    this.visualLine,
+                    currentRegister,
+                    resolution.count,
+                    resolution.countExplicit,
+                  )
+                : this.mode === "visual-block"
+                  ? runVisualBlockCommand(
+                      view,
+                      command,
+                      currentRegister,
+                      resolution.count,
+                    )
+                  : runEditorVimCommand(
+                      view,
+                      command,
+                      this.mode,
+                      currentRegister,
+                      resolution.count,
+                      resolution.countExplicit,
+                      this.options.keyConfig,
+                    );
+      const afterJumpCursor =
+        result.visualLine?.cursor ??
+        (this.mode === "visual-block"
+          ? visualBlockCursor(view)
+          : this.mode === "visual-char"
+            ? visualCharCursor(view)
+            : selectionCursor(view));
+      if (result.handled && jumpOrigin && jumpCursor !== afterJumpCursor)
+        this.options.onRecordJump?.(jumpOrigin);
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
             mode: this.mode,
@@ -2519,6 +2652,13 @@ export class ProductVimSession {
       }
       putCheckpoint?.manager?.stopCapturing();
       if (result.visualLine) this.visualLine = result.visualLine;
+      if (result.register?.kind === "section" && result.register.titleOnly) {
+        const depth = this.options.getSectionDepth?.(
+          result.register.sectionIds[0]!,
+        );
+        if (depth !== undefined && depth !== null)
+          result.register.sourceSectionDepth = depth;
+      }
       const clipboardRegister =
         result.handled &&
         result.register &&
@@ -2902,13 +3042,19 @@ export class ProductVimSession {
     const mountedSectionId = view.dom.dataset.sectionId ?? null;
     const targetSectionId = sectionIdAtEditorSelection(view.state);
     if (
-      !mountedSectionId ||
-      mountedSectionId === this.options.getRootNoteId?.() ||
-      targetSectionId !== mountedSectionId
+      !register.titleOnly &&
+      (!mountedSectionId ||
+        mountedSectionId === this.options.getRootNoteId?.() ||
+        targetSectionId !== mountedSectionId)
     ) {
       return null;
     }
     const direction = command === "put.after" ? "after" : "before";
+    const bodyBoundary = register.titleOnly
+      ? sectionTitlePutBoundary(view, direction)
+      : undefined;
+    if (!targetSectionId || (register.titleOnly && bodyBoundary === undefined))
+      return { handled: false, detail: "put:title:unsupported-boundary" };
     let handled = false;
     try {
       for (
@@ -2921,6 +3067,7 @@ export class ProductVimSession {
             targetSectionId,
             direction,
             register,
+            bodyBoundary,
           })
         ) {
           break;
@@ -3114,6 +3261,16 @@ export class ProductVimSession {
 
   cancelExternalMutationUndoBoundary(): void {
     this.pendingExternalVisualSelection = undefined;
+  }
+
+  completeExternalInsertMutation(): void {
+    this.pendingExternalVisualSelection = undefined;
+    const view = this.view;
+    if (!view || view.isDestroyed) return;
+    findUndoManager(view)?.stopCapturing();
+    this.action = "insert:symbol:changed";
+    this.emit();
+    this.scheduleCaretRefresh(view);
   }
 
   completeExternalSelectionMutation(
@@ -4201,6 +4358,7 @@ function eventSequence(event: KeyboardEvent): string {
       "b",
       "c",
       "d",
+      "e",
       "f",
       "h",
       "i",
@@ -4214,6 +4372,7 @@ function eventSequence(event: KeyboardEvent): string {
       "u",
       "v",
       "w",
+      "y",
     ].includes(key)
   ) {
     return `Ctrl+${key}`;

@@ -1,3 +1,5 @@
+import { InlineSymbols } from "./inline-symbols";
+import { renderSymbolText } from "./symbol-icons";
 import {
   Details,
   DetailsBody,
@@ -14,6 +16,7 @@ import {
   type NodeViewRendererProps,
 } from "@tiptap/core";
 import Code from "@tiptap/extension-code";
+import { alertIconMask } from "./alert-icons";
 import Collaboration from "@tiptap/extension-collaboration";
 import { replicatedNoteExtension } from "./replicated-note-extension";
 import { isReplicatedProjection } from "../core/replicated-editor-binding";
@@ -109,6 +112,13 @@ declare module "@tiptap/core" {
 
 export type InternalLinkTitleResolver = (sectionId: string) => string | null;
 
+export interface SectionHashInputRequest {
+  readonly sourceSectionId: string;
+  readonly paragraphBlockId: string;
+  readonly paragraphBodyIndex: number;
+  readonly caretPosition: number;
+}
+
 export type EditorAttachmentRepository = Pick<
   AttachmentRepository,
   "cached" | "previewUrl" | "resolve" | "subscribe"
@@ -154,6 +164,7 @@ const MarkdownAlertAttributes = Extension.create({
               return {
                 "data-memoka-alert-type": type,
                 "data-memoka-alert-label": markdownAlertLabel(attributes),
+                style: `--memoka-alert-icon: ${alertIconMask(type)}`,
                 ...(title ? { "data-memoka-alert-title": title } : {}),
                 ...(fold ? { "data-memoka-alert-fold": fold } : {}),
               };
@@ -303,7 +314,7 @@ function renderInternalSectionLinkElement(
   element.contentEditable = "false";
   element.draggable = false;
   element.spellcheck = false;
-  element.textContent = label;
+  renderSymbolText(element, label);
   element.setAttribute("aria-label", `${label}（内部リンク、gfで開く）`);
   element.title = `gf で開く: ${label}`;
 }
@@ -2234,7 +2245,10 @@ const TableShortcuts = Extension.create({
   },
 });
 
-const SectionEditing = Extension.create({
+const SectionEditing = Extension.create<{
+  absoluteDepth: number;
+  onSectionHashInput?: (request: SectionHashInputRequest) => void;
+}>({
   name: "memokaSectionEditing",
   priority: 2_000,
   addOptions() {
@@ -2267,6 +2281,34 @@ const SectionEditing = Extension.create({
             let absoluteDepth = this.options.absoluteDepth;
             for (let depth = 1; depth <= sectionDepth; depth++) {
               if ($from.node(depth).type.name === SECTION_NODE) absoluteDepth++;
+            }
+            if (absoluteDepth > 0) {
+              const sourceSectionId = String(
+                section.firstChild?.attrs.sectionId ?? "",
+              );
+              const paragraphBlockId = String($from.parent.attrs.blockId ?? "");
+              const onSectionHashInput = this.options.onSectionHashInput;
+              if (
+                !sourceSectionId ||
+                !paragraphBlockId ||
+                !onSectionHashInput
+              ) {
+                return false;
+              }
+              const chunkIndex = $from.index(bodyDepth);
+              let paragraphBodyIndex = $from.index(chunkDepth);
+              for (let index = 0; index < chunkIndex; index += 1) {
+                const chunk = body.child(index);
+                if (chunk.type.name !== BODY_CHUNK_NODE) return false;
+                paragraphBodyIndex += chunk.childCount;
+              }
+              onSectionHashInput({
+                sourceSectionId,
+                paragraphBlockId,
+                paragraphBodyIndex,
+                caretPosition: from,
+              });
+              return true;
             }
             if (absoluteDepth >= 5) return false;
             const sectionType = state.schema.nodes[SECTION_NODE];
@@ -2432,6 +2474,10 @@ export function productEditorExtensions(
     attachmentRepository?: EditorAttachmentRepository;
     /** Window-local Section fold state; never persisted into the NoteDoc. */
     collapsedSectionIds?: readonly string[];
+    onSectionFoldsChange?: (
+      ids: readonly string[],
+      activeSectionId: string | null,
+    ) => void;
     /** Window-local Code Block fold state; never persisted into the NoteDoc. */
     collapsedCodeBlockIds?: readonly string[];
     /** Window-local Details fold overrides; never persisted into the NoteDoc. */
@@ -2443,6 +2489,7 @@ export function productEditorExtensions(
     onCopyCodeBlock?: (
       blockId: string,
     ) => CodeCopyResult | Promise<CodeCopyResult>;
+    onSectionHashInput?: (request: SectionHashInputRequest) => void;
   } = {},
 ) {
   if (note.replicated && options.directBodyOnly)
@@ -2473,6 +2520,7 @@ export function productEditorExtensions(
       trailingNode: false,
       listItem: false,
     }),
+    InlineSymbols,
     MemokaCodeBlock.configure({ onCopyCode: options.onCopyCodeBlock }),
     CodeBlockFolding.configure({
       collapsedBlockIds: options.collapsedCodeBlockIds ?? [],
@@ -2515,6 +2563,8 @@ export function productEditorExtensions(
     ...(!options.directBodyOnly && !options.readOnly
       ? [
           SectionFolding.configure({
+            noteId: note.noteId,
+            onFoldsChange: options.onSectionFoldsChange,
             collapsedSectionIds: options.collapsedSectionIds ?? [],
           }),
         ]
@@ -2554,7 +2604,10 @@ export function productEditorExtensions(
     BlockIdentity,
     AttachmentIdentity,
     TableShortcuts,
-    SectionEditing.configure({ absoluteDepth: focusedSection?.depth ?? 0 }),
+    SectionEditing.configure({
+      absoluteDepth: focusedSection?.depth ?? 0,
+      onSectionHashInput: options.onSectionHashInput,
+    }),
     ...(note.replicated && !options.directBodyOnly
       ? [
           replicatedNoteExtension(

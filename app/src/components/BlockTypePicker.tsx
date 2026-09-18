@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type CSSProperties,
+} from "react";
+import { alertIconMask } from "../editor/alert-icons";
 import {
   filterBlockTypeCatalog,
   type BlockTransformOptions,
@@ -250,6 +258,11 @@ function AlertTypePreview({
       {entry && (
         <div className="block-type-picker__preview-content workspace-search-preview-document">
           <blockquote
+            style={
+              {
+                "--memoka-alert-icon": alertIconMask(entry.id),
+              } as CSSProperties
+            }
             data-memoka-alert-type={entry.id}
             data-memoka-alert-label={markdownAlertLabel({
               alertType: entry.id,

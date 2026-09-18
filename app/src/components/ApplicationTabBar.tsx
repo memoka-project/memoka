@@ -1,4 +1,5 @@
 import { noteDisplayTitle, type NoteMetadata } from "../core/documents";
+import { SymbolText } from "./SymbolText";
 import {
   listTabWindowIds,
   type ApplicationWindowState,
@@ -62,7 +63,9 @@ export function ApplicationTabBar({
                   {shortcutKey !== null && (
                     <span className="application-tab-index">{shortcutKey}</span>
                   )}
-                  <span className="application-tab-title">{label}</span>
+                  <span className="application-tab-title">
+                    <SymbolText text={label} />
+                  </span>
                   {windowCount > 1 && (
                     <span className="application-tab-window-count">
                       {windowCount}W

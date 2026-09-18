@@ -1,3 +1,4 @@
+import { SymbolText } from "./SymbolText";
 import {
   useLayoutEffect,
   useRef,
@@ -62,7 +63,7 @@ export function InternalLinkPicker({
                 }}
               >
                 <span className="internal-link-picker__title">
-                  {candidate.title}
+                  <SymbolText text={candidate.title} />
                 </span>
                 <span className="internal-link-picker__context">
                   {candidate.parentPath} · {candidate.shortId}

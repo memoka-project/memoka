@@ -1,4 +1,6 @@
 import { Extension } from "@tiptap/core";
+import { disclosureIconMask } from "./disclosure-icons";
+import { foldNoteRootSections } from "../core/sidebar-folding";
 import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   Plugin,
@@ -55,6 +57,7 @@ export interface SectionFoldRevealResult {
 }
 
 interface SectionFoldPluginState {
+  readonly noteId?: string;
   readonly collapsedSectionIds: readonly string[];
   readonly collapsedSignature: string;
   readonly activeEntries: readonly SectionFoldEntry[];
@@ -67,6 +70,11 @@ interface SectionFoldMeta {
 
 interface SectionFoldingOptions {
   readonly collapsedSectionIds: readonly string[];
+  readonly noteId?: string;
+  readonly onFoldsChange?: (
+    ids: readonly string[],
+    activeSectionId: string | null,
+  ) => void;
 }
 
 const sectionFoldPluginKey = new PluginKey<SectionFoldPluginState>(
@@ -240,13 +248,17 @@ function transactionIntroducesCollapsedSection(
 function createSectionFoldPluginState(
   doc: ProseMirrorNode,
   requestedIds: readonly string[],
+  noteId?: string,
 ): SectionFoldPluginState {
-  const collapsedSectionIds = normalizedSectionIds(requestedIds);
+  const collapsedSectionIds = normalizedSectionIds(
+    requestedIds.filter((id) => id !== noteId),
+  );
   const collapsed = new Set(collapsedSectionIds);
   const activeEntries = deriveEditorSectionFoldEntries(doc).filter((entry) =>
     collapsed.has(entry.sectionId),
   );
   return {
+    noteId,
     collapsedSectionIds,
     collapsedSignature: collapsedSignature(collapsedSectionIds),
     activeEntries,
@@ -275,6 +287,7 @@ function mapSectionFoldPluginState(
     return createSectionFoldPluginState(
       state.doc,
       previous.collapsedSectionIds,
+      previous.noteId,
     );
   }
   if (previous.activeEntries.length === 0) {
@@ -291,6 +304,7 @@ function mapSectionFoldPluginState(
       return createSectionFoldPluginState(
         state.doc,
         previous.collapsedSectionIds,
+        previous.noteId,
       );
     }
     const next = entryAtHeaderPosition(state.doc, mapped.pos);
@@ -298,6 +312,7 @@ function mapSectionFoldPluginState(
       return createSectionFoldPluginState(
         state.doc,
         previous.collapsedSectionIds,
+        previous.noteId,
       );
     }
     mappedEntries.push(next);
@@ -350,6 +365,7 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
     return { collapsedSectionIds: [] };
   },
   addProseMirrorPlugins() {
+    const { noteId, onFoldsChange } = this.options;
     const initialCollapsedSectionIds = this.options.collapsedSectionIds;
     return [
       new Plugin<SectionFoldPluginState>({
@@ -364,7 +380,11 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
         },
         state: {
           init: (_configuration, state) =>
-            createSectionFoldPluginState(state.doc, initialCollapsedSectionIds),
+            createSectionFoldPluginState(
+              state.doc,
+              initialCollapsedSectionIds,
+              noteId,
+            ),
           apply: (transaction, previous, _oldState, newState) => {
             const meta = transaction.getMeta(sectionFoldPluginKey) as
               SectionFoldMeta | undefined;
@@ -372,6 +392,7 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
               return createSectionFoldPluginState(
                 newState.doc,
                 meta.collapsedSectionIds,
+                noteId,
               );
             }
             if (!transaction.docChanged) return previous;
@@ -379,8 +400,72 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
           },
         },
         props: {
-          decorations: (state) =>
-            sectionFoldPluginKey.getState(state)?.decorations ?? null,
+          attributes: () => ({
+            style: `--memoka-chevron-down: ${disclosureIconMask(true)}; --memoka-chevron-right: ${disclosureIconMask(false)};`,
+          }),
+          decorations: (state) => {
+            const decorations =
+              sectionFoldPluginKey.getState(state)?.decorations ??
+              DecorationSet.empty;
+            const header = state.doc.firstChild;
+            return header && header.attrs.sectionId === noteId
+              ? decorations.add(state.doc, [
+                  Decoration.node(0, header.nodeSize, {
+                    class: "memoka-note-title",
+                  }),
+                ])
+              : decorations;
+          },
+          handleDOMEvents: {
+            mousedown: (view, event) => {
+              if (event.button !== 0 || !(event.target instanceof HTMLElement))
+                return false;
+              const header = event.target.closest<HTMLElement>(
+                ".memoka-section-header",
+              );
+              if (!header || header.dataset.sectionId === noteId) return false;
+              const rect = header.getBoundingClientRect();
+              const style = getComputedStyle(header);
+              const size = Number.parseFloat(style.fontSize);
+              const offset = Number.parseFloat(
+                getComputedStyle(view.dom).getPropertyValue(
+                  "--memoka-indent-guide-offset",
+                ),
+              );
+              if (!Number.isFinite(size) || !Number.isFinite(offset))
+                return false;
+              const center = rect.left - offset + 0.5;
+              if (
+                event.clientX < center - size / 2 ||
+                event.clientX > center + size / 2 ||
+                event.clientY < rect.top ||
+                event.clientY > rect.top + size * 1.35
+              )
+                return false;
+              const entry = deriveEditorSectionFoldEntries(view.state.doc).find(
+                (entry) => entry.sectionId === header.dataset.sectionId,
+              );
+              if (!entry) return false;
+              event.preventDefault();
+              view.dispatch(
+                view.state.tr
+                  .setSelection(
+                    TextSelection.near(
+                      view.state.doc.resolve(entry.headerFrom + 1),
+                    ),
+                  )
+                  .setMeta("addToHistory", false),
+              );
+              const result = runSectionFoldCommand(view, "toggle");
+              if (result.changed)
+                onFoldsChange?.(
+                  result.collapsedSectionIds,
+                  result.targetSectionId,
+                );
+              view.focus();
+              return true;
+            },
+          },
         },
         appendTransaction: (_transactions, _oldState, newState) => {
           const foldState = sectionFoldPluginKey.getState(newState);
@@ -496,6 +581,25 @@ export function runSectionFoldCommand(
     };
   }
   const targetIndex = entries.indexOf(target);
+  if (target.sectionId === sectionFoldPluginKey.getState(view.state)?.noteId) {
+    const collapsedSectionIds = foldNoteRootSections(
+      entries.map((entry) => ({ id: entry.sectionId, depth: entry.depth })),
+      target.sectionId,
+      currentIds,
+      action,
+    );
+    const changed = setSectionFoldCollapsedSectionIds(
+      view,
+      collapsedSectionIds,
+    );
+    return {
+      handled: true,
+      changed,
+      targetSectionId: target.sectionId,
+      collapsedSectionIds,
+      detail: `section:fold-${action}:root`,
+    };
+  }
   const subtreeIds: string[] = [];
   for (let index = targetIndex; index < entries.length; index += 1) {
     const entry = entries[index]!;

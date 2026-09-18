@@ -1,4 +1,5 @@
 // Product block semantics shared by the Vim command layer.
+import { graphemeStarts, textblockGraphemeStarts } from "./graphemes";
 import type {
   Node as ProseMirrorNode,
   NodeType,
@@ -177,6 +178,7 @@ function textblockContentCursorPositions(
   rangeTo = Number.POSITIVE_INFINITY,
 ): number[] {
   const positions: number[] = [];
+  const boundaries = new Set(textblockGraphemeStarts(node));
   node.descendants((child, offset) => {
     if (isHardBreakNode(child)) return false;
     if (child.isText) {
@@ -184,7 +186,8 @@ function textblockContentCursorPositions(
       const firstIndex = Math.max(0, rangeFrom - childFrom);
       const lastIndex = Math.min(child.nodeSize, rangeTo - childFrom);
       for (let index = firstIndex; index < lastIndex; index += 1) {
-        positions.push(blockFrom + offset + index);
+        if (boundaries.has(offset + index))
+          positions.push(blockFrom + offset + index);
       }
       return false;
     }
@@ -267,8 +270,16 @@ function descendantCursorPositions(
 ): number[] {
   const positions: number[] = [];
   node.descendants((child, offset) => {
+    if (child.isTextblock) {
+      positions.push(
+        ...textblockCursorPositions(child, contentStart + offset + 1),
+      );
+      return false;
+    }
     if (child.isText) {
-      for (let index = 0; index < child.nodeSize; index += 1) {
+      for (const index of textblockGraphemeStarts(node)
+        .filter((index) => index >= offset && index < offset + child.nodeSize)
+        .map((index) => index - offset)) {
         positions.push(contentStart + offset + index);
       }
       return false;
@@ -276,9 +287,6 @@ function descendantCursorPositions(
     if (child.isInline && (child.isAtom || child.isLeaf)) {
       positions.push(contentStart + offset);
       return false;
-    }
-    if (child.isTextblock && child.content.size === 0) {
-      positions.push(contentStart + offset + 1);
     }
     return true;
   });
@@ -311,14 +319,47 @@ function lastDescendantCursorPosition(
   rangeFrom = Number.NEGATIVE_INFINITY,
   rangeTo = Number.POSITIVE_INFINITY,
 ): number {
+  if (node.isTextblock) {
+    return (
+      textblockContentCursorPositions(
+        node,
+        contentStart,
+        rangeFrom,
+        rangeTo,
+      ).at(-1) ?? (Number.isFinite(rangeFrom) ? rangeFrom : contentStart)
+    );
+  }
   let last: number | null = null;
   node.descendants((child, offset) => {
     if (isHardBreakNode(child)) return false;
     const childFrom = contentStart + offset;
+    if (child.isTextblock) {
+      const positions = textblockContentCursorPositions(
+        child,
+        childFrom + 1,
+        rangeFrom,
+        rangeTo,
+      );
+      if (positions.length) last = positions.at(-1)!;
+      else if (
+        child.content.size === 0 &&
+        childFrom + 1 >= rangeFrom &&
+        childFrom + 1 < rangeTo
+      )
+        last = childFrom + 1;
+      return false;
+    }
     if (child.isText) {
       const from = Math.max(childFrom, rangeFrom);
       const to = Math.min(childFrom + child.nodeSize, rangeTo);
-      if (from < to) last = to - 1;
+      if (from < to)
+        last =
+          childFrom +
+          (graphemeStarts(child.text!)
+            .filter(
+              (index) => childFrom + index >= from && childFrom + index < to,
+            )
+            .at(-1) ?? 0);
       return false;
     }
     if (child.isInline && (child.isAtom || child.isLeaf)) {
@@ -624,13 +665,10 @@ export class VimBlockSemanticsRegistry {
                 blockNodeName: node.type.name,
                 kind: "code-line",
               },
-              lineLength > 0 ? lineFrom + lineLength - 1 : lineFrom,
+              lineFrom + (graphemeStarts(part).at(-1) ?? 0),
               () =>
                 lineLength > 0
-                  ? Array.from(
-                      { length: lineLength },
-                      (_, index) => lineFrom + index,
-                    )
+                  ? graphemeStarts(part).map((index) => lineFrom + index)
                   : [lineFrom],
             ),
           );

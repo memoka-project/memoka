@@ -8,6 +8,7 @@
 > [!IMPORTANT]
 > このノートはMemokaが管理しています。`:help`を実行するたびに、このファイルの内容から最新のHelpを作り直します。
 > Helpノートへ直接加えた編集は、そのときに置き換えられます。
+> 削除した見出しや本文も、原稿に含まれていれば復元されます。
 
 ## 目次
 
@@ -70,18 +71,18 @@ IME変換途中の文字は入力中のEditor内だけに保持し、確定し�
 リスト内の`o`は項目内のblockの種類にかかわらず、現在項目の表示順で直後に空の項目を作ります。
 子項目があれば先頭の子として、なければ次の兄弟として追加します。
 
-| Key                 | 動作                                                                                                                  |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `Esc` / `Ctrl-c`    | Insertを終了してNormalへ戻ります。                                                                                    |
-| `Ctrl-h`            | Backspaceと同じように直前を削除します。                                                                               |
-| `Ctrl-j` / `Ctrl-m` | Enterと同じ改行を行います。                                                                                           |
-| `Ctrl-u`            | 論理行の先頭からcaret直前までを削除します。                                                                           |
-| `Ctrl-w`            | 空白を読み飛ばし、直前のwordを削除します。                                                                            |
-| `Ctrl-t`            | SectionまたはListItemを1段深くします。直接本文Paragraphでは子Sectionを作ります。                                      |
-| `Ctrl-d`            | SectionまたはListItemを1段浅くします。直接本文Paragraphでは兄弟Sectionを作ります。                                    |
-| `Ctrl-Enter`        | List内では先頭の子または次の兄弟項目を作ります。それ以外のTable/Code/Source/Blockquoteでは直後にParagraphを作ります。 |
-| `Ctrl-Shift-v`      | Clipboardのテキストだけを貼り付けます。HTMLやMarkdownの装飾・構造は取り込みません。                                   |
-| `Tab` / `Shift-Tab` | Listの階層変更やTable Cell移動など、現在の構造に応じた操作を行います。                                                |
+| Key                 | 動作                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------- |
+| `Esc` / `Ctrl-c`    | Insertを終了してNormalへ戻ります。                                                  |
+| `Ctrl-h`            | Backspaceと同じように直前を削除します。                                             |
+| `Ctrl-j` / `Ctrl-m` | Enterと同じ改行を行います。                                                         |
+| `Ctrl-u`            | 論理行の先頭からcaret直前までを削除します。                                         |
+| `Ctrl-w`            | 空白を読み飛ばし、直前のwordを削除します。                                          |
+| `Ctrl-t`            | SectionまたはListItemを1段深くします。直接本文Paragraphでは子Sectionを作ります。    |
+| `Ctrl-d`            | SectionまたはListItemを1段浅くします。直接本文Paragraphでは兄弟Sectionを作ります。  |
+| `Ctrl-Enter`        | ListやTable/Code/Source/Blockquoteを抜け、直後にParagraphを作ってInsertへ入ります。 |
+| `Ctrl-Shift-v`      | Clipboardのテキストだけを貼り付けます。HTMLやMarkdownの装飾・構造は取り込みません。 |
+| `Tab` / `Shift-Tab` | Listの階層変更やTable Cell移動など、現在の構造に応じた操作を行います。              |
 
 ### `/`によるblock作成
 
@@ -91,10 +92,13 @@ IME変換途中の文字は入力中のEditor内だけに保持し、確定し�
 Tableを選ぶと10×10のgridが開きます。`h`、`j`、`k`、`l`または矢印keyで右下Cellを選び、
 `Enter`で行数と列数を確定します。初期選択は3×3です。Alertを選んだ場合は、続く画面で
 GitHubまたはObsidian互換のAlert typeを選択します。
+Alertの見出しとtype選択画面のプレビューには、種類別のLucideアイコンを表示します。別名は対応する種類と同じアイコン、独自typeはNoteアイコンになります。
 
 `Details`を選ぶと、折り畳める本文を持つblockを作れます。操作は下の「折り畳みblock」を参照してください。
 
 ### 折り畳みblock（Details）
+
+本文の最後の空ParagraphでInsert中に`Backspace`を押すと、そのParagraphをDetails直後へ移して入力を続けられます。本文がそのParagraphだけなら、何も変更しません。
 
 空のParagraphで`/`を押し、`details`と入力して候補を選びます。まず見出しを入力し、`Enter`で本文へ移ります。
 本文には通常の文章のほか、リスト・画像・テーブル・引用・コードなどを置けます。本文の空Paragraphでも`/`を使えます。
@@ -142,6 +146,8 @@ Details本文内のリストでは、リスト全体の直後に新しいParagra
 | `W` / `B` / `E`         | 空白区切りWORDの次、前、末尾へ移動します。                |
 | `0` / `$`               | 論理行の先頭、末尾へ移動します。                          |
 | `gg` / `G`              | 表示中のFocused Section subtreeの先頭、末尾へ移動します。 |
+| `H` / `M` / `L`         | 画面内の上端、中央、下端の表示行へ移動します。            |
+| `Ctrl-e` / `Ctrl-y`     | 1表示行ぶん下、上へスクロールします。                     |
 | `zz` / `zt` / `zb`      | caretのある表示行をWindowの中央、上端、下端へ配置します。 |
 | `Ctrl-f` / `Ctrl-b`     | 1画面ぶん下、上へ移動します。                             |
 | `Ctrl-d` / `Ctrl-u`     | 半画面ぶん下、上へ移動します。                            |
@@ -150,7 +156,18 @@ Details本文内のリストでは、リスト全体の直後に新しいParagra
 `whichwrap = true`では、`h/l/w/b/e/W/B/E`が論理行端を越えて前後の論理行へ移動します。
 `false`では論理行端で停止します。
 
+絵文字や結合文字は見た目の1文字として移動・選択・削除します。肌色付き・国旗・家族の絵文字も途中で分割しません。
+
+Insertで`Ctrl-e`を押すと、絵文字とLucide Iconを共通の検索ペインから入力できます。本文だけでなくNote・Sectionタイトルでも使えます。
+英語名で検索し、矢印または`Ctrl-n/p`で選び、`Enter`または`Tab`で入力してInsertを続けます。
+ペイン内の`Ctrl-1`はAll、`Ctrl-2`はEmoji、`Ctrl-3`はLucideへ切り替えます。検索語は保持します。
+`Esc`または`Ctrl-c`で入力せず閉じます。Normalの`Ctrl-e`はこれまで通りスクロールです。
+Lucideは`:lucide-smile:`のような文字列として保存し、本文やタイトルでは1文字分のIconとして表示・編集します。
+同じ表記を手入力・貼り付けしてもIconになります。Code Block・Source・インラインコード内では表記をそのまま表示します。
+絵文字・Iconと隣の文字の間、および絵文字・Icon同士の間には、和欧文間隔と同じ幅の隙間を表示します。保存・コピーされる文字列にはスペースを追加しません。既存の空白や論理行の端、コード内には追加しません。
+
 `zz`、`zt`、`zb`はcaretの文字位置を変えず、現在のEditor Windowだけをスクロールします。
+Normalの移動では、折り返した論理行がWindowに収まれば全体が見えるようスクロールします。長い行ではcaretと続きの表示を優先し、行頭では上寄りに配置します。Insert中や手動スクロールには適用しません。
 たとえば`20zt`は20論理行目へ移動して上端へ配置します。Countがある場合も、可能な限り現在の文字columnを保ちます。
 ノートの先頭・末尾ではスクロール可能な範囲で配置します。遅延描画で高さが変わっても配置を保ちますが、
 続けてcaretを移動したり、ホイールなどで手動スクロールしたりすると、その新しい操作を優先します。
@@ -189,6 +206,13 @@ operatorの前後にあるcountは乗算され、最大値は9,999です。
 Tableも最後の行を削除すると本体を削除します。未選択の行は、空のCellだけでも残します。
 Detailsも見出しと本文の両方が空になれば削除します。見出しが残る場合はDetailsを維持し、本文に入力用の空Paragraphを残します。
 この空blockの削除は`cc`やVisual Lineの`c`には適用せず、変更後の入力先を残します。Undoではblockごと元に戻せます。
+
+Section titleの単独`yy`/`Y`はタイトルだけをコピーします。`p`は現在のtitleまたはBlockの直後、`P`は直前にタイトルを挿入し、後続の本文・子Sectionを新しいSectionへ引き継ぎます。title上の`P`では元の本文は元Sectionに残します。List等の内部では容器全体の前後に挿入します。Rootでは分割後の本文だけを最初の子Sectionへ移し、既存Sectionはその後ろの兄弟として残します。既存Sectionの深さは変えません。
+貼り付けるタイトルは、挿入位置と既存Sectionの深さ・表示順を守れる範囲で、コピー元の深さに合わせます。親が足りない場合は空の親を作らず、配置可能な最も近い深さにします。Focus中でも深さはノート全体を基準にします。
+
+Section titleで`dd`、またはSection titleを含むVisual Lineで`d`を使うと、選択した論理行だけを削除します。
+選択していない本文や子Sectionは、表示順と可能な限り元の深さを保って直前のSectionまたは親へ残ります。
+Note titleでの`dd`はtitleだけを空にし、Note本文は削除しません。
 
 `J`は英語どうしの境界に空白を1つ入れますが、日本語または日本語の句読点に接する境界には空白を
 入れません。`gJ`は空白を追加も削除もせず、そのまま連結します。
@@ -278,9 +302,13 @@ Section直下のParagraphで`>>`またはInsertの`Ctrl-t`を使うと、そのP
 作ります。`<<`またはInsertの`Ctrl-d`では兄弟Sectionを作ります。Paragraphより後ろの本文も新しいSectionへ
 移動します。Normal操作は`u`、Insert直後の逆方向操作は一時的な逆変換で元へ戻せます。
 
+Paragraph先頭の`# `は、Root本文では子Sectionを作り、それ以外の本文では現在Section直後に空タイトルの
+兄弟Sectionを作ります。後ろの本文と既存の子Sectionは新しい兄弟Sectionへ移るため、本文の深さと表示順は
+変わりません。
+
 ノートタイトルはH1、Sectionは最も深い位置でH6までです。`zf`で表示を絞っても、深さはノートから数えます。
-H7を作る操作や貼り付けは全体を取り消し、既存内容を残します。H6の本文で`# `を入力した場合は、
-新しいSectionを作らず、そのまま文字として入力します。複数のH1を含むMarkdownでは、2つ目以降のH1を
+H7を作る操作や貼り付けは全体を取り消し、既存内容を残します。H6本文の`# `は同じ深さの兄弟Sectionを
+作るため使用できます。複数のH1を含むMarkdownでは、2つ目以降のH1を
 Rootの子にする結果、元のH6がH7相当になることがあります。その場合も、勝手に平坦化せず貼り付けを拒否します。
 
 ### Sectionの折り畳み
@@ -291,6 +319,10 @@ Rootの子にする結果、元のH6がH7相当になることがあります。
 | `zc` / `zC`      | 現在Sectionを1段、再帰的に折り畳みます。                                 |
 | `za` / `zA`      | 現在Sectionを1段、再帰的にtoggleします。                                 |
 | title上の`Enter` | `za`と同じく現在Sectionをtoggleします。本文上ではSectionを開閉しません。 |
+
+ノートタイトルまたはルート本文では、`zc/zo`は直下の全Section、`zC/zO`はすべてのSectionを閉じる／開く操作になります。
+ノート全体は折り畳みません。この位置では`za/zA`とノートタイトル上のEnterは折り畳みを変更しません。
+ルート本文のDetails内では、そのDetailsが操作対象です。Outlineのノートタイトル上でも同じルート操作が使えます。
 
 折り畳み中はSection titleだけを表示、編集できます。折り畳み状態はWindowごとの表示状態としてアプリ再起動後も
 復元しますが、本文やUndo履歴へは保存しません。折り畳んだ本文も`/`検索の対象になり、一致へ移動すると必要な祖先だけを展開します。
@@ -318,11 +350,12 @@ Languageを選ぶと対応言語を検索でき、Plain textで言語設定を�
 
 ### 構造blockから本文へ戻る
 
+`Ctrl-Enter`はNormalでもInsertと同じ構造操作を行い、作成先でInsertに入ります。通常のParagraphでは現在の本文を分割せず、直後に新しい空Paragraphを作ります。NormalではHard Breakを挿入しません。
+
 リスト外のTable、Code Block、Source Block、Blockquote内で`Ctrl-Enter`を押すと、その最外構造の直後へ
 新しいParagraphを作って移動します。直後に既存Paragraphがあっても再利用しません。
-リスト内ではblockの種類にかかわらず、現在の項目の表示順で直後に空の項目を作って移動します。
-子項目がある場合はその先頭に新しい子を追加し、ない場合は次の兄弟項目を作ります。
-ただしDetails内のリストでは、`Ctrl-Enter`でリストを抜け、その直後へ新しいParagraphを作ります。
+通常のリストでは、入れ子を含むリスト全体の直後に空Paragraphを作って移動します。既存の項目は変更しません。
+ただしDetails・Alert・Quote内のリストでは、`Ctrl-Enter`でリストを抜け、その直後へ新しいParagraphを作り、囲みの中にとどまります。
 ネストしたリストでも、現在のDetails内にある最外側のリスト全体を抜け、Details内にとどまります。
 
 Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先頭へ入ります。移動先がない側には
@@ -339,20 +372,22 @@ Horizontal Rule上では、`i`と`I`が前block末尾、`a`と`A`が次block先�
 | `Enter`       | 項目直下の段落を分割して、次の兄弟項目を作ります。後続ブロック・子リストも次の項目へ移ります。 |
 | `Shift-Enter` | 同じ段落の中に明示的な改行（Hard Break）を入れます。                                           |
 | `Alt-Enter`   | 段落を分割して、同じ項目内に次の段落を作ります。                                               |
-| `Ctrl-Enter`  | 現在の項目に子があれば先頭の子として、なければ次の兄弟として空段落を持つ項目を作ります。       |
+| `Ctrl-Enter`  | リスト全体を抜け、直後に空Paragraphを作ってInsertへ入ります。                                  |
 
 コードや表、引用の内部では、`Enter`はそのブロック本来の改行です。`Alt-Enter`なら項目内の次の段落へ抜けられます。
 段落途中での`Alt-Enter`は後半の文章を次の段落へ移します。段落だけの空項目で`Enter`を押すとリストを抜けます。
-`Ctrl-Enter`とNormalの`o`は段落・コード・表・引用・画像・添付などで共通です。
+Normalの`o`による項目追加は段落・コード・表・引用・画像・添付などで共通です。
 子項目があれば、最初の子リストの先頭へ新しい子を追加します。子がなければ現在と同じ深さの兄弟項目を作ります。
 追加先のリスト種別を保ち、作った項目の空段落へ移動します。既存の空項目は再利用しません。
 元の項目の本文はcaret位置では分割しません。既存の子項目や後続ブロックも移動せず、親子関係と表示順を保ちます。
 例えば、子が「子A、子B」なら「新しい子、子A、子B」の順になります。
-ただしDetails内のリストの`Ctrl-Enter`は、項目追加ではなくリスト直後への新しい段落追加になります。
+ただしDetails・Alert・Quote内のリストの`Ctrl-Enter`は、項目追加ではなく囲みの内側にある最外リスト直後への新しい段落追加になります。
 Normalの`o`はDetails内でも上記の項目追加のままです。
 
 `yy`や`V`→`y`でコピーしたリスト項目を`p`で貼る場合も同じです。現在項目に子があればその先頭へ、
-なければ次の兄弟として貼ります。コピーした項目に子孫がある場合は、その相対的な階層を保ちます。
+なければ次の兄弟として貼ります。子孫を含むリスト全体では元のインデント深さを可能な限り保つため、
+浅い項目を子項目の直前へ貼ると、後続の子項目は貼り付けた末尾側の項目の子になります。
+単一項目だけをコピーした場合は既存の子項目の親を変えません。コピーした項目内の相対的な階層は保ちます。
 `P`は従来どおり現在項目の前に貼ります。文字単位の`p`や表セル内の貼り付けには、この項目追加の規則を適用しません。
 
 Hard Breakで分けた行も論理行です。`V`、`dd`、`yy`で、同じ項目の別段落や未選択の子項目まで扱うことはありません。
@@ -383,6 +418,8 @@ Markdownの`- [ ] 未完了`、`- [x] 完了`を貼り付けても作れます�
 
 ### Cell間を移動する
 
+Cell内の文字をクリックすると、その位置へcaretを移します。
+
 - Normalの`h`と`l`はCell内を移動し、Cell端ではTabと同じrow-major順で前後Cellへ進みます。
 - `whichwrap`が有効なら、Table先頭と末尾から前後の論理行へ移動します。
 - `j`と`k`は同じ列の前後rowへ移動し、Table境界では前後の論理行へ移動します。
@@ -392,7 +429,7 @@ Markdownの`- [ ] 未完了`、`- [x] 完了`を貼り付けても作れます�
 - 左上Cellの`Shift-Tab`でEditor外やTreeへfocusを移しません。
 
 Insertの`Enter`はCell内に新しいParagraphを作り、`Shift-Enter`は同じParagraph内へHard Breakを入れます。
-`Ctrl-Enter`はTable全体の直後へ新しいParagraphを作ります。ただしリスト内のTableでは、現在項目に子があれば先頭の子として、なければ次の兄弟として空の項目を作ります。
+`Ctrl-Enter`はTable全体の直後へ新しいParagraphを作ります。ただしリスト内のTableでは、リスト全体の直後へ新しいParagraphを作ります。
 Details内のリストにあるTableでは、リスト全体の直後へ新しいParagraphを作り、Details内にとどまります。
 
 Table内の`p`と`P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼り付けます。
@@ -404,7 +441,7 @@ rowとcolumnの追加は`.`で繰り返せます。
 
 ## ノートとTree
 
-`<Leader>t`または`:tree`でTreeを開きます。項目の行をクリックすると選択し、ノートの行をダブルクリックするとそのノートを現在Windowで開き、
+`<Leader>t`または`:tree`でTreeを開きます。未選択の項目をクリックすると選択し、選択済みのノートを再度クリックするとそのノートを現在Windowで開き、
 本文へfocusを移します。マウスを重ねるだけでは選択は変わりません。並べ替えや作成はkeyboardで行います。
 Treeはノートの配置を管理する**Namespace**です。ノートを持たない
 **グループ**も作れます。ノートタイトルはEditorのRoot title、グループ名は`:rename-group`で編集します。
@@ -416,13 +453,13 @@ Treeはノートの配置を管理する**Namespace**です。ノートを持た
 | `gg` / `G`                         | 表示Treeの先頭、末尾へ移動します。                                                                 |
 | `h` / `←`                          | 展開中の項目を閉じます。閉じている場合は親へ移動します。                                           |
 | `l` / `→`                          | 閉じた親を展開します。展開済みの場合は最初の子へ移動します。                                       |
-| `Enter` / ダブルクリック           | Noteを現在Windowで開き本文へfocusを移します。グループはTreeにfocusを保って折り畳みを切り替えます。 |
-| クリック                           | 対象Entryを選択し、Treeにfocusを保ちます。                                                         |
+| `Enter` / 選択済み項目のクリック   | Noteを現在Windowで開き本文へfocusを移します。グループはTreeにfocusを保って折り畳みを切り替えます。 |
+| 未選択項目のクリック               | 対象Entryを選択し、Treeにfocusを保ちます。Windowは変更しません。                                   |
 | `a`                                | 選択項目の直後に空タイトルの兄弟Noteを作ります。                                                   |
 | `c`                                | 選択項目の最後の子として空タイトルのNoteを作ります。                                               |
 | `A`                                | top-level末尾に空タイトルのNoteを作ります。                                                        |
 | `[count]J` / `[count]K`            | 同じ親の中で下、上へ並べ替えます。                                                                 |
-| `[count]H` / `[count]L`            | 表示順を保ちながら1段浅く、深くします。                                                            |
+| `[count]<<` / `[count]>>`          | 表示順を保ちながら浅く、深くします。Countは階層移動の回数です。                                    |
 | `D`                                | 選択項目と、未削除の子孫項目・NoteをまとめてTrashへ移します。                                      |
 | `T`                                | Trash検索を開きます。                                                                              |
 | `Esc`                              | Treeを閉じてactive Windowへ戻ります。                                                              |
@@ -430,7 +467,24 @@ Treeはノートの配置を管理する**Namespace**です。ノートを持た
 ノート1つの配置は1か所です。グループを作成しても空のNoteを作るわけではなく、同じNoteを別の場所に複製する
 aliasでもありません。Treeで並べ替えてもNote本文や内部linkのIDは変わりません。
 
+TreeではNoteに書類アイコン、グループに開閉状態に応じたフォルダーアイコンを表示します。
+子を持つ項目の左の矢印をクリックすると、その項目を選択して開閉します。Noteは開かずTreeにfocusを保ちます。
+展開中の親の下には子孫の範囲を示す縦線が表示されます。空のグループには矢印を表示せず、Enterや再クリックでも開閉しません。
+
 TreeとOutlineの下部には名前の表示帯を置きません。focusのある領域は上端のhighlightで確認できます。
+
+Tree/Outlineでも`zo/zc/za`で選択項目を開く・閉じる・切り替える操作ができます。`zO/zC/zA`は子孫もまとめて操作します。
+Treeでは項目の階層、Outlineでは本文のSectionを折り畳みます。focusはSidebarに保ち、Enterの動作は変わりません。
+
+TreeとOutlineでは、`j/k`・上下矢印、`gg/G`・行番号付き`gg/G`、`H/M/L`、`Ctrl-f/b/d/u`、`Ctrl-e/y`、`zt/zz/zb`を共通に使えます。
+`H/L`のCountは画面の上端／下端からの項目数です。`M`はCountによらず中央へ移動します。
+ページ操作は選択行の画面内位置をできるだけ保ちます。`Ctrl-e/y`は選択を保ってスクロールし、画面外になる場合だけ端の項目へ移します。
+`zt/zz/zb`は選択項目を上端／中央／下端へ配置します。Count付きでは指定番号の項目へ移って配置します。
+Outlineの`h/l`・左右矢印は親／表示中の最初の子へ移動し、本文の折り畳み状態は変えません。
+
+`Ctrl-o/i`は現在の領域のJump Listを戻る／進みます。本文はWindow単位、Tree・OutlineはTabPage内でそれぞれ独立しています。
+`gg/G`・`H/M/L`とCount付き`zt/zz/zb`は移動前位置を記録します。通常の項目移動、スクロール、focus移動は記録しません。
+Sidebarの履歴は閉じても同じTabPage内で保持しますが、再起動後には引き継ぎません。Outlineの履歴は表示Noteを変えるとリセットします。
 
 Treeの構造変更はEditor本文のUndo、Redo、`.`には含まれません。`:trash`では削除済みNoteに加え、Noteを含まない
 グループも検索できます。`r`で同じ削除操作の対象を復元します。`Enter`と`Tab`では閉じず、`Esc`または`Ctrl-c`で終了します。
@@ -457,7 +511,7 @@ Note全体が対象です。`Enter`、`Esc`、`Ctrl-c`で検索入力を閉じ�
 ### Internal Linkと外部link
 
 Insertで`[[`を入力するとInternal Link候補が開きます。Internal Linkは表示上1文字として扱い、link titleを
-直接編集しません。Normalの`gf`で対象Sectionへ移動し、`Ctrl-o`で移動元、`Ctrl-i`で移動先へ戻れます。
+直接編集しません。Normalの`gf`でノート全体を表示して対象Sectionのタイトル先頭へ移動し、タイトルがWindow上部になるようスクロールします。`Ctrl-o`で移動元、`Ctrl-i`で移動先へ戻れます。
 clickはlinkを開かず、caretを置くだけです。
 
 外部linkはVisual Charで文字を選び、`m`から設定します。link上にcaretがある間はstatuslineへURLを表示します。
@@ -504,9 +558,12 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 - `<Leader>t`はTree、`<Leader>o`はOutlineをtoggleします。
 - Sidebarにfocusがあるときも、`:`、Leader、Tab、Windowの操作を利用できます。
 - Outlineはactive Windowに現在表示しているSectionだけを示します。
-- Outlineの`Enter`はSectionをfocusせず、対象title先頭へEditor caretを移動します。
+- Outlineの未選択項目のクリックは選択だけを変更します。選択済み項目の再クリックまたは`Enter`はSectionをfocusせず、対象title先頭へEditor caretを移動し、画面上部へスクロールします。
+- Outlineの矢印をクリックすると、そのSectionを選択して折り畳みを切り替え、Outlineにfocusを保ちます。
 - Editor caretが別Sectionへ移ると、Outlineの選択とscrollも追従します。
 - Sectionの折り畳みはOutlineにも反映されます。
+- 本文のSection見出し左にある矢印をクリックしても折り畳みを切り替えられます。ノートタイトルには矢印を表示しません。
+- Outlineではノートタイトルを除く全Sectionに矢印で本文の開閉状態を示し、展開中の親の下に子孫の範囲を示す縦線を表示します。文字色は本文のSection見出しと同じです。
 
 ### Tab
 
@@ -583,7 +640,16 @@ MemokaのCommand-lineは完全なVim Ex parserではありません。
 | `:version` / `:ver`                               | Memoka、Tauri、OS、architectureを表示します。                                      |
 | `:diagnostics` / `:diag`                          | 診断情報とlog directoryを表示します。                                              |
 | `:colorscheme [name]` / `:colo`                   | 収録テーマやカスタムテーマを選択、変更します。                                     |
-| `:font`                                           | Application全体のfontを選択します。                                                |
+| `:ui-font [font-family]` / `:font`                | Application UIのfontを選択、変更します。                                           |
+| `:note-font-ja [font-family]`                     | Noteの日本語fontを選択、変更します。                                               |
+| `:note-font-latin [font-family]`                  | Noteの英数fontを選択、変更します。                                                 |
+| `:note-font-mono [font-family]`                   | Noteのcode用等幅fontを選択、変更します。                                           |
+| `:note-line-height [1.00..2.50]`                  | Note本文の行間を確認、変更します。                                                 |
+| `:block-gap [0.00..3.00]`                         | Noteのblock間隔をem値で確認、変更します。                                          |
+| `:list-item-gap [0.00..3.00]`                     | List item間隔をem値で確認、変更します。                                            |
+| `:section-title-gap-before [0.00..3.00]`          | Section title前の間隔をem値で確認、変更します。既定値は0.4です。                   |
+| `:section-title-gap-after [0.00..3.00]`           | Section title後の間隔をem値で確認、変更します。                                    |
+| `:section-title-size [0.80..3.00]`                | Section titleの相対sizeを確認、変更します。                                        |
 | `:zoom [50..200]`                                 | Zoomを確認、変更します。                                                           |
 | `:note-width [px/off]`                            | Noteの最大表示幅を確認、変更、解除します。                                         |
 | `:line-number-min-width [px/off]`                 | 行番号を表示するWindow最小幅を確認、変更します。                                   |
@@ -602,7 +668,10 @@ Tree、Visual Charの文字装飾、Tableの移動とVisual Block開始keyを変
 主な設定値は次のとおりです。
 
 - `theme`はNightfox、Dayfox、Dawnfox、Duskfox、Nordfox、Terafox、Carbonfoxまたは自分で定義したテーマから選びます。
-- `font_family`は通常UIと本文のCSS font-familyです。
+- `ui_font_family`は通常UIのCSS font-familyです。旧`font_family`も読み込めますが、新規保存ではcanonical keyへ移行します。
+- `note_japanese_font_family`、`note_latin_font_family`、`note_monospace_font_family`はNote本文を用途別に設定します。
+- `note_line_height`は本文の折返し・改行の行間で、Table cellの縦paddingも連動します。
+- `note_block_gap_em`、`note_list_item_gap_em`、`note_section_title_gap_before_em`、`note_section_title_gap_after_em`、`note_section_title_size_em`はNoteの間隔とSection titleの相対sizeをem値で設定します。
 - `zoom_percent`は50〜200の10%刻みです。
 - `note_max_width_px`はNote canvasの最大幅で、`0`は上限なしです。
 - `line_number_min_width_px`より狭いWindowでは行番号を隠します。`0`は常時表示です。
@@ -678,6 +747,10 @@ memoka-cli config set --input settings.json --format json
 
 `y`や`yy`は、可能な場合にMemoka内部構造、HTML、Markdown、plain textを同時にOS Clipboardへ公開します。
 `p`はcaretの後、`P`は前へ貼り付けます。Table内では`p`と`P`が同じ動作になり、現在Cellから貼り付けます。
+リスト項目をMemoka内でコピーして既存リストへ貼り付けると、元のインデント深さを可能な限り保ちます。
+その深さでは指定位置へ入れられない場合は、直前の項目から1段を超えて深くならない位置へ調整します。
+子孫を含む浅い項目を既存の子項目直前へ貼ると、表示順に従って後続の子項目が貼り付けた項目の子になります。
+単一項目だけのコピーでは既存の子項目の親を変えません。
 
 Insertで`Ctrl-Shift-v`を押すと、OS Clipboardのテキストだけを貼り付けます。
 HTML、Memoka内部形式、Markdown、画像、file形式が同時にあっても取り込みません。

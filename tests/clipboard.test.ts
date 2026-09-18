@@ -1,4 +1,5 @@
 import { Editor } from "@tiptap/core";
+import { Fragment, Slice } from "@tiptap/pm/model";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -63,6 +64,19 @@ function firstParagraphPosition(editor: Editor): number {
     if (result < 0 && node.type.name === "paragraph") result = position + 1;
   });
   if (result < 0) throw new Error("Editor has no paragraph");
+  return result;
+}
+
+function textEndPosition(editor: Editor, text: string): number {
+  let result = -1;
+  editor.state.doc.descendants((node, position) => {
+    if (result < 0 && node.isTextblock && node.textContent === text) {
+      result = position + 1 + node.content.size;
+    }
+    return result < 0;
+  });
+  if (result < 0)
+    throw new Error(`Editor has no text block containing ${text}`);
   return result;
 }
 
@@ -551,6 +565,95 @@ describe("Memoka structured Clipboard", () => {
     ).toEqual(
       register.kind === "structure" ? register.slice.content.toJSON() : null,
     );
+    editor.destroy();
+    note.doc.destroy();
+  });
+
+  it("round-trips ListItem source depth and accepts the v7 legacy payload", () => {
+    const note = createNoteDocument("01900000-0000-7000-8000-000000000001");
+    const editor = new Editor({
+      extensions: productEditorExtensions(note, { directBodyOnly: true }),
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "nested source" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const list = editor.state.doc.firstChild;
+    if (!list) throw new Error("List fixture is empty");
+    const register: VimRegister = {
+      kind: "structure",
+      text: "nested source",
+      structureKind: "list-item",
+      nodeNames: ["bulletList", "listItem"],
+      sourceListDepth: 2,
+      slice: new Slice(Fragment.from(list), 1, 1),
+    };
+    const formats = encodeVimClipboard(register, editor.schema);
+    const payload = JSON.parse(formats[MEMOKA_CLIPBOARD_MIME]) as Record<
+      string,
+      unknown
+    >;
+
+    expect(payload).toMatchObject({
+      schemaVersion: MEMOKA_CLIPBOARD_SCHEMA_VERSION,
+      kind: "structure",
+      structureKind: "list-item",
+      sourceListDepth: 2,
+    });
+    expect(
+      decodeVimClipboard(formats[MEMOKA_CLIPBOARD_MIME], editor.schema),
+    ).toMatchObject({
+      kind: "structure",
+      structureKind: "list-item",
+      sourceListDepth: 2,
+    });
+
+    const legacy: Record<string, unknown> = { ...payload, schemaVersion: 7 };
+    delete legacy.sourceListDepth;
+    const decodedLegacy = decodeVimClipboard(
+      JSON.stringify(legacy),
+      editor.schema,
+    );
+    expect(decodedLegacy).toMatchObject({
+      kind: "structure",
+      structureKind: "list-item",
+    });
+    expect(decodedLegacy).not.toHaveProperty("sourceListDepth");
+
+    for (const sourceListDepth of [-1, 1.5, "2"]) {
+      expect(
+        decodeVimClipboard(
+          JSON.stringify({ ...payload, sourceListDepth }),
+          editor.schema,
+        ),
+      ).toBeNull();
+    }
+    expect(
+      decodeVimClipboard(
+        JSON.stringify({
+          ...payload,
+          structureKind: "block",
+          sourceListDepth: 2,
+        }),
+        editor.schema,
+      ),
+    ).toBeNull();
+
     editor.destroy();
     note.doc.destroy();
   });
@@ -1676,6 +1779,81 @@ describe("Memoka structured Clipboard", () => {
     runtime.destroy();
     firstRoot.remove();
     secondRoot.remove();
+  });
+
+  it("preserves ListItem source depth through internal Insert-mode paste", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const paragraph = (text: string) => ({
+      type: "paragraph",
+      content: [{ type: "text", text }],
+    });
+    const item = (text: string, children: object[] = []) => ({
+      type: "listItem",
+      content: [paragraph(text), ...children],
+    });
+    const list = (type: "bulletList" | "orderedList", content: object[]) => ({
+      type,
+      content,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        list("bulletList", [
+          item("copied task", [list("bulletList", [item("copied child")])]),
+        ]),
+      ],
+    });
+    const sourceList = editor.state.doc.firstChild;
+    if (!sourceList) throw new Error("List fixture is empty");
+    const formats = encodeVimClipboard(
+      {
+        kind: "structure",
+        text: "copied task\ncopied child",
+        structureKind: "list-item",
+        nodeNames: ["bulletList", "listItem"],
+        sourceListDepth: 2,
+        slice: new Slice(Fragment.from(sourceList), 1, 1),
+      },
+      editor.schema,
+    );
+
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        list("orderedList", [
+          item("target root", [list("orderedList", [item("target child")])]),
+          item("target after"),
+        ]),
+      ],
+    });
+    editor.commands.setTextSelection(textEndPosition(editor, "target child"));
+    editor.commands.focus();
+    const event = paste(editor, {
+      [MEMOKA_CLIPBOARD_MIME]: formats[MEMOKA_CLIPBOARD_MIME],
+      "text/plain": formats["text/plain"],
+    });
+    await runtime.flush();
+
+    expect(event.defaultPrevented).toBe(true);
+    const target = editor.state.doc.firstChild;
+    const depthOne = target?.firstChild?.child(1);
+    const pastedOwner = depthOne?.firstChild;
+    const depthTwo = pastedOwner?.child(1);
+    const copied = depthTwo?.firstChild;
+    expect(target?.type.name).toBe("orderedList");
+    expect(pastedOwner?.firstChild?.textContent).toBe("target child");
+    expect(depthTwo?.type.name).toBe("orderedList");
+    expect(copied?.firstChild?.textContent).toBe("copied task");
+    expect(copied?.child(1).type.name).toBe("bulletList");
+    expect(copied?.child(1).firstChild?.textContent).toBe("copied child");
+    expect(target?.child(1).textContent).toBe("target after");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
   });
 
   it("wraps an internally copied TableRow in a fresh Table outside a Table", async () => {

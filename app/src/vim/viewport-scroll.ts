@@ -2,6 +2,7 @@ import type { EditorView } from "@tiptap/pm/view";
 
 export type VimViewportAlignment = "center" | "top" | "bottom";
 export const VIM_VIEWPORT_ALIGNMENT_META = "memoka-vim-viewport-alignment";
+export const VIM_VIEWPORT_SCROLL_META = "memoka-vim-viewport-scroll";
 
 /** Align the current display row without moving its document position. The
  * adapter reuses this after deferred layout until a new user action takes over. */

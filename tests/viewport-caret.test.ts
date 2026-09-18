@@ -2,7 +2,10 @@ import { Schema } from "@tiptap/pm/model";
 import { EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { describe, expect, it, vi } from "vitest";
-import { findViewportCaretPosition } from "../app/src/vim/viewport-caret";
+import {
+  findViewportCaretPosition,
+  revealNormalLogicalLine,
+} from "../app/src/vim/viewport-caret";
 
 const schema = new Schema({
   nodes: {
@@ -11,6 +14,55 @@ const schema = new Schema({
     image: { group: "block", atom: true },
     text: { group: "inline" },
   },
+});
+
+describe("Normal logical-line reveal", () => {
+  it.each([
+    [70, 130, 70, 35],
+    [10, 70, 10, 0],
+    [-20, 40, 0, -25],
+    [70, 370, 70, 65],
+    [-150, 150, 70, 15],
+  ])("reveals line %s..%s with caret at %s", (top, bottom, caretTop, delta) => {
+    const scroll = document.createElement("div");
+    vi.spyOn(scroll, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 100),
+    );
+    Object.defineProperty(scroll, "scrollHeight", { value: 2000 });
+    Object.defineProperty(scroll, "clientHeight", { value: 100 });
+    scroll.scrollTop = 500;
+    const state = EditorState.create({
+      doc: schema.node("doc", null, [
+        schema.node("paragraph", null, schema.text("abcdef")),
+      ]),
+    });
+    const view = {
+      state,
+      coordsAtPos: (pos: number) => ({
+        left: 0,
+        right: 10,
+        top:
+          pos === 1
+            ? top
+            : pos === 7
+              ? bottom - 20
+              : pos > 3
+                ? caretTop + 20
+                : caretTop,
+        bottom:
+          pos === 1
+            ? top + 20
+            : pos === 7
+              ? bottom
+              : pos > 3
+                ? caretTop + 40
+                : caretTop + 20,
+      }),
+    };
+    expect(revealNormalLogicalLine(view, scroll, 3)).toBe(true);
+    expect(scroll.scrollTop).toBe(500 + delta);
+    expect(state.selection.from).toBe(1);
+  });
 });
 
 function harness() {

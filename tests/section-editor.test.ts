@@ -2,12 +2,14 @@ import type { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { AllSelection } from "@tiptap/pm/state";
 import type { UndoManager } from "yjs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import {
   blockToYXml,
   CORE_TRANSACTION_ORIGIN,
   readNoteTitle,
+  replaceNoteSectionTree,
+  putNoteSectionTitle,
 } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -29,7 +31,12 @@ import {
   sectionTitle,
 } from "../app/src/core/section-model";
 import { addSecondWindow } from "./helpers/runtime";
-import { registerFromMarkdown } from "../app/src/vim/clipboard";
+import {
+  registerFromMarkdown,
+  encodeVimClipboard,
+  decodeVimClipboard,
+  MEMOKA_CLIPBOARD_MIME,
+} from "../app/src/vim/clipboard";
 import { pasteVimRegisterAtSelection } from "../app/src/vim/editor-commands";
 
 function deterministicIds() {
@@ -78,6 +85,25 @@ function press(
   });
   editor.view.dom.dispatchEvent(event);
   return event;
+}
+
+function typeSectionMarker(editor: Editor, position: number): boolean {
+  editor.commands.setTextSelection(position);
+  editor.commands.insertContent("#");
+  const insertion = editor.state.selection.from;
+  let handled = false;
+  editor.view.someProp("handleTextInput", (handler) => {
+    if (
+      handler(editor.view, insertion, insertion, " ", () =>
+        editor.state.tr.insertText(" ", insertion),
+      )
+    ) {
+      handled = true;
+      return true;
+    }
+    return false;
+  });
+  return handled;
 }
 
 function composition(
@@ -224,6 +250,51 @@ class PausedWorkspaceCommitPort extends MemoryPersistencePort {
     request: PersistenceCommitRequest,
   ): Promise<PersistenceCommitResponse> {
     if (this.armed && request.scope === "workspace-structure") {
+      this.armed = false;
+      const held = this.held;
+      this.held = null;
+      held?.();
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    return super.commit(request);
+  }
+}
+
+class PausedReplicatedWorkspaceCommitPort extends PausedWorkspaceCommitPort {
+  private readonly replicaId = createUuidV7();
+
+  override async manifest() {
+    return {
+      ...(await super.manifest()),
+      databaseSchemaVersion: 7,
+      replicaId: this.replicaId,
+    };
+  }
+}
+
+class PausedLocalStateCommitPort extends MemoryPersistencePort {
+  private armed = false;
+  private held: (() => void) | null = null;
+  private release: (() => void) | null = null;
+
+  pauseNextLocalStateCommit(): Promise<void> {
+    this.armed = true;
+    return new Promise((resolve) => {
+      this.held = resolve;
+    });
+  }
+
+  releaseLocalStateCommit(): void {
+    this.release?.();
+    this.release = null;
+  }
+
+  override async commit(
+    request: PersistenceCommitRequest,
+  ): Promise<PersistenceCommitResponse> {
+    if (this.armed && request.scope === "local-ui") {
       this.armed = false;
       const held = this.held;
       this.held = null;
@@ -1145,7 +1216,7 @@ describe("Memoka Section editor semantics", () => {
     root.remove();
   });
 
-  it("keeps existing child Section identities when '# ' creates a sibling", async () => {
+  it("keeps existing child Section identities when Root '# ' creates a child", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "Root",
@@ -1174,6 +1245,517 @@ describe("Memoka Section editor semantics", () => {
     expect(
       findSectionById(runtime.noteDocument.rootSection, existingChildId),
     ).toBe(existingChild);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("splits a non-Root body into a sibling Section on '# '", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const note = runtime.noteDocument;
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    const existingChildId = createUuidV7();
+    const followingSectionId = createUuidV7();
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(
+          sourceSectionId,
+          "Source",
+          [
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "before" }],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: targetBlockId,
+              content: [],
+            }),
+            blockToYXml({
+              type: "paragraph",
+              blockId: createUuidV7(),
+              content: [{ type: "text", text: "after" }],
+            }),
+          ],
+          [createSectionXml(existingChildId, "Existing child")],
+        ),
+      );
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(followingSectionId, "Following"),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(note.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const converted = sectionSnapshot(note.rootSection);
+    expect(converted.children).toHaveLength(3);
+    expect(converted.children[0]?.sectionId).toBe(sourceSectionId);
+    expect(JSON.stringify(converted.children[0]?.body)).toContain("before");
+    expect(converted.children[0]?.children).toEqual([]);
+    expect(converted.children[1]?.title).toBe("");
+    expect(JSON.stringify(converted.children[1]?.body)).toContain("after");
+    expect(converted.children[1]?.children[0]?.sectionId).toBe(existingChildId);
+    expect(converted.children[2]?.sectionId).toBe(followingSectionId);
+    expect(editor.state.selection.$from.parent.type.name).toBe("sectionHeader");
+    expect(editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      converted.children[1]?.sectionId,
+    );
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    press(editor, "Escape");
+    press(editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    expect(sectionSnapshot(note.rootSection)).toEqual(before);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("focuses a sibling created outside the focused Section view", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const sourceRoot = rootElement();
+    const sourceEditor = runtime.editorForTesting("window-1", sourceRoot, {
+      directBodyOnly: false,
+    });
+    sourceEditor.editor.commands.focus();
+    press(sourceEditor.editor, "Escape");
+    press(sourceEditor.editor, "i", { code: "KeyI" });
+    await settle(runtime);
+    expect(sourceEditor.adapter.vimSnapshot.mode).toBe("insert");
+    expect(runtime.windows.get("window-1")?.mode).toBe("insert");
+
+    expect(
+      typeSectionMarker(
+        sourceEditor.editor,
+        positionOf(
+          sourceEditor.editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+    sourceEditor.adapter.destroy();
+    sourceRoot.remove();
+
+    const createdRoot = rootElement();
+    const createdEditor = runtime.editorForTesting("window-1", createdRoot, {
+      directBodyOnly: false,
+    });
+    expect(createdEditor.adapter.vimSnapshot.mode).toBe("insert");
+    expect(
+      createdEditor.editor.state.selection.$from.parent.attrs.sectionId,
+    ).toBe(createdSectionId);
+
+    press(createdEditor.editor, "Escape");
+    press(createdEditor.editor, "u", { code: "KeyU" });
+    await settle(runtime);
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      sourceSectionId,
+    );
+
+    createdEditor.adapter.destroy();
+    runtime.destroy();
+    createdRoot.remove();
+  });
+
+  it("shows the created sibling before its Window focus is durably saved", async () => {
+    const persistence = new PausedLocalStateCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "i", { code: "KeyI" });
+    await settle(runtime);
+
+    const focusCommitHeld = persistence.pauseNextLocalStateCommit();
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await focusCommitHeld;
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    persistence.releaseLocalStateCommit();
+    await settle(runtime);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows the created sibling while its structural commit is in flight", async () => {
+    const persistence = new PausedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(
+        runtime.noteDocument.rootSection,
+        createSectionXml(sourceSectionId, "Source", [
+          blockToYXml({
+            type: "paragraph",
+            blockId: targetBlockId,
+            content: [],
+          }),
+        ]),
+      );
+    }, CORE_TRANSACTION_ORIGIN);
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ),
+    );
+    editor.commands.insertContent("#");
+    await settle(runtime);
+
+    const structuralCommitHeld = persistence.pauseNextWorkspaceCommit();
+    const insertion = editor.state.selection.from;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (
+        handler(editor.view, insertion, insertion, " ", () =>
+          editor.state.tr.insertText(" ", insertion),
+        )
+      ) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    expect(handled).toBe(true);
+    await structuralCommitHeld;
+    await Promise.resolve();
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      sourceSectionId,
+    );
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+
+    persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
+      createdSectionId,
+    );
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows the created sibling while the preceding '#' commit is in flight", async () => {
+    const persistence = new PausedReplicatedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const sourceSectionId = createUuidV7();
+    const targetBlockId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: sourceSectionId,
+            title: "Source",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: targetBlockId },
+                content: [],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-16T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    await runtime.focusSection("window-1", runtime.noteId, sourceSectionId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === targetBlockId,
+      ),
+    );
+
+    const hashCommitHeld = persistence.pauseNextWorkspaceCommit();
+    editor.commands.insertContent("#");
+    await hashCommitHeld;
+    const insertion = editor.state.selection.from;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (
+        handler(editor.view, insertion, insertion, " ", () =>
+          editor.state.tr.insertText(" ", insertion),
+        )
+      ) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    expect(handled).toBe(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const createdSectionId = sectionSnapshot(runtime.noteDocument.rootSection)
+      .children[1]!.sectionId;
+    expect(adapter.editor.view.dom.dataset.sectionId).toBe(createdSectionId);
+    expect(adapter.editor.state.selection.$from.parent.attrs.sectionId).toBe(
+      createdSectionId,
+    );
+
+    persistence.releaseWorkspaceCommit();
+    await settle(runtime);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("changes replicated Section depth while a preceding edit commit is in flight", async () => {
+    const persistence = new PausedReplicatedWorkspaceCommitPort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const rootBlockId = createUuidV7();
+    const firstSectionId = createUuidV7();
+    const secondSectionId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [
+          {
+            type: "paragraph",
+            attrs: { blockId: rootBlockId },
+            content: [],
+          },
+        ],
+        children: [
+          {
+            sectionId: firstSectionId,
+            title: "First",
+            tags: [],
+            body: [],
+            children: [],
+          },
+          {
+            sectionId: secondSectionId,
+            title: "Second",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-16T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "paragraph",
+        (node) => node.attrs.blockId === rootBlockId,
+      ),
+    );
+
+    const editCommitHeld = persistence.pauseNextWorkspaceCommit();
+    editor.commands.insertContent("x");
+    await editCommitHeld;
+    const materialize = vi.spyOn(
+      runtime.noteDocument.replicated!,
+      "sectionSnapshot",
+    );
+    const shifted = runtime.shiftSectionDepth(
+      runtime.noteId,
+      runtime.noteId,
+      [secondSectionId],
+      "deeper",
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(materialize).not.toHaveBeenCalled();
+    materialize.mockRestore();
+
+    const snapshot = runtime.noteDocument.replicated!.sectionSnapshot();
+    expect(snapshot.children.map(({ sectionId }) => sectionId)).toEqual([
+      firstSectionId,
+    ]);
+    expect(
+      snapshot.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([secondSectionId]);
+
+    persistence.releaseWorkspaceCommit();
+    await shifted;
+    await settle(runtime);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("allows '# ' to create an H6 sibling without increasing depth", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetBlockId = createUuidV7();
+    let nested = createSectionXml(createUuidV7(), "H6", [
+      blockToYXml({
+        type: "paragraph",
+        blockId: targetBlockId,
+        content: [],
+      }),
+    ]);
+    for (const title of ["H5", "H4", "H3", "H2"]) {
+      nested = createSectionXml(createUuidV7(), title, [], [nested]);
+    }
+    runtime.noteDocument.doc.transact(() => {
+      insertChildSection(runtime.noteDocument.rootSection, nested);
+    }, CORE_TRANSACTION_ORIGIN);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+
+    expect(
+      typeSectionMarker(
+        editor,
+        positionOf(
+          editor,
+          "paragraph",
+          (node) => node.attrs.blockId === targetBlockId,
+        ),
+      ),
+    ).toBe(true);
+    await settle(runtime);
+
+    const h5 = sectionSnapshot(runtime.noteDocument.rootSection).children[0]!
+      .children[0]!.children[0]!.children[0]!;
+    expect(h5.title).toBe("H5");
+    expect(h5.children.map(({ title }) => title)).toEqual(["H6", ""]);
+
     adapter.destroy();
     runtime.destroy();
     root.remove();
@@ -1628,7 +2210,409 @@ describe("Memoka Section editor semantics", () => {
     secondRoot.remove();
   });
 
-  it("copies a Visual-line Section subtree with fresh IDs and moves a cut subtree across NoteDocs", async () => {
+  it("deletes only a Section title and preserves body preorder through the previous leaf", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const previousId = createUuidV7();
+    const leafId = createUuidV7();
+    const targetId = createUuidV7();
+    const targetChildId = createUuidV7();
+    const targetBodyId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: previousId,
+            title: "Previous",
+            tags: [],
+            body: [],
+            children: [
+              {
+                sectionId: leafId,
+                title: "Leaf",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: targetBodyId },
+                content: [{ type: "text", text: "preserved body" }],
+              },
+            ],
+            children: [
+              {
+                sectionId: targetChildId,
+                title: "Target child",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "sectionHeader",
+        (node) => node.attrs.sectionId === targetId,
+      ),
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children.map(({ sectionId }) => sectionId)).toEqual([
+      previousId,
+    ]);
+    expect(
+      changed.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([leafId, targetChildId]);
+    expect(JSON.stringify(changed.children[0]!.children[0]!.body)).toContain(
+      "preserved body",
+    );
+    expect(runtime.vimRegister.read(editor.schema)).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.child(1).childCount
+        : -1,
+    ).toBe(0);
+
+    press(editor, "u");
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("deletes only the selected Section title and body rows in Visual Line", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetId = createUuidV7();
+    const firstBodyId = createUuidV7();
+    const secondBodyId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: firstBodyId },
+                content: [{ type: "text", text: "selected body" }],
+              },
+              {
+                type: "paragraph",
+                attrs: { blockId: secondBodyId },
+                content: [{ type: "text", text: "remaining body" }],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(
+      positionOf(
+        editor,
+        "sectionHeader",
+        (node) => node.attrs.sectionId === targetId,
+      ),
+    );
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V", { shiftKey: true });
+    press(editor, "j");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children).toEqual([]);
+    expect(JSON.stringify(changed.body)).not.toContain("selected body");
+    expect(JSON.stringify(changed.body)).toContain("remaining body");
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(register).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).toContain("selected body");
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).not.toContain("remaining body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("deletes a focused Section header through Core and restores its focus on Undo", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const previousId = createUuidV7();
+    const leafId = createUuidV7();
+    const targetId = createUuidV7();
+    const childId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: previousId,
+            title: "Previous",
+            tags: [],
+            body: [],
+            children: [
+              {
+                sectionId: leafId,
+                title: "Leaf",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "preserved body" }],
+              },
+            ],
+            children: [
+              {
+                sectionId: childId,
+                title: "Child",
+                tags: [],
+                body: [],
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    const before = sectionSnapshot(runtime.noteDocument.rootSection);
+    await runtime.focusSection("window-1", runtime.noteId, targetId);
+    const targetRoot = rootElement();
+    const target = runtime.editorForTesting("window-1", targetRoot, {
+      directBodyOnly: false,
+    });
+    target.editor.commands.setTextSelection(
+      positionOf(target.editor, "sectionHeader"),
+    );
+    target.editor.commands.focus();
+    press(target.editor, "Escape");
+    press(target.editor, "d");
+    press(target.editor, "d");
+    await settle(runtime);
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(
+      findSectionById(runtime.noteDocument.rootSection, targetId),
+    ).toBeNull();
+    expect(
+      changed.children[0]!.children.map(({ sectionId }) => sectionId),
+    ).toEqual([leafId, childId]);
+    expect(JSON.stringify(changed.children[0]!.children[0]!.body)).toContain(
+      "preserved body",
+    );
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(leafId);
+    expect(runtime.vimRegister.read(target.editor.schema)).toMatchObject({
+      kind: "section",
+      transfer: "cut",
+      sectionIds: [targetId],
+    });
+
+    target.adapter.destroy();
+    targetRoot.remove();
+    const fallbackRoot = rootElement();
+    const fallback = runtime.editorForTesting("window-1", fallbackRoot, {
+      directBodyOnly: false,
+    });
+    fallback.editor.commands.focus();
+    press(fallback.editor, "Escape");
+    press(fallback.editor, "u");
+    await settle(runtime);
+    await settle(runtime);
+    expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(before);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(targetId);
+
+    fallback.adapter.destroy();
+    runtime.destroy();
+    fallbackRoot.remove();
+  });
+
+  it("deletes selected focused-Section body rows without deleting unselected rows", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root",
+    });
+    const targetId = createUuidV7();
+    replaceNoteSectionTree(
+      runtime.noteDocument,
+      {
+        sectionId: runtime.noteId,
+        title: "Root",
+        tags: [],
+        body: [],
+        children: [
+          {
+            sectionId: targetId,
+            title: "Target",
+            tags: [],
+            body: [
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "selected body" }],
+              },
+              {
+                type: "paragraph",
+                attrs: { blockId: createUuidV7() },
+                content: [{ type: "text", text: "remaining body" }],
+              },
+            ],
+            children: [],
+          },
+        ],
+      },
+      "2026-09-17T00:00:00.000Z",
+      CORE_TRANSACTION_ORIGIN,
+    );
+    await runtime.focusSection("window-1", runtime.noteId, targetId);
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "V", { shiftKey: true });
+    press(editor, "j");
+    press(editor, "d");
+    await settle(runtime);
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.children).toEqual([]);
+    expect(JSON.stringify(changed.body)).not.toContain("selected body");
+    expect(JSON.stringify(changed.body)).toContain("remaining body");
+    const register = runtime.vimRegister.read(editor.schema);
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).toContain("selected body");
+    expect(
+      register?.kind === "section"
+        ? register.slice.content.firstChild?.textContent
+        : "",
+    ).not.toContain("remaining body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps the Root Note and its body when dd clears its title", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "Root title",
+    });
+    const root = rootElement();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    editor.commands.insertContentAt(
+      positionOf(editor, "paragraph"),
+      "kept body",
+    );
+    editor.commands.setTextSelection(positionOf(editor, "sectionHeader"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    await settle(runtime);
+
+    const changed = sectionSnapshot(runtime.noteDocument.rootSection);
+    expect(changed.sectionId).toBe(runtime.noteId);
+    expect(changed.title).toBe("");
+    expect(JSON.stringify(changed.body)).toContain("kept body");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("copies a Visual-line Section subtree and moves only a deleted title across NoteDocs", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "Source note",
@@ -1702,13 +2686,347 @@ describe("Memoka Section editor semantics", () => {
     const targetSection = findSectionById(targetDocument.rootSection, childId);
     expect(targetSection).not.toBeNull();
     expect(sectionTitle(targetSection!)).toBe("Movable");
-    expect(sectionBody(targetSection!).toString()).toContain("payload");
+    expect(sectionBody(targetSection!).toString()).not.toContain("payload");
     expect(findSectionById(sourceDocument.rootSection, childId)).toBeNull();
+    const survivingCopyId = copiedIds.find((id) => id !== childId)!;
+    const survivingCopy = findSectionById(
+      sourceDocument.rootSection,
+      survivingCopyId,
+    );
+    expect(survivingCopy).not.toBeNull();
+    expect(
+      sectionBody(survivingCopy!)
+        .toString()
+        .match(/payload/g),
+    ).toHaveLength(2);
 
     targetEditor.adapter.destroy();
     runtime.destroy();
     targetRoot.remove();
   });
+
+  it.each(
+    ["p", "P"].flatMap((key) =>
+      [false, true].flatMap((replicated) =>
+        [false, true].flatMap((focused) =>
+          [false, true].map((body) => ({ key, replicated, focused, body })),
+        ),
+      ),
+    ),
+  )(
+    "puts a yy title at the $key boundary (replicated=$replicated, focused=$focused, body=$body)",
+    async ({ key, replicated, focused, body }) => {
+      class ReplicatedPersistence extends MemoryPersistencePort {
+        readonly replicaId = createUuidV7();
+        override async manifest() {
+          return {
+            ...(await super.manifest()),
+            databaseSchemaVersion: 7,
+            replicaId: this.replicaId,
+          };
+        }
+      }
+      const runtime = await CoreRuntime.open(
+        replicated ? new ReplicatedPersistence() : new MemoryPersistencePort(),
+        {
+          idFactory: deterministicIds(),
+          initialTitle: "Root",
+        },
+      );
+      const sourceId = createUuidV7();
+      const targetId = createUuidV7();
+      const source = {
+        sectionId: sourceId,
+        title: "Source😀",
+        tags: [],
+        body: [
+          {
+            type: "paragraph",
+            attrs: { blockId: createUuidV7() },
+            content: [{ type: "text", text: "source body" }],
+          },
+        ],
+        children: [
+          {
+            sectionId: createUuidV7(),
+            title: "Nested",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      };
+      const target = {
+        sectionId: targetId,
+        title: "Target",
+        tags: [],
+        body: ["A", "B", "C"].map((text) => ({
+          type: "paragraph",
+          attrs: { blockId: createUuidV7() },
+          content: [{ type: "text", text }],
+        })),
+        children: [
+          {
+            sectionId: createUuidV7(),
+            title: "Target child",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      };
+      replaceNoteSectionTree(
+        runtime.noteDocument,
+        {
+          ...sectionSnapshot(runtime.noteDocument.rootSection),
+          children: [source, target],
+        },
+        "2026-09-18T00:00:00.000Z",
+        "test-fixture",
+      );
+      await settle(runtime);
+      const root = rootElement();
+      let { adapter, editor } = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        const original = sectionSnapshot(runtime.noteDocument.rootSection);
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === sourceId,
+          ),
+        );
+        editor.commands.focus();
+        press(editor, "Escape");
+        press(editor, "y");
+        press(editor, "y");
+        expect(runtime.vimRegister.read(editor.schema)?.kind).toBe("section");
+        const copied = runtime.vimRegister.read(editor.schema)!;
+        const decoded = decodeVimClipboard(
+          encodeVimClipboard(copied, editor.schema)[MEMOKA_CLIPBOARD_MIME],
+          editor.schema,
+        );
+        expect(decoded).toMatchObject({ kind: "section", titleOnly: true });
+        runtime.vimRegister.set(decoded!);
+        if (focused) {
+          adapter.destroy();
+          await runtime.focusSection("window-1", runtime.noteId, targetId);
+          ({ adapter, editor } = runtime.editorForTesting("window-1", root, {
+            directBodyOnly: false,
+          }));
+          editor.commands.focus();
+          press(editor, "Escape");
+        }
+        editor.commands.setTextSelection(
+          positionOf(editor, body ? "paragraph" : "sectionHeader", (node) =>
+            body ? node.textContent === "B" : node.attrs.sectionId === targetId,
+          ),
+        );
+        press(editor, key, { shiftKey: key === "P" });
+        await settle(runtime);
+        const children = sectionSnapshot(
+          runtime.noteDocument.rootSection,
+        ).children;
+        expect(children.map((section) => section.title)).toEqual(
+          key === "p" || body
+            ? ["Source😀", "Target", "Source😀"]
+            : ["Source😀", "Source😀", "Target"],
+        );
+        const copy = children[key === "p" || body ? 2 : 1]!;
+        expect(copy.sectionId).not.toBe(sourceId);
+        const boundary = body ? (key === "p" ? 2 : 1) : key === "p" ? 0 : null;
+        expect(copy.body).toEqual(
+          boundary === null ? [] : target.body.slice(boundary),
+        );
+        expect(copy.children).toEqual(boundary === null ? [] : target.children);
+        expect(
+          children.find((section) => section.sectionId === targetId),
+        ).toEqual(
+          boundary === null
+            ? target
+            : { ...target, body: target.body.slice(0, boundary), children: [] },
+        );
+        expect(children[0]).toEqual(source);
+        press(adapter.editor, "u");
+        await settle(runtime);
+        expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(
+          original,
+        );
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
+  it.each(
+    [0, 1, 2].flatMap((boundary) =>
+      [false, true].map((replicated) => ({ boundary, replicated })),
+    ),
+  )(
+    "keeps Root child depth at boundary $boundary (replicated=$replicated)",
+    async ({ boundary, replicated }) => {
+      class ReplicatedPersistence extends MemoryPersistencePort {
+        readonly replicaId = createUuidV7();
+        override async manifest() {
+          return {
+            ...(await super.manifest()),
+            databaseSchemaVersion: 7,
+            replicaId: this.replicaId,
+          };
+        }
+      }
+      const runtime = await CoreRuntime.open(
+        replicated ? new ReplicatedPersistence() : new MemoryPersistencePort(),
+        {
+          idFactory: deterministicIds(),
+          initialTitle: "Root",
+        },
+      );
+      try {
+        const original = {
+          ...sectionSnapshot(runtime.noteDocument.rootSection),
+          children: [
+            {
+              sectionId: createUuidV7(),
+              title: "S",
+              tags: [],
+              body: [],
+              children: [
+                {
+                  sectionId: createUuidV7(),
+                  title: "Nested",
+                  tags: [],
+                  body: [],
+                  children: [],
+                },
+              ],
+            },
+          ],
+          body: ["A", "B", "C"].map((text) => ({
+            type: "paragraph",
+            attrs: { blockId: createUuidV7() },
+            content: [{ type: "text", text }],
+          })),
+        };
+        replaceNoteSectionTree(
+          runtime.noteDocument,
+          original,
+          "2026-09-18T00:00:00.000Z",
+          "test-fixture",
+        );
+        await settle(runtime);
+        runtime.noteDocument.undoManager.stopCapturing();
+        const inserted = {
+          sectionId: createUuidV7(),
+          title: "Copied",
+          tags: [],
+          body: [],
+          children: [],
+        };
+        expect(
+          putNoteSectionTitle(
+            runtime.noteDocument,
+            runtime.noteId,
+            inserted,
+            boundary,
+          ),
+        ).toBe(true);
+        await settle(runtime);
+        const result = sectionSnapshot(runtime.noteDocument.rootSection);
+        expect(result.body).toEqual(original.body.slice(0, boundary));
+        expect(result.children).toEqual([
+          { ...inserted, body: original.body.slice(boundary) },
+          ...original.children,
+        ]);
+        if (runtime.noteDocument.replicated)
+          runtime.noteDocument.replicated.undo();
+        else (runtime.noteDocument.undoManager as UndoManager).undo();
+        await settle(runtime);
+        expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(
+          original,
+        );
+      } finally {
+        runtime.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "preserves copied absolute depth after a focused yank (focused=%s)",
+    async (focused) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+        idFactory: deterministicIds(),
+        initialTitle: "Root",
+      });
+      const parentId = addChild(runtime, "Parent", "parent body");
+      const sourceId = addChildSection(
+        findSectionById(runtime.noteDocument.rootSection, parentId)!,
+        "Copied",
+      );
+      const targetId = addChild(runtime, "Target", "target body");
+      if (focused)
+        await runtime.focusSection("window-1", runtime.noteId, sourceId);
+      const root = rootElement();
+      let { adapter, editor } = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === sourceId,
+          ),
+        );
+        editor.commands.focus();
+        press(editor, "Escape");
+        press(editor, "y");
+        press(editor, "y");
+        const register = runtime.vimRegister.read(editor.schema)!;
+        expect(register).toMatchObject({
+          sourceSectionDepth: 2,
+          titleOnly: true,
+        });
+        const decoded = decodeVimClipboard(
+          encodeVimClipboard(register, editor.schema)[MEMOKA_CLIPBOARD_MIME],
+          editor.schema,
+        )!;
+        expect(decoded).toMatchObject({ sourceSectionDepth: 2 });
+        runtime.vimRegister.set(decoded);
+        if (focused) {
+          adapter.destroy();
+          await runtime.openNote("window-1", runtime.noteId);
+          ({ adapter, editor } = runtime.editorForTesting("window-1", root, {
+            directBodyOnly: false,
+          }));
+        }
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === targetId,
+          ),
+        );
+        press(editor, "p");
+        await settle(runtime);
+        const target = sectionSnapshot(
+          findSectionById(runtime.noteDocument.rootSection, targetId)!,
+        );
+        expect(target.body).toEqual([]);
+        expect(target.children.map((child) => child.title)).toEqual(["Copied"]);
+        expect(target.children[0]!.body).toHaveLength(1);
+        expect(target.children[0]!.sectionId).not.toBe(sourceId);
+      } finally {
+        adapter.destroy();
+        root.remove();
+        runtime.destroy();
+      }
+    },
+  );
 
   it("puts a yanked Section-and-body selection beside a Focused Section", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {

@@ -13,6 +13,11 @@ mappingは未対応である。
 
 ## 2. Modeとcaret
 
+Normalの`Ctrl-Enter`はInsertと同じ構造脱出を実行し、成功時はInsertへ移る。通常のParagraphでは本文を分割せず、直後に新しい空Paragraphを作る。作成と後続入力は1 Undo単位とする。対象がない場合は変更せず、Hard Break挿入へfallbackしない。
+Alert・Quote・Details内のListでは、囲みの内側にある最外Listの直後へ空Paragraphを作り、囲みの中にとどまる。Normal/Insert共通とする。
+
+Table Cell内のtextをクリックすると、Normal/Insertともクリック位置へcaretを移す。座標から対象Cell内の位置を取得できない場合だけCell先頭へfallbackする。
+
 | Mode         | 主な用途        | caret/statusline                            |
 | ------------ | --------------- | ------------------------------------------- |
 | Normal       | 移動とcommand   | 文字またはatomic nodeを覆う四角、青系NORMAL |
@@ -36,29 +41,37 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 
 ## 4. Normal motion
 
-| Key                 | 動作                                            |
-| ------------------- | ----------------------------------------------- |
-| `h/l`               | 前/次の文字またはatomic node                    |
-| `j/k`               | 次/前の論理行。可能な限り目標columnを維持       |
-| `gj/gk`             | 次/前の画面上の表示行                           |
-| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾             |
-| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾             |
-| `0/$`               | 論理行の先頭/末尾                               |
-| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾      |
-| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                 |
-| `{` / `}`           | 前/次の表示中blockの先頭                        |
-| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置 |
-| `Ctrl-f/Ctrl-b`     | 1画面下/上                                      |
-| `Ctrl-d/Ctrl-u`     | 半画面下/上                                     |
-| `[count]n/[count]N` | Note内検索の次/前の一致                         |
+| Key                 | 動作                                                    |
+| ------------------- | ------------------------------------------------------- |
+| `h/l`               | 前/次の文字またはatomic node                            |
+| `j/k`               | 次/前の論理行。可能な限り目標columnを維持               |
+| `gj/gk`             | 次/前の画面上の表示行                                   |
+| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾                     |
+| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾                     |
+| `0/$`               | 論理行の先頭/末尾                                       |
+| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾              |
+| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                         |
+| `{` / `}`           | 前/次の表示中blockの先頭                                |
+| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置         |
+| `Ctrl-f/Ctrl-b`     | 1画面下/上                                              |
+| `Ctrl-d/Ctrl-u`     | 半画面下/上                                             |
+| `H/M/L`             | 画面内の上端/中央/下端の表示行へ移動                    |
+| `Ctrl-e/Ctrl-y`     | 1表示行下/上へscroll。画面外になるcaretだけ表示端へ移す |
+| `[count]n/[count]N` | Note内検索の次/前の一致                                 |
 
 小文字のwordでは、Vim標準と同様にkeyword文字（Unicodeの文字・数字と`_`）の連続、および空白以外の
 非keyword記号の連続をそれぞれ1 wordとする。日本語は設定された分割方式を適用する。
+
+文字単位の移動・選択・削除・置換とNormal caretはUnicode書記素クラスタを単位とする。
+肌色修飾、国旗、ZWJ結合絵文字、結合文字を途中で分割しない。ProseMirrorの位置はUTF-16 offsetを維持する。
 
 `whichwrap`がtrueの場合、Normalの`h/l/w/b/e/ge/W/B/E/gE`は論理行端から前後の論理行へ続く。
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。
+Normalのcaret移動では、現在のテキスト論理行がWindowに収まれば全体を最小限のscrollで表示する。
+収まらない場合はcaretの表示行と次の表示行を優先し、論理行先頭では上寄りに配置する。
+scroll可能範囲で補正し、caret位置は変えない。Insert・Visual・手動scrollには適用せず、`zt/zz/zb`と`gf`の明示配置を優先する。
 Section移動は現在所属するSectionを基準にし、折り畳まれた子Sectionを飛ばす。block移動はSection本文直下の
 Paragraph、List、Table、Code/Source、Blockquote、Detailsなどをそれぞれ1 blockとして数え、Section titleと
 各block内部の論理行を移動先から除外する。どちらもCountを受け付ける。
@@ -72,25 +85,46 @@ CountありではFocused Section内の指定論理行へ移り、可能な限り
 
 通常の文字入力と矢印keyはEditorへ渡す。IME composition中は以下のCtrl commandよりIMEを優先する。
 
-| Key               | 動作                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Esc / Ctrl-c`    | Normalへ戻る                                                                                                  |
-| `Ctrl-h`          | Backspace                                                                                                     |
-| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                                                         |
-| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                                                               |
-| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                                                                    |
-| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化                                                     |
-| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化                                                   |
-| `Ctrl-Enter`      | List内は先頭の子または次の兄弟Itemを作る。List外のTable/Code/Source/Blockquoteは構造直後に新規Paragraphを作る |
-| `Ctrl-Shift-v`    | OS Clipboardのplain textだけをpasteし、HTML/Markdown/内部構造の解釈を行わない                                 |
-| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                                                |
+Insertの`Ctrl-e`は共通SearchPaneで絵文字・Lucide Iconを選択する。Normalの`Ctrl-e`は従来のscrollを維持する。
+Pane内だけ`Ctrl-1/2/3`でAll/Emoji/Lucideを切り替え、queryを維持する。英語名・alias・絵文字・token表記を検索できる。
+矢印・`Ctrl-n/p`で選択、`Enter/Tab`で確定し、挿入直後のcaretでInsertを続ける。選択範囲がある場合は置換する。
+`Esc/Ctrl-c`は文書・Undoを変更せずキャンセルする。確定した挿入は独立した1 Undo単位とする。
+入力元のWindow/Note/Editor・文書・選択範囲が変わった場合は挿入を拒否し、別の場所には入力しない。
+
+絵文字は通常のUnicode text、Lucideは`:lucide-<name>:`というtextとして保存する。既知の完全なtokenだけを
+本文・Note/Sectionタイトルで表示専用のIconにし、手入力・pasteも同じ扱いとする。Code/Source Blockとcode markでは
+文字列のまま編集する。未知・未完成tokenも文字列を維持する。URL属性・attachment pathは解釈しない。
+Iconは現在の文字色を継承した約1emの表示とし、対象textblockでは移動・選択・削除の1単位として扱う。
+ProseMirrorの位置と永続化形式はUTF-16 textを維持し、Clipboard/HTML/Markdown出力にも元のtokenを保持する。
+IME composition中の表示変換は保留する。Tree/Outline/Tab/breadcrumbと内部リンクの表示ラベルにも共通のIcon表記を使う。
+絵文字・Iconと隣接文字、および絵文字・Icon同士の境界に表示専用の`0.125ic`の隙間を1つ設ける。
+ZWJ・肌色・国旗・keycapを含むgrapheme内部には入れず、既存空白・論理行端・Code/Source/code markには追加しない。
+タイトル表示・内部リンクラベルにも同じ境界規則を使い、保存・Clipboard・HTML/Markdown・Undoには影響させない。
+
+候補は固定Unicode Emoji 17.0のfully-qualified/componentと導入済みLucideの全canonical Iconを同梱する。
+Lucide aliasは検索・token認識に使うが候補行を重複させない。完全一致、前方一致、単語一致、部分一致の順で、同順位は
+catalog順とする。空queryでは絵文字catalog順、Lucide名順に並べる。全件検索し表示は先頭200件まで、総件数と絞り込み案内を出す。
+候補・SVG geometryは必要時に読み込み、起動時に全SVGを生成しない。履歴・favoriteは持たない。
+
+| Key               | 動作                                                                          |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `Esc / Ctrl-c`    | Normalへ戻る                                                                  |
+| `Ctrl-h`          | Backspace                                                                     |
+| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                         |
+| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                               |
+| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                                    |
+| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化                     |
+| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化                   |
+| `Ctrl-Enter`      | List/Table/Code/Source/Blockquoteを抜け、構造直後に新規Paragraphを作る        |
+| `Ctrl-Shift-v`    | OS Clipboardのplain textだけをpasteし、HTML/Markdown/内部構造の解釈を行わない |
+| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                |
 
 `i/a`はcaret位置の前/後、`I/A`は論理行の先頭/末尾からInsertへ入る。
 `a`は現在文字の直後を挿入位置とし、空行では同じ位置を保つ。Tableでは最終文字上・空Cellでも同じCell内にとどまる。
 内部リンクは全体で1文字とするため、リンク上の`a`はリンク全体の直後へ入る。これらは`whichwrap`設定に依存しない。
 `o/O`は現在論理行またはblockの下/上に入力先を作る。
 Details本文からはDetailsの外へ出ず、内部blockの行を追加する。Detailsを所有する外側ListItemより本文内の操作を優先する。
-List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。
+List内の`o`は空のItemを作る。`Ctrl-Enter`は最外List直後へParagraphを作る。Details・Alert・Quote内では囲みの内側の最外Listを抜ける。
 
 ## 6. Operatorと編集command
 
@@ -128,7 +162,11 @@ Blockquote（Alertを含む）、Detailsの本体も同じtransaction内で取�
 削除に関係する祖先だけを調べ、未選択の本文・inline atom・画像・添付・List/Table構造を空とみなして削除しない。
 Tableでは全rowを削除する場合のみ本体を取り除き、未選択の空rowは維持する。
 DetailsはSummaryに内容が残るなら維持し、必須の空本文Paragraphを補う。ListItem内でも同じ規則とし、未選択の子孫は表示順を保って残す。
-Note/Sectionのidentityとtitle削除規則は変えない。`cc`やVisual Lineの`c`などのchangeは入力先を維持する。
+Root Note title上の`dd`はtitleだけを空にし、Root Sectionと本文を維持する。Root以外のSection titleを`dd`または
+Visual Lineの`d`で選択した場合は、選択したtitleと本文行だけを削除する。未選択の本文と子Sectionは表示順を変えず、
+直前の表示Section、または親Sectionの本文・子として残す。元の絶対深度が不可能なSectionだけを文脈上可能な深さへclampする。
+削除registerには選択行だけを入れ、titleだけを削除したSectionは空本文・子なしのSectionとして保持する。
+`cc`やVisual Lineの`c`などのchangeは入力先を維持する。
 
 ## 7. Text object
 
@@ -188,11 +226,16 @@ ListItem内ではParagraphのHard Breakも論理行境界となる。選択し�
 
 InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同じItem内の次Paragraphを作る。
 `Shift-Enter`はHard Break。内部Code/Table/引用などは固有のEnter操作を維持し、`Alt-Enter`で同じItem内の次Paragraphへ抜ける。
-`Ctrl-Enter`とNormalの`o`は所有ListItemの表示順で直後に空Paragraphを持つ新規Itemを作る。
+Normalの`o`は所有ListItemの表示順で直後に空Paragraphを持つ新規Itemを作る。
 内部Blockの種類を問わず、直接子Listがあれば最初の子Listの先頭の子、なければ次の兄弟となる。
 追加先のList種別・開始番号を保ち、既存子孫と後続Blockの親子関係・順序・IDを変えない。
 caret位置で本文は分割せず、既存の空Itemを再利用しない。新ParagraphへInsertで移動し、1 Undo単位とする。
-ListItem registerのNormal `p`も同じ挿入位置を使う。`P`、文字単位のput、Table Cellのputは従来のままとする。
+ListItem registerのNormal `p`も同じ挿入位置を使う。`p/P`と内部ClipboardのInsert pasteではコピー元の
+List深度を可能な限り保つが、指定した挿入位置を優先し、直前のItemから1段を超えて深くならない範囲へclampする。
+子孫を含む浅いItemを既存の子孫直前へ貼る場合、後続の深いItemは表示順を維持したまま貼り付けた末尾側のItemへ接続する。
+子孫を含まない単一Itemでは従来どおり既存子孫の親子関係を維持する。
+接続部分は貼り付け先のList種別・開始番号を使い、コピーしたItem内部の相対階層とList種別は維持する。
+文字単位のput、Table Cellのputは従来のままとする。
 ただしDetails本文内のListでは、`Ctrl-Enter`で最も近いDetails内の最外側Listを抜け、その直後へ新しいParagraphを作る。
 Details内にとどまり、既存Paragraphを再利用しない。Normalの`o`はこの場合もItem追加のままとする。
 
@@ -200,7 +243,8 @@ Details内にとどまり、既存Paragraphを再利用しない。Normalの`o`�
 
 SectionはNote RootをH1としてH6までとする。`>>/<<`、Insertの`Ctrl-t/Ctrl-d`、Visual Lineの`>/<`、
 ParagraphからSectionを作る操作、`p/P`には同じ上限を適用する。`zf`中も絶対深度で検査する。
-結果がH7を含む場合は操作全体を拒否し、本文、ID、revision、Undoを変えない。H6 Headerでの`# `は文字として残す。
+結果がH7を含む場合は操作全体を拒否し、本文、ID、revision、Undoを変えない。非Root本文での`# `は
+同じ絶対深度の兄弟Sectionを作るため、H6でも許可する。Root本文での`# `は従来どおり子Sectionを作る。
 
 既存の昇降格規則は、明示的に選んだHeaderを動かし、後続Headerの深さは不正な段差の補正以外は維持するもの。
 親Headerだけを選ぶ操作で子孫を自動選択しない。H5親からH6子までを選択してsubtree全体を1段降格する場合は、
@@ -236,7 +280,7 @@ Table左上CellのShift-TabでEditor外やTreeへfocusを移さない。
 ### 9.2 編集
 
 - Insert EnterはCell内Paragraphを分割し、Shift-EnterはHard Breakを入れる。
-- Ctrl-EnterはList内なら所有Itemの先頭の子または次の兄弟として空のItemを作り、List外ならTable全体の直後に新しいParagraphを作る。
+- Ctrl-EnterはList内ならList全体、List外ならTable全体の直後に新しいParagraphを作る。
   Details本文内のListにあるTableでは、最も近いDetails内の最外側List直後へ新しいParagraphを作る。
 - Table内の`p/P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼る。
 - 矩形`d`はCell内容をclearし、row/column構造を維持する。
@@ -322,7 +366,7 @@ EditorのVim modeではないが、共通cursor motionとCountを使用する。
 | `c`                        | 選択Entryの子として空titleのNoteを作る                                              |
 | `A`                        | top-levelへ空titleのNoteを作る                                                      |
 | `[count]J/K`               | sibling内で下/上へ並べ替える                                                        |
-| `[count]H/L`               | 表示順を保って1段浅く/深くする                                                      |
+| `[count]<</>>`             | 表示順を保って浅く/深くする。Count回繰り返す                                        |
 | `D`                        | 選択Entryとlive子孫、そこに含むNoteをTrashへ移す                                    |
 | `T`                        | Trash検索を開く                                                                     |
 
@@ -331,7 +375,7 @@ clickは対象Entryを選択し、未完のTree key sequenceやCountを破棄す
 mouse hoverだけでは選択を変更しない。mouseによる並べ替え、作成、inline renameは提供しない。
 Note titleはBuffer内のRoot Headerで編集する。
 `:group`で名前入力画面から選択Entryの子にグループを作り、`:rename-group`で選択グループを改名する。
-Entry未選択時はtop-levelへ作る。作成後は`H/L/J/K`でNoteと同じように配置を変更できる。
+Entry未選択時はtop-levelへ作る。作成後は`<</>>/J/K`でNoteと同じように配置を変更できる。
 グループ自体をBufferへ開かず、空グループのためにNote IDや仮Noteを作らない。
 `a`は選択Entry直後、`c`は最後の子、`A`はtop-level末尾へ作成し、対象Windowで新Noteを開いて
 空Root HeaderのInsert modeへ入る。Tree構造変更はEditor本文のUndo/Redoと`.` repeatには含めない。

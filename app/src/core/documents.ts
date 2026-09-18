@@ -11,6 +11,7 @@ import {
 } from "./replicated-note";
 import {
   applyReplicatedSectionSnapshot,
+  reconcileSiblingPositions,
   replaceReplicatedInline,
 } from "./replicated-note-edit";
 import {
@@ -30,6 +31,7 @@ import {
 import {
   compareSiblingPositions,
   isCanonicalSiblingPosition,
+  siblingPositionsBetween,
 } from "./sibling-position";
 import {
   applySectionSnapshot,
@@ -46,6 +48,7 @@ import {
   insertChildSection,
   sectionBodyBlocks,
   planSectionDepthShift,
+  planSectionTitlePut,
   sectionBody,
   sectionChildren,
   sectionId,
@@ -56,6 +59,7 @@ import {
   validateSectionTree,
   validateSectionSnapshotDepth,
   replaceSectionBodySnapshot,
+  MAX_SECTION_DEPTH,
   SECTION_CHILDREN_NODE,
   SECTION_HEADER_NODE,
   SECTION_NODE,
@@ -286,6 +290,7 @@ export const CORE_TRANSACTION_ORIGIN = "memoka:core-transaction";
 export const SECTION_DEPTH_SHIFT_ORIGIN = "memoka:section-depth-shift";
 export const SECTION_PARAGRAPH_CONVERSION_ORIGIN =
   "memoka:section-paragraph-conversion";
+export const SECTION_LINE_DELETION_ORIGIN = "memoka:section-line-deletion";
 export const BOOTSTRAP_ORIGIN = "memoka:bootstrap";
 export const NOTE_TIMESTAMP_ORIGIN = "memoka:note-timestamp";
 export const SECTION_IDENTITY_REPAIR_ORIGIN = "memoka:section-identity-repair";
@@ -1169,10 +1174,16 @@ export function replaceNoteSectionTree(
   snapshot: SectionSnapshot,
   updatedAt: string,
   origin: unknown = CORE_TRANSACTION_ORIGIN,
+  options: { readonly recoverProtectedIdentities?: boolean } = {},
 ): void {
   if (note.replicated) {
     note.replicated.transact(() => {
-      applyReplicatedSectionSnapshot(note.replicated!, snapshot, origin);
+      applyReplicatedSectionSnapshot(
+        note.replicated!,
+        snapshot,
+        origin,
+        options,
+      );
       note.meta.set("updated_at", updatedAt);
     }, origin);
     return;
@@ -1185,6 +1196,93 @@ export function replaceNoteSectionTree(
     applySectionSnapshot(note.rootSection, snapshot);
     note.meta.set("updated_at", updatedAt);
   }, origin);
+}
+
+interface SectionDeletionRow {
+  readonly originalDepth: number;
+  readonly snapshot: SectionSnapshot;
+  depth: number;
+  body: unknown[];
+  children: SectionDeletionRow[];
+}
+
+export interface NoteSectionLineDeletionResult {
+  readonly changed: boolean;
+  readonly fallbackSectionId: string | null;
+}
+
+/**
+ * Removes one non-Root Section header while retaining every unselected body
+ * block and child Section in display order. Remaining depths are clamped only
+ * where the removed header made the original depth impossible.
+ */
+export function deleteNoteSectionSelectedLines(
+  note: NoteDocument,
+  sourceSectionId: string,
+  remaining: SectionSnapshot,
+  updatedAt: string,
+  origin: unknown = SECTION_LINE_DELETION_ORIGIN,
+): NoteSectionLineDeletionResult {
+  if (
+    sourceSectionId === note.noteId ||
+    remaining.sectionId !== sourceSectionId
+  ) {
+    return { changed: false, fallbackSectionId: null };
+  }
+  const root = sectionSnapshot(note.rootSection);
+  let found = false;
+  const rows: SectionDeletionRow[] = [];
+  const visit = (snapshot: SectionSnapshot, depth: number): void => {
+    const value = snapshot.sectionId === sourceSectionId ? remaining : snapshot;
+    if (snapshot.sectionId === sourceSectionId) found = true;
+    rows.push({
+      originalDepth: depth,
+      depth,
+      snapshot: value,
+      body: [...value.body],
+      children: [],
+    });
+    for (const child of value.children) visit(child, depth + 1);
+  };
+  visit(root, 0);
+  if (!found) return { changed: false, fallbackSectionId: null };
+
+  const sourceIndex = rows.findIndex(
+    ({ snapshot }) => snapshot.sectionId === sourceSectionId,
+  );
+  const destination = rows[sourceIndex - 1];
+  if (sourceIndex <= 0 || !destination) {
+    return { changed: false, fallbackSectionId: null };
+  }
+  destination.body.push(...rows[sourceIndex]!.body);
+  rows.splice(sourceIndex, 1);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const previous = rows[index - 1];
+    rows[index]!.depth = previous
+      ? Math.min(rows[index]!.originalDepth, previous.depth + 1)
+      : 0;
+    rows[index]!.children = [];
+  }
+  const ancestors: SectionDeletionRow[] = [rows[0]!];
+  for (let index = 1; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    const parent = ancestors[row.depth - 1];
+    if (!parent) throw new Error("Section deletion produced an invalid depth");
+    parent.children.push(row);
+    ancestors[row.depth] = row;
+    ancestors.length = row.depth + 1;
+  }
+  const rebuild = (row: SectionDeletionRow): SectionSnapshot => ({
+    ...row.snapshot,
+    body: row.body,
+    children: row.children.map(rebuild),
+  });
+  replaceNoteSectionTree(note, rebuild(rows[0]!), updatedAt, origin);
+  return {
+    changed: true,
+    fallbackSectionId: destination.snapshot.sectionId,
+  };
 }
 
 export function planNoteSectionDepthShift(
@@ -1208,6 +1306,118 @@ export function planNoteSectionDepthShift(
   return plan;
 }
 
+export interface ReplicatedNoteSectionDepthShiftPlan {
+  readonly changed: boolean;
+  readonly affectedSectionIds: readonly string[];
+  readonly desiredChildren: ReadonlyMap<string, readonly string[]>;
+}
+
+export function planReplicatedNoteSectionDepthShift(
+  note: NoteDocument,
+  boundarySectionId: string,
+  targetSectionIds: readonly string[],
+  direction: SectionDepthShiftDirection,
+): ReplicatedNoteSectionDepthShiftPlan {
+  const replicated = note.replicated;
+  if (!replicated) {
+    throw new Error("Replicated Section depth planning requires schema v7");
+  }
+  const tree = replicated.project();
+  if (
+    !tree.visible.has(boundarySectionId) ||
+    replicated.type(boundarySectionId) !== "section"
+  ) {
+    throw new Error(`Unknown Focused Section: ${boundarySectionId}`);
+  }
+  const flattened: { sectionId: string; depth: number }[] = [];
+  const pending = [{ sectionId: boundarySectionId, depth: 0 }];
+  while (pending.length) {
+    const current = pending.pop()!;
+    flattened.push(current);
+    const children = (tree.children.get(current.sectionId) ?? []).filter(
+      (id) =>
+        replicated.type(id) === "section" &&
+        tree.parents.get(id)?.region === "sections",
+    );
+    for (let index = children.length - 1; index >= 0; index--) {
+      pending.push({ sectionId: children[index]!, depth: current.depth + 1 });
+    }
+  }
+  const knownIds = new Set(flattened.map(({ sectionId }) => sectionId));
+  const requestedIds = new Set(targetSectionIds);
+  for (const targetSectionId of requestedIds) {
+    assertUuidV7(targetSectionId, "targetSectionId");
+    if (!knownIds.has(targetSectionId)) {
+      throw new Error(
+        `Section is outside the Focused Section: ${targetSectionId}`,
+      );
+    }
+  }
+  const resultingDepths = flattened.map(({ sectionId, depth }, index) =>
+    index === 0 || !requestedIds.has(sectionId)
+      ? depth
+      : direction === "deeper"
+        ? depth + 1
+        : Math.max(1, depth - 1),
+  );
+  for (let index = 1; index < resultingDepths.length; index++) {
+    resultingDepths[index] = Math.max(
+      1,
+      Math.min(resultingDepths[index]!, resultingDepths[index - 1]! + 1),
+    );
+  }
+  let boundaryDepth = 0;
+  let ancestor = boundarySectionId;
+  while (ancestor !== replicated.noteId) {
+    ancestor = tree.parents.get(ancestor)!.parentId;
+    boundaryDepth++;
+  }
+  if (
+    resultingDepths.some((depth) => boundaryDepth + depth > MAX_SECTION_DEPTH)
+  ) {
+    throw new Error("Section depth exceeds H6");
+  }
+  const affectedSectionIds = flattened.flatMap(({ sectionId, depth }, index) =>
+    depth === resultingDepths[index] ? [] : [sectionId],
+  );
+  if (!affectedSectionIds.length) {
+    return {
+      changed: false,
+      affectedSectionIds: [],
+      desiredChildren: new Map(),
+    };
+  }
+  const desiredChildren = new Map<string, string[]>();
+  const ancestors: string[] = [];
+  for (const [index, { sectionId }] of flattened.entries()) {
+    const depth = resultingDepths[index]!;
+    desiredChildren.set(sectionId, []);
+    if (index > 0) {
+      const parentId = ancestors[depth - 1];
+      if (!parentId) throw new Error("Section depth plan has an invalid jump");
+      desiredChildren.get(parentId)!.push(sectionId);
+    }
+    ancestors[depth] = sectionId;
+    ancestors.length = depth + 1;
+  }
+  return { changed: true, affectedSectionIds, desiredChildren };
+}
+
+export function applyReplicatedNoteSectionDepthShift(
+  note: NoteDocument,
+  plan: ReplicatedNoteSectionDepthShiftPlan,
+  updatedAt: string,
+  origin: unknown = SECTION_DEPTH_SHIFT_ORIGIN,
+): void {
+  if (!plan.changed) return;
+  applyReplicatedSectionHierarchy(
+    note,
+    plan.desiredChildren,
+    updatedAt,
+    origin,
+  );
+}
+
 export function applyNoteSectionDepthShift(
   note: NoteDocument,
   boundarySectionId: string,
@@ -1215,16 +1425,26 @@ export function applyNoteSectionDepthShift(
   updatedAt: string,
   origin: unknown = SECTION_DEPTH_SHIFT_ORIGIN,
 ): void {
-  if (note.replicated)
-    return editReplicatedProjection(note, origin, (projection) =>
-      applyNoteSectionDepthShift(
-        projection,
-        boundarySectionId,
-        plan,
-        updatedAt,
-        origin,
-      ),
-    );
+  if (note.replicated) {
+    if (!plan.changed) return;
+    if (plan.snapshot.sectionId !== boundarySectionId) {
+      throw new Error("Section depth plan does not match its Focused Section");
+    }
+    const desiredChildren = new Map<string, string[]>();
+    const pending = [plan.snapshot];
+    while (pending.length) {
+      const parent = pending.pop()!;
+      desiredChildren.set(
+        parent.sectionId,
+        parent.children.map((child) => child.sectionId),
+      );
+      for (let index = parent.children.length - 1; index >= 0; index--) {
+        pending.push(parent.children[index]!);
+      }
+    }
+    applyReplicatedSectionHierarchy(note, desiredChildren, updatedAt, origin);
+    return;
+  }
   if (!plan.changed) return;
   const boundary = findSectionById(note.rootSection, boundarySectionId);
   if (!boundary)
@@ -1238,6 +1458,57 @@ export function applyNoteSectionDepthShift(
   );
   note.doc.transact(() => {
     applySectionHierarchySnapshot(boundary, plan.snapshot);
+    note.meta.set("updated_at", updatedAt);
+  }, origin);
+}
+
+function applyReplicatedSectionHierarchy(
+  note: NoteDocument,
+  desiredChildren: ReadonlyMap<string, readonly string[]>,
+  updatedAt: string,
+  origin: unknown,
+): void {
+  const replicated = note.replicated;
+  if (!replicated) {
+    throw new Error("Replicated Section hierarchy requires schema v7");
+  }
+  const tree = replicated.project();
+  const positions = new Map<string, string>();
+  for (const [parentId, children] of desiredChildren) {
+    const current = (tree.children.get(parentId) ?? []).filter(
+      (id) =>
+        replicated.type(id) === "section" &&
+        tree.parents.get(id)?.region === "sections",
+    );
+    for (const [id, position] of reconcileSiblingPositions(
+      children,
+      current,
+      (id) => tree.parents.get(id)!.position,
+      replicated.replicaId + parentId,
+    )) {
+      positions.set(id, position);
+    }
+  }
+  const moves = [...desiredChildren].flatMap(([parentId, children]) =>
+    children.flatMap((id) => {
+      const current = tree.parents.get(id);
+      const position = positions.get(id)!;
+      return current?.parentId !== parentId ||
+        current.region !== "sections" ||
+        current.position !== position
+        ? [
+            {
+              entityId: id,
+              parentId,
+              region: "sections",
+              position,
+            },
+          ]
+        : [];
+    }),
+  );
+  replicated.transact(() => {
+    replicated.moveMany(moves);
     note.meta.set("updated_at", updatedAt);
   }, origin);
 }
@@ -1288,6 +1559,27 @@ export function putNoteSectionSibling(
   return true;
 }
 
+/** Split at the requested display boundary while preserving existing depths. */
+export function putNoteSectionTitle(
+  note: NoteDocument,
+  targetSectionId: string,
+  title: SectionSnapshot,
+  boundary: number | null,
+  origin: unknown = ySyncPluginKey,
+  preferredDepth?: number,
+): boolean {
+  const snapshot = planSectionTitlePut(
+    sectionSnapshot(note.rootSection),
+    targetSectionId,
+    title,
+    boundary,
+    preferredDepth,
+  );
+  if (!snapshot) return false;
+  replaceNoteSectionTree(note, snapshot, readNoteUpdatedAt(note), origin);
+  return true;
+}
+
 export interface NoteSectionFromParagraphResult {
   readonly changed: boolean;
   readonly createdSectionId: string | null;
@@ -1328,9 +1620,7 @@ export function createNoteSectionFromParagraph(
   origin: unknown = SECTION_PARAGRAPH_CONVERSION_ORIGIN,
 ): NoteSectionFromParagraphResult {
   if (note.replicated)
-    return editReplicatedProjection(note, origin, (projection) =>
-      createNoteSectionFromParagraph(projection, request, origin),
-    );
+    return createReplicatedNoteSectionFromParagraph(note, request, origin);
   const boundary = findSectionById(note.rootSection, request.boundarySectionId);
   if (!boundary) {
     throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
@@ -1413,6 +1703,129 @@ export function createNoteSectionFromParagraph(
     }
     note.meta.set("updated_at", request.updatedAt);
     validateSectionTree(note.rootSection, note.noteId);
+  }, origin);
+  return { changed: true, createdSectionId: request.newSectionId };
+}
+
+function createReplicatedNoteSectionFromParagraph(
+  note: NoteDocument,
+  request: Parameters<typeof createNoteSectionFromParagraph>[1],
+  origin: unknown,
+): NoteSectionFromParagraphResult {
+  const replicated = note.replicated!;
+  const tree = replicated.project();
+  if (
+    !tree.visible.has(request.boundarySectionId) ||
+    replicated.type(request.boundarySectionId) !== "section"
+  ) {
+    throw new Error(`Unknown Focused Section: ${request.boundarySectionId}`);
+  }
+  const source = tree.visible.has(request.sourceSectionId)
+    ? request.sourceSectionId
+    : null;
+  if (!source || replicated.type(source) !== "section") {
+    throw new Error(
+      `Paragraph Section is outside the Focused Section: ${request.sourceSectionId}`,
+    );
+  }
+  let cursor = source;
+  while (cursor !== request.boundarySectionId && cursor !== replicated.noteId) {
+    cursor = tree.parents.get(cursor)?.parentId ?? replicated.noteId;
+  }
+  if (cursor !== request.boundarySectionId) {
+    throw new Error(
+      `Paragraph Section is outside the Focused Section: ${request.sourceSectionId}`,
+    );
+  }
+
+  const body = (tree.children.get(source) ?? []).filter(
+    (id) => tree.parents.get(id)?.region === "body",
+  );
+  const requested = body[request.paragraphBodyIndex];
+  const paragraphIndex =
+    requested === request.paragraphBlockId
+      ? request.paragraphBodyIndex
+      : body.indexOf(request.paragraphBlockId);
+  if (
+    paragraphIndex < 0 ||
+    replicated.type(request.paragraphBlockId) !== "paragraph"
+  ) {
+    return { changed: false, createdSectionId: null };
+  }
+
+  const parentEdge = tree.parents.get(source);
+  if (
+    request.direction === "shallower" &&
+    (source === request.boundarySectionId ||
+      !parentEdge ||
+      replicated.type(parentEdge.parentId) !== "section")
+  ) {
+    return { changed: false, createdSectionId: null };
+  }
+  if (request.direction === "deeper") {
+    let depth = 0;
+    let ancestor = source;
+    while (ancestor !== replicated.noteId) {
+      ancestor = tree.parents.get(ancestor)!.parentId;
+      depth++;
+    }
+    if (depth + 1 > MAX_SECTION_DEPTH) {
+      throw new Error("Section depth exceeds H6");
+    }
+  }
+
+  const sectionParent =
+    request.direction === "deeper" ? source : parentEdge!.parentId;
+  const siblingSections = (tree.children.get(sectionParent) ?? []).filter(
+    (id) =>
+      replicated.type(id) === "section" &&
+      tree.parents.get(id)?.region === "sections",
+  );
+  const insertionIndex =
+    request.direction === "deeper" ? 0 : siblingSections.indexOf(source) + 1;
+  if (insertionIndex <= 0 && request.direction === "shallower") {
+    throw new Error("Paragraph Section parent disappeared before conversion");
+  }
+  const lowerId = siblingSections[insertionIndex - 1];
+  const upperId = siblingSections[insertionIndex];
+  const position = siblingPositionsBetween(
+    lowerId ? tree.parents.get(lowerId)!.position : null,
+    upperId ? tree.parents.get(upperId)!.position : null,
+    1,
+    request.newSectionId,
+  )[0]!;
+  const suffix = body.slice(paragraphIndex + 1);
+  const childSectionsToMove =
+    request.direction === "shallower"
+      ? (tree.children.get(source) ?? []).filter(
+          (id) =>
+            replicated.type(id) === "section" &&
+            tree.parents.get(id)?.region === "sections",
+        )
+      : [];
+
+  replicated.transact(() => {
+    replicated.createEntity("section", sectionParent, "sections", position, {
+      id: request.newSectionId,
+      attrs: { tags: [] },
+      inline: request.title ? [{ type: "text", text: request.title }] : [],
+    });
+    replicated.moveMany([
+      ...suffix.map((id) => ({
+        entityId: id,
+        parentId: request.newSectionId,
+        region: "body",
+        position: tree.parents.get(id)!.position,
+      })),
+      ...childSectionsToMove.map((id) => ({
+        entityId: id,
+        parentId: request.newSectionId,
+        region: "sections",
+        position: tree.parents.get(id)!.position,
+      })),
+    ]);
+    replicated.delete(request.paragraphBlockId);
+    note.meta.set("updated_at", request.updatedAt);
   }, origin);
   return { changed: true, createdSectionId: request.newSectionId };
 }
@@ -1725,6 +2138,7 @@ function noteDocumentFromParts(
         ySyncPluginKey,
         SECTION_DEPTH_SHIFT_ORIGIN,
         SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+        SECTION_LINE_DELETION_ORIGIN,
       ]),
     }),
   } as Omit<NoteDocument, "body">;
@@ -1778,6 +2192,7 @@ function replicatedDocumentFromModel(replicated: ReplicatedNote): NoteDocument {
     ySyncPluginKey,
     SECTION_DEPTH_SHIFT_ORIGIN,
     SECTION_PARAGRAPH_CONVERSION_ORIGIN,
+    SECTION_LINE_DELETION_ORIGIN,
     NOTE_RECOVERY_ORIGIN,
   ])
     replicated.undoManager.trackedOrigins.add(origin);

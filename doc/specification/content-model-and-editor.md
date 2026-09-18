@@ -52,6 +52,7 @@ Paragraph、ListItem、Table Cellなどのinline contentで次を扱う。
 
 Visual Charでtextを選択して`m`を押すと、共通検索paneからmarkを適用できる。
 太字、斜体、打ち消し、inline code、highlight、外部link、全装飾解除を提供する。
+inline codeは本文の85%のfont sizeで表示し、縮小分の8分の1（本文font sizeの1.875%）だけbaselineから上へ補正して中央寄りに揃える。補正量は行間設定に依存しない。
 同じmarkの再適用はtoggleせず変更なしとし、確定全体を1 Undo単位にする。
 取消時はVisual selectionを維持する。
 
@@ -70,7 +71,7 @@ Normalの`Enter`はSection Header上ではSection fold、Details Summary上で�
 `za`等の明示fold commandは従来どおりである。
 
 Task Listへの型変換、slash picker、Markdown貼付けから作成できる。
-タスクからの`Enter`、`o/O`、`Ctrl-Enter`等で新規Itemを作る場合は未完了にする。
+タスクからの`Enter`、`o/O`等で新規Itemを作る場合は未完了にする。
 コピーしたItemの状態は保存し、新規入力との違いを維持する。状態変更は通常のUndo対象である。
 
 ### 3.2 隣接Listの正規化
@@ -126,12 +127,14 @@ Memokaがblock種別に応じて処理する。
 - ListItem直下のParagraphのEnterはcaret位置でItemを分割する。後続Blockと子Listは新しい兄弟Itemへ移る。単独の空ParagraphのItemではList構造を抜ける。
 - ListItem内のCode/Source、Table、引用ではEnterは内部Block本来の編集操作を行う。
 - `Alt-Enter`はListItem直下のParagraphをcaret位置で分割し、同じItem内に次のParagraphを作る。内部Block内では、そのBlockを包含するListItem直下のBlockの後ろに空Paragraphを作る。
-- List内の`Ctrl-Enter`とNormalの`o`は内部Blockの種類によらず、caretに最も近い所有ListItemの表示順で直後に空Paragraphを持つListItemを作ってInsertで移動する。
+- List内のNormalの`o`は内部Blockの種類によらず、caretに最も近い所有ListItemの表示順で直後に空Paragraphを持つListItemを作ってInsertで移動する。
   直接子Listがあれば最初の子Listの先頭に新しい子Itemを追加し、なければ元Itemの次の兄弟として追加する。
   元ItemのBlockをcaret位置で分割せず、既存子孫・後続Blockの親子関係・順序・IDも変えない。
   追加先のList種別と開始番号を維持し、既存の空Itemは再利用しない。変更は1 Undo単位とする。`O`とList外の`o`は従来どおり。
-  ListItem registerのNormal `p`も同じ挿入位置を使い、コピーしたItem内の相対的な階層を保つ。`P`は元Itemの前のままとする。
-  例外としてDetails内のListでは、`Ctrl-Enter`はそのDetails内の最外側List直後へ新しいParagraphを作る（§11）。Normalの`o`はItem追加のままとする。
+  ListItem registerのNormal `p`も同じ挿入位置を使い、コピー元の絶対深度とItem内の相対的な階層を可能な限り保つ。
+  子孫を含む浅いItemを既存子孫の直前へ入れる場合、後続子孫は表示順に従って貼り付けた末尾側のItemへ接続する。
+  子孫を含まない単一Itemでは既存子孫の親を変えない。`P`も同じ深度規則で元Itemの前へ貼る。
+- Normal/Insertの`Ctrl-Enter`は最外側List直後へ新しいParagraphを作る。Details・Alert・Quote内のListでは囲みの内側の最外Listを対象とし、囲みの中にとどまる。Normalの`o`はItem追加のままとする。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。
 - List外のTable、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ
@@ -143,9 +146,11 @@ Tableの詳細は[Vim操作](vim-operations.md)に記載する。
 
 ## 6. Sectionの作成と深さ
 
-Section直下のParagraph先頭で`# `を入力すると、そのParagraph以降を直接Bodyに持つ新しい子Sectionへ変換する。
-Section title以降の内容は、その新SectionのBodyまたは子Sectionになる。
-Root H1からH6までを許す。H6本文での`# `はliteral textのまま残す。
+Root Section直下のParagraph先頭で`# `を入力すると、そのParagraph以降を直接Bodyに持つ新しい子Sectionへ変換する。
+Root以外のSection直下では、現在Section直後に空titleの兄弟Sectionを作る。対象Paragraphより前の直接Bodyは
+現在Sectionに残し、後ろの直接Bodyと現在Sectionの既存子Sectionは新しい兄弟Sectionへ移す。これにより後半本文の
+絶対深度と表示順を維持する。兄弟化は深さを増やさないため、H6本文でも`# `による兄弟Section作成を許す。
+Root H1からH6までを許す。
 深さを変える操作と全paste経路は最終treeの絶対深さを事前検証する。
 H6を超える場合はtyped errorで全体を拒否し、ID、本文、revision、Undoを変更しない。
 H1が複数あるMarkdownの正規化後にH6を超える場合も、平坦化やplain-text fallbackを行わない。
@@ -174,6 +179,20 @@ Normalの`>>/<<`はこの往復を行わず、`u`で戻す。
 
 Visual Lineは選択した論理行または構造nodeだけを対象にする。
 
+Sectionタイトル上の単独`yy`/`Y`はタイトルだけをSection構造としてコピーし、本文・子Sectionを含めない。
+このタイトルregisterの`p`/`P`は、現在のタイトルまたは本文直下Blockの直後/直前でSectionを分割する。
+コピー時のノート全体での絶対深さをregisterと内部Clipboardの`sourceSectionDepth`に保存する。Focus範囲には依存しない。
+挿入位置を最優先し、既存Sectionの深さ・ID・表示順を維持できる範囲でコピー元の深さへ合わせる。
+挿入直前の深さ+1と最大深さを上限、直後の深さ-1と1を下限としてコピー元の深さをclampする。
+不足する親Sectionは作らない。深さ情報のない従来registerは貼付先Sectionの深さ（Rootでは1）を既定値とする。
+分割位置以降の本文を新しいSectionへ移し、子Sectionの所属は深さと表示順を保つ階層として再構成する。
+タイトル上の`P`では元のタイトルが後続の本文を所有するため、元Sectionの本文を変えず直前にタイトルを挿入する。
+List・Table・Details等の内部ではSection本文直下の容器全体を境界とし、容器内部へSectionを作らない。
+Focused Sectionでも同じ分割を行う。Rootには兄弟を作れないため、分割後の本文を持つ最初の子Sectionを作る。
+Rootの既存子Sectionは新しいSectionへ移さず、その後ろの兄弟として維持する。どの場合も既存Sectionの深さ・ID・表示順を変えない。
+Rootタイトル上の`P`もこの子Section位置を使う。元のtitleは残し、余分な空Sectionは作らない。
+Section全体やVisual Lineで選択した構造のregisterは従来の貼り付け規則を維持する。
+
 ListItemの先頭や唯一のBlockに引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Ruleも置ける。
 schemaを満たすためだけの空Paragraphは挿入しない。ListItem直下の空Paragraphで`/`を入力すると共通Block pickerを開く。
 Block変換と添付挿入は現在のItem内に適用し、未選択のBlockのIDや順序を変更しない。
@@ -183,11 +202,16 @@ ListItem内のParagraphと子Listは詰めた間隔を維持する。それ以�
 
 - 親ListItemの`dd`またはVisual Lineの`d`では、未選択の子Itemを削除しない。
   子Itemは表示位置を保つ範囲で昇格させる。
+- Root以外のSection titleの`dd`またはVisual Lineの`d`では、選択した論理行だけを削除する。
+  未選択の本文は直前の表示Section、または親Sectionの本文へ移し、未選択の子Sectionは表示順と可能な限り元の絶対深度を保つ。
+  深度を維持できない場合だけ直前の表示構造に合わせてclampする。Focused Sectionでも同じ規則をNote全体へ適用する。
+- Root Note titleの`dd`はtitleだけを空にし、Root identity、本文、子Sectionを維持する。
 - 親ListItemを単独でyankした場合も、選択されていない子孫をClipboardへ含めない。
 - `dd/yy`とVisual Lineの`d/y`は、同じItemに属する未選択のParagraphやBlockも対象にしない。残るBlockがあればItemを維持する。
 - indent/outdentは所有Item単位。同じItem内の複数論理行を選択しても深さを重複変更しない。
 - ListItemをVisual Lineでyank/putした場合、選択項目どうしの相対的なnest深さを維持する。
 - Sectionを含むVisual Line yankでは、選択範囲に含まれるSection subtreeだけを構造として保持する。
+- Section deleteのregisterには選択したtitle・本文行だけを含める。titleだけなら空本文・子なしのSectionとしてcutする。
 - Section S上で`P`した構造SectionはSの子ではなく、Sの前の同じ階層へ置く。
 - atomic blockの`dd/yy/p/P`はtext化せずblock構造を維持する。
 
@@ -204,7 +228,8 @@ Section foldもWindow-localな表示状態である。
 - `zo/zO`: 現在Sectionを1段/再帰的に展開する。
 - `zc/zC`: 現在Sectionを1段/再帰的に折り畳む。
 - `za/zA`: 現在Sectionを1段/再帰的にtoggleする。
-- Root Sectionもfoldできる。
+- NoteのRoot全体はfoldしない。Root titleまたはRoot本文での`zc/zo`は直下の全Section、`zC/zO`は全Sectionを対象にする。Rootでの`za/zA`とtitle上のEnterはfoldを変更しない。旧Root fold状態は表示時に無視する。
+- Root本文のDetails内では既存のDetails fold操作を優先し、Section一括操作にはしない。Section focus中の表示RootがNote自身でなければ通常のSection foldを維持する。
 - fold中はHeaderだけを表示、編集できる。
 - foldされた本文もNote内検索の対象になり、一致へ移動すると必要な祖先だけを展開する。
 - foldは文書Undo、Markdown、別Windowの表示へ影響しない。
@@ -222,6 +247,10 @@ CommonMark/GFMに加えて、次をimport、Clipboard、Native Markdown readで�
 
 CalloutのMarkdown fold指定は保持するが、Editorでは本文を常に展開して編集可能にする。
 これはWindow-localなSection foldとは別の属性である。
+
+Editor・検索preview・Alert type選択画面のpreviewのAlert見出しは、既存のラベル・種類別の色を維持し、共通のLucide装飾アイコンを表示する。
+Note=NotebookPen、Abstract=ScrollText、Info=Info、Todo=CircleCheck、Tip=Lightbulb、Important=CircleAlert、Success=Check、Question=CircleHelp、Warning=TriangleAlert、Caution=Flame、Failure=X、Danger=Zap、Bug=Bug、Example=List、Quote=Quoteとする。
+別名はcanonical typeと同じアイコン、未知のcustom typeはNoteアイコンにする。アイコンは本文・Markdown・保存データに含めず、文字サイズ・行高に追従して見出しの先頭行中央に配置する。
 
 Horizontal Ruleは選択中も線を残し、block状のselection表示を重ねる。
 
@@ -246,6 +275,9 @@ HTMLの[`details` / `summary`](https://html.spec.whatwg.org/multipage/interactiv
 - `details`は`detailsSummary`と`detailsBody`を1つずつ持つ。いずれにもstable block IDを割り当てる。
 - Summaryは本文と同じ基本fontを使い、inline textと明示的な文字装飾を保持する。空なら文字を表示せず、placeholderは設けない。
 - 本文は非空の`Block+`。Paragraph、List、引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Rule、入れ子Detailsを許す。
+- InsertでDetails本文直下の最後の空ParagraphにBackspaceすると、同じblock IDのParagraphをそのDetails直後の兄弟へ移し、Insert caretも移す。唯一の本文blockだった場合は文書もcaretも変更せず、標準Backspace処理も抑止する。移動は1 Undo単位とし、入れ子やListItem内でも対象Detailsの直後へ移す。
+- 展開本文の末尾がCode/Source、Table、画像、添付、引用、Alert、Details、水平線の場合、その下端からDetails下枠線の外端までを`block-gap`とする。下paddingは枠線の1pxを差し引き、最小0とする。折り畳み時や通常本文で終わる場合は標準の下paddingを使う。
+- 外枠の内側余白はDetailsが管理する（上下`0.5em`、Summaryから本文へ`0.65em`）。左枠線の外端から本文までをindent幅の60%、本文直下のCode/Source、Table、画像、添付、引用、Alert、Details、水平線の左端までをindent幅とし、Sectionのguide gridに揃える。内容の右端から右枠線の外端までもindent幅とする。左右paddingは枠線の1pxを差し引く。先頭・末尾の外側余白は0、本文直下のblock同士は`block-gap`とする。
 - `/`の共通pickerでDetailsを選ぶと、元ParagraphをSummaryにし、空Paragraphを持つ本文を作る。作成時は開いた状態にする。
 - 開閉マークのclick、Summary上のNormal `Enter`、Details内の`za`で開閉する。`zo/zc`は開く/閉じる、`zO/zC/zA`は内部Detailsも再帰的に操作する。
   Details内ではSection foldよりDetailsを優先する。閉じるとき本文にあるcaretはSummary先頭へ戻す。
@@ -304,6 +336,11 @@ inline code、Code/Source Block、8,192 UTF-16 code unitを超える単一text b
 
 通常本文ではCSSの`text-autospace`を使い、CJK文字と英数字の境界へ表示上の間隔を付ける。
 この間隔も文書data、検索offset、Vim word、Clipboard、Markdownには含めない。
+browserがinline要素の境界で自動間隔を欠落させる場合は、互いに独立したinline formatting contextで起動時に表示計測して検出する。
+該当環境では本文のnative自動間隔を無効にし、表示中の本文のCJK・英数字境界へmodel-neutralなdecorationで間隔を付ける。
+これにより表示専用の`wbr`やinline装飾で分断された境界も補正する。inline codeは既存のpaddingを使い、内部と前後へ補正を追加しない。
+plain textで表示する非active BodyChunkとInternal Link内部はnative自動間隔を使う。
+補正用decorationは後続文字のDOM位置より前に置き、Normal/Insert caretは間隔用要素ではなく実際の文字を計測する。
 
 ## 13. 大規模文書
 
