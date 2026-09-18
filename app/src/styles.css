@@ -1385,6 +1385,27 @@ textarea {
   border: 1px solid var(--memoka-color-border);
   border-radius: 4px;
   padding: 0.5em 0.75em;
+  /* Include the 1px border in the same guide-to-text grid as Sections. */
+  padding-inline-start: calc(var(--memoka-indent-guide-offset) - 1px);
+  padding-inline-end: calc(var(--memoka-indent-width) - 1px);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details:not([data-details-expanded="false"]):has(
+    > .memoka-details-body
+      > :is(
+        pre,
+        .memoka-code-block,
+        .tableWrapper,
+        .memoka-image-node,
+        .memoka-attachment-card,
+        blockquote,
+        .memoka-details,
+        hr
+      ):last-child
+  ) {
+  /* Include the outer border in the requested block-gap distance. */
+  padding-block-end: max(0px, calc(var(--memoka-note-block-gap) - 1px));
 }
 
 :is(.memoka-editor, .workspace-search-preview-document)
@@ -1423,10 +1444,6 @@ textarea {
 
 .memoka-details-body {
   padding-top: 0.65em;
-}
-
-.memoka-details-body > :last-child {
-  margin-bottom: 0;
 }
 
 .memoka-details[data-details-expanded="false"] > .memoka-details-body {
@@ -3224,6 +3241,38 @@ textarea {
   > :where(:not(ul, ol, .memoka-task-checkbox))
   + :where(:not(ul, ol, .memoka-task-content)) {
   margin-top: var(--memoka-list-item-gap);
+}
+
+/* Details owns its outer padding; only sibling content contributes a gap.
+ * The attribute raises specificity above each block's default margins. */
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-body[data-details-body]
+  > * {
+  margin-block: 0;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-body[data-details-body]
+  > *
+  + * {
+  margin-block-start: var(--memoka-note-block-gap);
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  .memoka-details-body[data-details-body]
+  > :is(
+    pre,
+    .memoka-code-block,
+    .tableWrapper,
+    .memoka-image-node,
+    .memoka-attachment-card,
+    blockquote,
+    .memoka-details,
+    hr
+  ) {
+  margin-inline-start: var(--memoka-block-grid-offset);
+  width: calc(100% - var(--memoka-block-grid-offset));
+  max-width: calc(100% - var(--memoka-block-grid-offset));
 }
 
 :is(.memoka-editor, .workspace-search-preview-document) .memoka-table {

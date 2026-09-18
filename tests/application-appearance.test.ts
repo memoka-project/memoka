@@ -195,6 +195,31 @@ describe("Memoka application appearance", () => {
     }
   });
 
+  it("lets Details own outer padding and spaces only adjacent body blocks", () => {
+    const css = readFileSync(
+      resolve(process.cwd(), "app/src/styles.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.memoka-details-body\[data-details-body\]\s+> \*\s*\{\s*margin-block: 0;/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-details-body\[data-details-body\]\s+> \*\s+\+ \*\s*\{\s*margin-block-start: var\(--memoka-note-block-gap\);/su,
+    );
+    expect(css).toMatch(
+      /\.memoka-details-body\[data-details-body\]\s+> :is\([^}]+\)\s*\{\s*margin-inline-start: var\(--memoka-block-grid-offset\);\s*width: calc\(100% - var\(--memoka-block-grid-offset\)\);\s*max-width: calc\(100% - var\(--memoka-block-grid-offset\)\);/su,
+    );
+    expect(css).toContain(
+      "padding-inline-start: calc(var(--memoka-indent-guide-offset) - 1px)",
+    );
+    expect(css).toContain(
+      "padding-inline-end: calc(var(--memoka-indent-width) - 1px)",
+    );
+    expect(css).toMatch(
+      /\.memoka-details:not\(\[data-details-expanded="false"\]\):has\([^{}]+:last-child\s*\)\s*\{[^}]*padding-block-end: max\(0px, calc\(var\(--memoka-note-block-gap\) - 1px\)\);/su,
+    );
+  });
+
   it("gives rich List blocks equal leading and trailing spacing", () => {
     const css = readFileSync(
       resolve(process.cwd(), "app/src/styles.css"),
