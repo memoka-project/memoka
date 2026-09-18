@@ -1,6 +1,8 @@
 import { Editor } from "@tiptap/core";
 import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import StarterKit from "@tiptap/starter-kit";
+import { InlineSymbols } from "../app/src/editor/inline-symbols";
 import { createNoteDocument } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -17,6 +19,33 @@ import {
 } from "../app/src/editor/symbol-icons";
 
 describe("display-only symbol spacing", () => {
+  it("does not rescan an unchanged document to lazily load icons", () => {
+    const editor = new Editor({
+      extensions: [StarterKit, InlineSymbols],
+      content: "<p>plain text</p>",
+    });
+    const plugin = editor.state.plugins.find(
+      (plugin) => plugin.getState(editor.state)?.composing === false,
+    );
+    const doc = editor.state.doc;
+    const scan = vi.spyOn(doc, "descendants");
+    const view = plugin!.spec.view!(editor.view);
+    try {
+      expect(scan).toHaveBeenCalledTimes(1);
+      view.update?.(editor.view, editor.state);
+      view.update?.(editor.view, editor.state);
+      expect(scan).toHaveBeenCalledTimes(1);
+      editor.commands.insertContent("changed");
+      const nextScan = vi.spyOn(editor.state.doc, "descendants");
+      view.update?.(editor.view, editor.state);
+      expect(nextScan).toHaveBeenCalledTimes(1);
+      view.update?.(editor.view, editor.state);
+      expect(nextScan).toHaveBeenCalledTimes(1);
+    } finally {
+      view.destroy?.();
+      editor.destroy();
+    }
+  });
   it("does not double-space Japanese beside variation selectors and keycap marks", () => {
     const note = createNoteDocument(createUuidV7());
     const editor = new Editor({

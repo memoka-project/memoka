@@ -204,8 +204,10 @@ export const InlineSymbols = Extension.create({
         view: (view) => {
           let alive = true;
           let requested = false;
+          let inspectedDocument: ProseMirrorNode | null = null;
           const ensureIcons = () => {
-            if (requested) return;
+            if (requested || inspectedDocument === view.state.doc) return;
+            inspectedDocument = view.state.doc;
             let found = false;
             view.state.doc.descendants((node) => {
               if (found) return false;
@@ -225,6 +227,7 @@ export const InlineSymbols = Extension.create({
               })
               .catch(() => {
                 requested = false;
+                inspectedDocument = null;
               });
           };
           ensureIcons();
