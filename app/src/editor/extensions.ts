@@ -2474,6 +2474,10 @@ export function productEditorExtensions(
     attachmentRepository?: EditorAttachmentRepository;
     /** Window-local Section fold state; never persisted into the NoteDoc. */
     collapsedSectionIds?: readonly string[];
+    onSectionFoldsChange?: (
+      ids: readonly string[],
+      activeSectionId: string | null,
+    ) => void;
     /** Window-local Code Block fold state; never persisted into the NoteDoc. */
     collapsedCodeBlockIds?: readonly string[];
     /** Window-local Details fold overrides; never persisted into the NoteDoc. */
@@ -2559,6 +2563,8 @@ export function productEditorExtensions(
     ...(!options.directBodyOnly && !options.readOnly
       ? [
           SectionFolding.configure({
+            noteId: note.noteId,
+            onFoldsChange: options.onSectionFoldsChange,
             collapsedSectionIds: options.collapsedSectionIds ?? [],
           }),
         ]

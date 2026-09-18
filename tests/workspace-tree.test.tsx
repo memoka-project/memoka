@@ -28,6 +28,80 @@ function selectedId(tree: HTMLElement): string | undefined {
 }
 
 describe("Workspace Tree", () => {
+  it("keeps guides visible when their parent is virtualized offscreen", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      await runtime.createNamespaceGroup(null, "Parent");
+      const parent = runtime
+        .snapshot()
+        .namespaceEntries.find((entry) => entry.title === "Parent")!;
+      for (let i = 0; i < 35; i++)
+        await runtime.createNamespaceGroup(parent.entryId, `Child ${i}`);
+      await runtime.createNamespaceGroup(null, "Next root");
+      const props = treeProps(runtime);
+      const view = render(<WorkspaceTree {...props} />);
+      const tree = screen.getByRole("tree", { name: "ノートツリー" });
+      fireEvent.scroll(tree, { target: { scrollTop: 600 } });
+      expect(screen.queryByText("Parent")).toBeNull();
+      const guide = tree.querySelector<HTMLElement>(
+        `[data-tree-guide="${parent.entryId}"]`,
+      )!;
+      expect(guide).not.toBeNull();
+      expect(Number.parseInt(guide.style.top)).toBe(360);
+      const nextRoot = screen
+        .getByText("Next root")
+        .closest<HTMLElement>('[role="treeitem"]')!;
+      expect(
+        Number.parseInt(guide.style.top) + Number.parseInt(guide.style.height),
+      ).toBe(Number.parseInt(nextRoot.style.top));
+      view.unmount();
+    } finally {
+      runtime.destroy();
+    }
+  });
+  it("shows folder state and toggles from the chevron without opening a Note", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      await runtime.createNamespaceGroup(null, "Parent");
+      const parent = runtime
+        .snapshot()
+        .namespaceEntries.find((entry) => entry.title === "Parent")!;
+      await runtime.createNamespaceGroup(parent.entryId, "Empty");
+      const props = treeProps(runtime);
+      const view = render(<WorkspaceTree {...props} />);
+      const tree = screen.getByRole("tree", { name: "ノートツリー" });
+      const parentRow = screen
+        .getByText("Parent")
+        .closest('[role="treeitem"]')!;
+      const emptyRow = screen.getByText("Empty").closest('[role="treeitem"]')!;
+      expect(
+        parentRow.querySelector('[data-tree-icon="folder-open"]'),
+      ).not.toBeNull();
+      expect(emptyRow.querySelector("button")).toBeNull();
+      expect(
+        emptyRow.querySelector('[data-tree-icon="folder-closed"]'),
+      ).not.toBeNull();
+      fireEvent.doubleClick(emptyRow);
+      expect(props.onOpenNote).not.toHaveBeenCalled();
+      const toggle = screen.getByRole("button", { name: "Parentを折り畳む" });
+      fireEvent.click(toggle);
+      fireEvent.doubleClick(toggle);
+      expect(screen.queryByText("Empty")).toBeNull();
+      expect(
+        parentRow.querySelector('[data-tree-icon="folder-closed"]'),
+      ).not.toBeNull();
+      expect(document.activeElement).toBe(tree);
+      expect(props.onOpenNote).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Parentを展開する" }));
+      expect(screen.getByText("Empty")).toBeTruthy();
+      expect(
+        tree.querySelector(`[data-tree-guide="${parent.entryId}"]`),
+      ).not.toBeNull();
+      view.unmount();
+    } finally {
+      runtime.destroy();
+    }
+  });
   it("shares screen/page navigation and retains its own jump history across remounts", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
@@ -52,17 +126,17 @@ describe("Workspace Tree", () => {
         });
       Object.defineProperty(tree, "clientHeight", {
         configurable: true,
-        value: 280,
+        value: 300,
       });
       tree.scrollTop = 0;
       key("L");
       expect(selectedId(tree)).toBe(`tree-note-${ids[9]}`);
       key("f", true);
       expect(selectedId(tree)).toBe(`tree-note-${ids[17]}`);
-      expect(tree.scrollTop).toBe(224);
+      expect(tree.scrollTop).toBe(240);
       key("z");
       key("t");
-      expect(tree.scrollTop).toBe(420); // document end clamps placement
+      expect(tree.scrollTop).toBe(450); // document end clamps placement
       key("g");
       key("g");
       expect(selectedId(tree)).toBe(`tree-note-${ids[0]}`);
@@ -252,7 +326,7 @@ describe("Workspace Tree", () => {
       const tree = screen.getByRole("tree", { name: "ノートツリー" });
       Object.defineProperty(tree, "clientHeight", {
         configurable: true,
-        value: 28,
+        value: 30,
       });
       const select = (key: string, entryId: string) => {
         expect(fireEvent.keyDown(tree, { key })).toBe(false);
@@ -273,7 +347,7 @@ describe("Workspace Tree", () => {
       select("ArrowUp", rootId);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowDown", sibling.entryId);
-      expect(tree.scrollTop).toBe(3 * 28);
+      expect(tree.scrollTop).toBe(3 * 30);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowUp", rootId);
       expect(tree.scrollTop).toBe(0);

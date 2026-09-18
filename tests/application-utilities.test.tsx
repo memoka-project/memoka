@@ -1908,9 +1908,18 @@ describe("Memoka Application utilities", () => {
       .closest<HTMLElement>('[role="treeitem"]');
     expect(parentRow?.getAttribute("aria-expanded")).toBe("false");
     expect(parentRow?.getAttribute("aria-selected")).toBe("true");
-    expect(parentRow?.querySelector(".outline-fold-state")?.textContent).toBe(
-      "▸",
-    );
+    expect(
+      parentRow?.querySelector('[data-tree-icon="chevron-right"]'),
+    ).not.toBeNull();
+    expect(
+      view.container.querySelector(`[data-outline-guide="${parentId}"]`),
+    ).toBeNull();
+    expect(
+      screen
+        .getByText("Visible sibling")
+        .closest('[role="treeitem"]')
+        ?.querySelector("[data-tree-icon]"),
+    ).toBeNull();
     expect(view.container.querySelector(".outline-level")).toBeNull();
 
     view.rerender(
@@ -1962,6 +1971,19 @@ describe("Memoka Application utilities", () => {
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
     expect(levels).toEqual(["1", "2", "3", "4", "5", "6"]);
+    const rootGuide = view.container.querySelector<HTMLElement>(
+      `[data-outline-guide="${noteId}"]`,
+    );
+    expect(rootGuide).toBeNull();
+    expect(
+      view.container.querySelector(
+        `#outline-section-${noteId} [data-tree-icon]`,
+      ),
+    ).toBeNull();
+    expect(
+      view.container.querySelectorAll('[data-tree-icon="chevron-down"]'),
+    ).toHaveLength(4);
+    expect(view.container.querySelectorAll(".tree-guide")).toHaveLength(4);
 
     view.rerender(
       <WorkspaceOutline
@@ -1979,6 +2001,10 @@ describe("Memoka Application utilities", () => {
         .querySelectorAll<HTMLElement>('[role="treeitem"]'),
     ].map((row) => row.dataset.memokaMarkupHeading);
     expect(focusedLevels).toEqual(["4", "5", "6"]);
+    expect(
+      view.container.querySelectorAll('[data-tree-icon="chevron-down"]'),
+    ).toHaveLength(2);
+    expect(view.container.querySelectorAll(".tree-guide")).toHaveLength(2);
 
     view.unmount();
     note.doc.destroy();

@@ -131,7 +131,16 @@ Sidebarではラベル内の文字移動や編集operatorは扱わない。入�
 
 ## 7. Tree
 
+Tree/Outline共通で、選択背景は親の階層縦線位置より4px右から右端の既存余白までとする。最上位では左端の既存余白からとする。
+この範囲から上下左右それぞれ2px内側に選択背景を描画する。行高・文字位置・click領域は変えない。
+選択枠線は表示しない。focus中はselection色、非focus時はsurface-hover色の背景を表示する。文字・アイコンの位置と色は変更しない。
+
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
+親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
+Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/double clickでは開閉しない。
+chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Noteを開かず、double clickも行へ伝播させない。
+展開した親のchevron中心から、最後の表示子孫の行末まで、本文のSection縦線と同じ1px・border-subtle色の縦線を表示する。仮想scrollで親が画面外にある場合も線を維持し、兄弟subtreeへ延長しない。
+タイトル14px、アイコン16px、行高30px、階層indent 20pxとし、既存themeの配色・選択表示を維持する。
 選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
@@ -154,13 +163,18 @@ Outlineはactive Windowで実際に表示しているFocused Section subtreeだ�
 Root表示中はNoteDoc全体、深いfocus中はそのsubtreeだけを対象にする。
 
 - Root titleもOutlineに表示する。
+- Note titleにはchevronと、その項目から伸びる階層縦線を表示しない。Sectionをfocusした場合は、表示先頭でも通常どおりchevronと縦線を表示する。
 - Section深さに応じてEditorと同じ循環title色を使う。
 - Section番号や`§`記号を表示しない。
-- EditorでfoldしたSectionは`▸`、展開中は`▾`で示す。
+- 子Sectionを持つ項目はEditorでfold中ならLucide chevron-right、展開中ならchevron-downで示す。子を持たない項目は同幅の空欄とする。
+- Treeと同じタイトル14px・chevron 16px・行高30px・indent 20pxとし、展開した親のchevron下から最後の表示子孫まで1pxのborder-subtle色の縦線を表示する。既存のSection title色は維持する。
 - foldされたSectionの子孫をOutlineでも隠す。
 - Editor caretがSection間を移動したらOutline選択も追従し、内部scrollで可視にする。
 - EnterまたはclickはSection Header先頭へcaretとEditor scrollを移すが、`zf`を実行しない。
 - Empty Bufferでは説明textを表示しない。
+
+本文のSection折り畳み表示はTree/Outlineと同じLucide chevron-down（展開中）・chevron-right（折り畳み中）を使う。サイズはSection titleの1emとし、左右中央をSectionの縦線中央に揃える。Note titleには表示しない。
+chevronの左clickで対象Headerへcaretを移し、既存のSection fold toggleを実行する。Window-local fold状態とOutline表示に反映し、文書内容やundo履歴は変更しない。
 
 ## 9. 行番号
 

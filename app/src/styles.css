@@ -553,6 +553,8 @@ textarea {
 }
 
 .note-tree-row {
+  --sidebar-selection-start: calc(var(--tree-depth) * 20px);
+  isolation: isolate;
   position: absolute;
   right: 0;
   left: 0;
@@ -560,35 +562,77 @@ textarea {
   align-items: center;
   min-width: 0;
   gap: 5px;
-  padding: 3px 8px 3px calc(8px + var(--tree-depth) * 16px);
+  padding: 3px 8px 3px calc(8px + var(--tree-depth) * 20px);
   border-radius: 5px;
   color: var(--memoka-color-text-muted);
   cursor: default;
   user-select: none;
 }
 
-.note-tree-row--selected {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--memoka-color-selection-muted);
+.note-tree-row--selected::before,
+.outline-row--selected::before {
+  content: "";
+  position: absolute;
+  inset: 2px 2px 2px calc(var(--sidebar-selection-start) + 2px);
+  z-index: -1;
+  border-radius: 5px;
+  background: var(--memoka-color-surface-hover);
+  pointer-events: none;
 }
 
 .focus-surface--focused .note-tree-row--selected {
   color: var(--memoka-color-selection-text);
+}
+
+.focus-surface--focused .note-tree-row--selected::before,
+.focus-surface--focused .outline-row--selected::before {
   background: var(--memoka-color-selection);
 }
 
 .tree-disclosure {
-  flex: 0 0 auto;
-  width: 14px;
+  flex: 0 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--memoka-color-text-subtle);
-  font-size: 11px;
-  text-align: center;
+  cursor: default;
+}
+
+.tree-icon {
+  display: inline-block;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  mask: center / contain no-repeat;
+  -webkit-mask: center / contain no-repeat;
+}
+
+.tree-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tree-guide {
+  position: absolute;
+  left: calc(16px + var(--tree-depth) * 20px);
+  width: 1px;
+  background: var(--memoka-color-border-subtle);
 }
 
 .tree-title {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -606,10 +650,8 @@ textarea {
   color: var(--memoka-color-danger-text);
 }
 
-.outline-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.outline-content {
+  position: relative;
 }
 
 .outline-title {
@@ -643,12 +685,14 @@ textarea {
 }
 
 .outline-row {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: 2px;
+  --sidebar-selection-start: calc(var(--outline-level) * 20px);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  gap: 5px;
   align-items: center;
-  min-height: 28px;
-  padding: 4px 8px 4px calc(8px + var(--outline-level) * 12px);
+  height: 30px;
+  padding: 3px 8px 3px calc(8px + var(--outline-level) * 20px);
   border-radius: 5px;
   color: var(--memoka-color-text-muted);
   cursor: default;
@@ -661,18 +705,12 @@ textarea {
   text-align: center;
 }
 
-.outline-row--selected {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--memoka-color-selection-muted);
-}
-
 .focus-surface--focused .outline-row--selected {
   color: var(--memoka-color-selection-text);
-  background: var(--memoka-color-selection);
 }
 
 .outline-title {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .outline-row--note {
@@ -1171,20 +1209,30 @@ textarea {
 
 .memoka-editor[data-section-folding="true"] .memoka-section-header::after {
   position: absolute;
-  top: 0.28em;
-  left: -1.15em;
-  content: "▾";
+  top: 0.175em;
+  left: calc(0.5px - var(--memoka-indent-guide-offset) - 0.5em);
+  content: "";
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  mask: var(--memoka-chevron-down) center / contain no-repeat;
+  -webkit-mask: var(--memoka-chevron-down) center / contain no-repeat;
   color: var(--memoka-markup-heading-color, var(--memoka-color-text-subtle));
-  font-size: 0.62em;
+  font-size: 1em;
   line-height: 1;
-  opacity: 0.55;
-  pointer-events: none;
+  opacity: 0.9;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.memoka-editor[data-section-folding="true"] .memoka-note-title::after {
+  display: none;
 }
 
 .memoka-editor[data-section-folding="true"]
   .memoka-section-header[data-section-fold-state="collapsed"]::after {
-  content: "▸";
-  opacity: 0.9;
+  mask-image: var(--memoka-chevron-right);
+  -webkit-mask-image: var(--memoka-chevron-right);
 }
 
 .memoka-editor[data-section-folding="true"]

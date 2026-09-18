@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { disclosureIconMask } from "./disclosure-icons";
 import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   Plugin,
@@ -67,6 +68,11 @@ interface SectionFoldMeta {
 
 interface SectionFoldingOptions {
   readonly collapsedSectionIds: readonly string[];
+  readonly noteId?: string;
+  readonly onFoldsChange?: (
+    ids: readonly string[],
+    activeSectionId: string | null,
+  ) => void;
 }
 
 const sectionFoldPluginKey = new PluginKey<SectionFoldPluginState>(
@@ -350,6 +356,7 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
     return { collapsedSectionIds: [] };
   },
   addProseMirrorPlugins() {
+    const { noteId, onFoldsChange } = this.options;
     const initialCollapsedSectionIds = this.options.collapsedSectionIds;
     return [
       new Plugin<SectionFoldPluginState>({
@@ -379,8 +386,72 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
           },
         },
         props: {
-          decorations: (state) =>
-            sectionFoldPluginKey.getState(state)?.decorations ?? null,
+          attributes: () => ({
+            style: `--memoka-chevron-down: ${disclosureIconMask(true)}; --memoka-chevron-right: ${disclosureIconMask(false)};`,
+          }),
+          decorations: (state) => {
+            const decorations =
+              sectionFoldPluginKey.getState(state)?.decorations ??
+              DecorationSet.empty;
+            const header = state.doc.firstChild;
+            return header && header.attrs.sectionId === noteId
+              ? decorations.add(state.doc, [
+                  Decoration.node(0, header.nodeSize, {
+                    class: "memoka-note-title",
+                  }),
+                ])
+              : decorations;
+          },
+          handleDOMEvents: {
+            mousedown: (view, event) => {
+              if (event.button !== 0 || !(event.target instanceof HTMLElement))
+                return false;
+              const header = event.target.closest<HTMLElement>(
+                ".memoka-section-header",
+              );
+              if (!header || header.dataset.sectionId === noteId) return false;
+              const rect = header.getBoundingClientRect();
+              const style = getComputedStyle(header);
+              const size = Number.parseFloat(style.fontSize);
+              const offset = Number.parseFloat(
+                getComputedStyle(view.dom).getPropertyValue(
+                  "--memoka-indent-guide-offset",
+                ),
+              );
+              if (!Number.isFinite(size) || !Number.isFinite(offset))
+                return false;
+              const center = rect.left - offset + 0.5;
+              if (
+                event.clientX < center - size / 2 ||
+                event.clientX > center + size / 2 ||
+                event.clientY < rect.top ||
+                event.clientY > rect.top + size * 1.35
+              )
+                return false;
+              const entry = deriveEditorSectionFoldEntries(view.state.doc).find(
+                (entry) => entry.sectionId === header.dataset.sectionId,
+              );
+              if (!entry) return false;
+              event.preventDefault();
+              view.dispatch(
+                view.state.tr
+                  .setSelection(
+                    TextSelection.near(
+                      view.state.doc.resolve(entry.headerFrom + 1),
+                    ),
+                  )
+                  .setMeta("addToHistory", false),
+              );
+              const result = runSectionFoldCommand(view, "toggle");
+              if (result.changed)
+                onFoldsChange?.(
+                  result.collapsedSectionIds,
+                  result.targetSectionId,
+                );
+              view.focus();
+              return true;
+            },
+          },
         },
         appendTransaction: (_transactions, _oldState, newState) => {
           const foldState = sectionFoldPluginKey.getState(newState);

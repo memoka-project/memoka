@@ -1567,6 +1567,8 @@ export class TiptapEditorAdapter {
           directBodyOnly: this.options.directBodyOnly,
           attachmentRepository: this.options.attachmentRepository,
           onCopyCodeBlock: (blockId) => this.copyCodeBlock(blockId),
+          onSectionFoldsChange: (ids, activeSectionId) =>
+            this.options.onSectionFoldsChange?.(ids, activeSectionId),
           collapsedSectionIds:
             this.options.getWindowState?.().collapsedSectionIds ?? [],
           collapsedCodeBlockIds:

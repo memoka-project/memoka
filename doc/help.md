@@ -463,6 +463,10 @@ Treeはノートの配置を管理する**Namespace**です。ノートを持た
 ノート1つの配置は1か所です。グループを作成しても空のNoteを作るわけではなく、同じNoteを別の場所に複製する
 aliasでもありません。Treeで並べ替えてもNote本文や内部linkのIDは変わりません。
 
+TreeではNoteに書類アイコン、グループに開閉状態に応じたフォルダーアイコンを表示します。
+子を持つ項目の左の矢印をクリックすると、その項目を選択して開閉します。Noteは開かずTreeにfocusを保ちます。
+展開中の親の下には子孫の範囲を示す縦線が表示されます。空のグループには矢印を表示せず、Enterやダブルクリックでも開閉しません。
+
 TreeとOutlineの下部には名前の表示帯を置きません。focusのある領域は上端のhighlightで確認できます。
 
 TreeとOutlineでは、`j/k`・上下矢印、`gg/G`・行番号付き`gg/G`、`H/M/L`、`Ctrl-f/b/d/u`、`Ctrl-e/y`、`zt/zz/zb`を共通に使えます。
@@ -550,6 +554,8 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 - Outlineの`Enter`はSectionをfocusせず、対象title先頭へEditor caretを移動します。
 - Editor caretが別Sectionへ移ると、Outlineの選択とscrollも追従します。
 - Sectionの折り畳みはOutlineにも反映されます。
+- 本文のSection見出し左にある矢印をクリックしても折り畳みを切り替えられます。ノートタイトルには矢印を表示しません。
+- 子Sectionのある項目は矢印で開閉状態を示し、展開中の親の下に子孫の範囲を示す縦線を表示します。文字色は本文のSection見出しと同じです。
 
 ### Tab
 

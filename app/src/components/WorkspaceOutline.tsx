@@ -1,4 +1,6 @@
 import { SymbolText } from "./SymbolText";
+import { TreeIcon } from "./tree-presentation";
+import { treeGuides } from "../core/tree-guides";
 import {
   useEffect,
   useRef,
@@ -61,6 +63,16 @@ export function WorkspaceOutline({
   const allEntries = deriveNoteOutline(note, scopeSectionId);
   const collapsed = new Set(collapsedSectionIds);
   const entries = visibleNoteOutlineEntries(allEntries, collapsed);
+  const parentIds = new Set(allEntries.map((entry) => entry.parentSectionId));
+  const guides = treeGuides(
+    entries.map((entry) => ({
+      id: entry.sectionId,
+      depth: entry.depth,
+      hasChildren:
+        entry.sectionId !== note.noteId && parentIds.has(entry.sectionId),
+      expanded: !collapsed.has(entry.sectionId),
+    })),
+  );
   const firstSectionId = entries[0]?.sectionId ?? "";
   const resolvedSectionId =
     viewState?.noteId === note.noteId
@@ -164,12 +176,12 @@ export function WorkspaceOutline({
         const top =
           rect && rect.height > 0
             ? rect.top - viewport.top + element.scrollTop
-            : i * 28;
+            : i * 30;
         return {
           id: entry.sectionId,
           parentId: entry.parentSectionId,
           top,
-          bottom: top + (rect?.height || 28),
+          bottom: top + (rect?.height || 30),
         };
       });
       const result = navigateSidebar({
@@ -179,7 +191,7 @@ export function WorkspaceOutline({
         items,
         selectedId: selected?.sectionId ?? null,
         scrollTop: element.scrollTop,
-        height: element.clientHeight || 280,
+        height: element.clientHeight || 300,
         scrollHeight: element.scrollHeight || items.at(-1)?.bottom || 0,
         history,
         resolveHistoryId: (id) =>
@@ -238,37 +250,65 @@ export function WorkspaceOutline({
           inputState.current = createTreeInputState();
         }}
       >
-        {entries.map((entry) => {
-          const selectedRow = entry.sectionId === selected?.sectionId;
-          const folded = collapsed.has(entry.sectionId);
-          return (
-            <div
-              ref={selectedRow ? selectedRowElement : undefined}
-              id={`outline-section-${entry.sectionId}`}
-              key={entry.sectionId}
-              className={`outline-row${selectedRow ? " outline-row--selected" : ""}`}
-              role="treeitem"
-              aria-level={entry.depth + 1}
-              aria-selected={selectedRow}
-              aria-expanded={!folded}
-              data-memoka-markup-heading={markupHeadingLevelForSectionDepth(
-                entry.noteDepth,
-              )}
-              style={{ "--outline-level": entry.depth } as CSSProperties}
-              onClick={() => {
-                selectSection(entry.sectionId);
-                void jump(entry.sectionId);
-              }}
-            >
-              <span className="outline-fold-state" aria-hidden="true">
-                {folded ? "▸" : "▾"}
-              </span>
-              <span className="outline-title">
-                <SymbolText text={entry.title} />
-              </span>
-            </div>
-          );
-        })}
+        <div className="outline-content">
+          {entries.map((entry) => {
+            const selectedRow = entry.sectionId === selected?.sectionId;
+            const folded = collapsed.has(entry.sectionId);
+            return (
+              <div
+                ref={selectedRow ? selectedRowElement : undefined}
+                id={`outline-section-${entry.sectionId}`}
+                key={entry.sectionId}
+                className={`outline-row${selectedRow ? " outline-row--selected" : ""}`}
+                role="treeitem"
+                aria-level={entry.depth + 1}
+                aria-selected={selectedRow}
+                aria-expanded={
+                  parentIds.has(entry.sectionId) ? !folded : undefined
+                }
+                data-memoka-markup-heading={markupHeadingLevelForSectionDepth(
+                  entry.noteDepth,
+                )}
+                style={{ "--outline-level": entry.depth } as CSSProperties}
+                onClick={() => {
+                  selectSection(entry.sectionId);
+                  void jump(entry.sectionId);
+                }}
+              >
+                <span
+                  className="tree-disclosure outline-fold-state"
+                  aria-hidden="true"
+                >
+                  {entry.sectionId !== note.noteId &&
+                    parentIds.has(entry.sectionId) && (
+                      <TreeIcon
+                        name={folded ? "chevron-right" : "chevron-down"}
+                      />
+                    )}
+                </span>
+                <span className="outline-title">
+                  <SymbolText text={entry.title} />
+                </span>
+              </div>
+            );
+          })}
+          <div className="tree-guides" aria-hidden="true">
+            {guides.map((guide) => (
+              <span
+                key={guide.id}
+                className="tree-guide"
+                data-outline-guide={guide.id}
+                style={
+                  {
+                    "--tree-depth": guide.depth,
+                    top: guide.start * 30,
+                    height: (guide.end - guide.start) * 30,
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </div>
+        </div>
       </div>
       {error && (
         <p className="utility-error" role="alert">

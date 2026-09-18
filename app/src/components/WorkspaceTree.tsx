@@ -1,4 +1,6 @@
 import { SymbolText } from "./SymbolText";
+import { TreeIcon } from "./tree-presentation";
+import { treeGuides } from "../core/tree-guides";
 import {
   useEffect,
   useMemo,
@@ -26,7 +28,7 @@ import type { CoreRuntime, RuntimeSnapshot } from "../core/runtime";
 import { focusSurfaceFromPointer } from "./focus-surface";
 import { navigateSidebar } from "../core/sidebar-navigation";
 
-const TREE_ROW_HEIGHT_PX = 28;
+const TREE_ROW_HEIGHT_PX = 30;
 const TREE_OVERSCAN_ROWS = 8;
 const DEFAULT_VIEWPORT_ROWS = 10;
 
@@ -110,6 +112,16 @@ export function WorkspaceTree({
       TREE_OVERSCAN_ROWS,
   );
   const visibleEntries = entries.slice(firstVisible, lastVisible);
+  const guides = useMemo(
+    () =>
+      treeGuides(entries.map((entry) => ({ ...entry, id: entry.note.noteId }))),
+    [entries],
+  );
+  const namespaceById = useMemo(
+    () =>
+      new Map(snapshot.namespaceEntries.map((entry) => [entry.entryId, entry])),
+    [snapshot.namespaceEntries],
+  );
 
   useEffect(() => {
     if (focusRequest > 0) root.current?.focus();
@@ -187,7 +199,11 @@ export function WorkspaceTree({
     inputState.current = createTreeInputState();
     const noteId = entry.targetNoteId;
     if (!noteId) {
-      setCollapsed(entryId, !collapsed.has(entryId), entryId);
+      if (entries.find((item) => item.note.noteId === entryId)?.hasChildren) {
+        setCollapsed(entryId, !collapsed.has(entryId), entryId);
+      } else {
+        selectEntry(entryId);
+      }
       return;
     }
     if (entryId !== selectedEntryId) persistTree(entryId);
@@ -454,15 +470,74 @@ export function WorkspaceTree({
                   } as CSSProperties
                 }
               >
-                <span className="tree-disclosure" aria-hidden="true">
-                  {entry.hasChildren ? (entry.expanded ? "▾" : "▸") : "·"}
-                </span>
+                {entry.hasChildren ? (
+                  <button
+                    type="button"
+                    className="tree-disclosure"
+                    tabIndex={-1}
+                    aria-label={`${noteDisplayTitle(entry.note.title)}を${entry.expanded ? "折り畳む" : "展開する"}`}
+                    aria-expanded={entry.expanded}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      inputState.current = createTreeInputState();
+                      setCollapsed(
+                        entry.note.noteId,
+                        entry.expanded,
+                        entry.note.noteId,
+                      );
+                      root.current?.focus();
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <TreeIcon
+                      name={entry.expanded ? "chevron-down" : "chevron-right"}
+                    />
+                  </button>
+                ) : (
+                  <span className="tree-disclosure" aria-hidden="true" />
+                )}
+                <TreeIcon
+                  name={
+                    namespaceById.get(entry.note.noteId)?.targetNoteId
+                      ? "file-text"
+                      : entry.hasChildren && entry.expanded
+                        ? "folder-open"
+                        : "folder-closed"
+                  }
+                />
                 <span className="tree-title">
                   <SymbolText text={noteDisplayTitle(entry.note.title)} />
                 </span>
               </div>
             );
           })}
+          <div className="tree-guides" aria-hidden="true">
+            {guides
+              .filter(
+                (guide) =>
+                  guide.start < lastVisible && guide.end > firstVisible,
+              )
+              .map((guide) => (
+                <span
+                  key={guide.id}
+                  className="tree-guide"
+                  data-tree-guide={guide.id}
+                  style={
+                    {
+                      "--tree-depth": guide.depth,
+                      top:
+                        Math.max(guide.start, firstVisible) *
+                        TREE_ROW_HEIGHT_PX,
+                      height:
+                        (Math.min(guide.end, lastVisible) -
+                          Math.max(guide.start, firstVisible)) *
+                        TREE_ROW_HEIGHT_PX,
+                    } as CSSProperties
+                  }
+                />
+              ))}
+          </div>
         </div>
       </div>
       {error && (
