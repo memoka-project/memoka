@@ -486,7 +486,7 @@ Note全体が対象です。`Enter`、`Esc`、`Ctrl-c`で検索入力を閉じ�
 ### Internal Linkと外部link
 
 Insertで`[[`を入力するとInternal Link候補が開きます。Internal Linkは表示上1文字として扱い、link titleを
-直接編集しません。Normalの`gf`で対象Sectionへ移動し、`Ctrl-o`で移動元、`Ctrl-i`で移動先へ戻れます。
+直接編集しません。Normalの`gf`でノート全体を表示して対象Sectionのタイトル先頭へ移動し、タイトルがWindow上部になるようスクロールします。`Ctrl-o`で移動元、`Ctrl-i`で移動先へ戻れます。
 clickはlinkを開かず、caretを置くだけです。
 
 外部linkはVisual Charで文字を選び、`m`から設定します。link上にcaretがある間はstatuslineへURLを表示します。

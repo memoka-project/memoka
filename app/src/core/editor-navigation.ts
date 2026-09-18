@@ -41,6 +41,7 @@ export type EditorNavigationDestination =
       kind: "section-start";
       noteId: string;
       sectionId: string;
+      alignment?: "top";
     }
   | {
       kind: "document-start";

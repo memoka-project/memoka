@@ -115,7 +115,7 @@ Insert modeで`[[`を入力すると、Section title候補を共通検索paneで
 - Note/Section renameはすべての表示へ反映するが、link target IDは変えない。
 - link内の1文字単位編集、`h/l`移動を許さない。
 - clickはlink先を開かずcaretを置く。
-- Normal `gf`でtarget NoteDocを現在Windowへ開き、target Sectionへfocusする。
+- Normal `gf`でtarget NoteDoc全体を現在Windowへ開き、focusを解除してtarget Sectionタイトル先頭へ移動する。タイトルがWindow上部になるようスクロールして本文を表示する（末尾付近ではスクロール可能な範囲まで）。
 - 移動前位置をWindow-local Jump Listへ追加する。
 - target欠損時は文書を変更せず通知する。
 

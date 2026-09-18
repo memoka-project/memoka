@@ -512,6 +512,87 @@ describe("Memoka Section Link and Jump List navigation", () => {
     runtime.destroy();
   });
 
+  it.each([false, true])(
+    "opens the whole note for gf from a focused section (same note: %s)",
+    async (sameNote) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+        idFactory: deterministicIds(),
+        initialTitle: "source",
+      });
+      const sourceId = runtime.noteId;
+      const targetId = sameNote
+        ? sourceId
+        : (await runtime.createNoteAtEnd("window-1", "target")).noteId;
+      const note = runtime.getNoteHandle(targetId).current;
+      if (note.kind !== "note") throw new Error("Expected NoteDoc");
+      const childId = createUuidV7();
+      note.doc.transact(() =>
+        insertChildSection(
+          note.rootSection,
+          createSectionXml(childId, "child"),
+        ),
+      );
+      await runtime.focusSection("window-1", targetId, childId);
+      const result = await runtime.navigateEditor("window-1", {
+        kind: "follow-link",
+        current: { ...stablePosition(targetId, 0), sectionId: childId },
+        target: { sectionId: sameNote ? childId : sourceId },
+      });
+      expect(result.handled).toBe(true);
+      expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+      const root = editorRoot();
+      const attached = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      runtime.applyPendingNavigation("window-1", attached.adapter);
+      expect(attached.editor.state.selection.from).toBe(
+        sectionHeaderStart(attached.editor, sameNote ? childId : sourceId),
+      );
+      expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
+      attached.adapter.destroy();
+      root.remove();
+      runtime.destroy();
+    },
+  );
+
+  it("follows gf from the Help contents without remounting the full-note editor", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+    });
+    await runtime.openHelpNote("window-1");
+    const root = editorRoot();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      let linkPosition = -1;
+      let targetId = "";
+      editor.state.doc.descendants((node, position) => {
+        if (linkPosition < 0 && node.type.name === "internalSectionLink") {
+          linkPosition = position;
+          targetId = node.attrs.targetSectionId;
+        }
+      });
+      expect(linkPosition).toBeGreaterThan(0);
+      editor.commands.setTextSelection(linkPosition);
+      editor.commands.focus();
+      press(editor, "Escape");
+      press(editor, "g");
+      press(editor, "f");
+      await settle(runtime);
+      expect(editor.state.selection.from).toBe(
+        sectionHeaderStart(editor, targetId),
+      );
+      expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+      expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
+      expect(runtime.applyPendingNavigation("window-1", adapter)).toBeNull();
+    } finally {
+      adapter.destroy();
+      root.remove();
+      runtime.destroy();
+    }
+  });
+
   it("treats an Internal Section Link as one atomic target and follows gf", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

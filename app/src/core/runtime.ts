@@ -2110,13 +2110,25 @@ export class CoreRuntime {
       if (!target || !this.isLiveNote(target.noteId)) {
         return { handled: false, detail: "jump:gf:missing-note" };
       }
-      return this.focusNavigationSection(
+      const destination: EditorNavigationDestination = {
+        kind: "section-start",
+        ...target,
+        alignment: "top",
+      };
+      // The full-note editor stays mounted for links within the same Note.
+      // Return the destination directly instead of waiting for an attach.
+      if (
+        target.noteId === request.current.noteId &&
+        !windowState.focusedSectionId
+      ) {
+        jumpList.recordOrigin(request.current);
+        return { handled: true, detail: "jump:gf:changed", destination };
+      }
+      return this.openNavigationDestination(
         windowId,
-        target.noteId,
-        target.sectionId,
-        { kind: "section-start", ...target },
+        destination,
         "jump:gf:changed",
-        request.current,
+        () => jumpList.recordOrigin(request.current),
       );
     }
 

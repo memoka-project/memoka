@@ -1363,7 +1363,12 @@ export class TiptapEditorAdapter {
       this.suppressSelectionUpdate = previousSuppression;
     }
     if (!applied) return null;
-    if (options.reveal !== false) this.revealNavigationSelection();
+    if (options.reveal !== false)
+      this.revealNavigationSelection(
+        destination.kind === "section-start"
+          ? destination.alignment
+          : undefined,
+      );
     return resolvedDetail;
   }
 
@@ -1841,13 +1846,23 @@ export class TiptapEditorAdapter {
     this.options.onCaretExternalLinkChange?.(href);
   }
 
-  private revealNavigationSelection(): void {
+  private revealNavigationSelection(alignment?: VimViewportAlignment): void {
     const editor = this.currentEditor;
     const reveal = (): void => {
       if (editor !== this.currentEditor || editor.isDestroyed) return;
-      editor.view.dispatch(
-        editor.view.state.tr.setMeta("addToHistory", false).scrollIntoView(),
-      );
+      const transaction = editor.view.state.tr
+        .setMeta("addToHistory", false)
+        .scrollIntoView();
+      if (alignment)
+        transaction.setMeta(VIM_VIEWPORT_ALIGNMENT_META, alignment);
+      editor.view.dispatch(transaction);
+      if (alignment)
+        alignVimViewport(
+          editor.view,
+          this.scrollElement,
+          editor.state.selection.from,
+          alignment,
+        );
     };
     reveal();
     if (this.navigationRevealFrame !== null) {
