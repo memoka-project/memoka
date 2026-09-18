@@ -1,4 +1,5 @@
 import { graphemes, graphemeEnd, previousGraphemeStart } from "./graphemes";
+import { textblockIconTokens } from "../core/symbols";
 import {
   Fragment,
   Slice,
@@ -644,6 +645,23 @@ function insertBackwardUnits(
       });
     }
   });
+  for (const token of [...textblockIconTokens(parent)].reverse()) {
+    if (token.from < lineStartOffset || token.to > caretOffset) continue;
+    const first = units.findIndex(
+      (unit) => unit.from === parentStart + token.from,
+    );
+    if (first < 0) continue;
+    let end = first;
+    while (end < units.length && units[end]!.from < parentStart + token.to)
+      end += 1;
+    units.splice(first, end - first, {
+      from: parentStart + token.from,
+      to: parentStart + token.to,
+      character: " ",
+      kind: "atom",
+      wordClass: null,
+    });
+  }
   const classes = segmentVimWordCharacters(
     units.map((unit) => (unit.kind === "atom" ? " " : unit.character)),
   );

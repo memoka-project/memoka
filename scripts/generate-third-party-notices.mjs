@@ -141,6 +141,19 @@ locked JavaScript and Rust dependency graphs by
 machine-readable inventory. Each project remains subject to its listed license; consult the
 linked upstream project and the dependency source package for the complete license text.
 
+## Bundled emoji and icon catalogs
+
+Unicode Emoji 17.0 data is derived from https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt.
+Lucide icon geometry is derived from the pinned lucide 1.47.0 package (https://lucide.dev).
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/unicode-emoji.txt", root), "utf8")).trimEnd()}
+\`\`\`
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/lucide.txt", root), "utf8")).trimEnd()}
+\`\`\`
+
 ${nightfoxNotice}
 ${resticNotice}
 ## Bundled rclone

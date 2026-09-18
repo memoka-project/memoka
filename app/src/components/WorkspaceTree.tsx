@@ -1,3 +1,4 @@
+import { SymbolText } from "./SymbolText";
 import {
   useEffect,
   useMemo,
@@ -457,7 +458,7 @@ export function WorkspaceTree({
                   {entry.hasChildren ? (entry.expanded ? "▾" : "▸") : "·"}
                 </span>
                 <span className="tree-title">
-                  {noteDisplayTitle(entry.note.title)}
+                  <SymbolText text={noteDisplayTitle(entry.note.title)} />
                 </span>
               </div>
             );

@@ -2842,6 +2842,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onSymbolPicker"
       | "onCodeActionPicker"
       | "onTableActionPicker"
       | "onCommandLine"
@@ -2911,6 +2912,7 @@ export class CoreRuntime {
       onNoteSearch: options.onNoteSearch,
       onBlockTypePicker: options.onBlockTypePicker,
       onInlineFormatPicker: options.onInlineFormatPicker,
+      onSymbolPicker: options.onSymbolPicker,
       onCodeActionPicker: options.onCodeActionPicker,
       onTableActionPicker: options.onTableActionPicker,
       openExternalLink: options.openExternalLink,
@@ -3131,6 +3133,7 @@ export class CoreRuntime {
       | "onNoteSearch"
       | "onBlockTypePicker"
       | "onInlineFormatPicker"
+      | "onSymbolPicker"
       | "onCodeActionPicker"
       | "onTableActionPicker"
       | "onOpenImage"

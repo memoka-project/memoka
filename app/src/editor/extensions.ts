@@ -1,3 +1,5 @@
+import { InlineSymbols } from "./inline-symbols";
+import { renderSymbolText } from "./symbol-icons";
 import {
   Details,
   DetailsBody,
@@ -312,7 +314,7 @@ function renderInternalSectionLinkElement(
   element.contentEditable = "false";
   element.draggable = false;
   element.spellcheck = false;
-  element.textContent = label;
+  renderSymbolText(element, label);
   element.setAttribute("aria-label", `${label}（内部リンク、gfで開く）`);
   element.title = `gf で開く: ${label}`;
 }
@@ -2514,6 +2516,7 @@ export function productEditorExtensions(
       trailingNode: false,
       listItem: false,
     }),
+    InlineSymbols,
     MemokaCodeBlock.configure({ onCopyCode: options.onCopyCodeBlock }),
     CodeBlockFolding.configure({
       collapsedBlockIds: options.collapsedCodeBlockIds ?? [],

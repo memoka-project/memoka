@@ -160,6 +160,10 @@ export interface InlineFormatPickerRequest {
   readonly apply: (action: InlineFormatAction) => InlineFormatResult;
 }
 
+export interface SymbolPickerRequest {
+  readonly apply: (value: string) => boolean;
+}
+
 export interface TableActionPickerRequest {
   readonly selection: TableActionSelection;
   readonly apply: (action: TableActionId) => TableActionResult;
@@ -214,6 +218,7 @@ export interface TiptapEditorAdapterOptions {
   onNoteSearch?: (origin: NoteSearchOrigin) => void;
   onBlockTypePicker?: (request: BlockTypePickerRequest) => void;
   onInlineFormatPicker?: (request: InlineFormatPickerRequest) => void;
+  onSymbolPicker?: (request: SymbolPickerRequest) => void;
   onCodeActionPicker?: (request: CodeActionPickerRequest) => void;
   onTableActionPicker?: (request: TableActionPickerRequest) => void;
   openExternalLink?: (href: string) => void | Promise<void>;
@@ -485,6 +490,7 @@ export class TiptapEditorAdapter {
             this.handleNoteSearchRepeat(cursor, direction, count)
         : undefined,
       onInlineFormat: () => this.requestInlineFormatPicker(),
+      onSymbolPicker: () => this.requestSymbolPicker(),
       onCodeBlockActions: (selection) =>
         this.requestCodeActionPicker(selection),
       onTableActions: (selection) => this.requestTableActionPicker(selection),
@@ -815,6 +821,40 @@ export class TiptapEditorAdapter {
       this.vimSession.cancelExternalMutationUndoBoundary();
     }
     return result;
+  }
+
+  private requestSymbolPicker(): boolean {
+    const editor = this.currentEditor;
+    if (
+      editor.isDestroyed ||
+      this.vimSession.snapshot().mode !== "insert" ||
+      !this.options.onSymbolPicker
+    )
+      return false;
+    const { doc, selection } = editor.state;
+    // A changed origin is rejected rather than inserting into a different Note,
+    // remounted Section, or concurrently modified selection.
+    this.options.onSymbolPicker({
+      apply: (value) => {
+        if (
+          editor !== this.currentEditor ||
+          editor.isDestroyed ||
+          editor.state.doc !== doc ||
+          !editor.state.selection.eq(selection) ||
+          this.vimSession.snapshot().mode !== "insert"
+        )
+          return false;
+        this.vimSession.prepareExternalMutationUndoBoundary();
+        editor.view.dispatch(
+          editor.state.tr
+            .insertText(value, selection.from, selection.to)
+            .scrollIntoView(),
+        );
+        this.vimSession.completeExternalInsertMutation();
+        return true;
+      },
+    });
+    return true;
   }
 
   private requestInlineFormatPicker(): boolean {

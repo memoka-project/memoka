@@ -3,6 +3,7 @@ import type { JSONContent } from "@tiptap/core";
 import { SearchPane } from "./SearchPane";
 import { EventDateTime } from "./EventDateTime";
 import { formatDisplayDateTime } from "../core/display-datetime";
+import { SymbolText } from "./SymbolText";
 import {
   nativeErrorMessage,
   type BackupPort,
@@ -297,7 +298,9 @@ function HistoryPreview({
       className="memoka-section"
       data-memoka-markup-heading={depth + 1}
     >
-      <header className="memoka-section-header">{value.title}</header>
+      <header className="memoka-section-header">
+        <SymbolText text={value.title} />
+      </header>
       <div className="memoka-section-body">
         {(value.body as JSONContent[]).map(block)}
       </div>

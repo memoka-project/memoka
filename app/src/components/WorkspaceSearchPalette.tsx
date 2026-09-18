@@ -8,6 +8,7 @@ import { contentOffsetAtTextOffset } from "../core/stable-position";
 import type { StableEditorPosition } from "../core/stable-position";
 import type { CoreRuntime } from "../core/runtime";
 import type { AttachmentRepository } from "../core/attachments";
+import { SymbolText } from "./SymbolText";
 import {
   normalizeWorkspaceSearchText,
   workspaceSearchMatchRanges,
@@ -216,7 +217,13 @@ export function WorkspaceSearchPalette({
             </span>
             {session.scope === "title" ? (
               <span className="workspace-search-note-title">
-                <HighlightedText value={result.title} query={currentQuery} />
+                <SymbolText
+                  text={result.title}
+                  highlights={workspaceSearchMatchRanges(
+                    result.title,
+                    currentQuery,
+                  )}
+                />
               </span>
             ) : (
               <SearchResultPath result={result} query={currentQuery} />
@@ -252,7 +259,9 @@ export function WorkspaceSearchPalette({
           />
         ) : result?.kind === "group" ? (
           <div className="workspace-search-preview-document">
-            <p>{result.title}</p>
+            <p>
+              <SymbolText text={result.title} />
+            </p>
             <p>整理用グループです。rで同じ削除操作の項目を復元します。</p>
           </div>
         ) : result ? (
@@ -318,9 +327,12 @@ function SearchResultPath({
         <span className="workspace-search-hierarchy">{hierarchy}/</span>
       )}
       <span className="workspace-search-note-title">
-        <HighlightedText
-          value={result.title}
-          query={result.kind === "title" ? query : ""}
+        <SymbolText
+          text={result.title}
+          highlights={workspaceSearchMatchRanges(
+            result.title,
+            result.kind === "title" ? query : "",
+          )}
         />
       </span>
       {result.logicalLineNumber !== null && (

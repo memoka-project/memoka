@@ -85,6 +85,27 @@ CountありではFocused Section内の指定論理行へ移り、可能な限り
 
 通常の文字入力と矢印keyはEditorへ渡す。IME composition中は以下のCtrl commandよりIMEを優先する。
 
+Insertの`Ctrl-e`は共通SearchPaneで絵文字・Lucide Iconを選択する。Normalの`Ctrl-e`は従来のscrollを維持する。
+Pane内だけ`Ctrl-1/2/3`でAll/Emoji/Lucideを切り替え、queryを維持する。英語名・alias・絵文字・token表記を検索できる。
+矢印・`Ctrl-n/p`で選択、`Enter/Tab`で確定し、挿入直後のcaretでInsertを続ける。選択範囲がある場合は置換する。
+`Esc/Ctrl-c`は文書・Undoを変更せずキャンセルする。確定した挿入は独立した1 Undo単位とする。
+入力元のWindow/Note/Editor・文書・選択範囲が変わった場合は挿入を拒否し、別の場所には入力しない。
+
+絵文字は通常のUnicode text、Lucideは`:lucide-<name>:`というtextとして保存する。既知の完全なtokenだけを
+本文・Note/Sectionタイトルで表示専用のIconにし、手入力・pasteも同じ扱いとする。Code/Source Blockとcode markでは
+文字列のまま編集する。未知・未完成tokenも文字列を維持する。URL属性・attachment pathは解釈しない。
+Iconは現在の文字色を継承した約1emの表示とし、対象textblockでは移動・選択・削除の1単位として扱う。
+ProseMirrorの位置と永続化形式はUTF-16 textを維持し、Clipboard/HTML/Markdown出力にも元のtokenを保持する。
+IME composition中の表示変換は保留する。Tree/Outline/Tab/breadcrumbと内部リンクの表示ラベルにも共通のIcon表記を使う。
+絵文字・Iconと隣接文字、および絵文字・Icon同士の境界に表示専用の`0.125ic`の隙間を1つ設ける。
+ZWJ・肌色・国旗・keycapを含むgrapheme内部には入れず、既存空白・論理行端・Code/Source/code markには追加しない。
+タイトル表示・内部リンクラベルにも同じ境界規則を使い、保存・Clipboard・HTML/Markdown・Undoには影響させない。
+
+候補は固定Unicode Emoji 17.0のfully-qualified/componentと導入済みLucideの全canonical Iconを同梱する。
+Lucide aliasは検索・token認識に使うが候補行を重複させない。完全一致、前方一致、単語一致、部分一致の順で、同順位は
+catalog順とする。空queryでは絵文字catalog順、Lucide名順に並べる。全件検索し表示は先頭200件まで、総件数と絞り込み案内を出す。
+候補・SVG geometryは必要時に読み込み、起動時に全SVGを生成しない。履歴・favoriteは持たない。
+
 | Key               | 動作                                                                          |
 | ----------------- | ----------------------------------------------------------------------------- |
 | `Esc / Ctrl-c`    | Normalへ戻る                                                                  |

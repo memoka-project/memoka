@@ -504,7 +504,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     secondRoot.remove();
   });
 
-  it.each(["😀", "👍🏽", "🇯🇵", "👨‍👩‍👧‍👦", "❤️", "e\u0301"])(
+  it.each(["😀", "👍🏽", "🇯🇵", "👨‍👩‍👧‍👦", "❤️", "e\u0301", ":lucide-smile:"])(
     "moves and edits a whole grapheme: %s",
     async (emoji) => {
       const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {

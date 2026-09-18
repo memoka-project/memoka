@@ -1,4 +1,5 @@
 import { graphemeEnd } from "./graphemes";
+import { textblockIconTokens } from "../core/symbols";
 import type { EditorView } from "@tiptap/pm/view";
 import { NodeSelection } from "@tiptap/pm/state";
 import { defaultVimBlockSemantics } from "./block-semantics";
@@ -220,6 +221,31 @@ function measureVimCharacterRange(
 ): VimCharacterRangeMeasurement | null {
   try {
     const { node, offset } = view.domAtPos(position, 1);
+    const resolved = view.state.doc.resolve(position);
+    const isIcon = textblockIconTokens(resolved.parent).some(
+      (token) => token.from === resolved.parentOffset,
+    );
+    const root = !isIcon
+      ? null
+      : node.nodeType === Node.TEXT_NODE
+        ? node.parentElement?.closest(".ProseMirror")
+        : (node as Element).closest?.(".ProseMirror");
+    const icon = root?.querySelector<HTMLElement>(
+      `[data-symbol-from="${position}"]`,
+    );
+    if (icon) {
+      const rect = icon.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0)
+        return {
+          characterLength: Number(icon.dataset.symbolTo) - position,
+          rect: {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          },
+        };
+    }
     if (node.nodeType !== Node.TEXT_NODE) return null;
     const text = node.nodeValue ?? "";
     if (offset >= text.length || text[offset] === "\n") return null;

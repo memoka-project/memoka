@@ -1,3 +1,4 @@
+import { SymbolText } from "./SymbolText";
 import {
   useEffect,
   useRef,
@@ -262,7 +263,9 @@ export function WorkspaceOutline({
               <span className="outline-fold-state" aria-hidden="true">
                 {folded ? "▸" : "▾"}
               </span>
-              <span className="outline-title">{entry.title}</span>
+              <span className="outline-title">
+                <SymbolText text={entry.title} />
+              </span>
             </div>
           );
         })}

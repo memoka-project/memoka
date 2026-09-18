@@ -43,6 +43,7 @@ export const VIM_COMMANDS = [
   "insert.line-start",
   "insert.line-end",
   "insert.backspace",
+  "insert.symbol",
   "insert.newline",
   "insert.delete-line-prefix",
   "insert.delete-word-backward",
@@ -360,6 +361,7 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     ".": "edit.repeat",
   }),
   ...modeBindings("insert", {
+    "Ctrl+e": "insert.symbol",
     Escape: "mode.normal",
     "Ctrl+c": "mode.normal",
     "Ctrl+h": "insert.backspace",

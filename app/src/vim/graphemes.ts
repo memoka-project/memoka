@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { textblockIconTokens } from "../core/symbols";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const startsByNode = new WeakMap<ProseMirrorNode, number[]>();
@@ -19,7 +20,14 @@ export function textblockGraphemeStarts(node: ProseMirrorNode): number[] {
   node.forEach((child) => {
     text += child.isText ? child.text! : "\n".repeat(child.nodeSize);
   });
-  const starts = graphemeStarts(text);
+  const tokens = textblockIconTokens(node);
+  let tokenIndex = 0;
+  const starts = graphemeStarts(text).filter((offset) => {
+    while (tokens[tokenIndex] && tokens[tokenIndex]!.to <= offset)
+      tokenIndex += 1;
+    const token = tokens[tokenIndex];
+    return !token || offset <= token.from;
+  });
   startsByNode.set(node, starts);
   return starts;
 }

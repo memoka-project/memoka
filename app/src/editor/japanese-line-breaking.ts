@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { textblockIconTokens } from "../core/symbols";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
@@ -118,8 +119,16 @@ export function japaneseLineBreakPlan(
   });
   flush(node.content.size);
 
+  const icons = textblockIconTokens(node);
   const result = hasJapaneseProse
-    ? { breakOffsets: [...breaks].sort((left, right) => left - right) }
+    ? {
+        breakOffsets: [...breaks]
+          .filter(
+            (offset) =>
+              !icons.some((icon) => offset > icon.from && offset < icon.to),
+          )
+          .sort((left, right) => left - right),
+      }
     : null;
   const cache = cached ?? new Map();
   cache.set(mode, result);

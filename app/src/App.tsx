@@ -1,4 +1,9 @@
 import {
+  SymbolPicker,
+  type SymbolPickerSession,
+} from "./components/SymbolPicker";
+import { SymbolText } from "./components/SymbolText";
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -348,6 +353,9 @@ export function App({
     useState<BlockTypePickerSession | null>(null);
   const [inlineFormatPicker, setInlineFormatPicker] =
     useState<InlineFormatPickerSession | null>(null);
+  const [symbolPicker, setSymbolPicker] = useState<SymbolPickerSession | null>(
+    null,
+  );
   const [tableActionPicker, setTableActionPicker] =
     useState<TableActionPickerSession | null>(null);
   const [codeActionPicker, setCodeActionPicker] =
@@ -1041,6 +1049,7 @@ export function App({
 
   const openCommandLine = useCallback(
     (session: ApplicationCommandLineSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setNoteSearch(null);
@@ -1056,6 +1065,7 @@ export function App({
 
   const openWorkspaceSearch = useCallback(
     (session: WorkspaceSearchSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setCommandLine(null);
       setCommandPicker(null);
@@ -1071,6 +1081,7 @@ export function App({
 
   const openNoteSearch = useCallback(
     (session: ApplicationNoteSearchSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1086,6 +1097,7 @@ export function App({
 
   const openBlockTypePicker = useCallback(
     (session: BlockTypePickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1104,6 +1116,7 @@ export function App({
 
   const openInlineFormatPicker = useCallback(
     (session: InlineFormatPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1117,8 +1130,25 @@ export function App({
     [clearEditorFocusRequests],
   );
 
+  const openSymbolPicker = useCallback(
+    (session: SymbolPickerSession): void => {
+      clearEditorFocusRequests();
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setCommandPicker(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setTableActionPicker(null);
+      setCodeActionPicker(null);
+      setInlineFormatPicker(null);
+      setSymbolPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
   const openTableActionPicker = useCallback(
     (session: TableActionPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1134,6 +1164,7 @@ export function App({
 
   const openCodeActionPicker = useCallback(
     (session: CodeActionPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1149,6 +1180,7 @@ export function App({
 
   const openCommandPicker = useCallback(
     (session: ApplicationCommandPickerSession): void => {
+      setSymbolPicker(null);
       clearEditorFocusRequests();
       setWorkspaceSearch(null);
       setCommandLine(null);
@@ -1858,6 +1890,14 @@ export function App({
         ?.focus();
       return;
     }
+    if (symbolPicker) {
+      appRoot.current
+        ?.querySelector<HTMLInputElement>(
+          "[data-memoka-focus-surface='symbol-picker'] input",
+        )
+        ?.focus();
+      return;
+    }
     if (themePicker) {
       appRoot.current
         ?.querySelector<HTMLInputElement>(
@@ -1959,6 +1999,7 @@ export function App({
     groupName,
     historySession,
     workspaceSearch,
+    symbolPicker,
   ]);
 
   useEffect(() => {
@@ -2239,6 +2280,7 @@ export function App({
   const { leftSidebar, rightSidebar } = activeTabPage;
   const transientFocus =
     modalFocusSurface ??
+    (symbolPicker ? "symbol-picker" : null) ??
     (historySession
       ? "history"
       : groupName
@@ -3459,6 +3501,7 @@ export function App({
         onWorkspaceSearch={openWorkspaceSearch}
         onBlockTypePicker={openBlockTypePicker}
         onInlineFormatPicker={openInlineFormatPicker}
+        onSymbolPicker={openSymbolPicker}
         onCodeActionPicker={openCodeActionPicker}
         onTableActionPicker={openTableActionPicker}
         onMessage={setCommandMessage}
@@ -3864,6 +3907,11 @@ export function App({
           onClose={() => setBlockTypePicker(null)}
           onMessage={setCommandMessage}
           focused
+        />
+      ) : symbolPicker ? (
+        <SymbolPicker
+          session={symbolPicker}
+          onClose={() => setSymbolPicker(null)}
         />
       ) : inlineFormatPicker ? (
         <InlineFormatPicker
@@ -4541,6 +4589,7 @@ function EditorWindow({
   onWorkspaceSearch,
   onBlockTypePicker,
   onInlineFormatPicker,
+  onSymbolPicker,
   onCodeActionPicker,
   onTableActionPicker,
   onMessage,
@@ -4572,6 +4621,7 @@ function EditorWindow({
   onWorkspaceSearch: (session: WorkspaceSearchSession) => void;
   onBlockTypePicker: (session: BlockTypePickerSession) => void;
   onInlineFormatPicker: (session: InlineFormatPickerSession) => void;
+  onSymbolPicker: (session: SymbolPickerSession) => void;
   onCodeActionPicker: (session: CodeActionPickerSession) => void;
   onTableActionPicker: (session: TableActionPickerSession) => void;
   onMessage: (message: string) => void;
@@ -4695,6 +4745,33 @@ function EditorWindow({
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
+      onSymbolPicker: (request) =>
+        onSymbolPicker({
+          windowId,
+          apply: (value) => {
+            const current = runtime.snapshot();
+            const tab = current.applicationWindow.tabs.find(
+              ({ id }) => id === current.applicationWindow.activeTabId,
+            );
+            if (
+              tab?.activeWindowId !== windowId ||
+              current.windows.find((window) => window.windowId === windowId)
+                ?.noteId !== noteId ||
+              adapterRef.current !== adapter
+            )
+              return false;
+            return request.apply(value);
+          },
+          restoreFocus: () => {
+            const current = runtime.snapshot().applicationWindow;
+            if (
+              current.tabs.find(({ id }) => id === current.activeTabId)
+                ?.activeWindowId === windowId &&
+              adapterRef.current === adapter
+            )
+              adapter.editor.commands.focus();
+          },
+        }),
       onCodeActionPicker: (request) =>
         onCodeActionPicker({
           windowId,
@@ -4768,6 +4845,7 @@ function EditorWindow({
     onWorkspaceSearch,
     onBlockTypePicker,
     onInlineFormatPicker,
+    onSymbolPicker,
     onCodeActionPicker,
     onTableActionPicker,
     onMessage,
@@ -4943,7 +5021,9 @@ function EditorWindow({
                     <span className="window-breadcrumb__separator">/</span>
                   )}
                   {index === sectionBreadcrumb.length - 1 ? (
-                    <span aria-current="page">{entry.title}</span>
+                    <span aria-current="page">
+                      <SymbolText text={entry.title} />
+                    </span>
                   ) : (
                     <button
                       type="button"
@@ -4952,7 +5032,7 @@ function EditorWindow({
                         moveCaretToBreadcrumbSection(entry.sectionId)
                       }
                     >
-                      {entry.title}
+                      <SymbolText text={entry.title} />
                     </button>
                   )}
                 </span>

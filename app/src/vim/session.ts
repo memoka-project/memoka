@@ -307,6 +307,7 @@ export interface ProductVimSessionOptions {
     count: number,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
   onInlineFormat?: () => boolean;
+  onSymbolPicker?: () => boolean;
   onCodeBlockActions?: (selection: CodeBlockActionSelection) => boolean;
   onTableActions?: (selection: TableActionSelection) => boolean;
   onOpenExternalLink?: (href: string) => void | Promise<void>;
@@ -2290,6 +2291,14 @@ export class ProductVimSession {
       return true;
     }
 
+    if (command === "insert.symbol") {
+      event.preventDefault();
+      const opened = this.options.onSymbolPicker?.() ?? false;
+      this.action = opened ? "insert:symbol:open" : "insert:symbol:unavailable";
+      this.emit();
+      return true;
+    }
+
     if (command === "selection.format") {
       event.preventDefault();
       const opened = this.options.onInlineFormat?.() ?? false;
@@ -3252,6 +3261,16 @@ export class ProductVimSession {
 
   cancelExternalMutationUndoBoundary(): void {
     this.pendingExternalVisualSelection = undefined;
+  }
+
+  completeExternalInsertMutation(): void {
+    this.pendingExternalVisualSelection = undefined;
+    const view = this.view;
+    if (!view || view.isDestroyed) return;
+    findUndoManager(view)?.stopCapturing();
+    this.action = "insert:symbol:changed";
+    this.emit();
+    this.scheduleCaretRefresh(view);
   }
 
   completeExternalSelectionMutation(

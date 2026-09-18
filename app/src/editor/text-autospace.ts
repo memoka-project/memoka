@@ -1,5 +1,6 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Decoration } from "@tiptap/pm/view";
+import { textblockSymbolRanges } from "../core/symbol-spacing";
 
 export const TEXT_AUTOSPACE_INLINE_END_DATA_ATTRIBUTE =
   "data-memoka-text-autospace-inline-end";
@@ -59,6 +60,8 @@ function compensationEntries(
 ): readonly TextAutospaceCompensationEntry[] {
   if (!node.isTextblock || node.type.spec.code) return [];
   const entries: TextAutospaceCompensationEntry[] = [];
+  const symbols = textblockSymbolRanges(node);
+  let symbolIndex = 0;
   let previous: string | null = null;
 
   const append = (value: string, position: number): void => {
@@ -72,7 +75,15 @@ function compensationEntries(
     if (child.isText && !hasCodeMark(child)) {
       let characterOffset = 0;
       for (const character of Array.from(child.text ?? "")) {
-        append(character, offset + characterOffset);
+        const position = offset + characterOffset;
+        while (symbols[symbolIndex] && symbols[symbolIndex]!.to <= position)
+          symbolIndex += 1;
+        const symbol = symbols[symbolIndex];
+        // Emoji variation selectors/keycaps are Marks, not Latin letters.
+        // Their visual boundary is already owned by symbol spacing.
+        if (symbol && symbol.from <= position && position < symbol.to)
+          previous = null;
+        else append(character, position);
         characterOffset += character.length;
       }
       return;

@@ -13,6 +13,22 @@ const noteContext = {
 };
 
 describe("Memoka Vim input grammar", () => {
+  it("opens the symbol picker only in Insert, preserving Normal scrolling and IME", () => {
+    expect(
+      advanceVimInput(createVimInputState(), "insert", "Ctrl+e", noteContext)
+        .resolvedCommand,
+    ).toBe("insert.symbol");
+    expect(
+      advanceVimInput(createVimInputState(), "normal", "Ctrl+e", noteContext)
+        .resolvedCommand,
+    ).toBe("viewport.scroll-down");
+    expect(
+      advanceVimInput(createVimInputState(), "insert", "Ctrl+e", {
+        ...noteContext,
+        isComposing: true,
+      }).resolvedCommand,
+    ).not.toBe("insert.symbol");
+  });
   it.each([
     ["normal", "Y", "line.yank", 1],
     ["normal", "3Y", "line.yank", 3],
