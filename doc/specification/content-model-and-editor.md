@@ -228,7 +228,8 @@ Section foldもWindow-localな表示状態である。
 - `zo/zO`: 現在Sectionを1段/再帰的に展開する。
 - `zc/zC`: 現在Sectionを1段/再帰的に折り畳む。
 - `za/zA`: 現在Sectionを1段/再帰的にtoggleする。
-- Root Sectionもfoldできる。
+- NoteのRoot全体はfoldしない。Root titleまたはRoot本文での`zc/zo`は直下の全Section、`zC/zO`は全Sectionを対象にする。Rootでの`za/zA`とtitle上のEnterはfoldを変更しない。旧Root fold状態は表示時に無視する。
+- Root本文のDetails内では既存のDetails fold操作を優先し、Section一括操作にはしない。Section focus中の表示RootがNote自身でなければ通常のSection foldを維持する。
 - fold中はHeaderだけを表示、編集できる。
 - foldされた本文もNote内検索の対象になり、一致へ移動すると必要な祖先だけを展開する。
 - foldは文書Undo、Markdown、別Windowの表示へ影響しない。

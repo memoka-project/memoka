@@ -439,6 +439,7 @@ describe("Memoka Section Link and Jump List navigation", () => {
         kind: "section-start",
         noteId: note.noteId,
         sectionId: childId,
+        alignment: "top",
       },
     });
     expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();

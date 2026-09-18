@@ -1,5 +1,6 @@
 import { Extension } from "@tiptap/core";
 import { disclosureIconMask } from "./disclosure-icons";
+import { foldNoteRootSections } from "../core/sidebar-folding";
 import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
   Plugin,
@@ -56,6 +57,7 @@ export interface SectionFoldRevealResult {
 }
 
 interface SectionFoldPluginState {
+  readonly noteId?: string;
   readonly collapsedSectionIds: readonly string[];
   readonly collapsedSignature: string;
   readonly activeEntries: readonly SectionFoldEntry[];
@@ -246,13 +248,17 @@ function transactionIntroducesCollapsedSection(
 function createSectionFoldPluginState(
   doc: ProseMirrorNode,
   requestedIds: readonly string[],
+  noteId?: string,
 ): SectionFoldPluginState {
-  const collapsedSectionIds = normalizedSectionIds(requestedIds);
+  const collapsedSectionIds = normalizedSectionIds(
+    requestedIds.filter((id) => id !== noteId),
+  );
   const collapsed = new Set(collapsedSectionIds);
   const activeEntries = deriveEditorSectionFoldEntries(doc).filter((entry) =>
     collapsed.has(entry.sectionId),
   );
   return {
+    noteId,
     collapsedSectionIds,
     collapsedSignature: collapsedSignature(collapsedSectionIds),
     activeEntries,
@@ -281,6 +287,7 @@ function mapSectionFoldPluginState(
     return createSectionFoldPluginState(
       state.doc,
       previous.collapsedSectionIds,
+      previous.noteId,
     );
   }
   if (previous.activeEntries.length === 0) {
@@ -297,6 +304,7 @@ function mapSectionFoldPluginState(
       return createSectionFoldPluginState(
         state.doc,
         previous.collapsedSectionIds,
+        previous.noteId,
       );
     }
     const next = entryAtHeaderPosition(state.doc, mapped.pos);
@@ -304,6 +312,7 @@ function mapSectionFoldPluginState(
       return createSectionFoldPluginState(
         state.doc,
         previous.collapsedSectionIds,
+        previous.noteId,
       );
     }
     mappedEntries.push(next);
@@ -371,7 +380,11 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
         },
         state: {
           init: (_configuration, state) =>
-            createSectionFoldPluginState(state.doc, initialCollapsedSectionIds),
+            createSectionFoldPluginState(
+              state.doc,
+              initialCollapsedSectionIds,
+              noteId,
+            ),
           apply: (transaction, previous, _oldState, newState) => {
             const meta = transaction.getMeta(sectionFoldPluginKey) as
               SectionFoldMeta | undefined;
@@ -379,6 +392,7 @@ export const SectionFolding = Extension.create<SectionFoldingOptions>({
               return createSectionFoldPluginState(
                 newState.doc,
                 meta.collapsedSectionIds,
+                noteId,
               );
             }
             if (!transaction.docChanged) return previous;
@@ -567,6 +581,25 @@ export function runSectionFoldCommand(
     };
   }
   const targetIndex = entries.indexOf(target);
+  if (target.sectionId === sectionFoldPluginKey.getState(view.state)?.noteId) {
+    const collapsedSectionIds = foldNoteRootSections(
+      entries.map((entry) => ({ id: entry.sectionId, depth: entry.depth })),
+      target.sectionId,
+      currentIds,
+      action,
+    );
+    const changed = setSectionFoldCollapsedSectionIds(
+      view,
+      collapsedSectionIds,
+    );
+    return {
+      handled: true,
+      changed,
+      targetSectionId: target.sectionId,
+      collapsedSectionIds,
+      detail: `section:fold-${action}:root`,
+    };
+  }
   const subtreeIds: string[] = [];
   for (let index = targetIndex; index < entries.length; index += 1) {
     const entry = entries[index]!;

@@ -180,9 +180,9 @@ describe("Window-local Section folding", () => {
         ),
       );
       runSectionFoldCommand(editor.view, "close");
-      expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([
-        note.noteId,
-      ]);
+      expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+        [childId, siblingId].sort(),
+      );
       expect(note.undoManager.undoStack).toHaveLength(undoDepth);
       expect(readNotePlainText(note)).toBe(textBefore);
     } finally {
@@ -190,6 +190,50 @@ describe("Window-local Section folding", () => {
       note.doc.destroy();
     }
   });
+
+  it.each(["title", "body"])(
+    "applies Root %s folds to Sections only",
+    async (target) => {
+      const { note, childId, grandchildId, siblingId } = createNestedNote();
+      const editor = new Editor({
+        extensions: productEditorExtensions(note, {
+          collapsedSectionIds: [note.noteId],
+        }),
+      });
+      try {
+        await Promise.resolve();
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([]);
+        const pos =
+          target === "title"
+            ? sectionHeaderTextPosition(editor, note.noteId)
+            : textPosition(editor, "root body");
+        editor.commands.setTextSelection(pos);
+        runSectionFoldCommand(editor.view, "close");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, siblingId].sort(),
+        );
+        expect(editor.state.selection.from).toBe(pos);
+        runSectionFoldCommand(editor.view, "close-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, grandchildId, siblingId].sort(),
+        );
+        runSectionFoldCommand(editor.view, "toggle");
+        runSectionFoldCommand(editor.view, "toggle-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual(
+          [childId, grandchildId, siblingId].sort(),
+        );
+        runSectionFoldCommand(editor.view, "open");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([
+          grandchildId,
+        ]);
+        runSectionFoldCommand(editor.view, "open-recursive");
+        expect(sectionFoldCollapsedSectionIds(editor.state)).toEqual([]);
+      } finally {
+        editor.destroy();
+        note.doc.destroy();
+      }
+    },
+  );
 
   it("keeps hidden content out of caret motion while retaining it in Note search", async () => {
     const { note, childId } = createNestedNote();

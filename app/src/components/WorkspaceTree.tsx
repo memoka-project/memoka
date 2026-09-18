@@ -2,6 +2,10 @@ import { SymbolText } from "./SymbolText";
 import { TreeIcon } from "./tree-presentation";
 import { treeGuides } from "../core/tree-guides";
 import {
+  foldSidebarSubtree,
+  isSidebarFoldCommand,
+} from "../core/sidebar-folding";
+import {
   useEffect,
   useMemo,
   useRef,
@@ -286,6 +290,23 @@ export function WorkspaceTree({
     countExplicit: boolean,
   ): void => {
     const selected = entries[selectedIndex] ?? null;
+    if (isSidebarFoldCommand(command)) {
+      if (selectedEntryId)
+        persistTree(
+          selectedEntryId,
+          foldSidebarSubtree(
+            deriveVisibleNoteTree(snapshot.namespaceEntries).map((entry) => ({
+              id: entry.note.noteId,
+              depth: entry.depth,
+              foldable: entry.hasChildren,
+            })),
+            selectedEntryId,
+            localCollapsedNoteIds,
+            command,
+          ),
+        );
+      return;
+    }
     if (command !== "cursor.left" && command !== "cursor.right") {
       const element = root.current;
       const result = navigateSidebar({
@@ -460,8 +481,10 @@ export function WorkspaceTree({
                 aria-level={entry.depth + 1}
                 aria-selected={selected}
                 aria-expanded={entry.hasChildren ? entry.expanded : undefined}
-                onClick={() => selectEntry(entry.note.noteId)}
-                onDoubleClick={() => void openEntry(entry.note.noteId)}
+                onClick={() => {
+                  if (selected) void openEntry(entry.note.noteId);
+                  else selectEntry(entry.note.noteId);
+                }}
                 style={
                   {
                     "--tree-depth": entry.depth,

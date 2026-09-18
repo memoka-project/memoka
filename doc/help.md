@@ -320,6 +320,10 @@ Rootの子にする結果、元のH6がH7相当になることがあります。
 | `za` / `zA`      | 現在Sectionを1段、再帰的にtoggleします。                                 |
 | title上の`Enter` | `za`と同じく現在Sectionをtoggleします。本文上ではSectionを開閉しません。 |
 
+ノートタイトルまたはルート本文では、`zc/zo`は直下の全Section、`zC/zO`はすべてのSectionを閉じる／開く操作になります。
+ノート全体は折り畳みません。この位置では`za/zA`とノートタイトル上のEnterは折り畳みを変更しません。
+ルート本文のDetails内では、そのDetailsが操作対象です。Outlineのノートタイトル上でも同じルート操作が使えます。
+
 折り畳み中はSection titleだけを表示、編集できます。折り畳み状態はWindowごとの表示状態としてアプリ再起動後も
 復元しますが、本文やUndo履歴へは保存しません。折り畳んだ本文も`/`検索の対象になり、一致へ移動すると必要な祖先だけを展開します。
 `[[` / `]]`と`{` / `}`も折り畳まれた内容を飛ばします。Countを付けると、その数だけ前後へ移動します。
@@ -437,7 +441,7 @@ rowとcolumnの追加は`.`で繰り返せます。
 
 ## ノートとTree
 
-`<Leader>t`または`:tree`でTreeを開きます。項目の行をクリックすると選択し、ノートの行をダブルクリックするとそのノートを現在Windowで開き、
+`<Leader>t`または`:tree`でTreeを開きます。未選択の項目をクリックすると選択し、選択済みのノートを再度クリックするとそのノートを現在Windowで開き、
 本文へfocusを移します。マウスを重ねるだけでは選択は変わりません。並べ替えや作成はkeyboardで行います。
 Treeはノートの配置を管理する**Namespace**です。ノートを持たない
 **グループ**も作れます。ノートタイトルはEditorのRoot title、グループ名は`:rename-group`で編集します。
@@ -449,8 +453,8 @@ Treeはノートの配置を管理する**Namespace**です。ノートを持た
 | `gg` / `G`                         | 表示Treeの先頭、末尾へ移動します。                                                                 |
 | `h` / `←`                          | 展開中の項目を閉じます。閉じている場合は親へ移動します。                                           |
 | `l` / `→`                          | 閉じた親を展開します。展開済みの場合は最初の子へ移動します。                                       |
-| `Enter` / ダブルクリック           | Noteを現在Windowで開き本文へfocusを移します。グループはTreeにfocusを保って折り畳みを切り替えます。 |
-| クリック                           | 対象Entryを選択し、Treeにfocusを保ちます。                                                         |
+| `Enter` / 選択済み項目のクリック   | Noteを現在Windowで開き本文へfocusを移します。グループはTreeにfocusを保って折り畳みを切り替えます。 |
+| 未選択項目のクリック               | 対象Entryを選択し、Treeにfocusを保ちます。Windowは変更しません。                                  |
 | `a`                                | 選択項目の直後に空タイトルの兄弟Noteを作ります。                                                   |
 | `c`                                | 選択項目の最後の子として空タイトルのNoteを作ります。                                               |
 | `A`                                | top-level末尾に空タイトルのNoteを作ります。                                                        |
@@ -465,9 +469,12 @@ aliasでもありません。Treeで並べ替えてもNote本文や内部linkの
 
 TreeではNoteに書類アイコン、グループに開閉状態に応じたフォルダーアイコンを表示します。
 子を持つ項目の左の矢印をクリックすると、その項目を選択して開閉します。Noteは開かずTreeにfocusを保ちます。
-展開中の親の下には子孫の範囲を示す縦線が表示されます。空のグループには矢印を表示せず、Enterやダブルクリックでも開閉しません。
+展開中の親の下には子孫の範囲を示す縦線が表示されます。空のグループには矢印を表示せず、Enterや再クリックでも開閉しません。
 
 TreeとOutlineの下部には名前の表示帯を置きません。focusのある領域は上端のhighlightで確認できます。
+
+Tree/Outlineでも`zo/zc/za`で選択項目を開く・閉じる・切り替える操作ができます。`zO/zC/zA`は子孫もまとめて操作します。
+Treeでは項目の階層、Outlineでは本文のSectionを折り畳みます。focusはSidebarに保ち、Enterの動作は変わりません。
 
 TreeとOutlineでは、`j/k`・上下矢印、`gg/G`・行番号付き`gg/G`、`H/M/L`、`Ctrl-f/b/d/u`、`Ctrl-e/y`、`zt/zz/zb`を共通に使えます。
 `H/L`のCountは画面の上端／下端からの項目数です。`M`はCountによらず中央へ移動します。
@@ -551,11 +558,12 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 - `<Leader>t`はTree、`<Leader>o`はOutlineをtoggleします。
 - Sidebarにfocusがあるときも、`:`、Leader、Tab、Windowの操作を利用できます。
 - Outlineはactive Windowに現在表示しているSectionだけを示します。
-- Outlineの`Enter`はSectionをfocusせず、対象title先頭へEditor caretを移動します。
+- Outlineの未選択項目のクリックは選択だけを変更します。選択済み項目の再クリックまたは`Enter`はSectionをfocusせず、対象title先頭へEditor caretを移動し、画面上部へスクロールします。
+- Outlineの矢印をクリックすると、そのSectionを選択して折り畳みを切り替え、Outlineにfocusを保ちます。
 - Editor caretが別Sectionへ移ると、Outlineの選択とscrollも追従します。
 - Sectionの折り畳みはOutlineにも反映されます。
 - 本文のSection見出し左にある矢印をクリックしても折り畳みを切り替えられます。ノートタイトルには矢印を表示しません。
-- 子Sectionのある項目は矢印で開閉状態を示し、展開中の親の下に子孫の範囲を示す縦線を表示します。文字色は本文のSection見出しと同じです。
+- Outlineではノートタイトルを除く全Sectionに矢印で本文の開閉状態を示し、展開中の親の下に子孫の範囲を示す縦線を表示します。文字色は本文のSection見出しと同じです。
 
 ### Tab
 

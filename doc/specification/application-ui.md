@@ -127,6 +127,9 @@ Tree/Outlineはcount付き`j/k`・上下矢印、`gg/G`、`Ctrl-f/b/d/u`、`H/M/
 ページ操作は選択行の画面内位置を保つ。`Ctrl-e/y`は行単位でscrollし、選択が画面外になった場合だけ最寄りの表示項目へ移す。
 `zt/zz/zb`は選択項目の上端/中央/下端配置、count付きでは指定番号の項目へ移動して配置する。
 Outlineの`h/l`・左右矢印は親/最初の表示中の子への移動とし、本文foldは変更しない。
+Tree/Outlineは本文と同じ`zo/zc/za`で選択項目を展開・折り畳み・toggleし、`zO/zC/zA`は非表示の子孫も含めて再帰的に操作する。再帰toggleの方向は選択項目の状態で決める。Countは受け付けない。
+Treeは子を持つEntryのTabPage-local fold、OutlineはSection本文のWindow-local foldを操作し、Sidebar focus・選択を維持する。空Tree項目は何もしない。Enterの既存のopen/jump動作は変更しない。
+OutlineのNote title選択時は`zc/zo`を直下の全Section、`zC/zO`を全Sectionに適用し、`za/zA`は何もしない。Note自身はfoldしない。TreeのNote Entryは引き続き通常の階層foldを行う。
 Sidebarではラベル内の文字移動や編集operatorは扱わない。入力途中のEscapeはcount/prefix取消、通常のEscapeは既存のcloseとする。
 
 ## 7. Tree
@@ -137,15 +140,15 @@ Tree/Outline共通で、選択背景は親の階層縦線位置より4px右か�
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
 親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
-Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/double clickでは開閉しない。
+Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/再clickでは開閉しない。
 chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Noteを開かず、double clickも行へ伝播させない。
 展開した親のchevron中心から、最後の表示子孫の行末まで、本文のSection縦線と同じ1px・border-subtle色の縦線を表示する。仮想scrollで親が画面外にある場合も線を維持し、兄弟subtreeへ延長しない。
 タイトル14px、アイコン16px、行高30px、階層indent 20pxとし、既存themeの配色・選択表示を維持する。
 選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
-Entryの行をsingle clickすると、そのEntryを選択してTreeにDOM focusを保つ。Noteの行をdouble clickすると
-現在WindowへNoteを開き、EditorへDOM focusを移す。すでに選択中のNoteのdouble clickでもEditorへfocusを戻す。
+未選択Entryの行をclickすると、そのEntryを選択してTreeにDOM focusを保ち、Windowは変更しない。選択済みNoteの行を再度clickすると
+現在WindowへNoteを開き、EditorへDOM focusを移す。
 mouse hoverだけでは選択を変更しない。
 mouseによる並べ替え、作成、inline renameは提供しない。
 
@@ -153,7 +156,7 @@ mouseによる並べ替え、作成、inline renameは提供しない。
 `→`は閉じた親を展開し、展開済みなら最初の子へ移動する。折り畳まれた子孫は移動先から除外する。
 先頭/末尾では移動を止め、矢印操作中はTreeにfocusを保持してbrowserの既定scrollを防ぐ。
 
-Noteなしgroupはfolderとして表示し、Enterまたはdouble clickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
+Noteなしgroupはfolderとして表示し、Enterまたは選択済み行のclickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
 `:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
 削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
 
@@ -164,13 +167,15 @@ Root表示中はNoteDoc全体、深いfocus中はそのsubtreeだけを対象に
 
 - Root titleもOutlineに表示する。
 - Note titleにはchevronと、その項目から伸びる階層縦線を表示しない。Sectionをfocusした場合は、表示先頭でも通常どおりchevronと縦線を表示する。
+- Note titleのchevron空欄は設けず、Note全体のOutlineでは子Section以下の表示indentを1段詰める。論理階層・見出し色・キー操作は変えない。Section focus中の表示indentは変更しない。
 - Section深さに応じてEditorと同じ循環title色を使う。
 - Section番号や`§`記号を表示しない。
-- 子Sectionを持つ項目はEditorでfold中ならLucide chevron-right、展開中ならchevron-downで示す。子を持たない項目は同幅の空欄とする。
+- Note title以外の全Sectionは、子Sectionの有無によらずEditorでfold中ならLucide chevron-right、展開中ならchevron-downで示す。
 - Treeと同じタイトル14px・chevron 16px・行高30px・indent 20pxとし、展開した親のchevron下から最後の表示子孫まで1pxのborder-subtle色の縦線を表示する。既存のSection title色は維持する。
 - foldされたSectionの子孫をOutlineでも隠す。
 - Editor caretがSection間を移動したらOutline選択も追従し、内部scrollで可視にする。
-- EnterまたはclickはSection Header先頭へcaretとEditor scrollを移すが、`zf`を実行しない。
+- 未選択行のclickはOutline選択だけを変更し、Windowのcaret・scrollは変更しない。選択済み行の再clickまたはEnterはSection Header先頭へcaretを移し、画面上部へscrollするが、`zf`を実行しない。
+- chevronのclickは対象を選択して本文のSection foldをtoggleし、Outlineにfocusを保つ。行のjump処理へ伝播しない。
 - Empty Bufferでは説明textを表示しない。
 
 本文のSection折り畳み表示はTree/Outlineと同じLucide chevron-down（展開中）・chevron-right（折り畳み中）を使う。サイズはSection titleの1emとし、左右中央をSectionの縦線中央に揃える。Note titleには表示しない。

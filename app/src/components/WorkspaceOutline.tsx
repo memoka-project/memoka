@@ -2,6 +2,12 @@ import { SymbolText } from "./SymbolText";
 import { TreeIcon } from "./tree-presentation";
 import { treeGuides } from "../core/tree-guides";
 import {
+  foldSidebarSubtree,
+  foldNoteRootSections,
+  isSidebarFoldCommand,
+  type SidebarFoldCommand,
+} from "../core/sidebar-folding";
+import {
   useEffect,
   useRef,
   useState,
@@ -31,6 +37,7 @@ export function WorkspaceOutline({
   collapsedSectionIds = [],
   focusRequest,
   onJump,
+  onFoldsChange,
   onClose,
   onFocus,
   onApplicationKeyDown,
@@ -45,6 +52,7 @@ export function WorkspaceOutline({
   collapsedSectionIds?: readonly string[];
   focusRequest: number;
   onJump: (sectionId: string) => Promise<void>;
+  onFoldsChange?: (ids: readonly string[]) => Promise<void>;
   onClose: () => void;
   onFocus: () => void;
   onApplicationKeyDown?: (event: KeyboardEvent<HTMLElement>) => boolean;
@@ -61,8 +69,11 @@ export function WorkspaceOutline({
   const explicitScroll = useRef(false);
   const selectedRowElement = useRef<HTMLDivElement>(null);
   const allEntries = deriveNoteOutline(note, scopeSectionId);
-  const collapsed = new Set(collapsedSectionIds);
+  const collapsed = new Set(
+    collapsedSectionIds.filter((id) => id !== note.noteId),
+  );
   const entries = visibleNoteOutlineEntries(allEntries, collapsed);
+  const visualDepthOffset = allEntries[0]?.sectionId === note.noteId ? 1 : 0;
   const parentIds = new Set(allEntries.map((entry) => entry.parentSectionId));
   const guides = treeGuides(
     entries.map((entry) => ({
@@ -141,6 +152,39 @@ export function WorkspaceOutline({
     }
   };
 
+  const fold = (sectionId: string, command: SidebarFoldCommand): void => {
+    if (busy || !onFoldsChange) return;
+    if (sectionId === note.noteId && command.startsWith("fold.toggle")) return;
+    const ids =
+      sectionId === note.noteId
+        ? foldNoteRootSections(
+            allEntries.map((entry) => ({
+              id: entry.sectionId,
+              depth: entry.depth,
+            })),
+            note.noteId,
+            collapsedSectionIds,
+            command.slice("fold.".length),
+          )
+        : foldSidebarSubtree(
+            allEntries.map((entry) => ({
+              id: entry.sectionId,
+              depth: entry.depth,
+              foldable: true,
+            })),
+            sectionId,
+            collapsedSectionIds,
+            command,
+          );
+    setBusy(true);
+    setError(null);
+    void onFoldsChange(ids)
+      .catch((cause: unknown) =>
+        setError(cause instanceof Error ? cause.message : String(cause)),
+      )
+      .finally(() => setBusy(false));
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (
       event.key === "Escape" &&
@@ -165,6 +209,10 @@ export function WorkspaceOutline({
     inputState.current = resolution.state;
     if (resolution.consume) event.preventDefault();
     if (resolution.kind === "execute") {
+      if (isSidebarFoldCommand(resolution.command)) {
+        if (selected) fold(selected.sectionId, resolution.command);
+        return;
+      }
       const element = root.current;
       if (!element) return;
       const viewport = element.getBoundingClientRect();
@@ -264,28 +312,48 @@ export function WorkspaceOutline({
                 aria-level={entry.depth + 1}
                 aria-selected={selectedRow}
                 aria-expanded={
-                  parentIds.has(entry.sectionId) ? !folded : undefined
+                  entry.sectionId === note.noteId ? undefined : !folded
                 }
                 data-memoka-markup-heading={markupHeadingLevelForSectionDepth(
                   entry.noteDepth,
                 )}
-                style={{ "--outline-level": entry.depth } as CSSProperties}
+                style={
+                  {
+                    "--outline-level": Math.max(
+                      0,
+                      entry.depth - visualDepthOffset,
+                    ),
+                  } as CSSProperties
+                }
                 onClick={() => {
-                  selectSection(entry.sectionId);
-                  void jump(entry.sectionId);
+                  inputState.current = createTreeInputState();
+                  if (selectedRow) void jump(entry.sectionId);
+                  else selectSection(entry.sectionId);
                 }}
               >
-                <span
-                  className="tree-disclosure outline-fold-state"
-                  aria-hidden="true"
-                >
-                  {entry.sectionId !== note.noteId &&
-                    parentIds.has(entry.sectionId) && (
-                      <TreeIcon
-                        name={folded ? "chevron-right" : "chevron-down"}
-                      />
-                    )}
-                </span>
+                {entry.sectionId !== note.noteId && (
+                  <button
+                    type="button"
+                    className="tree-disclosure outline-fold-state"
+                    tabIndex={-1}
+                    aria-label={`${entry.title}を${folded ? "展開する" : "折り畳む"}`}
+                    aria-expanded={!folded}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (event.detail > 1) return;
+                      inputState.current = createTreeInputState();
+                      selectSection(entry.sectionId);
+                      fold(entry.sectionId, "fold.toggle");
+                      root.current?.focus();
+                    }}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                  >
+                    <TreeIcon
+                      name={folded ? "chevron-right" : "chevron-down"}
+                    />
+                  </button>
+                )}
                 <span className="outline-title">
                   <SymbolText text={entry.title} />
                 </span>
@@ -300,7 +368,10 @@ export function WorkspaceOutline({
                 data-outline-guide={guide.id}
                 style={
                   {
-                    "--tree-depth": guide.depth,
+                    "--tree-depth": Math.max(
+                      0,
+                      guide.depth - visualDepthOffset,
+                    ),
                     top: guide.start * 30,
                     height: (guide.end - guide.start) * 30,
                   } as CSSProperties

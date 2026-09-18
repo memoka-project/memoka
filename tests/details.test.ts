@@ -504,6 +504,13 @@ describe("Details blocks", () => {
       press("Enter");
       expect(editor.state.doc.toJSON()).toEqual(unchanged);
       expect(detailsFoldHiddenEntries(editor.state)).toHaveLength(0);
+      press("z");
+      press("c");
+      expect(adapter.vimSnapshot.action).toContain("details:fold-close");
+      expect(detailsFoldHiddenEntries(editor.state).length).toBeGreaterThan(0);
+      press("z");
+      press("o");
+      expect(adapter.vimSnapshot.action).toContain("details:fold-open");
       editor.commands.setTextSelection(summary);
       press("z");
       press("C");

@@ -3636,6 +3636,18 @@ export function App({
             jumpList={outlineJumpList}
             scopeSectionId={outlineScopeSectionId ?? undefined}
             collapsedSectionIds={targetWindow?.collapsedSectionIds ?? []}
+            onFoldsChange={async (ids) => {
+              await runtime.executeCommand({
+                name: "window.update_view",
+                operationId: createUuidV7(),
+                source: "editor",
+                payload: {
+                  windowId: effectiveTargetWindowId,
+                  noteId: outlineNoteId,
+                  update: { collapsedSectionIds: [...ids] },
+                },
+              });
+            }}
             viewState={rightSidebar.outline}
             onViewStateChange={(outline) => {
               void runtime

@@ -94,6 +94,13 @@ describe("Workspace Tree", () => {
       expect(props.onOpenNote).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Parentを展開する" }));
       expect(screen.getByText("Empty")).toBeTruthy();
+      fireEvent.keyDown(tree, { key: "z" });
+      fireEvent.keyDown(tree, { key: "c" });
+      expect(screen.queryByText("Empty")).toBeNull();
+      fireEvent.keyDown(tree, { key: "z" });
+      fireEvent.keyDown(tree, { key: "O" });
+      expect(screen.getByText("Empty")).toBeTruthy();
+      expect(document.activeElement).toBe(tree);
       expect(
         tree.querySelector(`[data-tree-guide="${parent.entryId}"]`),
       ).not.toBeNull();
@@ -219,7 +226,7 @@ describe("Workspace Tree", () => {
     view.unmount();
   });
 
-  it("selects a clicked Note and opens it only on double-click", async () => {
+  it("selects a clicked Note and opens it on a second click", async () => {
     const view = render(<App />);
     const tree = await screen.findByRole("tree", { name: "ノートツリー" });
     const rootId = selectedId(tree)!;
@@ -260,7 +267,7 @@ describe("Workspace Tree", () => {
       ).toBe(childNoteId);
     });
 
-    fireEvent.doubleClick(rootTitle);
+    fireEvent.click(rootTitle);
     await waitFor(() => {
       expect(document.activeElement?.getAttribute("data-note-id")).toBe(
         rootNoteId,
@@ -282,7 +289,7 @@ describe("Workspace Tree", () => {
           .noteId,
       ).toBe(rootNoteId);
     });
-    fireEvent.doubleClick(childRow);
+    fireEvent.click(childRow);
     await waitFor(() => {
       expect(document.activeElement?.getAttribute("data-note-id")).toBe(
         childNoteId,
@@ -357,7 +364,7 @@ describe("Workspace Tree", () => {
     }
   });
 
-  it("selects a clicked Group and toggles it only on double-click or Enter", async () => {
+  it("selects a clicked Group and toggles it on a second click or Enter", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
       const group = await runtime.createNamespaceGroup(null, "Group");
@@ -387,7 +394,7 @@ describe("Workspace Tree", () => {
       fireEvent.keyDown(tree, { key: "Enter" });
       expect(row.getAttribute("aria-expanded")).toBe("false");
       expect(screen.queryByText("Child group")).toBeNull();
-      fireEvent.doubleClick(row);
+      fireEvent.click(row);
       expect(row.getAttribute("aria-expanded")).toBe("true");
       expect(screen.getByText("Child group")).toBeTruthy();
       expect(props.onOpenNote).not.toHaveBeenCalled();
@@ -398,7 +405,7 @@ describe("Workspace Tree", () => {
     }
   });
 
-  it("keeps Tree focus and reports an error when a double-clicked Note cannot open", async () => {
+  it("keeps Tree focus and reports an error when a selected Note cannot open", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
       const props = treeProps(runtime);
@@ -410,8 +417,6 @@ describe("Workspace Tree", () => {
       const row = tree.querySelector('[role="treeitem"]')!;
       fireEvent.mouseDown(row);
       fireEvent.click(row);
-      expect(props.onOpenNote).not.toHaveBeenCalled();
-      fireEvent.doubleClick(row);
       expect((await screen.findByRole("alert")).textContent).toBe(
         "Cannot open Note",
       );

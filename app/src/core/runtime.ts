@@ -2716,6 +2716,7 @@ export class CoreRuntime {
       kind: "section-start",
       noteId,
       sectionId: targetSectionId,
+      alignment: "top",
     };
     const handle = await this.ensureNoteLoaded(noteId);
     if (handle.current.kind !== "note") {

@@ -4,8 +4,13 @@ import {
   SHARED_NAVIGATION_COMMAND_IDS,
   type SharedNavigationCommandId,
 } from "./application-key-config";
+import {
+  SIDEBAR_FOLD_BINDINGS,
+  type SidebarFoldCommand,
+} from "./sidebar-folding";
 
 export type TreeCommandId =
+  | SidebarFoldCommand
   | SharedNavigationCommandId
   | "navigation.jump-back"
   | "navigation.jump-forward"
@@ -113,6 +118,7 @@ export function advanceTreeInput(
       !navigationOnly ||
       command.startsWith("cursor.") ||
       command.startsWith("viewport.") ||
+      command.startsWith("fold.") ||
       command.startsWith("navigation."),
   );
   const exact = bindings.find(({ keys }) => sameKeys(keys, pending));
@@ -172,6 +178,10 @@ function effectiveTreeBindings(
   // Native Tree navigation supplements the configurable Vim bindings without
   // changing how arrow keys move the caret in Editor buffers.
   const result: Array<{ command: TreeCommandId; keys: string[] }> = [
+    ...Object.entries(SIDEBAR_FOLD_BINDINGS).map(([command, sequence]) => ({
+      command: command as SidebarFoldCommand,
+      keys: Array.from(sequence),
+    })),
     { command: "cursor.left", keys: ["ArrowLeft"] },
     { command: "cursor.right", keys: ["ArrowRight"] },
     { command: "cursor.logical-up", keys: ["ArrowUp"] },
