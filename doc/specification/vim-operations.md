@@ -13,6 +13,9 @@ mappingは未対応である。
 
 ## 2. Modeとcaret
 
+Normalの`Ctrl-Enter`はInsertと同じ構造脱出を実行し、成功時はInsertへ移る。通常のParagraphでは本文を分割せず、直後に新しい空Paragraphを作る。作成と後続入力は1 Undo単位とする。対象がない場合は変更せず、Hard Break挿入へfallbackしない。
+Alert・Quote・Details内のListでは、囲みの内側にある最外Listの直後へ空Paragraphを作り、囲みの中にとどまる。Normal/Insert共通とする。
+
 Table Cell内のtextをクリックすると、Normal/Insertともクリック位置へcaretを移す。座標から対象Cell内の位置を取得できない場合だけCell先頭へfallbackする。
 
 | Mode         | 主な用途        | caret/statusline                            |
@@ -74,25 +77,25 @@ CountありではFocused Section内の指定論理行へ移り、可能な限り
 
 通常の文字入力と矢印keyはEditorへ渡す。IME composition中は以下のCtrl commandよりIMEを優先する。
 
-| Key               | 動作                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Esc / Ctrl-c`    | Normalへ戻る                                                                                                  |
-| `Ctrl-h`          | Backspace                                                                                                     |
-| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                                                         |
-| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                                                               |
-| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                                                                    |
-| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化                                                     |
-| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化                                                   |
-| `Ctrl-Enter`      | List内は先頭の子または次の兄弟Itemを作る。List外のTable/Code/Source/Blockquoteは構造直後に新規Paragraphを作る |
-| `Ctrl-Shift-v`    | OS Clipboardのplain textだけをpasteし、HTML/Markdown/内部構造の解釈を行わない                                 |
-| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                                                |
+| Key               | 動作                                                                          |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `Esc / Ctrl-c`    | Normalへ戻る                                                                  |
+| `Ctrl-h`          | Backspace                                                                     |
+| `Ctrl-j / Ctrl-m` | 通常のEnterと同じ改行                                                         |
+| `Ctrl-u`          | 論理行先頭からcaret直前まで削除                                               |
+| `Ctrl-w`          | 空白を読み飛ばし、前の設定word境界まで削除                                    |
+| `Ctrl-t`          | Section/ListItemを1段深くする。直接Paragraphは子Section化                     |
+| `Ctrl-d`          | Section/ListItemを1段浅くする。直接Paragraphは兄弟Section化                   |
+| `Ctrl-Enter`      | List/Table/Code/Source/Blockquoteを抜け、構造直後に新規Paragraphを作る        |
+| `Ctrl-Shift-v`    | OS Clipboardのplain textだけをpasteし、HTML/Markdown/内部構造の解釈を行わない |
+| `Tab / Shift-Tab` | Listの階層変更、Table Cell移動など文脈依存操作                                |
 
 `i/a`はcaret位置の前/後、`I/A`は論理行の先頭/末尾からInsertへ入る。
 `a`は現在文字の直後を挿入位置とし、空行では同じ位置を保つ。Tableでは最終文字上・空Cellでも同じCell内にとどまる。
 内部リンクは全体で1文字とするため、リンク上の`a`はリンク全体の直後へ入る。これらは`whichwrap`設定に依存しない。
 `o/O`は現在論理行またはblockの下/上に入力先を作る。
 Details本文からはDetailsの外へ出ず、内部blockの行を追加する。Detailsを所有する外側ListItemより本文内の操作を優先する。
-List内の`o`はDetails本文内を除き、`Ctrl-Enter`と同じ表示順保持規則で空のItemを作る。
+List内の`o`は空のItemを作る。`Ctrl-Enter`は最外List直後へParagraphを作る。Details・Alert・Quote内では囲みの内側の最外Listを抜ける。
 
 ## 6. Operatorと編集command
 
@@ -194,7 +197,7 @@ ListItem内ではParagraphのHard Breakも論理行境界となる。選択し�
 
 InsertのListItem直下Paragraphでは`Enter`が兄弟Item、`Alt-Enter`が同じItem内の次Paragraphを作る。
 `Shift-Enter`はHard Break。内部Code/Table/引用などは固有のEnter操作を維持し、`Alt-Enter`で同じItem内の次Paragraphへ抜ける。
-`Ctrl-Enter`とNormalの`o`は所有ListItemの表示順で直後に空Paragraphを持つ新規Itemを作る。
+Normalの`o`は所有ListItemの表示順で直後に空Paragraphを持つ新規Itemを作る。
 内部Blockの種類を問わず、直接子Listがあれば最初の子Listの先頭の子、なければ次の兄弟となる。
 追加先のList種別・開始番号を保ち、既存子孫と後続Blockの親子関係・順序・IDを変えない。
 caret位置で本文は分割せず、既存の空Itemを再利用しない。新ParagraphへInsertで移動し、1 Undo単位とする。
@@ -248,7 +251,7 @@ Table左上CellのShift-TabでEditor外やTreeへfocusを移さない。
 ### 9.2 編集
 
 - Insert EnterはCell内Paragraphを分割し、Shift-EnterはHard Breakを入れる。
-- Ctrl-EnterはList内なら所有Itemの先頭の子または次の兄弟として空のItemを作り、List外ならTable全体の直後に新しいParagraphを作る。
+- Ctrl-EnterはList内ならList全体、List外ならTable全体の直後に新しいParagraphを作る。
   Details本文内のListにあるTableでは、最も近いDetails内の最外側List直後へ新しいParagraphを作る。
 - Table内の`p/P`は同じ動作で、現在Cellを左上として矩形またはTable dataを貼る。
 - 矩形`d`はCell内容をclearし、row/column構造を維持する。

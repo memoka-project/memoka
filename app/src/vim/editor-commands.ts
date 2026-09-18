@@ -296,10 +296,11 @@ export function runEditorTab(
 
 interface InsertExitBlock {
   depth: number;
-  detailPrefix: "blockquote" | "code" | "table" | "details" | "list";
+  detailPrefix:
+    "blockquote" | "code" | "table" | "details" | "list" | "paragraph";
 }
 
-function insertExitListInsideDetails(
+function insertExitListInsideContainer(
   view: VimEditorView,
 ): InsertExitBlock | null {
   const { $from, $to } = view.state.selection;
@@ -307,14 +308,15 @@ function insertExitListInsideDetails(
   for (let depth = $from.depth; depth > 0; depth--) {
     const node = $from.node(depth);
     if ($to.depth < depth || $to.node(depth) !== node) continue;
-    // Stop at the nearest Details body: a surrounding list owns the Details
-    // itself and must not receive a new item when leaving an inner list.
-    if (node.type.name === "detailsBody") return list;
+    // Stop at the nearest enclosing body/quote. A list outside that container
+    // must not receive an item when leaving an inner list.
+    if (node.type.name === "detailsBody" || node.type.name === "blockquote")
+      return list;
     if (node.type.name === "details") return null;
     if (node.type.name === "bulletList" || node.type.name === "orderedList")
       list = { depth, detailPrefix: "list" };
   }
-  return null;
+  return list;
 }
 
 function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
@@ -340,22 +342,19 @@ function insertExitBlock(view: VimEditorView): InsertExitBlock | null {
     }
   }
   const inner = blockquote ?? code ?? table;
-  return details && (!inner || details.depth > inner.depth) ? details : inner;
+  const structure =
+    details && (!inner || details.depth > inner.depth) ? details : inner;
+  return (
+    structure ??
+    ($from.parent.type.name === "paragraph" && $from.sameParent($to)
+      ? { depth: $from.depth, detailPrefix: "paragraph" }
+      : null)
+  );
 }
 
 export function runEditorExitBlock(view: VimEditorView): EditorVimResult {
-  const detailsList = insertExitListInsideDetails(view);
-  // Inside Details, leave the whole inner list. Elsewhere the nearest ListItem
-  // owns Ctrl+Enter, creating its first child or its next sibling.
-  if (
-    !detailsList &&
-    owningListItemDepth(view.state.selection.$from) !== null
-  ) {
-    const handled = insertListItemAfter(view.state, view.dispatch);
-    if (handled) view.focus();
-    return { handled, detail: "list:created-item-after" };
-  }
-  const target = detailsList ?? insertExitBlock(view);
+  const innerList = insertExitListInsideContainer(view);
+  const target = innerList ?? insertExitBlock(view);
   if (!target) {
     return {
       handled: false,

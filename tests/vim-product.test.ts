@@ -140,6 +140,196 @@ function ancestorBlockIdAt(
 }
 
 describe("Memoka keyboard-only Vim golden scenario", () => {
+  it.each(["normal", "insert"])(
+    "exits a nested ordinary list in %s mode without changing any items",
+    async (mode) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const root = document.createElement("div");
+      document.body.append(root);
+      const { editor, adapter } = runtime.editorForTesting("window-1", root);
+      try {
+        editor.commands.setContent(
+          '<ol start="3"><li><p>parent</p><ul><li><p>target</p></li></ul></li><li><p>sibling</p></li></ol><p>following</p>',
+        );
+        let position = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === "target") position = pos;
+        });
+        editor.commands.setTextSelection(position);
+        press(editor, "Escape");
+        if (mode === "insert") press(editor, "i");
+        const before = editor.state.doc;
+        press(editor, "Enter", { ctrlKey: true });
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        expect(editor.state.doc.childCount).toBe(3);
+        expect(editor.state.doc.child(0).eq(before.child(0))).toBe(true);
+        expect(editor.state.doc.child(2).eq(before.child(1))).toBe(true);
+        expect(editor.state.selection.$from.parent).toBe(
+          editor.state.doc.child(1),
+        );
+        expect(editor.state.doc.child(1).content.size).toBe(0);
+        const after = editor.state.doc;
+        press(editor, "Escape");
+        press(editor, "u");
+        expect(editor.state.doc.eq(before)).toBe(true);
+        press(editor, "r", { ctrlKey: true });
+        expect(editor.state.doc.eq(after)).toBe(true);
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
+  it.each(["normal", "insert"])(
+    "exits lists inside Quote and Alert in %s mode",
+    async (mode) => {
+      for (const alertType of [null, "note"]) {
+        const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+        const root = document.createElement("div");
+        document.body.append(root);
+        const { editor, adapter } = runtime.editorForTesting("window-1", root);
+        try {
+          const p = (text: string) => ({
+            type: "paragraph",
+            content: [{ type: "text", text }],
+          });
+          editor.commands.setContent({
+            type: "doc",
+            content: [
+              {
+                type: "blockquote",
+                attrs: { alertType },
+                content: [
+                  {
+                    type: "bulletList",
+                    content: [
+                      {
+                        type: "listItem",
+                        content: [
+                          p("parent"),
+                          {
+                            type: "bulletList",
+                            content: [
+                              { type: "listItem", content: [p("target")] },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  p("following"),
+                ],
+              },
+            ],
+          });
+          let position = -1;
+          editor.state.doc.descendants((node, pos) => {
+            if (node.isText && node.text === "target") position = pos;
+          });
+          editor.commands.setTextSelection(position);
+          press(editor, "Escape");
+          if (mode === "insert") press(editor, "i");
+          const before = editor.state.doc;
+          press(editor, "Enter", { ctrlKey: true });
+          expect(adapter.vimSnapshot.mode).toBe("insert");
+          const quote = editor.state.doc.firstChild!;
+          expect(quote.childCount).toBe(3);
+          expect(quote.child(0).eq(before.firstChild!.child(0))).toBe(true);
+          expect(quote.child(2).eq(before.firstChild!.child(1))).toBe(true);
+          expect(editor.state.selection.$from.parent).toBe(quote.child(1));
+          expect(quote.child(1).content.size).toBe(0);
+          press(editor, "Escape");
+          press(editor, "u");
+          expect(editor.state.doc.eq(before)).toBe(true);
+        } finally {
+          adapter.destroy();
+          runtime.destroy();
+          root.remove();
+        }
+      }
+    },
+  );
+
+  it.each([
+    ["paragraph", "<p>target</p><p>following</p>"],
+    ["code", "<pre><code>target</code></pre>"],
+    ["quote", "<blockquote><p>target</p></blockquote>"],
+    ["table", "<table><tbody><tr><td><p>target</p></td></tr></tbody></table>"],
+    ["list", "<ul><li><p>target</p></li></ul>"],
+    [
+      "details",
+      "<details open><summary>Title</summary><p>target</p></details>",
+    ],
+  ])(
+    "exits %s with Normal Ctrl-Enter and groups following input into one Undo",
+    async (_kind, html) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+      const root = document.createElement("div");
+      document.body.append(root);
+      const { editor, adapter } = runtime.editorForTesting("window-1", root);
+      try {
+        editor.commands.setContent(html);
+        let position = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.isText && node.text === "target") position = pos;
+        });
+        expect(position).toBeGreaterThan(0);
+        editor.commands.setTextSelection(position);
+        press(editor, "Escape");
+        const before = editor.state.doc;
+        expect(press(editor, "Enter", { ctrlKey: true }).defaultPrevented).toBe(
+          true,
+        );
+        expect(adapter.vimSnapshot.mode).toBe("insert");
+        expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
+        expect(editor.state.selection.$from.parent.content.size).toBe(0);
+        expect(editor.state.selection.head).toBeGreaterThan(
+          position + "target".length,
+        );
+        editor.view.dispatch(editor.state.tr.insertText("new text"));
+        const after = editor.state.doc;
+        press(editor, "Escape");
+        press(editor, "u");
+        expect(editor.state.doc.eq(before)).toBe(true);
+        press(editor, "r", { ctrlKey: true });
+        expect(editor.state.doc.eq(after)).toBe(true);
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
+  it("creates a sibling Paragraph with Insert Ctrl-Enter without splitting the current text", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { editor, adapter } = runtime.editorForTesting("window-1", root);
+    try {
+      editor.commands.setContent("<p>text</p><p>following</p>");
+      editor.commands.setTextSelection(3);
+      const original = editor.state.doc.firstChild!;
+      expect(press(editor, "Enter", { ctrlKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(editor.state.doc.childCount).toBe(3);
+      expect(editor.state.doc.firstChild!.eq(original)).toBe(true);
+      expect(editor.state.doc.child(1).textContent).toBe("");
+      expect(editor.state.doc.child(2).textContent).toBe("following");
+      expect(editor.state.selection.$from.parent).toBe(
+        editor.state.doc.child(1),
+      );
+      expect(adapter.vimSnapshot.mode).toBe("insert");
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
   it("renders relative logical line numbers independently in each window", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
@@ -4272,22 +4462,18 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       await runtime.flush();
       expect(created.defaultPrevented).toBe(true);
       const inList = detail === "list";
-      expect(editor.state.doc.childCount).toBe(inList ? 1 : 2);
-      const createdParagraph = inList
-        ? editor.state.doc.firstChild!.lastChild!.firstChild
-        : editor.state.doc.lastChild;
+      expect(editor.state.doc.childCount).toBe(2);
+      const createdParagraph = editor.state.doc.lastChild;
       expect(createdParagraph?.type.name).toBe("paragraph");
       expect(editor.state.selection.$from.parent).toBe(createdParagraph);
       if (inList) {
-        expect(editor.state.doc.firstChild!.childCount).toBe(2);
+        expect(editor.state.doc.firstChild!.childCount).toBe(1);
         expect(editor.state.doc.firstChild!.attrs).toMatchObject(
           block.attrs ?? {},
         );
       }
       expect(adapter.vimSnapshot.action).toBe(
-        inList
-          ? "list:created-item-after:changed"
-          : `${detail}:exit-created-paragraph:changed`,
+        `${detail}:exit-created-paragraph:changed`,
       );
       expect(undoManager.undoStack).toHaveLength(1);
 
@@ -4317,10 +4503,8 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       });
       await runtime.flush();
       expect(insertedBeforeExisting.defaultPrevented).toBe(true);
-      expect(editor.state.doc.childCount).toBe(inList ? 2 : 3);
-      const nextParagraph = inList
-        ? editor.state.doc.firstChild!.lastChild!.firstChild
-        : editor.state.doc.child(1);
+      expect(editor.state.doc.childCount).toBe(3);
+      const nextParagraph = editor.state.doc.child(1);
       expect(nextParagraph?.type.name).toBe("paragraph");
       expect(nextParagraph?.textContent).toBe("");
       expect(editor.state.doc.lastChild!.textContent).toBe(
@@ -4328,9 +4512,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
       );
       expect(editor.state.selection.$from.parent).toBe(nextParagraph);
       expect(adapter.vimSnapshot.action).toBe(
-        inList
-          ? "list:created-item-after:changed"
-          : `${detail}:exit-created-paragraph:changed`,
+        `${detail}:exit-created-paragraph:changed`,
       );
       expect(undoManager.undoStack).toHaveLength(1);
 
@@ -4340,7 +4522,7 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     },
   );
 
-  it("creates a sibling for a nested ListItem at its own depth", async () => {
+  it("creates a sibling for a nested ListItem at its own depth with o", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       clock: () => "2026-08-01T00:00:00.000Z",
@@ -4398,10 +4580,8 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     editor.commands.focus();
     await runtime.flush();
 
-    const event = press(editor, "Enter", {
-      code: "Enter",
-      ctrlKey: true,
-    });
+    press(editor, "Escape");
+    const event = press(editor, "o");
     await runtime.flush();
 
     expect(event.defaultPrevented).toBe(true);

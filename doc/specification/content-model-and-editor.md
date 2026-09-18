@@ -71,7 +71,7 @@ Normalの`Enter`はSection Header上ではSection fold、Details Summary上で�
 `za`等の明示fold commandは従来どおりである。
 
 Task Listへの型変換、slash picker、Markdown貼付けから作成できる。
-タスクからの`Enter`、`o/O`、`Ctrl-Enter`等で新規Itemを作る場合は未完了にする。
+タスクからの`Enter`、`o/O`等で新規Itemを作る場合は未完了にする。
 コピーしたItemの状態は保存し、新規入力との違いを維持する。状態変更は通常のUndo対象である。
 
 ### 3.2 隣接Listの正規化
@@ -127,14 +127,14 @@ Memokaがblock種別に応じて処理する。
 - ListItem直下のParagraphのEnterはcaret位置でItemを分割する。後続Blockと子Listは新しい兄弟Itemへ移る。単独の空ParagraphのItemではList構造を抜ける。
 - ListItem内のCode/Source、Table、引用ではEnterは内部Block本来の編集操作を行う。
 - `Alt-Enter`はListItem直下のParagraphをcaret位置で分割し、同じItem内に次のParagraphを作る。内部Block内では、そのBlockを包含するListItem直下のBlockの後ろに空Paragraphを作る。
-- List内の`Ctrl-Enter`とNormalの`o`は内部Blockの種類によらず、caretに最も近い所有ListItemの表示順で直後に空Paragraphを持つListItemを作ってInsertで移動する。
+- List内のNormalの`o`は内部Blockの種類によらず、caretに最も近い所有ListItemの表示順で直後に空Paragraphを持つListItemを作ってInsertで移動する。
   直接子Listがあれば最初の子Listの先頭に新しい子Itemを追加し、なければ元Itemの次の兄弟として追加する。
   元ItemのBlockをcaret位置で分割せず、既存子孫・後続Blockの親子関係・順序・IDも変えない。
   追加先のList種別と開始番号を維持し、既存の空Itemは再利用しない。変更は1 Undo単位とする。`O`とList外の`o`は従来どおり。
   ListItem registerのNormal `p`も同じ挿入位置を使い、コピー元の絶対深度とItem内の相対的な階層を可能な限り保つ。
   子孫を含む浅いItemを既存子孫の直前へ入れる場合、後続子孫は表示順に従って貼り付けた末尾側のItemへ接続する。
   子孫を含まない単一Itemでは既存子孫の親を変えない。`P`も同じ深度規則で元Itemの前へ貼る。
-  例外としてDetails内のListでは、`Ctrl-Enter`はそのDetails内の最外側List直後へ新しいParagraphを作る（§11）。Normalの`o`はItem追加のままとする。
+- Normal/Insertの`Ctrl-Enter`は最外側List直後へ新しいParagraphを作る。Details・Alert・Quote内のListでは囲みの内側の最外Listを対象とし、囲みの中にとどまる。Normalの`o`はItem追加のままとする。
 - Table CellのEnterはCell内Paragraphを分割し、`Shift-Enter`はHard Breakを挿入する。
 - Code/Source BlockのEnterはblock内へ改行を挿入する。
 - List外のTable、Code/Source Block、Blockquote内の`Ctrl-Enter`は、最外側の対象構造block直後へ

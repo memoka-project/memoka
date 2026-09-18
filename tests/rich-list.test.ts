@@ -289,10 +289,10 @@ describe("rich ListItem editing", () => {
     ]);
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
     key(editor, "Enter", { ctrlKey: true });
-    expect(editor.state.doc.childCount).toBe(1);
-    expect(editor.state.doc.firstChild!.childCount).toBe(2);
-    expect(editor.state.doc.firstChild!.lastChild!.firstChild!.type.name).toBe(
-      "paragraph",
+    expect(editor.state.doc.childCount).toBe(2);
+    expect(editor.state.doc.firstChild!.childCount).toBe(1);
+    expect(editor.state.selection.$from.parent).toBe(
+      editor.state.doc.lastChild,
     );
   });
 
@@ -340,7 +340,8 @@ describe("rich ListItem editing", () => {
       p("existing"),
     ]);
     editor.commands.setTextSelection(position(editor, "inside"));
-    key(editor, "Enter", { ctrlKey: true });
+    key(editor, "Escape");
+    key(editor, "o");
     expect(
       editor.state.doc.content.content.map((node) => node.type.name),
     ).toEqual(["bulletList", "paragraph"]);
@@ -381,7 +382,7 @@ describe("rich ListItem editing", () => {
   ])(
     "creates a first child before existing children from $type, with Undo/Redo",
     async (block) => {
-      for (const opening of ["Ctrl-Enter", "o"]) {
+      for (const opening of ["o"]) {
         const { editor, adapter } = await harness([
           list(item(block, p("tail"), list(item(p("child")))), item(p("next"))),
         ]);
@@ -434,7 +435,7 @@ describe("rich ListItem editing", () => {
     },
   );
 
-  it.each(["Ctrl-Enter", "o"])(
+  it.each(["o"])(
     "preserves the display order of multiple child lists and trailing blocks with %s",
     async (opening) => {
       const { editor } = await harness([
@@ -503,7 +504,8 @@ describe("rich ListItem editing", () => {
     editor.commands.setTextSelection(3);
     const oldFirst = editor.state.doc.firstChild!.firstChild!;
     const oldNext = editor.state.doc.firstChild!.lastChild!;
-    key(editor, "Enter", { ctrlKey: true });
+    key(editor, "Escape");
+    key(editor, "o");
     const result = editor.state.doc.firstChild!;
     expect(result.childCount).toBe(3);
     expect(result.firstChild!.eq(oldFirst)).toBe(true);

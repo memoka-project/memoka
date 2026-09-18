@@ -1863,23 +1863,39 @@ export class ProductVimSession {
     }
     if (
       !isComposing &&
-      this.mode === "insert" &&
+      (this.mode === "insert" || this.mode === "normal") &&
       event.ctrlKey &&
       event.key === "Enter"
     ) {
+      const fromNormal = this.mode === "normal";
       const undoManager = findUndoManager(view);
+      const undoStackDepth = undoManager?.undoStack.length ?? 0;
+      const cursorBefore = selectionCursor(view);
       const standaloneUndo = this.shouldCreateStandaloneUndoUnit(undoManager);
-      if (standaloneUndo) undoManager?.stopCapturing();
+      if (fromNormal || standaloneUndo) undoManager?.stopCapturing();
       const result = runEditorExitBlock(view);
       if (result.handled) {
         event.preventDefault();
         this.armInsertBreakSuppression();
         this.ignoreStaleDomTableSelection = true;
         this.domTableSelectionPosition = null;
-        if (standaloneUndo) undoManager?.stopCapturing();
+        if (fromNormal) {
+          this.beginChangeUndoCapture(
+            undoManager,
+            undoStackDepth,
+            cursorBefore,
+          );
+          this.changeMode(view, "insert");
+        } else if (standaloneUndo) undoManager?.stopCapturing();
         this.action = `${result.detail}:changed`;
         this.emit();
         this.scheduleCaretRefresh(view);
+        return true;
+      }
+      // Never let Normal Ctrl-Enter fall through to a native Hard Break.
+      if (fromNormal) {
+        event.preventDefault();
+        this.input = createVimInputState();
         return true;
       }
     }
