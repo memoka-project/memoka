@@ -1,5 +1,64 @@
 import type { EditorView } from "@tiptap/pm/view";
 import type { VimCaretGeometry } from "./caret-geometry";
+import { defaultVimBlockSemantics } from "./block-semantics";
+
+/** Reveal text context without moving the selection or measuring other blocks. */
+export function revealNormalLogicalLine(
+  view: Pick<EditorView, "state" | "coordsAtPos">,
+  scroll: HTMLElement,
+  cursor: number,
+): boolean {
+  const viewport = scroll.getBoundingClientRect();
+  if (viewport.height <= 10) return false;
+  const resolved = view.state.doc.resolve(cursor);
+  if (!resolved.parent.isTextblock || resolved.depth === 0) return false;
+  const lines = defaultVimBlockSemantics.logicalLineAnchorsForNode(
+    view,
+    resolved.parent,
+    resolved.before(),
+  );
+  const line = lines?.find(({ from, to }) => cursor >= from && cursor <= to);
+  if (!line || line.kind === "block-atom") return false;
+  try {
+    const first = view.coordsAtPos(line.from, 1);
+    const last = view.coordsAtPos(line.to, -1);
+    const caret = view.coordsAtPos(cursor, 1);
+    const available = viewport.height - 10;
+    const fits = last.bottom - first.top <= available;
+    const top = fits ? first.top : caret.top;
+    let bottom = last.bottom;
+    if (!fits && last.top > caret.top) {
+      // Locate the next display row in logarithmic probes, including actual
+      // line-height spacing rather than assuming two glyph heights suffice.
+      let low = cursor + 1;
+      let high = line.to;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (view.coordsAtPos(middle, 1).top > caret.top) high = middle;
+        else low = middle + 1;
+      }
+      bottom = view.coordsAtPos(low, 1).bottom;
+    }
+    // At the beginning of an oversized line, show as much continuation as fits.
+    const delta =
+      !fits && caret.top === first.top
+        ? top - viewport.top - 5
+        : top < viewport.top + 5
+          ? top - viewport.top - 5
+          : bottom > viewport.bottom - 5
+            ? Math.min(bottom - viewport.bottom + 5, top - viewport.top - 5)
+            : 0;
+    const maximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    if (delta)
+      scroll.scrollTop = Math.max(
+        0,
+        Math.min(maximum, Math.round(scroll.scrollTop + delta)),
+      );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** A selection correction owns the viewport, not a request to reveal a caret. */
 export const VIM_VIEWPORT_CARET_META = "memoka-vim-viewport-caret";

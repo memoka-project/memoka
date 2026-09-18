@@ -66,6 +66,9 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。
+Normalのcaret移動では、現在のテキスト論理行がWindowに収まれば全体を最小限のscrollで表示する。
+収まらない場合はcaretの表示行と次の表示行を優先し、論理行先頭では上寄りに配置する。
+scroll可能範囲で補正し、caret位置は変えない。Insert・Visual・手動scrollには適用せず、`zt/zz/zb`と`gf`の明示配置を優先する。
 Section移動は現在所属するSectionを基準にし、折り畳まれた子Sectionを飛ばす。block移動はSection本文直下の
 Paragraph、List、Table、Code/Source、Blockquote、Detailsなどをそれぞれ1 blockとして数え、Section titleと
 各block内部の論理行を移動先から除外する。どちらもCountを受け付ける。

@@ -548,6 +548,34 @@ describe("Memoka TipTap adapter", () => {
     );
     expect(scroll.scrollTop).toBe(695);
 
+    let lastStart = 0;
+    let lastEnd = 0;
+    editor.state.doc.descendants((node, position) => {
+      if (node.type.name === "paragraph") {
+        lastStart = position + 1;
+        lastEnd = lastStart + node.content.size;
+      }
+    });
+    vi.spyOn(editor.view, "coordsAtPos").mockImplementation((position) => ({
+      top: (position === lastEnd ? 780 : 700) - scroll.scrollTop,
+      bottom: (position === lastEnd ? 800 : 720) - scroll.scrollTop,
+      left: 0,
+      right: 10,
+    }));
+    scroll.scrollTop = 330;
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "G",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => resolve()),
+    );
+    expect(editor.state.selection.from).toBe(lastStart);
+    expect(scroll.scrollTop).toBe(405);
+
     dispatch.mockRestore();
     adapter.destroy();
     runtime.destroy();

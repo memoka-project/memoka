@@ -65,6 +65,7 @@ import type { VimRegisterStore } from "../vim/register-store";
 import {
   caretFitsViewport,
   findViewportCaretPosition,
+  revealNormalLogicalLine,
 } from "../vim/viewport-caret";
 import { BODY_CHUNK_VIEWPORT_CHANGED_EVENT } from "./body-chunk-viewport-event";
 import type { VimRepeatStore } from "../vim/repeat";
@@ -1583,10 +1584,11 @@ export class TiptapEditorAdapter {
               // A command owns the caret destination. Native scroll events and
               // delayed layout must reveal it, not replace it with a visible line.
               this.viewportScrollIntent = "caret";
+              this.scheduleViewportCaretReconciliation();
             }
           }
-          // Scroll/ResizeObserver schedule reconciliation only if the viewport
-          // actually changes; ordinary in-view motions need no extra DOM reads.
+          // Caret-owned navigation also reveals wrapped logical-line context;
+          // manual scrolling keeps the viewport-owned selection policy.
         }
         this.publishCaretExternalLink(editor);
         const snapshot = this.vimSession.snapshot();
@@ -2371,6 +2373,12 @@ export class TiptapEditorAdapter {
       );
       return;
     }
+    if (
+      this.viewportScrollIntent === "caret" &&
+      this.vimSession.snapshot().mode === "normal" &&
+      revealNormalLogicalLine(editor.view, this.scrollElement, cursor)
+    )
+      return;
     const caret = this.vimSession.viewportCaretGeometry(cursor);
     if (!caret || caretFitsViewport(caret, viewport)) return;
     const above = caret.top < viewport.top;
