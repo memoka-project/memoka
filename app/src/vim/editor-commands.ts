@@ -121,6 +121,8 @@ export type VimRegister =
       transfer: "copy" | "cut";
       sourceNoteId: string | null;
       sectionIds: string[];
+      titleOnly?: boolean;
+      sourceSectionDepth?: number;
       slice: Slice;
     }
   | VimTableCellsRegister;
@@ -2993,6 +2995,26 @@ function nearestSectionDepth(view: VimEditorView, position: number): number {
     if ($position.node(depth).type.name === "section") return depth;
   }
   return 0;
+}
+
+export function sectionTitlePutBoundary(
+  view: VimEditorView,
+  direction: PutDirection,
+): number | null | undefined {
+  const $cursor = view.state.doc.resolve(selectionCursor(view));
+  for (let depth = $cursor.depth; depth > 0; depth--) {
+    if ($cursor.node(depth).type.name === "sectionHeader")
+      return direction === "before" ? null : 0;
+    if ($cursor.node(depth).type.name === "bodyChunk") {
+      const body = $cursor.node(depth - 1);
+      if (body.type.name !== "sectionBody") return undefined;
+      let index = 0;
+      for (let chunk = 0; chunk < $cursor.index(depth - 1); chunk++)
+        index += body.child(chunk).childCount;
+      return index + $cursor.index(depth) + (direction === "after" ? 1 : 0);
+    }
+  }
+  return undefined;
 }
 
 function sectionPutPosition(
@@ -6355,7 +6377,28 @@ function countedLogicalLine(
 function yankLine(view: VimEditorView, count = 1): VimRegister | null {
   const visualLine = countedLogicalLine(view, count);
   if (!visualLine) return null;
-  const yanked = visualLineRegister(view, visualLine);
+  const target = sectionTitleTarget(view, visualLine);
+  // A title-only yank still needs a closed Section slice: a bare Header is
+  // otherwise fitted into the target's structure by ProseMirror on put.
+  const titleOnly = target?.node.copy(
+    Fragment.fromArray([
+      target.node.child(0),
+      target.node.child(1).copy(Fragment.empty),
+      target.node.child(2).copy(Fragment.empty),
+    ]),
+  );
+  const yanked: VimRegister | null =
+    target && titleOnly
+      ? {
+          kind: "section",
+          text: target.node.child(0).textContent,
+          transfer: "copy",
+          sourceNoteId: view.dom.dataset.noteId ?? null,
+          sectionIds: [target.sectionId],
+          titleOnly: true,
+          slice: new Slice(Fragment.from(titleOnly), 0, 0),
+        }
+      : visualLineRegister(view, visualLine);
   dispatchSelection(view, visualLine.cursor, "normal");
   return yanked;
 }

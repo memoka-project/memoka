@@ -48,6 +48,7 @@ import {
   insertChildSection,
   sectionBodyBlocks,
   planSectionDepthShift,
+  planSectionTitlePut,
   sectionBody,
   sectionChildren,
   sectionId,
@@ -1555,6 +1556,27 @@ export function putNoteSectionSibling(
       targetIndex + (direction === "after" ? 1 : 0),
     );
   }, origin);
+  return true;
+}
+
+/** Split at the requested display boundary while preserving existing depths. */
+export function putNoteSectionTitle(
+  note: NoteDocument,
+  targetSectionId: string,
+  title: SectionSnapshot,
+  boundary: number | null,
+  origin: unknown = ySyncPluginKey,
+  preferredDepth?: number,
+): boolean {
+  const snapshot = planSectionTitlePut(
+    sectionSnapshot(note.rootSection),
+    targetSectionId,
+    title,
+    boundary,
+    preferredDepth,
+  );
+  if (!snapshot) return false;
+  replaceNoteSectionTree(note, snapshot, readNoteUpdatedAt(note), origin);
   return true;
 }
 

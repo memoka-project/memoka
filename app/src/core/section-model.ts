@@ -1096,6 +1096,57 @@ function validateSectionProperties(
   }
 }
 
+/** Insert a title in preorder without changing any existing Section depth.
+ * Adjacent depths bound the available parents; never synthesize ancestors. */
+export function planSectionTitlePut(
+  root: SectionSnapshot,
+  targetId: string,
+  title: SectionSnapshot,
+  boundary: number | null,
+  preferredDepth?: number,
+): SectionSnapshot | null {
+  const rows = flattenSectionSnapshot(root);
+  const targetIndex = rows.findIndex(
+    ({ snapshot }) => snapshot.sectionId === targetId,
+  );
+  if (targetIndex < 0 || title.body.length || title.children.length)
+    return null;
+  const target = rows[targetIndex]!;
+  const beforeHeader = boundary === null && targetIndex > 0;
+  const bodyIndex = boundary ?? 0;
+  if (
+    !Number.isInteger(bodyIndex) ||
+    bodyIndex < 0 ||
+    bodyIndex > target.snapshot.body.length
+  )
+    return null;
+  const insertion = beforeHeader ? targetIndex : targetIndex + 1;
+  const minimum = Math.max(1, (rows[insertion]?.depth ?? 1) - 1);
+  const maximum = Math.min(MAX_SECTION_DEPTH, rows[insertion - 1]!.depth + 1);
+  if (minimum > maximum) return null;
+  const requested =
+    preferredDepth !== undefined &&
+    Number.isInteger(preferredDepth) &&
+    preferredDepth >= 0
+      ? preferredDepth
+      : Math.max(1, target.depth);
+  const depth = Math.max(minimum, Math.min(maximum, requested));
+  const body = beforeHeader ? [] : target.snapshot.body.slice(bodyIndex);
+  if (!beforeHeader)
+    rows[targetIndex] = {
+      ...target,
+      snapshot: {
+        ...target.snapshot,
+        body: target.snapshot.body.slice(0, bodyIndex),
+      },
+    };
+  rows.splice(insertion, 0, { snapshot: { ...title, body }, depth });
+  return rebuildSectionSnapshot(
+    rows,
+    rows.map((row) => row.depth),
+  );
+}
+
 interface FlattenedSectionSnapshot {
   readonly snapshot: SectionSnapshot;
   readonly depth: number;

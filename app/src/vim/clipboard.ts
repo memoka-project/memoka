@@ -78,6 +78,8 @@ interface StructureClipboardPayload {
 }
 
 interface SectionClipboardPayload {
+  sourceSectionDepth?: number;
+  titleOnly?: boolean;
   schemaVersion: 8;
   kind: "section";
   text: string;
@@ -562,6 +564,10 @@ function payloadForRegister(register: VimRegister): MemokaClipboardPayload {
       transfer: register.transfer,
       sourceNoteId: register.sourceNoteId,
       sectionIds: [...register.sectionIds],
+      ...(register.titleOnly ? { titleOnly: true } : {}),
+      ...(register.sourceSectionDepth === undefined
+        ? {}
+        : { sourceSectionDepth: register.sourceSectionDepth }),
       slice: {
         content: register.slice.content.toJSON(),
         openStart: 0,
@@ -775,6 +781,12 @@ export function decodeVimClipboard(
         transfer: payload.transfer,
         sourceNoteId: payload.sourceNoteId,
         sectionIds: payload.sectionIds,
+        ...(payload.titleOnly === true ? { titleOnly: true } : {}),
+        ...(typeof payload.sourceSectionDepth === "number" &&
+        Number.isInteger(payload.sourceSectionDepth) &&
+        payload.sourceSectionDepth >= 0
+          ? { sourceSectionDepth: payload.sourceSectionDepth }
+          : {}),
         slice,
       };
     }

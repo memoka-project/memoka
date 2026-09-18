@@ -40,6 +40,7 @@ import {
   beginVisualLine,
   clampVimBlockCursor,
   focusedSectionLineDeletionSelection,
+  sectionTitlePutBoundary,
   moveVimSelectionToViewportPosition,
   resolveVimViewportCaretPosition,
   pasteVimRegisterAtSelection,
@@ -266,6 +267,7 @@ export interface ProductVimSessionOptions {
   initialMode: VimMode;
   /** The persisted Note ID; a Focused child Section never matches this ID. */
   getRootNoteId?: () => string | null;
+  getSectionDepth?: (sectionId: string) => number | null;
   registerStore?: VimRegisterStore;
   repeatStore?: VimRepeatStore;
   visualSelectionStore?: VimVisualSelectionStore;
@@ -356,6 +358,7 @@ export interface ProductVimSessionOptions {
     request: Omit<FocusedSectionLineDeletionSelection, "register">,
   ) => void | Promise<void>;
   onSectionSiblingPut?: (request: {
+    bodyBoundary?: number | null;
     targetSectionId: string;
     direction: "after" | "before";
     register: Extract<VimRegister, { kind: "section" }>;
@@ -2640,6 +2643,13 @@ export class ProductVimSession {
       }
       putCheckpoint?.manager?.stopCapturing();
       if (result.visualLine) this.visualLine = result.visualLine;
+      if (result.register?.kind === "section" && result.register.titleOnly) {
+        const depth = this.options.getSectionDepth?.(
+          result.register.sectionIds[0]!,
+        );
+        if (depth !== undefined && depth !== null)
+          result.register.sourceSectionDepth = depth;
+      }
       const clipboardRegister =
         result.handled &&
         result.register &&
@@ -3023,13 +3033,19 @@ export class ProductVimSession {
     const mountedSectionId = view.dom.dataset.sectionId ?? null;
     const targetSectionId = sectionIdAtEditorSelection(view.state);
     if (
-      !mountedSectionId ||
-      mountedSectionId === this.options.getRootNoteId?.() ||
-      targetSectionId !== mountedSectionId
+      !register.titleOnly &&
+      (!mountedSectionId ||
+        mountedSectionId === this.options.getRootNoteId?.() ||
+        targetSectionId !== mountedSectionId)
     ) {
       return null;
     }
     const direction = command === "put.after" ? "after" : "before";
+    const bodyBoundary = register.titleOnly
+      ? sectionTitlePutBoundary(view, direction)
+      : undefined;
+    if (!targetSectionId || (register.titleOnly && bodyBoundary === undefined))
+      return { handled: false, detail: "put:title:unsupported-boundary" };
     let handled = false;
     try {
       for (
@@ -3042,6 +3058,7 @@ export class ProductVimSession {
             targetSectionId,
             direction,
             register,
+            bodyBoundary,
           })
         ) {
           break;

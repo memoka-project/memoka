@@ -9,6 +9,7 @@ import {
   CORE_TRANSACTION_ORIGIN,
   readNoteTitle,
   replaceNoteSectionTree,
+  putNoteSectionTitle,
 } from "../app/src/core/documents";
 import { createUuidV7 } from "../app/src/core/ids";
 import {
@@ -30,7 +31,12 @@ import {
   sectionTitle,
 } from "../app/src/core/section-model";
 import { addSecondWindow } from "./helpers/runtime";
-import { registerFromMarkdown } from "../app/src/vim/clipboard";
+import {
+  registerFromMarkdown,
+  encodeVimClipboard,
+  decodeVimClipboard,
+  MEMOKA_CLIPBOARD_MIME,
+} from "../app/src/vim/clipboard";
 import { pasteVimRegisterAtSelection } from "../app/src/vim/editor-commands";
 
 function deterministicIds() {
@@ -2698,6 +2704,329 @@ describe("Memoka Section editor semantics", () => {
     runtime.destroy();
     targetRoot.remove();
   });
+
+  it.each(
+    ["p", "P"].flatMap((key) =>
+      [false, true].flatMap((replicated) =>
+        [false, true].flatMap((focused) =>
+          [false, true].map((body) => ({ key, replicated, focused, body })),
+        ),
+      ),
+    ),
+  )(
+    "puts a yy title at the $key boundary (replicated=$replicated, focused=$focused, body=$body)",
+    async ({ key, replicated, focused, body }) => {
+      class ReplicatedPersistence extends MemoryPersistencePort {
+        readonly replicaId = createUuidV7();
+        override async manifest() {
+          return {
+            ...(await super.manifest()),
+            databaseSchemaVersion: 7,
+            replicaId: this.replicaId,
+          };
+        }
+      }
+      const runtime = await CoreRuntime.open(
+        replicated ? new ReplicatedPersistence() : new MemoryPersistencePort(),
+        {
+          idFactory: deterministicIds(),
+          initialTitle: "Root",
+        },
+      );
+      const sourceId = createUuidV7();
+      const targetId = createUuidV7();
+      const source = {
+        sectionId: sourceId,
+        title: "Source😀",
+        tags: [],
+        body: [
+          {
+            type: "paragraph",
+            attrs: { blockId: createUuidV7() },
+            content: [{ type: "text", text: "source body" }],
+          },
+        ],
+        children: [
+          {
+            sectionId: createUuidV7(),
+            title: "Nested",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      };
+      const target = {
+        sectionId: targetId,
+        title: "Target",
+        tags: [],
+        body: ["A", "B", "C"].map((text) => ({
+          type: "paragraph",
+          attrs: { blockId: createUuidV7() },
+          content: [{ type: "text", text }],
+        })),
+        children: [
+          {
+            sectionId: createUuidV7(),
+            title: "Target child",
+            tags: [],
+            body: [],
+            children: [],
+          },
+        ],
+      };
+      replaceNoteSectionTree(
+        runtime.noteDocument,
+        {
+          ...sectionSnapshot(runtime.noteDocument.rootSection),
+          children: [source, target],
+        },
+        "2026-09-18T00:00:00.000Z",
+        "test-fixture",
+      );
+      await settle(runtime);
+      const root = rootElement();
+      let { adapter, editor } = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        const original = sectionSnapshot(runtime.noteDocument.rootSection);
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === sourceId,
+          ),
+        );
+        editor.commands.focus();
+        press(editor, "Escape");
+        press(editor, "y");
+        press(editor, "y");
+        expect(runtime.vimRegister.read(editor.schema)?.kind).toBe("section");
+        const copied = runtime.vimRegister.read(editor.schema)!;
+        const decoded = decodeVimClipboard(
+          encodeVimClipboard(copied, editor.schema)[MEMOKA_CLIPBOARD_MIME],
+          editor.schema,
+        );
+        expect(decoded).toMatchObject({ kind: "section", titleOnly: true });
+        runtime.vimRegister.set(decoded!);
+        if (focused) {
+          adapter.destroy();
+          await runtime.focusSection("window-1", runtime.noteId, targetId);
+          ({ adapter, editor } = runtime.editorForTesting("window-1", root, {
+            directBodyOnly: false,
+          }));
+          editor.commands.focus();
+          press(editor, "Escape");
+        }
+        editor.commands.setTextSelection(
+          positionOf(editor, body ? "paragraph" : "sectionHeader", (node) =>
+            body ? node.textContent === "B" : node.attrs.sectionId === targetId,
+          ),
+        );
+        press(editor, key, { shiftKey: key === "P" });
+        await settle(runtime);
+        const children = sectionSnapshot(
+          runtime.noteDocument.rootSection,
+        ).children;
+        expect(children.map((section) => section.title)).toEqual(
+          key === "p" || body
+            ? ["Source😀", "Target", "Source😀"]
+            : ["Source😀", "Source😀", "Target"],
+        );
+        const copy = children[key === "p" || body ? 2 : 1]!;
+        expect(copy.sectionId).not.toBe(sourceId);
+        const boundary = body ? (key === "p" ? 2 : 1) : key === "p" ? 0 : null;
+        expect(copy.body).toEqual(
+          boundary === null ? [] : target.body.slice(boundary),
+        );
+        expect(copy.children).toEqual(boundary === null ? [] : target.children);
+        expect(
+          children.find((section) => section.sectionId === targetId),
+        ).toEqual(
+          boundary === null
+            ? target
+            : { ...target, body: target.body.slice(0, boundary), children: [] },
+        );
+        expect(children[0]).toEqual(source);
+        press(adapter.editor, "u");
+        await settle(runtime);
+        expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(
+          original,
+        );
+      } finally {
+        adapter.destroy();
+        runtime.destroy();
+        root.remove();
+      }
+    },
+  );
+
+  it.each(
+    [0, 1, 2].flatMap((boundary) =>
+      [false, true].map((replicated) => ({ boundary, replicated })),
+    ),
+  )(
+    "keeps Root child depth at boundary $boundary (replicated=$replicated)",
+    async ({ boundary, replicated }) => {
+      class ReplicatedPersistence extends MemoryPersistencePort {
+        readonly replicaId = createUuidV7();
+        override async manifest() {
+          return {
+            ...(await super.manifest()),
+            databaseSchemaVersion: 7,
+            replicaId: this.replicaId,
+          };
+        }
+      }
+      const runtime = await CoreRuntime.open(
+        replicated ? new ReplicatedPersistence() : new MemoryPersistencePort(),
+        {
+          idFactory: deterministicIds(),
+          initialTitle: "Root",
+        },
+      );
+      try {
+        const original = {
+          ...sectionSnapshot(runtime.noteDocument.rootSection),
+          children: [
+            {
+              sectionId: createUuidV7(),
+              title: "S",
+              tags: [],
+              body: [],
+              children: [
+                {
+                  sectionId: createUuidV7(),
+                  title: "Nested",
+                  tags: [],
+                  body: [],
+                  children: [],
+                },
+              ],
+            },
+          ],
+          body: ["A", "B", "C"].map((text) => ({
+            type: "paragraph",
+            attrs: { blockId: createUuidV7() },
+            content: [{ type: "text", text }],
+          })),
+        };
+        replaceNoteSectionTree(
+          runtime.noteDocument,
+          original,
+          "2026-09-18T00:00:00.000Z",
+          "test-fixture",
+        );
+        await settle(runtime);
+        runtime.noteDocument.undoManager.stopCapturing();
+        const inserted = {
+          sectionId: createUuidV7(),
+          title: "Copied",
+          tags: [],
+          body: [],
+          children: [],
+        };
+        expect(
+          putNoteSectionTitle(
+            runtime.noteDocument,
+            runtime.noteId,
+            inserted,
+            boundary,
+          ),
+        ).toBe(true);
+        await settle(runtime);
+        const result = sectionSnapshot(runtime.noteDocument.rootSection);
+        expect(result.body).toEqual(original.body.slice(0, boundary));
+        expect(result.children).toEqual([
+          { ...inserted, body: original.body.slice(boundary) },
+          ...original.children,
+        ]);
+        if (runtime.noteDocument.replicated)
+          runtime.noteDocument.replicated.undo();
+        else (runtime.noteDocument.undoManager as UndoManager).undo();
+        await settle(runtime);
+        expect(sectionSnapshot(runtime.noteDocument.rootSection)).toEqual(
+          original,
+        );
+      } finally {
+        runtime.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "preserves copied absolute depth after a focused yank (focused=%s)",
+    async (focused) => {
+      const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+        idFactory: deterministicIds(),
+        initialTitle: "Root",
+      });
+      const parentId = addChild(runtime, "Parent", "parent body");
+      const sourceId = addChildSection(
+        findSectionById(runtime.noteDocument.rootSection, parentId)!,
+        "Copied",
+      );
+      const targetId = addChild(runtime, "Target", "target body");
+      if (focused)
+        await runtime.focusSection("window-1", runtime.noteId, sourceId);
+      const root = rootElement();
+      let { adapter, editor } = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === sourceId,
+          ),
+        );
+        editor.commands.focus();
+        press(editor, "Escape");
+        press(editor, "y");
+        press(editor, "y");
+        const register = runtime.vimRegister.read(editor.schema)!;
+        expect(register).toMatchObject({
+          sourceSectionDepth: 2,
+          titleOnly: true,
+        });
+        const decoded = decodeVimClipboard(
+          encodeVimClipboard(register, editor.schema)[MEMOKA_CLIPBOARD_MIME],
+          editor.schema,
+        )!;
+        expect(decoded).toMatchObject({ sourceSectionDepth: 2 });
+        runtime.vimRegister.set(decoded);
+        if (focused) {
+          adapter.destroy();
+          await runtime.openNote("window-1", runtime.noteId);
+          ({ adapter, editor } = runtime.editorForTesting("window-1", root, {
+            directBodyOnly: false,
+          }));
+        }
+        editor.commands.setTextSelection(
+          positionOf(
+            editor,
+            "sectionHeader",
+            (node) => node.attrs.sectionId === targetId,
+          ),
+        );
+        press(editor, "p");
+        await settle(runtime);
+        const target = sectionSnapshot(
+          findSectionById(runtime.noteDocument.rootSection, targetId)!,
+        );
+        expect(target.body).toEqual([]);
+        expect(target.children.map((child) => child.title)).toEqual(["Copied"]);
+        expect(target.children[0]!.body).toHaveLength(1);
+        expect(target.children[0]!.sectionId).not.toBe(sourceId);
+      } finally {
+        adapter.destroy();
+        root.remove();
+        runtime.destroy();
+      }
+    },
+  );
 
   it("puts a yanked Section-and-body selection beside a Focused Section", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {

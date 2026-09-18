@@ -199,6 +199,9 @@ Tableも最後の行を削除すると本体を削除します。未選択の行
 Detailsも見出しと本文の両方が空になれば削除します。見出しが残る場合はDetailsを維持し、本文に入力用の空Paragraphを残します。
 この空blockの削除は`cc`やVisual Lineの`c`には適用せず、変更後の入力先を残します。Undoではblockごと元に戻せます。
 
+Section titleの単独`yy`/`Y`はタイトルだけをコピーします。`p`は現在のtitleまたはBlockの直後、`P`は直前にタイトルを挿入し、後続の本文・子Sectionを新しいSectionへ引き継ぎます。title上の`P`では元の本文は元Sectionに残します。List等の内部では容器全体の前後に挿入します。Rootでは分割後の本文だけを最初の子Sectionへ移し、既存Sectionはその後ろの兄弟として残します。既存Sectionの深さは変えません。
+貼り付けるタイトルは、挿入位置と既存Sectionの深さ・表示順を守れる範囲で、コピー元の深さに合わせます。親が足りない場合は空の親を作らず、配置可能な最も近い深さにします。Focus中でも深さはノート全体を基準にします。
+
 Section titleで`dd`、またはSection titleを含むVisual Lineで`d`を使うと、選択した論理行だけを削除します。
 選択していない本文や子Sectionは、表示順と可能な限り元の深さを保って直前のSectionまたは親へ残ります。
 Note titleでの`dd`はtitleだけを空にし、Note本文は削除しません。

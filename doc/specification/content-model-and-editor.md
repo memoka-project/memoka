@@ -179,6 +179,20 @@ Normalの`>>/<<`はこの往復を行わず、`u`で戻す。
 
 Visual Lineは選択した論理行または構造nodeだけを対象にする。
 
+Sectionタイトル上の単独`yy`/`Y`はタイトルだけをSection構造としてコピーし、本文・子Sectionを含めない。
+このタイトルregisterの`p`/`P`は、現在のタイトルまたは本文直下Blockの直後/直前でSectionを分割する。
+コピー時のノート全体での絶対深さをregisterと内部Clipboardの`sourceSectionDepth`に保存する。Focus範囲には依存しない。
+挿入位置を最優先し、既存Sectionの深さ・ID・表示順を維持できる範囲でコピー元の深さへ合わせる。
+挿入直前の深さ+1と最大深さを上限、直後の深さ-1と1を下限としてコピー元の深さをclampする。
+不足する親Sectionは作らない。深さ情報のない従来registerは貼付先Sectionの深さ（Rootでは1）を既定値とする。
+分割位置以降の本文を新しいSectionへ移し、子Sectionの所属は深さと表示順を保つ階層として再構成する。
+タイトル上の`P`では元のタイトルが後続の本文を所有するため、元Sectionの本文を変えず直前にタイトルを挿入する。
+List・Table・Details等の内部ではSection本文直下の容器全体を境界とし、容器内部へSectionを作らない。
+Focused Sectionでも同じ分割を行う。Rootには兄弟を作れないため、分割後の本文を持つ最初の子Sectionを作る。
+Rootの既存子Sectionは新しいSectionへ移さず、その後ろの兄弟として維持する。どの場合も既存Sectionの深さ・ID・表示順を変えない。
+Rootタイトル上の`P`もこの子Section位置を使う。元のtitleは残し、余分な空Sectionは作らない。
+Section全体やVisual Lineで選択した構造のregisterは従来の貼り付け規則を維持する。
+
 ListItemの先頭や唯一のBlockに引用、Alert、Code/Source、Table、Image、Attachment、Horizontal Ruleも置ける。
 schemaを満たすためだけの空Paragraphは挿入しない。ListItem直下の空Paragraphで`/`を入力すると共通Block pickerを開く。
 Block変換と添付挿入は現在のItem内に適用し、未選択のBlockのIDや順序を変更しない。

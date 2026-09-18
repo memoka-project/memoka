@@ -14,6 +14,7 @@ import {
   SECTION_DEPTH_SHIFT_ORIGIN,
   noteSectionCatalog,
   putNoteSectionSibling,
+  putNoteSectionTitle,
   type ProductDocument,
 } from "../core/documents";
 import {
@@ -393,6 +394,13 @@ export class TiptapEditorAdapter {
         return current.kind === "note" ? current.noteId : null;
       },
       registerStore: options.registerStore,
+      getSectionDepth: (sectionId) => {
+        const document = this.handle.current;
+        return document.kind === "note"
+          ? (findSectionWithDepth(document.rootSection, sectionId)?.depth ??
+              null)
+          : null;
+      },
       repeatStore: options.repeatStore,
       visualSelectionStore: options.visualSelectionStore,
       captureVisualPosition: (position) => {
@@ -550,6 +558,29 @@ export class TiptapEditorAdapter {
           request.register,
           occupiedSectionIds,
         );
+        if (prepared && request.bodyBoundary !== undefined) {
+          const changed = putNoteSectionTitle(
+            document,
+            request.targetSectionId,
+            prepared.snapshot,
+            request.bodyBoundary,
+            undefined,
+            request.register.sourceSectionDepth,
+          );
+          if (changed) {
+            const position = sectionHeaderPosition(
+              this.currentEditor.view,
+              prepared.snapshot.sectionId,
+              0,
+            );
+            if (position !== null)
+              this.vimSession.applyNavigationPosition(
+                position,
+                "put:title:changed",
+              );
+          }
+          return changed;
+        }
         return prepared
           ? putNoteSectionSibling(
               document,
