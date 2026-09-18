@@ -28,6 +28,62 @@ function selectedId(tree: HTMLElement): string | undefined {
 }
 
 describe("Workspace Tree", () => {
+  it("shares screen/page navigation and retains its own jump history across remounts", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      for (let i = 0; i < 24; i++)
+        await runtime.createNamespaceGroup(null, `Group ${i}`);
+      const props = treeProps(runtime);
+      const ids = runtime
+        .snapshot()
+        .namespaceEntries.map((entry) => entry.entryId);
+      await runtime.updateSidebar({
+        side: "left",
+        tree: { selectedEntryId: ids[0], collapsedEntryIds: [] },
+      });
+      props.snapshot = runtime.snapshot();
+      let view = render(<WorkspaceTree {...props} />);
+      let tree = screen.getByRole("tree", { name: "ノートツリー" });
+      const key = (key: string, ctrlKey = false) =>
+        fireEvent.keyDown(tree, {
+          key,
+          ctrlKey,
+          code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+        });
+      Object.defineProperty(tree, "clientHeight", {
+        configurable: true,
+        value: 280,
+      });
+      tree.scrollTop = 0;
+      key("L");
+      expect(selectedId(tree)).toBe(`tree-note-${ids[9]}`);
+      key("f", true);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[17]}`);
+      expect(tree.scrollTop).toBe(224);
+      key("z");
+      key("t");
+      expect(tree.scrollTop).toBe(420); // document end clamps placement
+      key("g");
+      key("g");
+      expect(selectedId(tree)).toBe(`tree-note-${ids[0]}`);
+      key("o", true);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[17]}`);
+      expect(document.activeElement).toBe(tree);
+      expect(runtime.jumpListFor("window-1").snapshot().back).toEqual([]);
+      await runtime.flush();
+      view.unmount();
+      view = render(<WorkspaceTree {...treeProps(runtime)} />);
+      tree = screen.getByRole("tree", { name: "ノートツリー" });
+      key("i", true);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[0]}`);
+      key("2");
+      key("Escape");
+      expect(props.onClose).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      runtime.destroy();
+    }
+  });
   it("creates and moves hierarchy by keyboard without an inline rename UI", async () => {
     const view = render(<App />);
     let tree = await screen.findByRole("tree", { name: "ノートツリー" });
@@ -70,7 +126,8 @@ describe("Workspace Tree", () => {
         ?.id,
     ).toBe(childId);
 
-    fireEvent.keyDown(tree, { key: "H", code: "KeyH", shiftKey: true });
+    fireEvent.keyDown(tree, { key: "<", code: "Comma", shiftKey: true });
+    fireEvent.keyDown(tree, { key: "<", code: "Comma", shiftKey: true });
     await waitFor(() =>
       expect(document.getElementById(childId)?.getAttribute("aria-level")).toBe(
         "1",

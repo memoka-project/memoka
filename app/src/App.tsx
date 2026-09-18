@@ -2225,6 +2225,11 @@ export function App({
       ({ windowId }) => windowId === effectiveTargetWindowId,
     ) ?? visibleWindows[0];
   const outlineNoteId = targetWindow?.noteId ?? null;
+  const outlineJumpList = runtime.sidebarJumpListFor(
+    activeTabPage.id,
+    "outline",
+    outlineNoteId,
+  );
   const outlineDocument = outlineNoteId
     ? (runtime.getNoteHandle(outlineNoteId).current as NoteDocument)
     : null;
@@ -2506,6 +2511,10 @@ export function App({
   const handleSidebarApplicationKeyDown = (
     event: KeyboardEvent<HTMLElement>,
   ): boolean => {
+    if (event.defaultPrevented) {
+      sidebarInputState.current = createSidebarInputState();
+      return false;
+    }
     const target = event.target;
     if (
       target instanceof HTMLElement &&
@@ -3580,6 +3589,8 @@ export function App({
           <WorkspaceOutline
             key={`${activeTabPage.id}:${outlineNoteId}`}
             note={outlineDocument}
+            keyConfig={keyConfig}
+            jumpList={outlineJumpList}
             scopeSectionId={outlineScopeSectionId ?? undefined}
             collapsedSectionIds={targetWindow?.collapsedSectionIds ?? []}
             viewState={rightSidebar.outline}

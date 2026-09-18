@@ -47,6 +47,7 @@ import { expandEmptyLineDeletion } from "./line-deletion";
 import {
   alignVimViewport,
   VIM_VIEWPORT_ALIGNMENT_META,
+  VIM_VIEWPORT_SCROLL_META,
   type VimViewportAlignment,
 } from "./viewport-scroll";
 import {
@@ -5932,6 +5933,146 @@ function viewportScrollRoot(view: VimEditorView): HTMLElement | null {
   return view.dom.closest<HTMLElement>(".editor-scroll");
 }
 
+/** Resolve a screen-row motion without replacing Visual anchors or scrolling to selection. */
+export function viewportNavigationTarget(
+  view: VimEditorView,
+  command: string,
+  cursor: number,
+  count: number,
+): number | null {
+  const scroll = viewportScrollRoot(view);
+  const lines = blockSemantics.logicalLines(view);
+  if (!lines.length || !scroll || scroll.clientHeight <= 0) return null;
+  const viewport = scroll.getBoundingClientRect();
+  if (viewport.height <= 0) return null;
+  let source:
+    DOMRect | { left: number; right: number; top: number; bottom: number };
+  try {
+    source = displayedCharacterRect(view, cursor);
+  } catch {
+    return null;
+  }
+  const x = Math.max(
+    viewport.left + 1,
+    Math.min(viewport.right - 1, (source.left + source.right) / 2),
+  );
+  const scrolling = command.startsWith("viewport.scroll-");
+  view.dispatch(
+    view.state.tr
+      .setMeta(VIM_VIEWPORT_SCROLL_META, true)
+      .setMeta("addToHistory", false),
+  );
+  if (scrolling) {
+    const dom = view.domAtPos(cursor).node;
+    const element = dom instanceof HTMLElement ? dom : dom.parentElement;
+    const lineHeight = element
+      ? Number.parseFloat(getComputedStyle(element).lineHeight)
+      : NaN;
+    const distance =
+      (Number.isFinite(lineHeight)
+        ? lineHeight
+        : Math.max(1, source.bottom - source.top)) * normalizedCount(count);
+    scroll.scrollTop = Math.max(
+      0,
+      Math.min(
+        Math.max(0, scroll.scrollHeight - scroll.clientHeight),
+        scroll.scrollTop + (command.endsWith("down") ? distance : -distance),
+      ),
+    );
+    try {
+      const current = displayedCharacterRect(view, cursor);
+      if (current.top >= viewport.top && current.bottom <= viewport.bottom)
+        return cursor;
+    } catch {
+      return null;
+    }
+  }
+  const rows: Array<{ position: number; top: number; bottom: number }> = [];
+  const cache = new Map<number, MeasuredDisplayPosition | null>();
+  for (let y = viewport.top + 1; y < viewport.bottom;) {
+    const hit = view.posAtCoords({ left: x, top: y });
+    if (!hit) {
+      y += 4;
+      continue;
+    }
+    const position = clampCursorInLines(lines, hit.pos);
+    let measured = measuredDisplayPosition(view, position, cache, true);
+    if (!measured) {
+      try {
+        const rect = view.coordsAtPos(position, 1);
+        if (rect.bottom > rect.top)
+          measured = {
+            position,
+            rect: {
+              left: rect.left,
+              top: rect.top,
+              width: Math.max(1, rect.right - rect.left),
+              height: rect.bottom - rect.top,
+            },
+            centerX: (rect.left + rect.right) / 2,
+            centerY: (rect.top + rect.bottom) / 2,
+          };
+      } catch {
+        /* Detached rows have no geometry. */
+      }
+    }
+    if (!measured) {
+      y += 4;
+      continue;
+    }
+    const { rect } = measured;
+    const bottom = rect.top + rect.height;
+    if (
+      rect.top >= viewport.top - 0.5 &&
+      bottom <= viewport.bottom + 0.5 &&
+      !rows.some((row) => Math.abs(row.top - rect.top) < 1)
+    ) {
+      const line = lines[blockSemantics.currentLineIndex(lines, position)];
+      const seedIndex = line?.cursorPositions.indexOf(position) ?? -1;
+      const boundary =
+        line && seedIndex >= 0
+          ? displayedRowBoundary(
+              view,
+              line.cursorPositions,
+              seedIndex,
+              -1,
+              measured,
+              cache,
+              true,
+            )
+          : null;
+      rows.push({
+        position: scrolling
+          ? position
+          : boundary && line
+            ? line.cursorPositions[boundary.sameIndex]
+            : position,
+        top: rect.top,
+        bottom,
+      });
+    }
+    y = Math.max(y + 4, bottom + 1);
+  }
+  if (!rows.length) return null;
+  if (scrolling) {
+    const current = displayedCharacterRect(view, cursor);
+    return current.top < viewport.top
+      ? rows[0].position
+      : rows.at(-1)!.position;
+  }
+  if (command.endsWith("top"))
+    return rows[Math.min(normalizedCount(count) - 1, rows.length - 1)].position;
+  if (command.endsWith("bottom"))
+    return rows[Math.max(0, rows.length - normalizedCount(count))].position;
+  const center = (viewport.top + viewport.bottom) / 2;
+  return rows.reduce((best, row) =>
+    Math.abs((row.top + row.bottom) / 2 - center) <
+    Math.abs((best.top + best.bottom) / 2 - center)
+      ? row
+      : best,
+  ).position;
+}
+
 function positionViewport(
   view: VimEditorView,
   alignment: VimViewportAlignment,
@@ -7970,6 +8111,21 @@ export function runEditorVimCommand(
   countExplicit = false,
   keyConfig: ApplicationKeyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
 ): EditorVimResult {
+  if (
+    command.startsWith("cursor.screen-") ||
+    command.startsWith("viewport.scroll-")
+  ) {
+    const cursor =
+      mode === "visual-char" ? visualCharCursor(view) : selectionCursor(view);
+    const target = viewportNavigationTarget(view, command, cursor, count);
+    if (target === null) return { handled: false, detail: command };
+    const result = moveVimSelectionToViewportPosition(view, mode, target, null);
+    return {
+      ...result,
+      handled: result.handled || command.startsWith("viewport.scroll-"),
+      detail: command,
+    };
+  }
   const handler = editorVimCommandHandlers[command];
   return handler
     ? handler(

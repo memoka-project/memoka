@@ -23,6 +23,7 @@ import {
 } from "../core/tree-keymap";
 import type { CoreRuntime, RuntimeSnapshot } from "../core/runtime";
 import { focusSurfaceFromPointer } from "./focus-surface";
+import { navigateSidebar } from "../core/sidebar-navigation";
 
 const TREE_ROW_HEIGHT_PX = 28;
 const TREE_OVERSCAN_ROWS = 8;
@@ -171,11 +172,6 @@ export function WorkspaceTree({
     persistTree(selected, [...next].sort());
   };
 
-  const selectIndex = (index: number): void => {
-    const bounded = Math.max(0, Math.min(entries.length - 1, index));
-    persistTree(entries[bounded]?.note.noteId ?? null);
-  };
-
   const selectEntry = (entryId: string): void => {
     inputState.current = createTreeInputState();
     if (entryId !== selectedEntryId) persistTree(entryId);
@@ -273,36 +269,46 @@ export function WorkspaceTree({
     countExplicit: boolean,
   ): void => {
     const selected = entries[selectedIndex] ?? null;
-    switch (command) {
-      case "cursor.logical-down":
-        selectIndex(selectedIndex + count);
-        return;
-      case "cursor.logical-up":
-        selectIndex(selectedIndex - count);
-        return;
-      case "cursor.document-start":
-        selectIndex(count - 1);
-        return;
-      case "cursor.document-end":
-        selectIndex(countExplicit ? count - 1 : entries.length - 1);
-        return;
-      case "cursor.page-down":
-      case "cursor.page-up":
-      case "cursor.half-page-down":
-      case "cursor.half-page-up": {
-        const rows = Math.max(
-          1,
-          Math.floor(
-            (root.current?.clientHeight ?? viewportHeight) / TREE_ROW_HEIGHT_PX,
-          ),
-        );
-        const page = command.includes("half")
-          ? Math.max(1, Math.floor(rows / 2))
-          : Math.max(1, rows - 2);
-        const direction = command.endsWith("down") ? 1 : -1;
-        selectIndex(selectedIndex + direction * page * count);
+    if (command !== "cursor.left" && command !== "cursor.right") {
+      const element = root.current;
+      const result = navigateSidebar({
+        command,
+        count,
+        countExplicit,
+        items: entries.map((entry, i) => ({
+          id: entry.note.noteId,
+          parentId: entry.note.parentNoteId,
+          top: i * TREE_ROW_HEIGHT_PX,
+          bottom: (i + 1) * TREE_ROW_HEIGHT_PX,
+        })),
+        selectedId: selectedEntryId,
+        scrollTop: element?.scrollTop ?? scrollTop,
+        height: element?.clientHeight || viewportHeight,
+        scrollHeight: entries.length * TREE_ROW_HEIGHT_PX,
+        history: runtime.sidebarJumpListFor(tab.id, "tree"),
+        resolveHistoryId: (id) => {
+          let entry = snapshot.namespaceEntries.find(
+            (item) => item.entryId === id,
+          );
+          while (entry) {
+            if (entries.some((item) => item.note.noteId === entry!.entryId))
+              return entry.entryId;
+            entry = snapshot.namespaceEntries.find(
+              (item) => item.entryId === entry!.parentNoteId,
+            );
+          }
+          return null;
+        },
+      });
+      if (result) {
+        if (element) element.scrollTop = result.scrollTop;
+        setScrollTop(result.scrollTop);
+        if (result.selectedId !== selectedEntryId)
+          persistTree(result.selectedId);
         return;
       }
+    }
+    switch (command) {
       case "cursor.left":
         if (selected?.hasChildren && selected.expanded) {
           setCollapsed(selected.note.noteId, true);
@@ -388,7 +394,19 @@ export function WorkspaceTree({
         }
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         onKeyDown={(event) => {
-          if (onApplicationKeyDown?.(event)) return;
+          if (
+            event.key === "Escape" &&
+            (inputState.current.pending.length || inputState.current.count)
+          ) {
+            inputState.current = createTreeInputState();
+            event.preventDefault();
+            onApplicationKeyDown?.(event);
+            return;
+          }
+          if (onApplicationKeyDown?.(event)) {
+            inputState.current = createTreeInputState();
+            return;
+          }
           if (busy) return;
           const resolution = advanceTreeInput(
             inputState.current,
@@ -404,6 +422,9 @@ export function WorkspaceTree({
               resolution.countExplicit,
             );
           }
+        }}
+        onBlur={() => {
+          inputState.current = createTreeInputState();
         }}
       >
         <div

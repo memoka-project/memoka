@@ -1834,6 +1834,15 @@ describe("Memoka Application utilities", () => {
     expect(rows[0]?.getAttribute("aria-level")).toBe("1");
     expect(rows[1]?.getAttribute("aria-level")).toBe("2");
     expect(rows[2]?.getAttribute("aria-level")).toBe("3");
+    fireEvent.keyDown(outline, { key: "G" });
+    expect(rows[2]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "o", ctrlKey: true, code: "KeyO" });
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "i", ctrlKey: true, code: "KeyI" });
+    expect(rows[2]?.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(outline, { key: "g" });
+    fireEvent.keyDown(outline, { key: "g" });
+    expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
     expect(rows[0]?.dataset.memokaMarkupHeading).toBe("1");
     expect(rows[1]?.dataset.memokaMarkupHeading).toBe("2");
     expect(rows[2]?.dataset.memokaMarkupHeading).toBe("3");

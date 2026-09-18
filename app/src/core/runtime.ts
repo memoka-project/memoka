@@ -155,7 +155,11 @@ import {
   type EditorNavigationRequest,
   type EditorNavigationResult,
 } from "./editor-navigation";
-import { WindowJumpList } from "./jump-list";
+import {
+  WindowJumpList,
+  createSidebarJumpList,
+  type JumpHistory,
+} from "./jump-list";
 import {
   deriveNoteSearchProjection,
   selectNoteSearchMatch,
@@ -365,6 +369,14 @@ export class CoreRuntime {
     PendingSectionIdentityRepair
   >();
   private readonly jumpLists = new Map<string, WindowJumpList>();
+  private readonly sidebarJumpLists = new Map<
+    string,
+    {
+      tree: JumpHistory<string>;
+      outline: JumpHistory<string>;
+      noteId: string | null;
+    }
+  >();
   private readonly imageReturnOrigins = new Map<string, StableEditorPosition>();
   private readonly pendingNavigations = new Map<
     string,
@@ -2040,6 +2052,27 @@ export class CoreRuntime {
     return jumpList;
   }
 
+  sidebarJumpListFor(
+    tabId: string,
+    kind: "tree" | "outline",
+    noteId: string | null = null,
+  ): JumpHistory<string> {
+    let state = this.sidebarJumpLists.get(tabId);
+    if (!state) {
+      state = {
+        tree: createSidebarJumpList(),
+        outline: createSidebarJumpList(),
+        noteId,
+      };
+      this.sidebarJumpLists.set(tabId, state);
+    }
+    if (kind === "outline" && state.noteId !== noteId) {
+      state.outline.clear();
+      state.noteId = noteId;
+    }
+    return state[kind];
+  }
+
   /**
    * Completes a navigation after the destination Section has been bound to an
    * Editor. A same-Section jump can reuse the current adapter, while a Section
@@ -2859,6 +2892,7 @@ export class CoreRuntime {
       readExplicitClipboard: options.readExplicitClipboard,
       scrollElement: options.scrollElement,
       onNavigate: (request) => this.navigateEditor(windowId, request),
+      onRecordJump: (origin) => this.jumpListFor(windowId).recordOrigin(origin),
       onNavigationDestination: options.onNavigationDestination,
       onOpenImage: options.onOpenImage,
       onWorkspaceSearch: options.onWorkspaceSearch,
@@ -3193,6 +3227,7 @@ export class CoreRuntime {
     for (const handle of this.notes.values()) handle.current.doc.destroy();
     this.workspace.current.doc.destroy();
     this.jumpLists.clear();
+    this.sidebarJumpLists.clear();
     this.imageReturnOrigins.clear();
     this.pendingNavigations.clear();
     this.pendingSectionIdentityRepairs.clear();
@@ -4909,6 +4944,10 @@ export class CoreRuntime {
     previous: ApplicationWindowState,
     next: ApplicationWindowState,
   ): void {
+    for (const tabId of this.sidebarJumpLists.keys()) {
+      if (!next.tabs.some((tab) => tab.id === tabId))
+        this.sidebarJumpLists.delete(tabId);
+    }
     for (const windowId of Object.keys(previous.windows)) {
       if (next.windows[windowId]) continue;
       this.jumpLists.delete(windowId);

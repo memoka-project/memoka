@@ -5,11 +5,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
-import {
-  outlineKeySequence,
-  outlineKeymap,
-  type OutlineCommandId,
-} from "../core/outline-keymap";
+import { outlineKeySequence, outlineKeymap } from "../core/outline-keymap";
 import {
   deriveNoteOutline,
   nearestVisibleOutlineSectionId,
@@ -18,6 +14,13 @@ import {
 import { focusSurfaceFromPointer } from "./focus-surface";
 import type { OutlineSidebarViewState } from "../core/application-state";
 import { markupHeadingLevelForSectionDepth } from "../core/application-theme";
+import { navigateSidebar } from "../core/sidebar-navigation";
+import { advanceTreeInput, createTreeInputState } from "../core/tree-keymap";
+import { createSidebarJumpList, type JumpHistory } from "../core/jump-list";
+import {
+  DEFAULT_APPLICATION_KEY_CONFIG,
+  type ApplicationKeyConfig,
+} from "../core/application-key-config";
 
 export function WorkspaceOutline({
   note,
@@ -31,6 +34,8 @@ export function WorkspaceOutline({
   viewState,
   onViewStateChange,
   focused = true,
+  keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
+  jumpList,
 }: {
   note: Parameters<typeof deriveNoteOutline>[0];
   scopeSectionId?: string;
@@ -43,8 +48,14 @@ export function WorkspaceOutline({
   viewState?: OutlineSidebarViewState;
   onViewStateChange?: (viewState: OutlineSidebarViewState) => void;
   focused?: boolean;
+  keyConfig?: ApplicationKeyConfig;
+  jumpList?: JumpHistory<string>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const inputState = useRef(createTreeInputState());
+  const localHistory = useRef(createSidebarJumpList());
+  const history = jumpList ?? localHistory.current;
+  const explicitScroll = useRef(false);
   const selectedRowElement = useRef<HTMLDivElement>(null);
   const allEntries = deriveNoteOutline(note, scopeSectionId);
   const collapsed = new Set(collapsedSectionIds);
@@ -78,6 +89,15 @@ export function WorkspaceOutline({
   }, [focusRequest]);
 
   useEffect(() => {
+    inputState.current = createTreeInputState();
+    localHistory.current.clear();
+  }, [note.noteId]);
+
+  useEffect(() => {
+    if (explicitScroll.current) {
+      explicitScroll.current = false;
+      return;
+    }
     selectedRowElement.current?.scrollIntoView?.({
       block: "nearest",
       inline: "nearest",
@@ -108,31 +128,89 @@ export function WorkspaceOutline({
     }
   };
 
-  const handleCommand = (command: OutlineCommandId): void => {
-    const index = Math.max(
-      0,
-      entries.findIndex(({ sectionId }) => sectionId === selected?.sectionId),
-    );
-    if (command === "outline.close") onClose();
-    else if (command === "outline.jump") void jump();
-    else if (command === "outline.select_next") {
-      selectSection(
-        entries[Math.min(index + 1, entries.length - 1)]?.sectionId ?? "",
-      );
-    } else {
-      selectSection(entries[Math.max(0, index - 1)]?.sectionId ?? "");
-    }
-  };
-
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (onApplicationKeyDown?.(event)) return;
+    if (
+      event.key === "Escape" &&
+      (inputState.current.pending.length || inputState.current.count)
+    ) {
+      inputState.current = createTreeInputState();
+      event.preventDefault();
+      onApplicationKeyDown?.(event);
+      return;
+    }
+    if (onApplicationKeyDown?.(event)) {
+      inputState.current = createTreeInputState();
+      return;
+    }
     if (busy) return;
+    const resolution = advanceTreeInput(
+      inputState.current,
+      event.nativeEvent,
+      keyConfig,
+      true,
+    );
+    inputState.current = resolution.state;
+    if (resolution.consume) event.preventDefault();
+    if (resolution.kind === "execute") {
+      const element = root.current;
+      if (!element) return;
+      const viewport = element.getBoundingClientRect();
+      const rows = Array.from(
+        element.querySelectorAll<HTMLElement>(".outline-row"),
+      );
+      const items = entries.map((entry, i) => {
+        const rect = rows[i]?.getBoundingClientRect();
+        const top =
+          rect && rect.height > 0
+            ? rect.top - viewport.top + element.scrollTop
+            : i * 28;
+        return {
+          id: entry.sectionId,
+          parentId: entry.parentSectionId,
+          top,
+          bottom: top + (rect?.height || 28),
+        };
+      });
+      const result = navigateSidebar({
+        command: resolution.command,
+        count: resolution.count,
+        countExplicit: resolution.countExplicit,
+        items,
+        selectedId: selected?.sectionId ?? null,
+        scrollTop: element.scrollTop,
+        height: element.clientHeight || 280,
+        scrollHeight: element.scrollHeight || items.at(-1)?.bottom || 0,
+        history,
+        resolveHistoryId: (id) =>
+          allEntries.some((entry) => entry.sectionId === id)
+            ? nearestVisibleOutlineSectionId(allEntries, entries, id) || null
+            : null,
+      });
+      if (result) {
+        element.scrollTop = result.scrollTop;
+        if (result.selectedId !== selected?.sectionId) {
+          explicitScroll.current =
+            resolution.command.startsWith("viewport.") ||
+            resolution.command.includes("page-") ||
+            resolution.command.startsWith("cursor.screen-");
+          selectSection(result.selectedId);
+        }
+      }
+      return;
+    }
+    if (resolution.consume) return;
     const sequence = outlineKeySequence(event);
     if (!sequence) return;
     const command = outlineKeymap.resolve("outline.normal", sequence);
-    if (!command) return;
+    if (
+      !command ||
+      command === "outline.select_next" ||
+      command === "outline.select_previous"
+    )
+      return;
     event.preventDefault();
-    handleCommand(command);
+    if (command === "outline.close") onClose();
+    else void jump();
   };
 
   return (
@@ -155,6 +233,9 @@ export function WorkspaceOutline({
           selected ? `outline-section-${selected.sectionId}` : undefined
         }
         onKeyDown={handleKeyDown}
+        onBlur={() => {
+          inputState.current = createTreeInputState();
+        }}
       >
         {entries.map((entry) => {
           const selectedRow = entry.sectionId === selected?.sectionId;

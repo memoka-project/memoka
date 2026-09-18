@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import { isJumpMotion } from "../core/sidebar-navigation";
 import {
   revealDetailsFoldsAtPosition,
   runDetailsFoldCommand,
@@ -52,6 +53,7 @@ import {
   runEditorReplaceText,
   runEditorTab,
   runEditorVimCommand,
+  viewportNavigationTarget,
   runEditorVimOperator,
   runVisualLineCommand,
   restoreVisualCharSelection,
@@ -260,6 +262,7 @@ export interface VimNativeFilePutRequest {
 }
 
 export interface ProductVimSessionOptions {
+  onRecordJump?: (origin: StableEditorPosition) => void;
   initialMode: VimMode;
   /** The persisted Note ID; a Focused child Section never matches this ID. */
   getRootNoteId?: () => string | null;
@@ -2508,52 +2511,102 @@ export class ProductVimSession {
               manager: undoManager,
             }
           : null;
-      const result: EditorVimResult = focusedSectionDeletion
-        ? {
-            handled: true,
-            detail: "section:delete-focused-selected-lines",
-            register: focusedSectionDeletion.register,
-            nextMode: "normal",
-          }
-        : resolution.operator
-          ? runEditorVimOperator(
+      const jumpMotion =
+        !resolution.operator && isJumpMotion(command, resolution.countExplicit);
+      const jumpCursor =
+        this.mode === "visual-line"
+          ? (this.visualLine?.cursor ?? selectionCursor(view))
+          : this.mode === "visual-block"
+            ? visualBlockCursor(view)
+            : this.mode === "visual-char"
+              ? visualCharCursor(view)
+              : selectionCursor(view);
+      const jumpOrigin = jumpMotion
+        ? this.options.captureVisualPosition?.(jumpCursor)
+        : null;
+      const screenMotion =
+        !resolution.operator &&
+        (command.startsWith("cursor.screen-") ||
+          command.startsWith("viewport.scroll-"));
+      const result: EditorVimResult = screenMotion
+        ? (() => {
+            const target = viewportNavigationTarget(
               view,
-              resolution.operator,
               command,
+              jumpCursor,
               resolution.count,
-            )
-          : command === "replace.character" && resolution.argument
-            ? runEditorReplaceCharacter(
-                view,
-                resolution.argument,
-                resolution.count,
-                this.mode,
-              )
-            : this.mode === "visual-line" && this.visualLine
-              ? runVisualLineCommand(
-                  view,
-                  command,
-                  this.visualLine,
-                  currentRegister,
-                  resolution.count,
-                  resolution.countExplicit,
-                )
-              : this.mode === "visual-block"
-                ? runVisualBlockCommand(
+            );
+            if (target === null) return { handled: false, detail: command };
+            const moved =
+              this.mode === "visual-block"
+                ? moveVisualBlockHeadToPosition(view, target)
+                : moveVimSelectionToViewportPosition(
                     view,
-                    command,
-                    currentRegister,
-                    resolution.count,
-                  )
-                : runEditorVimCommand(
-                    view,
-                    command,
                     this.mode,
+                    target,
+                    this.visualLine,
+                  );
+            return {
+              ...moved,
+              handled: moved.handled || command.startsWith("viewport.scroll-"),
+              detail: command,
+            };
+          })()
+        : focusedSectionDeletion
+          ? {
+              handled: true,
+              detail: "section:delete-focused-selected-lines",
+              register: focusedSectionDeletion.register,
+              nextMode: "normal",
+            }
+          : resolution.operator
+            ? runEditorVimOperator(
+                view,
+                resolution.operator,
+                command,
+                resolution.count,
+              )
+            : command === "replace.character" && resolution.argument
+              ? runEditorReplaceCharacter(
+                  view,
+                  resolution.argument,
+                  resolution.count,
+                  this.mode,
+                )
+              : this.mode === "visual-line" && this.visualLine
+                ? runVisualLineCommand(
+                    view,
+                    command,
+                    this.visualLine,
                     currentRegister,
                     resolution.count,
                     resolution.countExplicit,
-                    this.options.keyConfig,
-                  );
+                  )
+                : this.mode === "visual-block"
+                  ? runVisualBlockCommand(
+                      view,
+                      command,
+                      currentRegister,
+                      resolution.count,
+                    )
+                  : runEditorVimCommand(
+                      view,
+                      command,
+                      this.mode,
+                      currentRegister,
+                      resolution.count,
+                      resolution.countExplicit,
+                      this.options.keyConfig,
+                    );
+      const afterJumpCursor =
+        result.visualLine?.cursor ??
+        (this.mode === "visual-block"
+          ? visualBlockCursor(view)
+          : this.mode === "visual-char"
+            ? visualCharCursor(view)
+            : selectionCursor(view));
+      if (result.handled && jumpOrigin && jumpCursor !== afterJumpCursor)
+        this.options.onRecordJump?.(jumpOrigin);
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
             mode: this.mode,
@@ -4269,6 +4322,7 @@ function eventSequence(event: KeyboardEvent): string {
       "b",
       "c",
       "d",
+      "e",
       "f",
       "h",
       "i",
@@ -4282,6 +4336,7 @@ function eventSequence(event: KeyboardEvent): string {
       "u",
       "v",
       "w",
+      "y",
     ].includes(key)
   ) {
     return `Ctrl+${key}`;

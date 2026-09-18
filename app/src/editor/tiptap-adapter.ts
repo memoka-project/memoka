@@ -72,6 +72,7 @@ import type { VimVisualSelectionStore } from "../vim/visual-history";
 import {
   alignVimViewport,
   VIM_VIEWPORT_ALIGNMENT_META,
+  VIM_VIEWPORT_SCROLL_META,
   type VimViewportAlignment,
 } from "../vim/viewport-scroll";
 import type { VimWindowCommand } from "../vim/input";
@@ -165,6 +166,7 @@ export interface TableActionPickerRequest {
 export type CodeActionPickerRequest = CodeBlockActionRequest;
 
 export interface TiptapEditorAdapterOptions {
+  onRecordJump?: (origin: StableEditorPosition) => void;
   /** Internal unit-test harness; production windows always render a Section. */
   directBodyOnly?: boolean;
   registerStore?: VimRegisterStore;
@@ -461,6 +463,7 @@ export class TiptapEditorAdapter {
       onNavigate: options.onNavigate
         ? (intent) => this.handleNavigationIntent(intent)
         : undefined,
+      onRecordJump: options.onRecordJump,
       onWorkspaceSearch: options.onWorkspaceSearch
         ? (cursor, scope, target) =>
             this.handleWorkspaceSearch(cursor, scope, target)
@@ -1552,6 +1555,8 @@ export class TiptapEditorAdapter {
       },
       onTransaction: ({ editor, transaction, appendedTransactions }) => {
         if (editor === this.currentEditor) {
+          if (transaction.getMeta(VIM_VIEWPORT_SCROLL_META))
+            this.handleViewportScrollIntent();
           const alignment = transaction.getMeta(VIM_VIEWPORT_ALIGNMENT_META);
           if (
             alignment === "center" ||

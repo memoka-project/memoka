@@ -41,21 +41,23 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 
 ## 4. Normal motion
 
-| Key                 | 動作                                            |
-| ------------------- | ----------------------------------------------- |
-| `h/l`               | 前/次の文字またはatomic node                    |
-| `j/k`               | 次/前の論理行。可能な限り目標columnを維持       |
-| `gj/gk`             | 次/前の画面上の表示行                           |
-| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾             |
-| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾             |
-| `0/$`               | 論理行の先頭/末尾                               |
-| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾      |
-| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                 |
-| `{` / `}`           | 前/次の表示中blockの先頭                        |
-| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置 |
-| `Ctrl-f/Ctrl-b`     | 1画面下/上                                      |
-| `Ctrl-d/Ctrl-u`     | 半画面下/上                                     |
-| `[count]n/[count]N` | Note内検索の次/前の一致                         |
+| Key                 | 動作                                                    |
+| ------------------- | ------------------------------------------------------- |
+| `h/l`               | 前/次の文字またはatomic node                            |
+| `j/k`               | 次/前の論理行。可能な限り目標columnを維持               |
+| `gj/gk`             | 次/前の画面上の表示行                                   |
+| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾                     |
+| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾                     |
+| `0/$`               | 論理行の先頭/末尾                                       |
+| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾              |
+| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                         |
+| `{` / `}`           | 前/次の表示中blockの先頭                                |
+| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置         |
+| `Ctrl-f/Ctrl-b`     | 1画面下/上                                              |
+| `Ctrl-d/Ctrl-u`     | 半画面下/上                                             |
+| `H/M/L`             | 画面内の上端/中央/下端の表示行へ移動                    |
+| `Ctrl-e/Ctrl-y`     | 1表示行下/上へscroll。画面外になるcaretだけ表示端へ移す |
+| `[count]n/[count]N` | Note内検索の次/前の一致                                 |
 
 小文字のwordでは、Vim標準と同様にkeyword文字（Unicodeの文字・数字と`_`）の連続、および空白以外の
 非keyword記号の連続をそれぞれ1 wordとする。日本語は設定された分割方式を適用する。
@@ -337,7 +339,7 @@ EditorのVim modeではないが、共通cursor motionとCountを使用する。
 | `c`                        | 選択Entryの子として空titleのNoteを作る                                              |
 | `A`                        | top-levelへ空titleのNoteを作る                                                      |
 | `[count]J/K`               | sibling内で下/上へ並べ替える                                                        |
-| `[count]H/L`               | 表示順を保って1段浅く/深くする                                                      |
+| `[count]<</>>`             | 表示順を保って浅く/深くする。Count回繰り返す                                        |
 | `D`                        | 選択Entryとlive子孫、そこに含むNoteをTrashへ移す                                    |
 | `T`                        | Trash検索を開く                                                                     |
 
@@ -346,7 +348,7 @@ clickは対象Entryを選択し、未完のTree key sequenceやCountを破棄す
 mouse hoverだけでは選択を変更しない。mouseによる並べ替え、作成、inline renameは提供しない。
 Note titleはBuffer内のRoot Headerで編集する。
 `:group`で名前入力画面から選択Entryの子にグループを作り、`:rename-group`で選択グループを改名する。
-Entry未選択時はtop-levelへ作る。作成後は`H/L/J/K`でNoteと同じように配置を変更できる。
+Entry未選択時はtop-levelへ作る。作成後は`<</>>/J/K`でNoteと同じように配置を変更できる。
 グループ自体をBufferへ開かず、空グループのためにNote IDや仮Noteを作らない。
 `a`は選択Entry直後、`c`は最後の子、`A`はtop-level末尾へ作成し、対象Windowで新Noteを開いて
 空Root HeaderのInsert modeへ入る。Tree構造変更はEditor本文のUndo/Redoと`.` repeatには含めない。

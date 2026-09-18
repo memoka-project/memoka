@@ -250,10 +250,19 @@ function idleResolution(
   // the utility's unmodified key. In particular, an obsolete direct Ctrl-l
   // must never reach the focused utility as an unmodified key on WebKitGTK.
   if (key.startsWith("Ctrl+")) {
+    const navigation =
+      keyConfig.sharedNavigationBindings ??
+      DEFAULT_APPLICATION_KEY_CONFIG.sharedNavigationBindings!;
+    const utilityKey =
+      key === "Ctrl+o" ||
+      key === "Ctrl+i" ||
+      Object.values(navigation).some((sequences) =>
+        sequences.some((sequence) => sequence.trim().split(/\s+/u)[0] === key),
+      );
     return {
       state: createSidebarInputState(),
       action: { kind: "unmapped" },
-      consume: true,
+      consume: !utilityKey,
     };
   }
   return {

@@ -122,6 +122,13 @@ application keyをWindowと共通に利用できる。
 
 Sidebarが縦に長い場合はSidebar内部だけをscrollし、Tab line、statusline、Command-lineを画面外へ押し出さない。
 
+Tree/Outlineはcount付き`j/k`・上下矢印、`gg/G`、`Ctrl-f/b/d/u`、`H/M/L`、`Ctrl-e/y`、`zt/zz/zb`を共有する。
+移動対象は折り畳みを除いた表示項目。`H/L`のcountは画面上端/下端からの項目数、`M`はcountを無視して中央とする。
+ページ操作は選択行の画面内位置を保つ。`Ctrl-e/y`は行単位でscrollし、選択が画面外になった場合だけ最寄りの表示項目へ移す。
+`zt/zz/zb`は選択項目の上端/中央/下端配置、count付きでは指定番号の項目へ移動して配置する。
+Outlineの`h/l`・左右矢印は親/最初の表示中の子への移動とし、本文foldは変更しない。
+Sidebarではラベル内の文字移動や編集operatorは扱わない。入力途中のEscapeはcount/prefix取消、通常のEscapeは既存のcloseとする。
+
 ## 7. Tree
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。

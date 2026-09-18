@@ -138,6 +138,11 @@ line_break_segmentation = "fine"
 - `cursor.page-down`
 - `cursor.half-page-up`
 - `cursor.half-page-down`
+- `cursor.screen-top` / `cursor.screen-middle` / `cursor.screen-bottom`
+- `viewport.scroll-up` / `viewport.scroll-down`
+- `viewport.top` / `viewport.center` / `viewport.bottom`
+
+本文・Tree・Outlineで共通の移動設定を使う。既定の`H/M/L`は画面内移動、Treeの階層移動は`<</>>`とする。
 
 ### 4.2 Tree
 

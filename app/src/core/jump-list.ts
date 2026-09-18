@@ -38,47 +38,42 @@ function sameLocation(
 }
 
 /** Browser-history-style, Window-local Jump List. */
-export class WindowJumpList {
-  private readonly backEntries: StableEditorPosition[] = [];
-  private readonly forwardEntries: StableEditorPosition[] = [];
+export class JumpHistory<T> {
+  private readonly backEntries: T[] = [];
+  private readonly forwardEntries: T[] = [];
 
   constructor(
-    readonly windowId: string,
+    private readonly clone: (entry: T) => T,
+    private readonly equal: (left: T | undefined, right: T) => boolean,
+    private readonly validate: (entry: T) => void,
     private readonly maximumEntries = 100,
   ) {
-    if (!windowId) throw new Error("Jump List requires a windowId");
     if (!Number.isSafeInteger(maximumEntries) || maximumEntries < 1) {
       throw new Error("Jump List maximum must be a positive safe integer");
     }
   }
 
-  recordOrigin(origin: StableEditorPosition): void {
-    validateEntry(origin);
-    if (!sameLocation(this.backEntries.at(-1), origin)) {
-      this.backEntries.push(cloneEntry(origin));
+  recordOrigin(origin: T): void {
+    this.validate(origin);
+    if (!this.equal(this.backEntries.at(-1), origin)) {
+      this.backEntries.push(this.clone(origin));
       this.trim(this.backEntries);
     }
     this.forwardEntries.length = 0;
   }
 
-  back(
-    current: StableEditorPosition,
-    canVisit: JumpEntryAvailability = () => true,
-  ): StableEditorPosition | null {
+  back(current: T, canVisit: (entry: T) => boolean = () => true): T | null {
     return this.move(current, this.backEntries, this.forwardEntries, canVisit);
   }
 
-  forward(
-    current: StableEditorPosition,
-    canVisit: JumpEntryAvailability = () => true,
-  ): StableEditorPosition | null {
+  forward(current: T, canVisit: (entry: T) => boolean = () => true): T | null {
     return this.move(current, this.forwardEntries, this.backEntries, canVisit);
   }
 
-  snapshot(): WindowJumpListSnapshot {
+  snapshot(): { back: readonly T[]; forward: readonly T[] } {
     return {
-      back: this.backEntries.map(cloneEntry),
-      forward: this.forwardEntries.map(cloneEntry),
+      back: this.backEntries.map(this.clone),
+      forward: this.forwardEntries.map(this.clone),
     };
   }
 
@@ -87,44 +82,65 @@ export class WindowJumpList {
     this.forwardEntries.length = 0;
   }
 
-  restore(snapshot: WindowJumpListSnapshot): void {
+  restore(snapshot: { back: readonly T[]; forward: readonly T[] }): void {
     for (const entry of [...snapshot.back, ...snapshot.forward]) {
-      validateEntry(entry);
+      this.validate(entry);
     }
     this.backEntries.splice(
       0,
       this.backEntries.length,
-      ...snapshot.back.map(cloneEntry),
+      ...snapshot.back.map(this.clone),
     );
     this.forwardEntries.splice(
       0,
       this.forwardEntries.length,
-      ...snapshot.forward.map(cloneEntry),
+      ...snapshot.forward.map(this.clone),
     );
     this.trim(this.backEntries);
     this.trim(this.forwardEntries);
   }
 
   private move(
-    current: StableEditorPosition,
-    source: StableEditorPosition[],
-    destination: StableEditorPosition[],
-    canVisit: JumpEntryAvailability,
-  ): StableEditorPosition | null {
-    validateEntry(current);
+    current: T,
+    source: T[],
+    destination: T[],
+    canVisit: (entry: T) => boolean,
+  ): T | null {
+    this.validate(current);
     let target = source.pop();
     while (target && !canVisit(target)) target = source.pop();
     if (!target) return null;
-    if (!sameLocation(destination.at(-1), current)) {
-      destination.push(cloneEntry(current));
+    if (!this.equal(destination.at(-1), current)) {
+      destination.push(this.clone(current));
       this.trim(destination);
     }
-    return cloneEntry(target);
+    return this.clone(target);
   }
 
-  private trim(entries: StableEditorPosition[]): void {
+  private trim(entries: T[]): void {
     if (entries.length > this.maximumEntries) {
       entries.splice(0, entries.length - this.maximumEntries);
     }
   }
+}
+
+/** Browser-history-style, Window-local Jump List. */
+export class WindowJumpList extends JumpHistory<StableEditorPosition> {
+  constructor(
+    readonly windowId: string,
+    maximumEntries = 100,
+  ) {
+    super(cloneEntry, sameLocation, validateEntry, maximumEntries);
+    if (!windowId) throw new Error("Jump List requires a windowId");
+  }
+}
+
+export function createSidebarJumpList(): JumpHistory<string> {
+  return new JumpHistory<string>(
+    (entry) => entry,
+    (left, right) => left === right,
+    (entry) => {
+      if (!entry) throw new Error("Sidebar Jump List requires an item ID");
+    },
+  );
 }

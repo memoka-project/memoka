@@ -143,6 +143,51 @@ function press(editor: Editor, key: string, options: KeyboardEventInit = {}) {
 }
 
 describe("Memoka Section Link and Jump List navigation", () => {
+  it("records gg/G and restores positions with Ctrl-o/i without recording ordinary motion", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = editorRoot();
+    const { editor, adapter } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    try {
+      editor.commands.setContent(
+        noteContent(runtime.noteId, "Title", [
+          paragraph("first"),
+          paragraph("middle"),
+          paragraph("last"),
+        ]),
+      );
+      editor.commands.focus();
+      press(editor, "Escape");
+      editor.commands.setTextSelection(1);
+      await settle(runtime);
+      const history = runtime.jumpListFor("window-1");
+      history.clear();
+      const before = editor.state.doc;
+      press(editor, "G");
+      const end = editor.state.selection.head;
+      expect(history.snapshot().back).toHaveLength(1);
+      press(editor, "G");
+      expect(history.snapshot().back).toHaveLength(1);
+      press(editor, "g");
+      press(editor, "g");
+      expect(editor.state.selection.head).toBe(1);
+      expect(history.snapshot().back).toHaveLength(2);
+      press(editor, "o", { ctrlKey: true });
+      await settle(runtime);
+      expect(editor.state.selection.head).toBe(end);
+      press(editor, "i", { ctrlKey: true });
+      await settle(runtime);
+      expect(editor.state.selection.head).toBe(1);
+      press(editor, "j");
+      expect(history.snapshot().back).toHaveLength(2);
+      expect(editor.state.doc).toBe(before);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
   it("falls back to the Section-local logical line when a legacy block ID is ambiguous", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
