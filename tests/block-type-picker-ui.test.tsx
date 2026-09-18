@@ -188,8 +188,21 @@ describe("Memoka Block Type picker", () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(alertTypeInput));
     expect(screen.getAllByRole("option")).toHaveLength(15);
+    const notePreview = document.querySelector<HTMLElement>(
+      'blockquote[data-memoka-alert-type="note"]',
+    );
+    const noteIcon = notePreview?.style.getPropertyValue("--memoka-alert-icon");
+    expect(noteIcon).toContain("data:image/svg+xml");
     fireEvent.change(alertTypeInput, { target: { value: "注意 warning" } });
     expect(screen.getAllByRole("option")).toHaveLength(1);
+    const warningPreview = document.querySelector<HTMLElement>(
+      'blockquote[data-memoka-alert-type="warning"]',
+    );
+    const warningIcon = warningPreview?.style.getPropertyValue(
+      "--memoka-alert-icon",
+    );
+    expect(warningIcon).toContain("data:image/svg+xml");
+    expect(warningIcon).not.toBe(noteIcon);
     fireEvent.keyDown(alertTypeInput, { key: "Enter" });
 
     expect(onClose).toHaveBeenCalledTimes(1);

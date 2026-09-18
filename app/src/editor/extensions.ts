@@ -14,6 +14,7 @@ import {
   type NodeViewRendererProps,
 } from "@tiptap/core";
 import Code from "@tiptap/extension-code";
+import { alertIconMask } from "./alert-icons";
 import Collaboration from "@tiptap/extension-collaboration";
 import { replicatedNoteExtension } from "./replicated-note-extension";
 import { isReplicatedProjection } from "../core/replicated-editor-binding";
@@ -161,6 +162,7 @@ const MarkdownAlertAttributes = Extension.create({
               return {
                 "data-memoka-alert-type": type,
                 "data-memoka-alert-label": markdownAlertLabel(attributes),
+                style: `--memoka-alert-icon: ${alertIconMask(type)}`,
                 ...(title ? { "data-memoka-alert-title": title } : {}),
                 ...(fold ? { "data-memoka-alert-fold": fold } : {}),
               };

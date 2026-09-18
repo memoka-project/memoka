@@ -1455,6 +1455,7 @@ textarea {
   --memoka-alert-color: var(--memoka-color-info);
   --memoka-alert-surface: var(--memoka-color-surface-raised);
 
+  position: relative;
   margin: 0 0 var(--memoka-note-block-gap) var(--memoka-block-grid-offset);
   padding: 0.65em 0.8em 0.7em 14px;
   border-left: 3px solid var(--memoka-alert-color);
@@ -1466,10 +1467,26 @@ textarea {
 :is(.memoka-editor, .workspace-search-preview-document)
   blockquote[data-memoka-alert-type]::before {
   display: block;
+  padding-left: 1.4em;
   margin-bottom: 0.35em;
   color: var(--memoka-alert-color);
-  content: "◆ " attr(data-memoka-alert-label);
+  content: attr(data-memoka-alert-label);
   font-weight: 700;
+}
+
+:is(.memoka-editor, .workspace-search-preview-document)
+  blockquote[data-memoka-alert-type]::after {
+  position: absolute;
+  top: calc(0.65em + 0.5lh);
+  left: 14px;
+  width: 1em;
+  height: 1em;
+  transform: translateY(-50%);
+  background-color: var(--memoka-alert-color);
+  -webkit-mask: var(--memoka-alert-icon) center / contain no-repeat;
+  mask: var(--memoka-alert-icon) center / contain no-repeat;
+  content: "";
+  pointer-events: none;
 }
 
 :is(.memoka-editor, .workspace-search-preview-document)

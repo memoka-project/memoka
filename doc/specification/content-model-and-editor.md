@@ -233,6 +233,10 @@ CommonMark/GFMに加えて、次をimport、Clipboard、Native Markdown readで�
 CalloutのMarkdown fold指定は保持するが、Editorでは本文を常に展開して編集可能にする。
 これはWindow-localなSection foldとは別の属性である。
 
+Editor・検索preview・Alert type選択画面のpreviewのAlert見出しは、既存のラベル・種類別の色を維持し、共通のLucide装飾アイコンを表示する。
+Note=NotebookPen、Abstract=ScrollText、Info=Info、Todo=CircleCheck、Tip=Lightbulb、Important=CircleAlert、Success=Check、Question=CircleHelp、Warning=TriangleAlert、Caution=Flame、Failure=X、Danger=Zap、Bug=Bug、Example=List、Quote=Quoteとする。
+別名はcanonical typeと同じアイコン、未知のcustom typeはNoteアイコンにする。アイコンは本文・Markdown・保存データに含めず、文字サイズ・行高に追従して見出しの先頭行中央に配置する。
+
 Horizontal Ruleは選択中も線を残し、block状のselection表示を重ねる。
 
 ## 10. Slash block picker
