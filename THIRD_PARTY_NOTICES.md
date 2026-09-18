@@ -322,6 +322,7 @@ THE SOFTWARE.
 - linkifyjs@4.3.3 — MIT — https://linkify.js.org
 - longest-streak@3.1.0 — MIT — https://github.com/wooorm/longest-streak#readme
 - lowlight@3.3.0 — MIT — https://github.com/wooorm/lowlight#readme
+- lucide@1.47.0 — ISC — https://lucide.dev
 - markdown-table@3.0.4 — MIT — https://github.com/wooorm/markdown-table#readme
 - mdast-util-find-and-replace@3.0.2 — MIT — https://github.com/syntax-tree/mdast-util-find-and-replace#readme
 - mdast-util-from-markdown@2.0.3 — MIT — https://github.com/syntax-tree/mdast-util-from-markdown#readme
