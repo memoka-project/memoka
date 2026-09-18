@@ -66,6 +66,20 @@ export function applyReplicatedSectionSnapshot(
       )
         throw new Error("Protected identities require explicit recovery");
     }
+    // Moving or rewriting an entity does not cancel its remove-wins deletion.
+    // Explicit recovery acknowledges only observed deletes of requested IDs,
+    // never the unrelated entities covered by the same deletion operation.
+    const restorations = new Map<string, string[]>();
+    if (options.recoverProtectedIdentities) {
+      for (const entry of current.recovery) {
+        if (!nextIds.has(entry.entityId)) continue;
+        for (const deletionId of entry.deletionIds) {
+          const ids = restorations.get(deletionId) ?? [];
+          ids.push(entry.entityId);
+          restorations.set(deletionId, ids);
+        }
+      }
+    }
     const positions = new Map<string, string>();
     for (const [parent, children] of desired.children) {
       const groups = new Map<string, string[]>();
@@ -101,6 +115,9 @@ export function applyReplicatedSectionSnapshot(
     // not leave a partial Yjs transaction behind if a move is rejected.
     const apply = (target: ReplicatedNote) =>
       target.transact(() => {
+        for (const [deletionId, ids] of restorations) {
+          target.restore(deletionId, ids);
+        }
         for (const source of ordered) {
           const id = identity(source);
           if (
@@ -175,9 +192,11 @@ export function applyReplicatedSectionSnapshot(
             );
         }
         const visible = target.project().visible;
-        const removed = [...current.visible].filter(
-          (id) => !nextIds.has(id) && visible.has(id),
-        );
+        // Restoring a parent may also expose previously hidden children that
+        // are not part of the requested managed snapshot.
+        const removed = [
+          ...(options.recoverProtectedIdentities ? visible : current.visible),
+        ].filter((id) => !nextIds.has(id) && visible.has(id));
         if (removed.length) target.deleteMany(removed);
       }, origin);
     const staged = ReplicatedNote.load(

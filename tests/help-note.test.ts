@@ -33,6 +33,70 @@ function deterministicIds() {
 const clock = () => "2027-01-05T00:00:00.000Z";
 
 describe("managed Memoka help note", () => {
+  it.each(["section", "body"] as const)(
+    "restores a deleted Help %s in replicated storage, including after restart",
+    async (removed) => {
+      class ReplicatedPersistence extends MemoryPersistencePort {
+        readonly replicaId = createUuidV7();
+        override async manifest() {
+          return {
+            ...(await super.manifest()),
+            databaseSchemaVersion: 7,
+            replicaId: this.replicaId,
+          };
+        }
+      }
+      const persistence = new ReplicatedPersistence();
+      let runtime = await CoreRuntime.open(persistence, { clock });
+      try {
+        const help = await runtime.openHelpNote("window-1");
+        const note = runtime.getNoteHandle(help.noteId).current as NoteDocument;
+        expect(note.replicated).toBeDefined();
+        const complete = sectionSnapshot(note.rootSection);
+        const about = complete.children.find(
+          (section) => section.title === "このHelpについて",
+        )!;
+        expect(about.body).toHaveLength(2);
+        replaceNoteSectionTree(
+          note,
+          {
+            ...complete,
+            children: complete.children.flatMap((section) =>
+              section.sectionId !== about.sectionId
+                ? [section]
+                : removed === "section"
+                  ? []
+                  : [{ ...section, body: [] }],
+            ),
+          },
+          clock(),
+          "test-help-edit",
+        );
+        const incomplete = sectionSnapshot(note.rootSection).children.find(
+          (section) => section.sectionId === about.sectionId,
+        );
+        if (removed === "section") expect(incomplete).toBeUndefined();
+        else expect(incomplete?.body).toEqual([]);
+        await runtime.flush();
+        await runtime.openHelpNote("window-1");
+        expect(sectionSnapshot(note.rootSection)).toEqual(complete);
+        const restorations = note.replicated!.restorations.size;
+        expect(restorations).toBeGreaterThan(0);
+        await runtime.openHelpNote("window-1");
+        expect(sectionSnapshot(note.rootSection)).toEqual(complete);
+        expect(note.replicated!.restorations.size).toBe(restorations);
+        await runtime.flush();
+        runtime.destroy();
+        runtime = await CoreRuntime.open(persistence, { clock });
+        await runtime.openHelpNote("window-1");
+        const restored = runtime.getNoteHandle(help.noteId)
+          .current as NoteDocument;
+        expect(sectionSnapshot(restored.rootSection)).toEqual(complete);
+      } finally {
+        runtime.destroy();
+      }
+    },
+  );
   it("generates a received Help identity from bundled Markdown and keeps manual edits out of shared metadata", async () => {
     class ReplicatedPersistence extends MemoryPersistencePort {
       replicaId = createUuidV7();
