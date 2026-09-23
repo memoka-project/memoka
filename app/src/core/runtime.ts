@@ -167,7 +167,10 @@ import {
   type NoteSearchNavigationStatus,
   type NoteSearchOrigin,
   type NoteSearchProjection,
+  type NoteSearchLocation,
 } from "./note-search";
+import { deriveNoteFuzzySearchProjection } from "./note-fuzzy-search";
+import { getJapaneseSegmentationConfiguration } from "./japanese-segmentation";
 import {
   deriveInternalLinkCandidates,
   deriveTrashSearchCandidates,
@@ -311,6 +314,10 @@ interface PendingWindowViewUpdate {
 
 interface WindowNoteSearchState {
   readonly query: string;
+  readonly direction: NoteSearchDirection;
+  readonly mode: "literal" | "fuzzy-migemo";
+  readonly migemoPattern: string;
+  readonly wordSegmentation: string;
   readonly noteId: string;
   readonly scopeSectionId: string;
   readonly document: Y.Doc;
@@ -2176,26 +2183,84 @@ export class CoreRuntime {
     origin: NoteSearchOrigin,
     query: string,
     count = 1,
+    direction: NoteSearchDirection = "forward",
   ): Promise<NoteSearchNavigationResult> {
-    if (!query)
-      return this.repeatNoteSearch(windowId, origin, "forward", count);
+    if (!query) {
+      const previous = this.noteSearchStates.get(windowId);
+      if (!previous?.query)
+        return this.repeatNoteSearch(windowId, origin, "forward", count);
+      return this.navigateNoteSearch(
+        windowId,
+        origin,
+        previous.query,
+        direction,
+        count,
+        true,
+        previous.mode,
+        previous.migemoPattern,
+      );
+    }
     return this.navigateNoteSearch(
       windowId,
       origin,
       query,
-      "forward",
+      direction,
       count,
       true,
+      "literal",
+      "",
     );
   }
 
+  searchFuzzyNote(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    query: string,
+    migemoPattern: string,
+    direction: NoteSearchDirection = "forward",
+  ): Promise<NoteSearchNavigationResult> {
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      direction,
+      1,
+      true,
+      "fuzzy-migemo",
+      migemoPattern,
+    );
+  }
+
+  selectFuzzyNoteSearch(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    query: string,
+    migemoPattern: string,
+    selectedLocation: NoteSearchLocation,
+    direction: NoteSearchDirection = "forward",
+  ): Promise<NoteSearchNavigationResult> {
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      direction,
+      1,
+      true,
+      "fuzzy-migemo",
+      migemoPattern,
+      selectedLocation,
+    );
+  }
+
+  /** `forward` means n (same as the last / or ?); `backward` means N. */
   repeatNoteSearch(
     windowId: string,
     origin: NoteSearchOrigin,
     direction: NoteSearchDirection,
     count = 1,
   ): Promise<NoteSearchNavigationResult> {
-    const query = this.noteSearchStates.get(windowId)?.query;
+    const previous = this.noteSearchStates.get(windowId);
+    const query = previous?.query;
     if (!query) {
       return Promise.resolve({
         handled: false,
@@ -2206,13 +2271,21 @@ export class CoreRuntime {
         wrapped: false,
       });
     }
+    const searchDirection =
+      direction === "forward"
+        ? previous.direction
+        : previous.direction === "forward"
+          ? "backward"
+          : "forward";
     return this.navigateNoteSearch(
       windowId,
       origin,
       query,
-      direction,
+      searchDirection,
       count,
       false,
+      previous?.mode ?? "literal",
+      previous?.migemoPattern ?? "",
     );
   }
 
@@ -2223,6 +2296,9 @@ export class CoreRuntime {
     direction: NoteSearchDirection,
     count: number,
     replacePattern: boolean,
+    mode: "literal" | "fuzzy-migemo",
+    migemoPattern: string,
+    selectedLocation?: NoteSearchLocation,
   ): Promise<NoteSearchNavigationResult> {
     const windowState = this.windows.get(windowId);
     if (!windowState) throw new Error(`Unknown window: ${windowId}`);
@@ -2249,41 +2325,69 @@ export class CoreRuntime {
       };
     }
     const documentVersion = this.noteSearchDocumentVersion(note.doc);
+    const wordSegmentation =
+      getJapaneseSegmentationConfiguration().wordSegmentation;
     const scopeSectionId = windowState.focusedSectionId ?? note.noteId;
     const cached = this.noteSearchStates.get(windowId);
     const projection =
       !replacePattern &&
       cached?.noteId === note.noteId &&
+      cached.mode === mode &&
+      cached.migemoPattern === migemoPattern &&
+      cached.wordSegmentation === wordSegmentation &&
       cached.scopeSectionId === scopeSectionId &&
       cached.query === query &&
       cached.document === note.doc &&
       cached.documentVersion === documentVersion
         ? cached.projection
-        : deriveNoteSearchProjection(note, query, scopeSectionId);
-    this.noteSearchStates.set(windowId, {
+        : mode === "fuzzy-migemo"
+          ? deriveNoteFuzzySearchProjection(
+              note,
+              query,
+              migemoPattern,
+              scopeSectionId,
+            )
+          : deriveNoteSearchProjection(note, query, scopeSectionId);
+    const nextSearchState: WindowNoteSearchState = {
       query,
+      direction: replacePattern ? direction : (cached?.direction ?? direction),
+      mode,
+      migemoPattern,
+      wordSegmentation,
       noteId: note.noteId,
       scopeSectionId,
       document: note.doc,
       documentVersion,
       projection,
-    });
-    const selected = selectNoteSearchMatch(
-      projection,
-      origin.location,
-      direction,
-      count,
-    );
+    };
+    const selected = selectedLocation
+      ? (() => {
+          const index = projection.matches.findIndex(
+            (match) =>
+              match.sectionId === selectedLocation.sectionId &&
+              match.blockId === selectedLocation.blockId &&
+              match.offset === selectedLocation.offset,
+          );
+          return index < 0
+            ? null
+            : { match: projection.matches[index]!, index, wrapped: false };
+        })()
+      : selectNoteSearchMatch(projection, origin.location, direction, count);
     if (!selected) {
+      if (!selectedLocation)
+        this.noteSearchStates.set(windowId, nextSearchState);
       return {
         handled: false,
-        detail: `search:note:not-found:${query}`,
+        detail: selectedLocation
+          ? "search:note:stale-target"
+          : `search:note:not-found:${query}`,
         query,
         matchCount: 0,
         matchIndex: null,
         wrapped: false,
       };
     }
+    this.noteSearchStates.set(windowId, nextSearchState);
     const destination: EditorNavigationDestination = {
       kind: "note-search-match",
       noteId: note.noteId,
@@ -2295,6 +2399,7 @@ export class CoreRuntime {
     const detail = `search:note:${direction}:${selected.index + 1}/${projection.matches.length}${selected.wrapped ? ":wrapped" : ""}`;
     const result = {
       query,
+      direction: nextSearchState.direction,
       matchCount: projection.matches.length,
       matchIndex: selected.index,
       wrapped: selected.wrapped,

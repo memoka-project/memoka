@@ -46,6 +46,7 @@ export interface NoteSearchProjection {
 
 export interface NoteSearchNavigationStatus {
   readonly query: string | null;
+  readonly direction?: NoteSearchDirection;
   readonly matchCount: number;
   readonly matchIndex: number | null;
   readonly wrapped: boolean;
@@ -391,7 +392,7 @@ export function noteSearchStatusMessage(
   ) {
     return null;
   }
-  return `/${status.query} · ${status.matchIndex + 1}/${status.matchCount}${status.wrapped ? " · wrapped" : ""}`;
+  return `${status.direction === "backward" ? "?" : "/"}${status.query} · ${status.matchIndex + 1}/${status.matchCount}${status.wrapped ? " · wrapped" : ""}`;
 }
 
 function positiveModulo(value: number, divisor: number): number {

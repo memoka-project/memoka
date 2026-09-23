@@ -149,6 +149,10 @@ import {
   type CodeBlockActionSelection,
   type CodeBlockLanguageResult,
 } from "../vim/code-block-actions";
+import { visibleNoteFuzzyWords } from "../vim/note-fuzzy-candidates";
+import { VimFindHintOverlay } from "../vim/find-hint-overlay";
+import type { NoteFuzzyWord } from "../core/note-fuzzy-search";
+import type { NoteSearchLocation } from "../core/note-search";
 
 export interface BlockTypePickerRequest {
   readonly blockId: string;
@@ -215,7 +219,10 @@ export interface TiptapEditorAdapterOptions {
     scope: WorkspaceSearchScope,
     target: WorkspaceSearchTarget,
   ) => void;
-  onNoteSearch?: (origin: NoteSearchOrigin) => void;
+  onNoteSearch?: (
+    origin: NoteSearchOrigin,
+    direction: NoteSearchDirection,
+  ) => void;
   onBlockTypePicker?: (request: BlockTypePickerRequest) => void;
   onInlineFormatPicker?: (request: InlineFormatPickerRequest) => void;
   onSymbolPicker?: (request: SymbolPickerRequest) => void;
@@ -344,6 +351,9 @@ export class TiptapEditorAdapter {
     TiptapEditorAdapterOptions["readExplicitClipboard"]
   >;
   private readonly internalLinkCompletion: InternalLinkCompletion | null;
+  private noteSearchHintOverlay: VimFindHintOverlay | null = null;
+  private noteSearchHintView: Editor["view"] | null = null;
+  private readonly noteSearchViewListeners = new Set<() => void>();
   private navigationRevealFrame: number | null = null;
   private sectionDepthScrollFrame: number | null = null;
   private sectionDepthScrollLock: SectionScrollLock | null = null;
@@ -483,7 +493,7 @@ export class TiptapEditorAdapter {
             this.handleWorkspaceSearch(cursor, scope, target)
         : undefined,
       onNoteSearch: options.onNoteSearch
-        ? (cursor) => this.handleNoteSearch(cursor)
+        ? (cursor, direction) => this.handleNoteSearch(cursor, direction)
         : undefined,
       onNoteSearchRepeat: options.onNoteSearchRepeat
         ? (cursor, direction, count) =>
@@ -1349,6 +1359,47 @@ export class TiptapEditorAdapter {
     return this.noteSearchOrigin(this.currentEditor.state.selection.head);
   }
 
+  noteSearchVisibleWords(): readonly NoteFuzzyWord[] {
+    return this.currentEditor.isDestroyed
+      ? []
+      : visibleNoteFuzzyWords(this.currentEditor.view);
+  }
+
+  noteSearchLocation(position: number): NoteSearchLocation | null {
+    return this.currentEditor.isDestroyed
+      ? null
+      : noteSearchLocationAtPosition(this.currentEditor.state, position);
+  }
+
+  noteSearchViewport(): HTMLElement {
+    return this.scrollElement;
+  }
+
+  onNoteSearchViewChange(listener: () => void): () => void {
+    this.noteSearchViewListeners.add(listener);
+    return () => this.noteSearchViewListeners.delete(listener);
+  }
+
+  showNoteSearchHints(
+    hints: readonly { label: string; position: number }[],
+    typed = "",
+  ): void {
+    if (this.currentEditor.isDestroyed) return;
+    const view = this.currentEditor.view;
+    if (this.noteSearchHintView !== view) {
+      this.noteSearchHintOverlay?.destroy();
+      this.noteSearchHintOverlay = new VimFindHintOverlay(view);
+      this.noteSearchHintView = view;
+    }
+    this.noteSearchHintOverlay?.update(view, hints, typed);
+  }
+
+  clearNoteSearchHints(): void {
+    this.noteSearchHintOverlay?.destroy();
+    this.noteSearchHintOverlay = null;
+    this.noteSearchHintView = null;
+  }
+
   acceptInternalLinkCandidate(noteId: string): boolean {
     const completion = this.internalLinkCompletion;
     if (!completion || this.currentEditor.isDestroyed) return false;
@@ -1473,6 +1524,7 @@ export class TiptapEditorAdapter {
     this.unsubscribe();
     this.observeDocument(null);
     this.internalLinkCompletion?.destroy();
+    this.clearNoteSearchHints();
     this.vimSession.preserveVisualSelection();
     this.currentEditor.destroy();
     this.vimSession.destroy();
@@ -1634,6 +1686,10 @@ export class TiptapEditorAdapter {
       },
       onTransaction: ({ editor, transaction, appendedTransactions }) => {
         if (editor === this.currentEditor) {
+          if (transaction.docChanged && this.noteSearchViewListeners.size > 0)
+            queueMicrotask(() =>
+              this.noteSearchViewListeners.forEach((listener) => listener()),
+            );
           if (transaction.getMeta(VIM_VIEWPORT_SCROLL_META))
             this.handleViewportScrollIntent();
           const alignment = transaction.getMeta(VIM_VIEWPORT_ALIGNMENT_META);
@@ -1842,9 +1898,11 @@ export class TiptapEditorAdapter {
     this.sectionParagraphReverse = null;
     this.cancelSelectionUpdate();
     this.internalLinkCompletion?.close();
+    this.clearNoteSearchHints();
     this.currentEditor.destroy();
     this.element.replaceChildren();
     this.currentEditor = this.createEditor();
+    this.noteSearchViewListeners.forEach((listener) => listener());
     this.scheduleSelectionUpdate(this.currentEditor, false);
     if (hadFocus) this.currentEditor.commands.focus();
   }
@@ -2340,9 +2398,12 @@ export class TiptapEditorAdapter {
     };
   }
 
-  private handleNoteSearch(cursor: number): void {
+  private handleNoteSearch(
+    cursor: number,
+    direction: NoteSearchDirection,
+  ): void {
     const origin = this.noteSearchOrigin(cursor);
-    if (origin) this.options.onNoteSearch?.(origin);
+    if (origin) this.options.onNoteSearch?.(origin, direction);
   }
 
   private async handleNoteSearchRepeat(
@@ -2379,6 +2440,7 @@ export class TiptapEditorAdapter {
   }
 
   private readonly handleScroll = (): void => {
+    this.noteSearchHintOverlay?.refreshLayout();
     if (this.sectionDepthScrollLock) {
       this.holdSectionDepthScrollPosition();
       this.internalLinkCompletion?.refreshLayout();

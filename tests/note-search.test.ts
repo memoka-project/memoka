@@ -11,6 +11,7 @@ import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 import {
   deriveNoteSearchProjection,
+  noteSearchStatusMessage,
   selectNoteSearchMatch,
 } from "../app/src/core/note-search";
 import {
@@ -38,7 +39,8 @@ function press(editor: Editor, key: string): void {
   editor.view.dom.dispatchEvent(
     new KeyboardEvent("keydown", {
       key,
-      code: key === "/" ? "Slash" : key,
+      code: key === "/" || key === "?" ? "Slash" : key,
+      shiftKey: key === "?",
       bubbles: true,
       cancelable: true,
     }),
@@ -46,6 +48,251 @@ function press(editor: Editor, key: string): void {
 }
 
 describe("Memoka current NoteDoc search", () => {
+  it("uses the last / or ? direction for n and reverses it for N", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const note = runtime.getNoteHandle(runtime.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const blockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([blockToYXml(paragraph(blockId, "needle x needle"))]),
+      );
+    });
+    const root = editorRoot();
+    const { adapter } = runtime.editorForTesting("window-1", root);
+    const captured = adapter.captureNoteSearchOrigin();
+    expect(captured).not.toBeNull();
+    const originAt = (offset: number) => ({
+      ...captured!,
+      location: { sectionId: note.noteId, blockId, offset },
+    });
+    const backward = await runtime.searchNote(
+      "window-1",
+      originAt(9),
+      "needle",
+      1,
+      "backward",
+    );
+    expect(backward).toMatchObject({
+      direction: "backward",
+      matchIndex: 0,
+      destination: { offset: 0 },
+    });
+    expect(noteSearchStatusMessage(backward)).toBe("?needle · 1/2");
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(0), "forward"),
+    ).toMatchObject({
+      direction: "backward",
+      matchIndex: 1,
+      destination: { offset: 9 },
+      wrapped: true,
+    });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(9), "backward"),
+    ).toMatchObject({
+      direction: "backward",
+      matchIndex: 0,
+      destination: { offset: 0 },
+      wrapped: true,
+    });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(0), "forward"),
+    ).toMatchObject({ destination: { offset: 9 } });
+    expect(
+      await runtime.searchNote("window-1", originAt(0), "needle"),
+    ).toMatchObject({ direction: "forward", destination: { offset: 9 } });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(9), "forward"),
+    ).toMatchObject({ direction: "forward", destination: { offset: 0 } });
+    expect(
+      await runtime.searchNote("window-1", originAt(9), "", 1, "backward"),
+    ).toMatchObject({
+      query: "needle",
+      direction: "backward",
+      destination: { offset: 0 },
+    });
+    adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+
+  it("collects visible Editor words and paints removable search hints", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = editorRoot();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>abc 検索</p>");
+    const words = adapter.noteSearchVisibleWords();
+    expect(words.map(({ text }) => text)).toContain("abc");
+    expect(words.map(({ text }) => text)).toContain("検索");
+    const target = words.find(({ text }) => text === "検索")?.positions[0];
+    expect(target).toBeDefined();
+    adapter.showNoteSearchHints([{ label: "A", position: target! }]);
+    expect(root.querySelector('[data-vim-find-hint="A"]')).not.toBeNull();
+    adapter.clearNoteSearchHints();
+    expect(root.querySelector('[data-vim-find-hint="A"]')).toBeNull();
+    adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+
+  it("keeps visible fuzzy words separate across Table Cells", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = editorRoot();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(
+      "<table><tbody><tr><td><p>abc</p></td><td><p>検索</p></td></tr></tbody></table>",
+    );
+    expect(adapter.noteSearchVisibleWords().map(({ text }) => text)).toEqual(
+      expect.arrayContaining(["abc", "検索"]),
+    );
+    adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+
+  it("repeats a selected fuzzy Migemo word by the lowercase query in document order", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      initialTitle: "root",
+    });
+    const note = runtime.getNoteHandle(runtime.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const blockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml(paragraph(blockId, "検索 kensaku 検索")),
+        ]),
+      );
+    });
+    const root = editorRoot();
+    const { adapter } = runtime.editorForTesting("window-1", root);
+    const origin = adapter.captureNoteSearchOrigin();
+    expect(origin).not.toBeNull();
+    const entered = await runtime.searchFuzzyNote(
+      "window-1",
+      {
+        ...origin!,
+        location: { sectionId: note.noteId, blockId, offset: 0 },
+      },
+      "kensaku",
+      "検索",
+    );
+    expect(entered).toMatchObject({
+      handled: true,
+      query: "kensaku",
+      matchCount: 3,
+      matchIndex: 1,
+      destination: { blockId, offset: 3 },
+    });
+    await expect(
+      runtime.repeatNoteSearch(
+        "window-1",
+        {
+          ...origin!,
+          location: { sectionId: note.noteId, blockId, offset: 3 },
+        },
+        "forward",
+      ),
+    ).resolves.toMatchObject({
+      matchIndex: 2,
+      destination: { blockId, offset: 11 },
+    });
+    const backward = await runtime.searchFuzzyNote(
+      "window-1",
+      {
+        ...origin!,
+        location: { sectionId: note.noteId, blockId, offset: 11 },
+      },
+      "kensaku",
+      "検索",
+      "backward",
+    );
+    expect(backward).toMatchObject({
+      direction: "backward",
+      matchIndex: 1,
+      destination: { blockId, offset: 3 },
+    });
+    await expect(
+      runtime.repeatNoteSearch(
+        "window-1",
+        {
+          ...origin!,
+          location: { sectionId: note.noteId, blockId, offset: 3 },
+        },
+        "forward",
+      ),
+    ).resolves.toMatchObject({
+      direction: "backward",
+      matchIndex: 0,
+      destination: { blockId, offset: 0 },
+    });
+    const selected = await runtime.selectFuzzyNoteSearch(
+      "window-1",
+      origin!,
+      "kensaku",
+      "検索",
+      { sectionId: note.noteId, blockId, offset: 0 },
+    );
+    expect(selected).toMatchObject({
+      handled: true,
+      query: "kensaku",
+      matchCount: 3,
+      matchIndex: 0,
+      destination: { blockId, offset: 0 },
+    });
+    const next = await runtime.repeatNoteSearch(
+      "window-1",
+      {
+        ...origin!,
+        location: { sectionId: note.noteId, blockId, offset: 0 },
+      },
+      "forward",
+    );
+    expect(next).toMatchObject({
+      handled: true,
+      query: "kensaku",
+      matchIndex: 1,
+      destination: { blockId, offset: 3 },
+    });
+    expect(
+      await runtime.repeatNoteSearch(
+        "window-1",
+        {
+          ...origin!,
+          location: { sectionId: note.noteId, blockId, offset: 3 },
+        },
+        "backward",
+      ),
+    ).toMatchObject({ matchIndex: 0, destination: { blockId, offset: 0 } });
+    await expect(
+      runtime.selectFuzzyNoteSearch("window-1", origin!, "different", "別語", {
+        sectionId: note.noteId,
+        blockId,
+        offset: 999,
+      }),
+    ).resolves.toMatchObject({
+      handled: false,
+      detail: "search:note:stale-target",
+    });
+    await expect(
+      runtime.repeatNoteSearch(
+        "window-1",
+        {
+          ...origin!,
+          location: { sectionId: note.noteId, blockId, offset: 0 },
+        },
+        "forward",
+      ),
+    ).resolves.toMatchObject({ query: "kensaku", matchIndex: 1 });
+    adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+
   it("indexes Section Headers and nested direct bodies in document order", () => {
     const noteId = createUuidV7();
     const rootBlockId = createUuidV7();

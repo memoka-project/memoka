@@ -6,6 +6,128 @@ locked JavaScript and Rust dependency graphs by
 machine-readable inventory. Each project remains subject to its listed license; consult the
 linked upstream project and the dependency source package for the complete license text.
 
+## Bundled Migemo dictionary
+
+The offline Migemo dictionary is copied unchanged from
+[jsmigemo 0.5.2](https://github.com/oguna/jsmigemo). The library is MIT-licensed;
+the dictionary derives from [yet-another-migemo-dict](https://github.com/oguna/yet-another-migemo-dict),
+which uses BSD-3-Clause-licensed Mozc and UniDic data.
+Its SHA-256 is `402baabd752bfd04e48609fa02bcdd99e2853ba9a1d2959c5deb6f35c30e371e`.
+
+```text
+MIT License
+
+Copyright (c) 2026 oguna
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+```text
+yet-another-migemo-dict
+Source: https://github.com/oguna/yet-another-migemo-dict
+
+Copyright (c) 2021, oguna
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+* Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+* Neither the name of the <organization> nor the names of its contributors
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Mozc source data
+Source: https://github.com/google/mozc
+
+Copyright 2010-2018, Google Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above
+    copyright notice, this list of conditions and the following disclaimer
+    in the documentation and/or other materials provided with the
+    distribution.
+  * Neither the name of Google Inc. nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+UniDic source data
+Source: https://clrd.ninjal.ac.jp/unidic/
+
+Copyright (c) 2011-2021, The UniDic Consortium
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+ * Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+ * Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the
+   distribution.
+
+ * Neither the name of the UniDic Consortium nor the names of its
+   contributors may be used to endorse or promote products derived
+   from this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ## Bundled emoji and icon catalogs
 
 Unicode Emoji 17.0 data is derived from https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt.
@@ -297,6 +419,7 @@ THE SOFTWARE.
 - extend@3.0.2 — MIT — https://github.com/justmoon/node-extend#readme
 - fast-equals@5.4.1 — MIT — https://github.com/planttheidea/fast-equals#readme
 - fractional-indexing@3.4.0 — CC0-1.0 — https://github.com/rocicorp/fractional-indexing#readme
+- fzf@0.5.2 — BSD-3-Clause — https://fzf.netlify.app
 - gaxios@6.7.1 — Apache-2.0 — https://github.com/googleapis/gaxios#readme
 - gcp-metadata@6.1.1 — Apache-2.0 — https://github.com/googleapis/gcp-metadata#readme
 - get-caller-file@2.0.5 — ISC — https://github.com/stefanpenner/get-caller-file#readme
@@ -314,6 +437,7 @@ THE SOFTWARE.
 - isomorphic.js@0.2.5 — MIT — https://github.com/dmonad/isomorphic.js#readme
 - jittered-fractional-indexing@1.0.1 — CC0-1.0 — https://github.com/nathanhleung/jittered-fractional-indexing#readme
 - js-yaml@4.3.0 — MIT — https://github.com/nodeca/js-yaml#readme
+- jsmigemo@0.5.2 — MIT — https://github.com/oguna/jsmigemo#readme
 - json-bigint@1.0.0 — MIT — https://github.com/sidorares/json-bigint#readme
 - jwa@2.0.1 — MIT — https://github.com/brianloveswords/node-jwa#readme
 - jws@4.0.1 — MIT — https://github.com/brianloveswords/node-jws#readme

@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { allocateVimFindHintLabels } from "../app/src/vim/find-character";
+import {
+  allocateVimFindHintLabels,
+  allocateVimSearchHintLabels,
+} from "../app/src/vim/find-character";
 
 describe("Normal find hint labels", () => {
+  it("allocates uppercase-only prefix-free labels for search", () => {
+    const labels = allocateVimSearchHintLabels(100);
+    expect(labels).toHaveLength(100);
+    expect(labels.every((label) => /^[A-Z]{1,3}$/u.test(label))).toBe(true);
+    expect(
+      labels.every((label) =>
+        labels.every((other) => label === other || !other.startsWith(label)),
+      ),
+    ).toBe(true);
+  });
   it("uses lowercase labels and reserves literal ASCII targets", () => {
     const labels = allocateVimFindHintLabels(40, new Set(["a", "s", "A"]));
     expect(labels).toHaveLength(40);

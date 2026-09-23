@@ -134,6 +134,7 @@ export function vimFindHintMotionTarget(
 function allocateHintLabels(
   count: number,
   initials: readonly string[],
+  suffixAlphabet: string = LOWERCASE_HINT_ALPHABET,
 ): string[] {
   if (count <= 0 || initials.length === 0) return [];
   const singles = [...initials];
@@ -142,7 +143,7 @@ function allocateHintLabels(
   const initialOrder = initials.join("");
   const compare = (left: string, right: string): number => {
     for (let index = 0; index < left.length; index += 1) {
-      const order = index === 0 ? initialOrder : LOWERCASE_HINT_ALPHABET;
+      const order = index === 0 ? initialOrder : suffixAlphabet;
       const difference =
         order.indexOf(left[index]!) - order.indexOf(right[index]!);
       if (difference !== 0) return difference;
@@ -154,18 +155,18 @@ function allocateHintLabels(
   while (slots < count) {
     if (singles.length > 0) {
       const prefix = singles.pop()!;
-      doubles.push(...HINT_SUFFIX_ALPHABET.map((letter) => prefix + letter));
+      doubles.push(...[...suffixAlphabet].map((letter) => prefix + letter));
     } else if (doubles.length > 0) {
       if (!sortedDoubles) {
         doubles.sort(compare);
         sortedDoubles = true;
       }
       const prefix = doubles.pop()!;
-      triples.push(...HINT_SUFFIX_ALPHABET.map((letter) => prefix + letter));
+      triples.push(...[...suffixAlphabet].map((letter) => prefix + letter));
     } else {
       break;
     }
-    slots += HINT_SUFFIX_ALPHABET.length - 1;
+    slots += suffixAlphabet.length - 1;
   }
   return [...singles, ...doubles, ...triples]
     .sort((left, right) => {
@@ -194,6 +195,15 @@ export function allocateVimFindHintLabels(
     ...allocateHintLabels(lowercaseCount, lowercase),
     ...allocateHintLabels(count - lowercaseCount, uppercase),
   ];
+}
+
+/** Uppercase-only labels keep lowercase search input unambiguous. */
+export function allocateVimSearchHintLabels(count: number): string[] {
+  return allocateHintLabels(
+    Math.min(count, UPPERCASE_HINT_ALPHABET.length ** 3),
+    [...UPPERCASE_HINT_ALPHABET],
+    UPPERCASE_HINT_ALPHABET,
+  );
 }
 
 export function vimFindHints(

@@ -312,7 +312,7 @@ export interface ProductVimSessionOptions {
     scope: WorkspaceSearchScope,
     target: WorkspaceSearchTarget,
   ) => void;
-  onNoteSearch?: (cursor: number) => void;
+  onNoteSearch?: (cursor: number, direction: NoteSearchDirection) => void;
   onNoteSearchRepeat?: (
     cursor: number,
     direction: NoteSearchDirection,
@@ -2557,9 +2557,12 @@ export class ProductVimSession {
       return true;
     }
 
-    if (command === "note.search") {
+    if (command === "note.search" || command === "note.search_backward") {
       event.preventDefault();
-      this.options.onNoteSearch?.(selectionCursor(view));
+      this.options.onNoteSearch?.(
+        selectionCursor(view),
+        command === "note.search" ? "forward" : "backward",
+      );
       this.action = this.options.onNoteSearch
         ? "search:note:open"
         : "search:note:unavailable";

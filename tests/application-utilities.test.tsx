@@ -1690,30 +1690,36 @@ describe("Memoka Application utilities", () => {
     ).toBe("colorscheme ");
   });
 
-  it("opens the shared application input surface with / and restores Editor focus on cancel", async () => {
-    const view = render(<App />);
-    await screen.findByRole("tree", { name: "ノートツリー" });
-    const editor = await waitFor(() => {
-      const mounted = view.container.querySelector<HTMLElement>(
-        ".editor-window .memoka-editor",
+  it.each([
+    ["/", false],
+    ["?", true],
+  ])(
+    "opens the shared application input surface with %s and restores Editor focus on cancel",
+    async (key, shiftKey) => {
+      const view = render(<App />);
+      await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      enterNormal(editor);
+      fireEvent.keyDown(editor, { key, code: "Slash", shiftKey });
+      const input = await screen.findByRole("textbox", {
+        name: "ノート内を検索",
+      });
+      expect(document.activeElement).toBe(input);
+      expect(input.closest(".application-commandline")?.textContent).toContain(
+        key,
       );
-      if (!mounted) throw new Error("Editor did not mount");
-      return mounted;
-    });
-    enterNormal(editor);
-    fireEvent.keyDown(editor, { key: "/", code: "Slash" });
-    const input = await screen.findByRole("textbox", {
-      name: "ノート内を検索",
-    });
-    expect(document.activeElement).toBe(input);
-    expect(input.closest(".application-commandline")?.textContent).toContain(
-      "/",
-    );
 
-    fireEvent.keyDown(input, { key: "Escape", code: "Escape" });
-    await waitFor(() => expect(document.activeElement).toBe(editor));
-    view.unmount();
-  });
+      fireEvent.keyDown(input, { key: "Escape", code: "Escape" });
+      await waitFor(() => expect(document.activeElement).toBe(editor));
+      view.unmount();
+    },
+  );
 
   it("does not submit note search with an IME composition Enter", async () => {
     const restoreFocus = vi.fn();
@@ -1724,6 +1730,7 @@ describe("Memoka Application utilities", () => {
     const origin = createNoteSearchOrigin();
     const session: ApplicationNoteSearchSession = {
       windowId: "window-1",
+      direction: "forward",
       origin,
       applyDestination,
       requestInputMethodDeactivation,
@@ -1760,7 +1767,13 @@ describe("Memoka Application utilities", () => {
 
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(searchNote).toHaveBeenCalledTimes(1));
-    expect(searchNote).toHaveBeenCalledWith("window-1", origin, "日本語");
+    expect(searchNote).toHaveBeenCalledWith(
+      "window-1",
+      origin,
+      "日本語",
+      1,
+      "forward",
+    );
     expect(applyDestination).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledWith("/日本語 · 1/1");
@@ -1779,6 +1792,7 @@ describe("Memoka Application utilities", () => {
         runtime={{ searchNote: vi.fn() } as unknown as CoreRuntime}
         session={{
           windowId: "window-1",
+          direction: "forward",
           origin: createNoteSearchOrigin(),
           applyDestination: vi.fn(() => null),
           requestInputMethodDeactivation,

@@ -20,12 +20,26 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 
 ## 2. Note内検索
 
-`/`または`<Leader>s`はactive WindowのNote内検索を開く。
+`/`または`<Leader>s`は前方、`?`は後方のactive WindowのNote内検索を開く。入力欄のpromptは開いた方向を表示する。
 
 - 既定scopeは現在のFocused Section subtreeである。
 - Root focusではNoteDoc全体を対象にする。
-- queryは表示textに対する正規化済みliteral部分一致である。
-- `n/N`は次/前の一致へloopし、Countを受ける。
+- 1〜128文字で先頭がASCII小文字、残りがASCII小文字か`-`のqueryを`Enter`で確定すると、Focused Section subtree全体のword候補を
+  Migemo＋fzf型あいまい検索し、現在位置から指定方向の次の一致へ移動する。画面内にhintがなくても検索できる。
+  以後の`n/N`はこのqueryの候補を最後の検索方向に従って巡回する。
+- 先頭がASCII小文字で残りがASCII小文字か`-`のqueryを入力中は、active Editorの表示範囲にあるword候補へfzf型のあいまい照合と
+  Migemoのローマ字・日本語照合を行う。同じwordの重複を除き、最良の一致箇所へ大文字1〜3文字のprefix-freeな
+  hintを表示する。hintは文書へ書き込まず、画面外や折り畳み中の候補には表示しない。
+- hint labelを確定すると一致箇所へ移動する。Window-localな検索状態には小文字queryと最後の`/`または`?`の方向を保存し、
+  `n/N`は同じFocused Section subtreeのword候補をその方向に従って巡回する。折り畳み本文も巡回対象である。
+- hint入力中の`Enter`は入力欄の全文を従来の正規化済みliteral部分一致へ渡す。先頭の大文字、
+  hint prefixに該当しない大文字、または上記のquery形式から外れる入力も従来検索入力へ移り、
+  `Enter`まで編集を続けられる。Migemo辞書を読み込めない場合も従来検索を使う。
+  一致しなくてもエラーを通知して検索入力を閉じ、Normalへ戻る。
+  IME確定中の`Enter`では検索を実行しない。
+- Migemo辞書はアプリに同梱してオフラインで読む。読み込み失敗時はhintを停止してエラーを示し、
+  従来検索と前回の有効な検索状態を保持する。
+- `n/N`は直前の`/`または`?`と同方向/逆方向の一致へloopし、Countを受ける。`N`で基準方向は変えない。
 - Command-lineへ総一致数と現在位置を表示し、`n/N`ごとに即時更新する。
 - 一致移動は事前計算した位置indexを利用し、毎回Note全体のDOM走査を行わない。
 - fold中のcontentも検索し、移動時は一致を含む必要最小限の祖先Sectionを展開する。

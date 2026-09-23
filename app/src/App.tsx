@@ -2485,6 +2485,7 @@ export function App({
     }
     openNoteSearch({
       windowId: effectiveTargetWindowId,
+      direction: "forward",
       origin,
       applyDestination: (destination, detail) =>
         applyNavigationDestinationToWindow(
@@ -2494,6 +2495,12 @@ export function App({
         ),
       requestInputMethodDeactivation: () =>
         adapter.requestInputMethodDeactivation(),
+      visibleWords: () => adapter.noteSearchVisibleWords(),
+      locationAt: (position) => adapter.noteSearchLocation(position),
+      showHints: (hints, typed) => adapter.showNoteSearchHints(hints, typed),
+      clearHints: () => adapter.clearNoteSearchHints(),
+      viewport: () => adapter.noteSearchViewport(),
+      onViewChange: (listener) => adapter.onNoteSearchViewChange(listener),
       restoreFocus,
       focusResult: () => requestEditorFocus(effectiveTargetWindowId),
     });
@@ -4800,9 +4807,10 @@ function EditorWindow({
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
       onMessage,
-      onNoteSearch: (origin) =>
+      onNoteSearch: (origin, direction) =>
         onNoteSearch({
           windowId,
+          direction,
           origin,
           applyDestination: (destination, detail) =>
             adapterRef.current?.applyNavigationDestination(
@@ -4811,6 +4819,16 @@ function EditorWindow({
             ) ?? null,
           requestInputMethodDeactivation: () =>
             adapterRef.current?.requestInputMethodDeactivation(),
+          visibleWords: () =>
+            adapterRef.current?.noteSearchVisibleWords() ?? [],
+          locationAt: (position) =>
+            adapterRef.current?.noteSearchLocation(position) ?? null,
+          showHints: (hints, typed) =>
+            adapterRef.current?.showNoteSearchHints(hints, typed),
+          clearHints: () => adapterRef.current?.clearNoteSearchHints(),
+          viewport: () => adapterRef.current?.noteSearchViewport() ?? null,
+          onViewChange: (listener) =>
+            adapterRef.current?.onNoteSearchViewChange(listener) ?? (() => {}),
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
       onCommandLine: () =>

@@ -1,6 +1,11 @@
 import type { EditorView } from "@tiptap/pm/view";
 import { measureVimCharacterRangeCell } from "./caret-geometry";
-import type { VimFindHint } from "./find-character";
+
+type PositionHint = {
+  readonly label: string;
+  readonly position: number;
+  readonly character?: string;
+};
 
 /** Temporary, Window-local labels painted outside the ProseMirror document. */
 export class VimFindHintOverlay {
@@ -8,7 +13,7 @@ export class VimFindHintOverlay {
   private readonly host: HTMLElement;
   private readonly root: HTMLDivElement;
   private readonly scrollRoot: HTMLElement | null;
-  private hints: readonly VimFindHint[] = [];
+  private hints: readonly PositionHint[] = [];
   private typed = "";
   private frame: number | null = null;
 
@@ -23,7 +28,11 @@ export class VimFindHintOverlay {
     this.scrollRoot = view.dom.closest<HTMLElement>(".editor-scroll");
   }
 
-  update(view: EditorView, hints: readonly VimFindHint[], typed: string): void {
+  update(
+    view: EditorView,
+    hints: readonly PositionHint[],
+    typed: string,
+  ): void {
     this.view = view;
     this.hints = hints;
     this.typed = typed;

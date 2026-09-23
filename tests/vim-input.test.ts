@@ -560,6 +560,7 @@ describe("Memoka Vim input grammar", () => {
 
   it("maps current-note search and counted repeats from Normal mode", () => {
     expect(resolveKey("normal", "/", noteContext)).toBe("note.search");
+    expect(resolveKey("normal", "?", noteContext)).toBe("note.search_backward");
     expect(resolveKey("normal", "n", noteContext)).toBe("note.search_next");
     expect(resolveKey("normal", "N", noteContext)).toBe("note.search_previous");
     expect(resolveKey("insert", "/", noteContext)).toBeNull();
