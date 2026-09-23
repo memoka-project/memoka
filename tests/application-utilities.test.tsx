@@ -742,7 +742,7 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(firstEditor));
 
     enterNormal(firstEditor);
-    fireEvent.keyDown(firstEditor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(firstEditor, { key: " ", code: "Space" });
     fireEvent.keyDown(firstEditor, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
@@ -1243,7 +1243,7 @@ describe("Memoka Application utilities", () => {
       return mounted;
     });
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "c", code: "KeyC" });
     const picker = await screen.findByRole("combobox", {
       name: "Memoka Commandを検索",
@@ -1284,7 +1284,7 @@ describe("Memoka Application utilities", () => {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "f", code: "KeyF" });
     const search = await screen.findByRole("combobox", {
       name: "ワークスペースを検索",
@@ -1295,7 +1295,7 @@ describe("Memoka Application utilities", () => {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "s", code: "KeyS" });
     const noteSearch = await screen.findByRole("textbox", {
       name: "ノート内を検索",
@@ -1306,7 +1306,7 @@ describe("Memoka Application utilities", () => {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "C", code: "KeyC", shiftKey: true });
     await screen.findByText(/Config \/ Settings · 予約済み/);
     expect(document.activeElement).toBe(tree);
@@ -1348,7 +1348,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(editor, { key: "h", code: "KeyH" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "t", code: "KeyT" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
@@ -1356,9 +1356,9 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     await screen.findByText("utility.outline · closed");
     expect(
@@ -1367,12 +1367,12 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "b", code: "KeyB" });
     const bufferSearch = await screen.findByRole("combobox", {
       name: "ワークスペースを検索",
@@ -1390,7 +1390,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(tree, { key: "l", code: "KeyL" });
     await waitFor(() => expect(document.activeElement).toBe(editor));
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     const outline = await screen.findByRole("tree", {
       name: "Sectionアウトライン",
@@ -1413,7 +1413,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(editor, { key: "l", code: "KeyL" });
     await waitFor(() => expect(document.activeElement).toBe(outline));
 
-    fireEvent.keyDown(outline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(outline, { key: " ", code: "Space" });
     fireEvent.keyDown(outline, { key: "o", code: "KeyO" });
     await waitFor(() =>
       expect(
@@ -1423,20 +1423,20 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     fireEvent.keyDown(editor, { key: "Escape", code: "Escape" });
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     const reopenedOutline = await screen.findByRole("tree", {
       name: "Sectionアウトライン",
     });
     await waitFor(() => expect(document.activeElement).toBe(reopenedOutline));
 
-    fireEvent.keyDown(reopenedOutline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(reopenedOutline, { key: " ", code: "Space" });
     fireEvent.keyDown(reopenedOutline, { key: "t", code: "KeyT" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
     );
     await waitFor(() => expect(document.activeElement).toBe(reopenedOutline));
-    fireEvent.keyDown(reopenedOutline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(reopenedOutline, { key: " ", code: "Space" });
     fireEvent.keyDown(reopenedOutline, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
@@ -1501,14 +1501,14 @@ describe("Memoka Application utilities", () => {
       }
       return empty;
     });
-    fireEvent.keyDown(newTabWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(newTabWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(newTabWindow, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     tree.focus();
     fireEvent.keyDown(tree, { key: "g" });
     fireEvent.keyDown(tree, { key: "g" });
     await waitFor(() => expect(selectedTreeItem()?.id).toBe(initialNoteId));
-    fireEvent.keyDown(tree, { key: "," });
+    fireEvent.keyDown(tree, { key: " " });
     fireEvent.keyDown(tree, { key: "t" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
@@ -1527,7 +1527,7 @@ describe("Memoka Application utilities", () => {
     );
     if (!emptyWindow) throw new Error("Second TabPage is not empty");
     emptyWindow.focus();
-    fireEvent.keyDown(emptyWindow, { key: "," });
+    fireEvent.keyDown(emptyWindow, { key: " " });
     fireEvent.keyDown(emptyWindow, { key: "t" });
     await screen.findByRole("tree", { name: "ノートツリー" });
     expect(selectedTreeItem()?.id).toBe(initialNoteId);
@@ -1562,7 +1562,7 @@ describe("Memoka Application utilities", () => {
       emptyWindow.querySelector(".empty-editor-window__body")?.textContent,
     ).toBe("");
 
-    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "c", code: "KeyC" });
     const emptyCommandPicker = await screen.findByRole("combobox", {
       name: "Memoka Commandを検索",
@@ -1570,7 +1570,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(emptyCommandPicker, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
-    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "s", code: "KeyS" });
     await screen.findByText(/Note Search · この画面では利用できません/);
     expect(document.activeElement).toBe(emptyWindow);

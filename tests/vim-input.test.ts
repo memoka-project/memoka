@@ -13,6 +13,65 @@ const noteContext = {
 };
 
 describe("Memoka Vim input grammar", () => {
+  it("parses Normal f/F with literal characters, counts, hint prefixes, and cancellation", () => {
+    const started = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      "f",
+      noteContext,
+    );
+    expect(started).toMatchObject({
+      state: { pending: { kind: "find-character", key: "f", typed: "" } },
+      action: { kind: "pending", detail: "pending:find-character" },
+    });
+    expect(
+      advanceVimInput(started.state, "normal", ";", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-forward", argument: ";" });
+    const hintContext = { ...noteContext, findHints: ["as", "ad", "w"] };
+    const prefix = advanceVimInput(started.state, "normal", "a", hintContext);
+    expect(prefix).toMatchObject({
+      state: { pending: { kind: "find-character", typed: "a" } },
+      action: { kind: "pending", detail: "pending:find-character" },
+    });
+    expect(
+      advanceVimInput(prefix.state, "normal", "d", hintContext),
+    ).toMatchObject({
+      resolvedCommand: "cursor.find-forward",
+      argument: "ad",
+      findHint: true,
+    });
+    const three = { ...noteContext, findHints: ["ask"] };
+    const first = advanceVimInput(started.state, "normal", "a", three);
+    const second = advanceVimInput(first.state, "normal", "s", three);
+    expect(second.action).toMatchObject({ kind: "pending" });
+    expect(advanceVimInput(second.state, "normal", "k", three)).toMatchObject({
+      argument: "ask",
+      findHint: true,
+    });
+    expect(
+      advanceVimInput(prefix.state, "normal", "Escape", hintContext),
+    ).toMatchObject({
+      state: createVimInputState(),
+      action: { kind: "unmapped" },
+    });
+    const counted = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      "2",
+      noteContext,
+    );
+    const backward = advanceVimInput(counted.state, "normal", "F", noteContext);
+    expect(
+      advanceVimInput(backward.state, "normal", "a", noteContext),
+    ).toMatchObject({
+      resolvedCommand: "cursor.find-backward",
+      argument: "a",
+      count: 2,
+    });
+    expect(
+      advanceVimInput(createVimInputState(), "normal", ";", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-repeat" });
+  });
   it("opens the symbol picker only in Insert, preserving Normal scrolling and IME", () => {
     expect(
       advanceVimInput(createVimInputState(), "insert", "Ctrl+e", noteContext)
@@ -613,11 +672,11 @@ describe("Memoka Vim input grammar", () => {
     ).toBe("insert.delete-word-backward");
   });
 
-  it("maps the default comma Leader to application commands", () => {
+  it("maps the default Space Leader to application commands", () => {
     const leader = advanceVimInput(
       createVimInputState(),
       "normal",
-      ",",
+      " ",
       noteContext,
     );
     expect(leader).toMatchObject({
@@ -627,20 +686,20 @@ describe("Memoka Vim input grammar", () => {
     expect(
       advanceVimInput(leader.state, "normal", "f", noteContext),
     ).toMatchObject({
-      sequence: ",f",
+      sequence: " f",
       resolvedCommand: "workspace.search_title",
       action: { kind: "execute", command: "workspace.search_title" },
     });
     const bodyLeader = advanceVimInput(
       createVimInputState(),
       "normal",
-      ",",
+      " ",
       noteContext,
     );
     expect(
       advanceVimInput(bodyLeader.state, "normal", "g", noteContext),
     ).toMatchObject({
-      sequence: ",g",
+      sequence: " g",
       resolvedCommand: "workspace.search_body",
       action: { kind: "execute", command: "workspace.search_body" },
     });
@@ -655,13 +714,13 @@ describe("Memoka Vim input grammar", () => {
       const utilityLeader = advanceVimInput(
         createVimInputState(),
         "normal",
-        ",",
+        " ",
         noteContext,
       );
       expect(
         advanceVimInput(utilityLeader.state, "normal", key, noteContext),
       ).toMatchObject({
-        sequence: `,${key}`,
+        sequence: ` ${key}`,
         resolvedCommand: command,
         action: { kind: "execute", command },
       });
@@ -673,7 +732,7 @@ describe("Memoka Vim input grammar", () => {
     const visualLeader = advanceVimInput(
       createVimInputState(),
       "visual-char",
-      ",",
+      " ",
       noteContext,
     );
     expect(
@@ -687,7 +746,7 @@ describe("Memoka Vim input grammar", () => {
     const unknownLeader = advanceVimInput(
       createVimInputState(),
       "normal",
-      ",",
+      " ",
       noteContext,
     );
     expect(
@@ -699,23 +758,23 @@ describe("Memoka Vim input grammar", () => {
       },
     });
     expect(
-      advanceVimInput(createVimInputState(), "normal", " ", noteContext),
-    ).toMatchObject({ action: { kind: "unmapped" } });
+      advanceVimInput(createVimInputState(), "normal", ",", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-reverse" });
   });
 
   it("resolves the semantic Leader through an injected key setting", () => {
-    const config = { leaderKey: ";" } as const;
+    const config = { leaderKey: "q" } as const;
     const leader = advanceVimInput(
       createVimInputState(),
       "normal",
-      ";",
+      "q",
       noteContext,
       config,
     );
     expect(
       advanceVimInput(leader.state, "normal", "o", noteContext, config),
     ).toMatchObject({
-      sequence: ";o",
+      sequence: "qo",
       resolvedCommand: "utility.toggle-outline",
     });
     expect(

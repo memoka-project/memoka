@@ -154,7 +154,7 @@ describe("application focus surfaces", () => {
     fireEvent.blur(emptyWindow, { relatedTarget: null });
     await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
-    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "o", code: "KeyO" });
     const emptyOutline = await screen.findByLabelText("Outline");
     expect(emptyOutline.textContent).toBe("");

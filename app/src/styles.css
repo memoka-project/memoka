@@ -971,6 +971,34 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--memoka-color-selection-border);
 }
 
+.memoka-find-hint-overlay {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.memoka-find-hint {
+  position: absolute;
+  transform: translateY(calc(-100% + 0.7em));
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: var(--memoka-color-warning);
+  color: var(--memoka-color-surface);
+  font:
+    700 11px/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  white-space: nowrap;
+}
+
+.memoka-find-hint-typed {
+  color: var(--memoka-color-focus);
+}
+
 .memoka-visual-line-text-selected {
   position: relative;
   z-index: 3;

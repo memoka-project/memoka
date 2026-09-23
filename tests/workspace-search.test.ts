@@ -707,7 +707,7 @@ describe("Memoka Workspace search", () => {
     editor.commands.focus();
     press(editor, "Escape");
 
-    expect(press(editor, ",").defaultPrevented).toBe(true);
+    expect(press(editor, " ").defaultPrevented).toBe(true);
     expect(adapter.vimSnapshot.action).toBe("pending:leader");
     expect(press(editor, "f").defaultPrevented).toBe(true);
     expect(onWorkspaceSearch).toHaveBeenCalledTimes(1);
@@ -717,7 +717,7 @@ describe("Memoka Workspace search", () => {
     expect(onWorkspaceSearch.mock.calls[0][1]).toBe("title");
     expect(adapter.vimSnapshot.action).toBe("search:workspace:title:open");
 
-    expect(press(editor, ",").defaultPrevented).toBe(true);
+    expect(press(editor, " ").defaultPrevented).toBe(true);
     expect(press(editor, "g").defaultPrevented).toBe(true);
     expect(onWorkspaceSearch.mock.calls[1][1]).toBe("body");
     expect(adapter.vimSnapshot.action).toBe("search:workspace:body:open");
@@ -740,7 +740,7 @@ describe("Memoka Workspace search", () => {
     editor.commands.focus();
     press(editor, "Escape");
 
-    expect(press(editor, ",").defaultPrevented).toBe(true);
+    expect(press(editor, " ").defaultPrevented).toBe(true);
     expect(press(editor, "t").defaultPrevented).toBe(true);
     expect(onApplicationCommand).toHaveBeenCalledWith("utility.toggle-tree");
     expect(adapter.vimSnapshot.action).toBe("utility.toggle-tree:requested");

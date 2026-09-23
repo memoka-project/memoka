@@ -4030,6 +4030,16 @@ function dispatchSelection(
   if (focus) view.focus();
 }
 
+/** Move a Normal find target through the same caret and scroll path as motions. */
+export function moveVimFindToPosition(
+  view: VimEditorView,
+  position: number,
+): boolean {
+  if (position === selectionCursor(view)) return false;
+  dispatchSelection(view, position, "normal");
+  return true;
+}
+
 /** Resolve hit-test positions without changing selection or virtualized DOM. */
 export function resolveVimViewportCaretPosition(
   view: VimEditorView,

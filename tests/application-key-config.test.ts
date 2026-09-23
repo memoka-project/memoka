@@ -30,16 +30,21 @@ function key(value: string) {
 }
 
 describe("application key configuration", () => {
+  it("normalizes character-find Leader conflicts to Space", () => {
+    for (const leaderKey of ["f", "F", ";", ","]) {
+      expect(mergeApplicationKeyConfig({ leaderKey }).leaderKey).toBe(" ");
+    }
+  });
   it("merges partial TOML-shaped overrides over the complete defaults", () => {
     const config = mergeApplicationKeyConfig({
-      leaderKey: ";",
+      leaderKey: "q",
       whichwrap: false,
       sharedNavigationBindings: { "cursor.logical-up": ["q"] },
       treeBindings: { "note.create_child": ["C"] },
       inlineFormatBindings: { "selection.format": ["M"] },
       tableBindings: { "table.next_cell": ["Ctrl+n"] },
     });
-    expect(config.leaderKey).toBe(";");
+    expect(config.leaderKey).toBe("q");
     expect(config.whichwrap).toBe(false);
     expect(config.sharedNavigationBindings?.["cursor.logical-up"]).toEqual([
       "q",
@@ -155,7 +160,7 @@ describe("application key configuration", () => {
       const prefix = advanceVimInput(
         createVimInputState(),
         mode,
-        ",",
+        " ",
         noteContext,
         config,
       );

@@ -42,6 +42,7 @@ import {
   focusedSectionLineDeletionSelection,
   sectionTitlePutBoundary,
   moveVimSelectionToViewportPosition,
+  moveVimFindToPosition,
   resolveVimViewportCaretPosition,
   pasteVimRegisterAtSelection,
   runEditorEnterInsertFromHorizontalRule,
@@ -108,6 +109,13 @@ import {
 } from "./code-block-actions";
 import { VimLogicalLineGutter } from "./logical-line-gutter";
 import { VimVisualLineOverlay } from "./visual-line-overlay";
+import { VimFindHintOverlay } from "./find-hint-overlay";
+import {
+  vimFindCharacterDestination,
+  vimFindHints,
+  type VimFindDirection,
+  type VimFindHint,
+} from "./find-character";
 import {
   MARKDOWN_CLIPBOARD_MIME,
   MEMOKA_CLIPBOARD_MIME,
@@ -134,7 +142,10 @@ import {
   type VimOperator,
   type VimWindowCommand,
 } from "./input";
-import type { ApplicationKeyConfig } from "../core/application-key-config";
+import {
+  DEFAULT_APPLICATION_KEY_CONFIG,
+  type ApplicationKeyConfig,
+} from "../core/application-key-config";
 import {
   leaderShortcutForCommand,
   leaderShortcutMessage,
@@ -487,6 +498,14 @@ export class ProductVimSession {
   private caret: HTMLSpanElement | null = null;
   private gutter: VimLogicalLineGutter | null = null;
   private visualLineOverlay: VimVisualLineOverlay | null = null;
+  private findHintOverlay: VimFindHintOverlay | null = null;
+  private findHints: VimFindHint[] = [];
+  private findOriginDoc: ProseMirrorNode | null = null;
+  private findOriginCursor: number | null = null;
+  private lastCharacterFind: {
+    direction: VimFindDirection;
+    character: string;
+  } | null = null;
   private refreshFrame: number | null = null;
   private focusRefreshTimer: number | null = null;
   private changeUndoCapture: ChangeUndoCapture | null = null;
@@ -665,10 +684,20 @@ export class ProductVimSession {
             view,
             this.mode === "visual-line" ? this.visualLine : null,
           );
+          const findHintOverlay = new VimFindHintOverlay(view);
           this.gutter = gutter;
           this.visualLineOverlay = visualLineOverlay;
+          this.findHintOverlay = findHintOverlay;
           return {
             update: (next, previous) => {
+              if (
+                this.input.pending?.kind === "find-character" &&
+                (next.state.doc !== this.findOriginDoc ||
+                  selectionCursor(next) !== this.findOriginCursor)
+              ) {
+                this.input = createVimInputState();
+                this.clearFindHints(next);
+              }
               gutter.update(next, previous, lineNumberCursor(next.state));
               visualLineOverlay.update(
                 next,
@@ -679,10 +708,13 @@ export class ProductVimSession {
             destroy: () => {
               gutter.destroy();
               visualLineOverlay.destroy();
+              findHintOverlay.destroy();
               if (this.gutter === gutter) this.gutter = null;
               if (this.visualLineOverlay === visualLineOverlay) {
                 this.visualLineOverlay = null;
               }
+              if (this.findHintOverlay === findHintOverlay)
+                this.findHintOverlay = null;
               this.unbind(view, bindingGeneration);
             },
           };
@@ -744,6 +776,10 @@ export class ProductVimSession {
     this.focusSurfaceActive = active;
     this.updateNormalModeImeGuard();
     if (!active) {
+      if (this.input.pending?.kind === "find-character") {
+        this.input = createVimInputState();
+        if (this.view) this.clearFindHints(this.view);
+      }
       this.clearFocusCaretRefresh();
       this.hideCaret();
       return;
@@ -767,6 +803,8 @@ export class ProductVimSession {
     this.gutter = null;
     this.visualLineOverlay?.destroy();
     this.visualLineOverlay = null;
+    this.findHintOverlay?.destroy();
+    this.findHintOverlay = null;
     if (this.refreshFrame !== null) {
       cancelAnimationFrame(this.refreshFrame);
       this.refreshFrame = null;
@@ -828,6 +866,8 @@ export class ProductVimSession {
     ) {
       return;
     }
+    this.input = createVimInputState();
+    this.clearFindHints(view);
     if (this.view === view) this.disableNormalModeImeGuard();
     this.clearFocusCaretRefresh();
     if (this.view === view) this.finishChangeUndoCapture();
@@ -880,6 +920,11 @@ export class ProductVimSession {
 
   private readonly handleLayoutChange = (): void => {
     if (this.view) {
+      if (
+        this.input.pending?.kind !== "find-character" &&
+        this.findHints.length > 0
+      )
+        this.clearFindHints(this.view);
       this.captureDomTableSelection(this.view);
       this.scheduleCaretRefresh(this.view);
       this.gutter?.refreshCursor(
@@ -894,6 +939,7 @@ export class ProductVimSession {
                 : this.view.state.selection.head,
       );
       this.visualLineOverlay?.refreshLayout();
+      this.findHintOverlay?.refreshLayout();
     }
   };
 
@@ -911,6 +957,10 @@ export class ProductVimSession {
     this.clearFocusCaretRefresh();
     this.updateNormalModeImeGuard(false);
     this.hideCaret();
+    if (this.input.pending?.kind === "find-character") {
+      this.input = createVimInputState();
+      if (this.view) this.clearFindHints(this.view);
+    }
     this.handleLayoutChange();
   };
 
@@ -1972,10 +2022,34 @@ export class ProductVimSession {
       {
         isComposing,
         targetKind: "note-body",
+        findHints: this.findHints.map(({ label }) => label),
       },
       this.options.keyConfig,
     );
+    const wasFinding = this.input.pending?.kind === "find-character";
+    const selectedHint = resolution.findHint
+      ? this.findHints.find(({ label }) => label === resolution.argument)
+      : null;
     this.input = resolution.state;
+    if (resolution.state.pending?.kind === "find-character") {
+      if (!wasFinding) {
+        this.findOriginDoc = view.state.doc;
+        this.findOriginCursor = selectionCursor(view);
+        this.findHints = resolution.state.pending.count
+          ? []
+          : vimFindHints(
+              view.state,
+              resolution.state.pending.key === "f" ? 1 : -1,
+            );
+      }
+      this.findHintOverlay?.update(
+        view,
+        this.findHints,
+        resolution.state.pending.typed,
+      );
+    } else if (wasFinding) {
+      this.clearFindHints(view);
+    }
 
     if (resolution.action.kind === "pending") {
       event.preventDefault();
@@ -1990,13 +2064,24 @@ export class ProductVimSession {
       return true;
     }
 
+    if (
+      wasFinding &&
+      resolution.state.pending?.kind !== "find-character" &&
+      resolution.action.kind === "unmapped"
+    ) {
+      event.preventDefault();
+      this.action = "find:cancelled";
+      this.emit();
+      return true;
+    }
+
     if (resolution.action.kind === "leader-shortcut") {
       event.preventDefault();
       if (resolution.action.resolution) {
         this.options.onMessage?.(
           leaderShortcutMessage(
             resolution.action.resolution,
-            this.options.keyConfig?.leaderKey ?? ",",
+            this.options.keyConfig?.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey,
           ),
         );
         this.action = `leader:${resolution.action.resolution.kind}`;
@@ -2009,6 +2094,48 @@ export class ProductVimSession {
     }
 
     const command = resolution.resolvedCommand;
+    if (
+      command === "cursor.find-forward" ||
+      command === "cursor.find-backward" ||
+      command === "cursor.find-repeat" ||
+      command === "cursor.find-reverse"
+    ) {
+      event.preventDefault();
+      const repeat =
+        command === "cursor.find-repeat" || command === "cursor.find-reverse";
+      const direction: VimFindDirection = repeat
+        ? command === "cursor.find-reverse"
+          ? this.lastCharacterFind?.direction === 1
+            ? -1
+            : 1
+          : (this.lastCharacterFind?.direction ?? 1)
+        : command === "cursor.find-forward"
+          ? 1
+          : -1;
+      const character =
+        selectedHint?.character ??
+        (repeat ? this.lastCharacterFind?.character : resolution.argument);
+      const position =
+        selectedHint?.position ??
+        (character
+          ? vimFindCharacterDestination(
+              view.state,
+              direction,
+              character,
+              resolution.count,
+            )
+          : null);
+      const moved =
+        position !== null && position !== undefined
+          ? moveVimFindToPosition(view, position)
+          : false;
+      if (!repeat && character)
+        this.lastCharacterFind = { direction, character };
+      this.action = `find:${command}:${moved ? "changed" : "boundary"}`;
+      this.emit();
+      this.scheduleCaretRefresh(view);
+      return true;
+    }
     if (command?.startsWith("mode.")) {
       event.preventDefault();
       if (command === "mode.insert" || command === "mode.append") {
@@ -2328,7 +2455,7 @@ export class ProductVimSession {
       if (!opened) {
         const shortcut = leaderShortcutForCommand("context.action_picker");
         this.options.onMessage?.(
-          `${this.options.keyConfig?.leaderKey ?? ","}${shortcut.key} · ${shortcut.label} · 利用可能な操作がありません`,
+          `${this.options.keyConfig?.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey}${shortcut.key} · ${shortcut.label} · 利用可能な操作がありません`,
         );
       }
       this.emit();
@@ -2714,6 +2841,13 @@ export class ProductVimSession {
 
     this.scheduleCaretRefresh(view);
     return false;
+  }
+
+  private clearFindHints(view: EditorView): void {
+    this.findHints = [];
+    this.findOriginDoc = null;
+    this.findOriginCursor = null;
+    this.findHintOverlay?.update(view, [], "");
   }
 
   private armInsertBreakSuppression(): void {
@@ -3192,6 +3326,7 @@ export class ProductVimSession {
     this.clipboardReadGeneration += 1;
     this.mode = "normal";
     this.input = createVimInputState();
+    this.clearFindHints(view);
     this.visualLine = null;
     applyNativeCaretMode(view.dom, "normal");
     // Hidden body lines are absent from Normal cursor candidates. Reveal an
@@ -3798,6 +3933,7 @@ export class ProductVimSession {
     this.clipboardReadGeneration += 1;
     this.mode = nextMode;
     this.input = createVimInputState();
+    this.clearFindHints(view);
     applyNativeCaretMode(view.dom, nextMode);
 
     if (nextMode === "visual-line") {

@@ -41,23 +41,26 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 
 ## 4. Normal motion
 
-| Key                 | 動作                                                    |
-| ------------------- | ------------------------------------------------------- |
-| `h/l`               | 前/次の文字またはatomic node                            |
-| `j/k`               | 次/前の論理行。可能な限り目標columnを維持               |
-| `gj/gk`             | 次/前の画面上の表示行                                   |
-| `w/b/e/ge`          | 設定されたwordの次/前/末尾/前の末尾                     |
-| `W/B/E/gE`          | 空白区切りWORDの次/前/末尾/前の末尾                     |
-| `0/$`               | 論理行の先頭/末尾                                       |
-| `gg/G`              | 表示中のFocused Section subtreeの先頭/末尾              |
-| `[[` / `]]`         | 前/次の表示中Sectionのtitle先頭                         |
-| `{` / `}`           | 前/次の表示中blockの先頭                                |
-| `zz/zt/zb`          | caretの表示行を現在Windowの中央/上端/下端に配置         |
-| `Ctrl-f/Ctrl-b`     | 1画面下/上                                              |
-| `Ctrl-d/Ctrl-u`     | 半画面下/上                                             |
-| `H/M/L`             | 画面内の上端/中央/下端の表示行へ移動                    |
-| `Ctrl-e/Ctrl-y`     | 1表示行下/上へscroll。画面外になるcaretだけ表示端へ移す |
-| `[count]n/[count]N` | Note内検索の次/前の一致                                 |
+| Key                     | 動作                                                    |
+| ----------------------- | ------------------------------------------------------- |
+| `h/l`                   | 前/次の文字またはatomic node                            |
+| `j/k`                   | 次/前の論理行。可能な限り目標columnを維持               |
+| `gj/gk`                 | 次/前の画面上の表示行                                   |
+| `w/b/e/ge`              | 設定されたwordの次/前/末尾/前の末尾                     |
+| `W/B/E/gE`              | 空白区切りWORDの次/前/末尾/前の末尾                     |
+| `0/$`                   | 論理行の先頭/末尾                                       |
+| `[count]f{char}`        | 現在論理行内で前方のCount番目の文字へ移動               |
+| `[count]F{char}`        | 現在論理行内で後方のCount番目の文字へ移動               |
+| `[count];` / `[count],` | 直前の文字検索を同方向/逆方向で繰り返す                 |
+| `gg/G`                  | 表示中のFocused Section subtreeの先頭/末尾              |
+| `[[` / `]]`             | 前/次の表示中Sectionのtitle先頭                         |
+| `{` / `}`               | 前/次の表示中blockの先頭                                |
+| `zz/zt/zb`              | caretの表示行を現在Windowの中央/上端/下端に配置         |
+| `Ctrl-f/Ctrl-b`         | 1画面下/上                                              |
+| `Ctrl-d/Ctrl-u`         | 半画面下/上                                             |
+| `H/M/L`                 | 画面内の上端/中央/下端の表示行へ移動                    |
+| `Ctrl-e/Ctrl-y`         | 1表示行下/上へscroll。画面外になるcaretだけ表示端へ移す |
+| `[count]n/[count]N`     | Note内検索の次/前の一致                                 |
 
 小文字のwordでは、Vim標準と同様にkeyword文字（Unicodeの文字・数字と`_`）の連続、および空白以外の
 非keyword記号の連続をそれぞれ1 wordとする。日本語は設定された分割方式を適用する。
@@ -67,6 +70,21 @@ Countを受けないapplication commandや未対応sequenceは、別の意味へ
 
 `whichwrap`がtrueの場合、Normalの`h/l/w/b/e/ge/W/B/E/gE`は論理行端から前後の論理行へ続く。
 falseの場合は現在論理行端で止まる。Tableの同じ論理行に属するCell間移動はfalseでも許可する。
+
+`f/F/;/,`は`whichwrap`に関係なく現在の論理行を越えない。Tableでは同じrow内のCellをまたげるが、別rowには移動しない。
+文字検索は書記素クラスタ単位で大文字・小文字を区別し、対象がなければcaretを動かさない。
+`f/F`の入力待ちは`Esc`で取り消せる。Count付きの`f/F`は通常の1文字検索のみ行う。
+
+Countなしの`f/F`では、検索方向にある日本語を含むphraseの先頭へ英字1〜3文字のhintを表示する。
+phrase境界は設定中の日本語word分割方式を使い、日本語を含まない単位を除外する。
+半角英数字・半角記号で始まるphraseも対象とする。
+同じ方向に通常の文字検索で到達できる英字をhint先頭には使わない。使用可能な小文字の1〜3文字labelを使い切ってから大文字を先頭とするlabelを使い、近い候補から
+小文字を優先して短いprefix-freeなlabelを割り当てる。3文字以内で割り当てられない候補は表示しない。
+label入力中は、入力済みprefixに一致しないhintを消す。label確定でphrase先頭へ移動する。
+hintの表示位置はphrase先頭の文字位置とし、表示行先頭で折り返した場合も前の表示行末には置かない。
+文書・選択・focusが変わればhint入力を取り消す。hintは文書やUndoへ保存しない。
+hint後の`;`/`,`は選んだphraseの先頭文字を通常の文字検索として繰り返すため、同じ文字がphrase途中に
+あっても検索対象になる。直前の検索文字と元の方向はWindow-localの一時状態とする。
 
 block間やSection間を移動しても、画面上にcaretが見えるようEditorをscrollする。
 Normalのcaret移動では、現在のテキスト論理行がWindowに収まれば全体を最小限のscrollで表示する。
@@ -271,6 +289,7 @@ Visual中の`gv`は現在範囲と直前範囲を交換し、続けて押すと�
 - Normalの`h/l`はCell内文字を移動し、Cell端ではrow-major順に前後Cellへ移る。
 - `whichwrap`有効時、Table行端およびTable端から前後論理行へ移る。
 - `j/k`は同じ列の前後rowへ移り、Table境界では前後論理行へ移る。
+- `f/F/;/,`は現在row内のCellをまたいで文字を検索し、別rowには移動しない。phrase hintも同じ範囲とする。
 - `w/b/e/W/B/E`はCell境界と空Cellも停止位置として扱う。
 - Normalの`Tab/Shift-Tab`はrow-major順に移動し、Table先頭/末尾で止まる。
 - Insertの`Tab/Shift-Tab`は移動先Cell先頭へcollapsed caretを移し、Cell内容を選択しない。最終CellのTabだけは本文rowを追加する。
@@ -383,7 +402,8 @@ Treeの折り畳み・選択はTabごとのEntry IDで管理する。既存confi
 
 ## 13. Leader
 
-既定の物理Leaderは`,`で、物理keyだけを設定変更できる。後続カテゴリは固定する。
+既定の物理LeaderはSpaceで、物理keyだけを設定変更できる。後続カテゴリは固定する。
+`f`、`F`、`;`、`,`を明示した既存設定は読み込み時にSpaceへ読み替えて警告し、設定fileは書き換えない。
 
 | Key         | 動作                            |
 | ----------- | ------------------------------- |

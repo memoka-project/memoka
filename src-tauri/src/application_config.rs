@@ -636,12 +636,20 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             path.display()
         ));
     }
+    let mut leader = parsed.leader;
+    if matches!(leader.as_deref(), Some("f" | "F" | ";" | ",")) {
+        warnings.push(format!(
+            "{}: 指定されたLeaderはNormalの文字検索と衝突するため、Spaceを使用します",
+            path.display()
+        ));
+        leader = Some(" ".to_owned());
+    }
     let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     ApplicationKeyConfigLoadResult {
         config_path,
         revision: Some(command::revision(&source)),
         config: Some(ApplicationKeyConfigOverride {
-            leader_key: parsed.leader,
+            leader_key: leader,
             whichwrap: parsed.vim.and_then(|value| value.whichwrap),
             shared_navigation_bindings: keymap
                 .as_ref()
@@ -1105,7 +1113,7 @@ wait_for_mirror = false
         .expect("write fixture");
         let loaded = load_application_key_config(&missing);
         let config = loaded.config.expect("config");
-        assert_eq!(config.leader_key.as_deref(), Some(";"));
+        assert_eq!(config.leader_key.as_deref(), Some(" "));
         assert_eq!(loaded.theme, "duskfox");
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
@@ -1148,6 +1156,30 @@ wait_for_mirror = false
                 .as_deref()
                 .is_some_and(|warning| warning.contains("table.action_pickerは廃止"))
         );
+        assert!(loaded.warning.as_deref().unwrap().contains("Spaceを使用"));
+    }
+
+    #[test]
+    fn reads_reserved_find_leaders_as_space_without_rewriting_config() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("config.toml");
+        for leader in ["f", "F", ";", ","] {
+            let source = format!("leader = \"{leader}\"\n");
+            fs::write(&path, &source).expect("write config");
+            let loaded = load_application_key_config(&path);
+            assert_eq!(
+                loaded.config.expect("config").leader_key.as_deref(),
+                Some(" ")
+            );
+            assert!(
+                loaded
+                    .warning
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("Spaceを使用")
+            );
+            assert_eq!(fs::read_to_string(&path).expect("read config"), source);
+        }
     }
 
     #[test]

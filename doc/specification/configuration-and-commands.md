@@ -97,7 +97,7 @@ zoom_percent = 110
 note_max_width_px = 1000
 line_number_min_width_px = 480
 indent_width_px = 24
-leader = ","
+leader = " "
 
 [vim]
 whichwrap = true
@@ -179,6 +179,8 @@ line_break_segmentation = "fine"
 ## 5. Leader namespace
 
 物理Leader文字だけを`leader`で変更できる。後続categoryはHelp、設定、将来の拡張で安定させるため固定する。
+既定値はSpace。`f`、`F`、`;`、`,`はNormal文字検索のため予約し、既存設定で指定されている場合は
+設定fileを変更せずSpaceとして読み込み、警告を表示する。
 active/予約一覧は[Vim操作](vim-operations.md#13-leader)を参照する。
 
 未実装の予約categoryを別commandへ割り当てない。

@@ -739,7 +739,7 @@ describe("keyboard-first Table editing", () => {
     editor.commands.setTextSelection(positionOf(editor, "A2") + 1);
     editor.commands.focus();
     press(editor, "Escape");
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     expect(onTableActionPicker).toHaveBeenCalledOnce();
     const firstRequest = requests[0];
@@ -762,7 +762,7 @@ describe("keyboard-first Table editing", () => {
     ).toBe(true);
 
     editor.commands.setTextSelection(positionOf(editor, "A2"));
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     const secondRequest = requests[1];
     if (!secondRequest)
@@ -779,7 +779,7 @@ describe("keyboard-first Table editing", () => {
     ).toEqual(["right", "right", "right", "right"]);
 
     editor.commands.setTextSelection(positionOf(editor, "H1"));
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     const thirdRequest = requests[2];
     if (!thirdRequest)
@@ -819,7 +819,7 @@ describe("keyboard-first Table editing", () => {
     press(editor, "Escape");
     press(editor, "V");
     press(editor, "j");
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     const opened = request as unknown as TableActionPickerRequest | null;
     if (!opened) throw new Error("Table action request was not captured");
@@ -858,7 +858,7 @@ describe("keyboard-first Table editing", () => {
     press(editor, "Escape");
     press(editor, "v", { ctrlKey: true, code: "KeyV" });
     press(editor, "l");
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     const opened = request as unknown as TableActionPickerRequest | null;
     if (!opened) throw new Error("Table action request was not captured");
@@ -897,7 +897,7 @@ describe("keyboard-first Table editing", () => {
     press(editor, "Escape");
     press(editor, "v", { ctrlKey: true, code: "KeyV" });
     press(editor, "$");
-    press(editor, ",");
+    press(editor, " ");
     press(editor, "a");
     const opened = request as unknown as TableActionPickerRequest | null;
     if (!opened) throw new Error("Table action request was not captured");

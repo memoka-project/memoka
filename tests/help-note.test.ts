@@ -218,7 +218,7 @@ describe("managed Memoka help note", () => {
       "Visual Block",
       "Focused Section subtree",
       "Table編集",
-      "既定Leaderは,です",
+      "既定LeaderはSpaceです",
       "config.toml",
       "shutdown.wait_for_mirror",
       ":group",

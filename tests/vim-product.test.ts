@@ -16,6 +16,8 @@ import {
   visualCharCursor,
 } from "../app/src/vim/editor-commands";
 import { defaultVimBlockSemantics } from "../app/src/vim/block-semantics";
+import { vimFindHints } from "../app/src/vim/find-character";
+import { VimFindHintOverlay } from "../app/src/vim/find-hint-overlay";
 import { addSecondWindow } from "./helpers/runtime";
 
 function deterministicIds() {
@@ -2259,6 +2261,372 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     await runtime.flush();
     expect(editor.getText()).toBe("日本語の快適に編集する");
     expect(adapter.vimSnapshot.register).toBe("text: 文章を");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("finds literal characters within one logical line and repeats in either direction", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>a!a?A a<br>a a</p>");
+    const start = textPosition(editor, "a!a?A a");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    press(editor, "2");
+    press(editor, "f");
+    press(editor, "a");
+    expect(editor.state.selection.from).toBe(start + 6);
+    press(editor, "F");
+    press(editor, "a");
+    expect(editor.state.selection.from).toBe(start + 2);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(start);
+    press(editor, ",");
+    expect(editor.state.selection.from).toBe(start + 2);
+    press(editor, "f");
+    press(editor, "?");
+    expect(editor.state.selection.from).toBe(start + 3);
+    press(editor, "f");
+    press(editor, "a");
+    expect(editor.state.selection.from).toBe(start + 6);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(start + 6);
+    editor.commands.setTextSelection(start);
+    press(editor, "f");
+    press(editor, " ");
+    expect(editor.state.selection.from).toBe(start + 5);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("finds across Table Cells but not beyond the current logical row", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(
+      "<table><tbody><tr><td><p>ax</p></td><td><p></p></td><td><p>yx</p></td><td><p>zx</p></td></tr><tr><td><p>x</p></td></tr></tbody></table>",
+    );
+    const start = textPosition(editor, "a");
+    const firstX = textPosition(editor, "ax") + 1;
+    const middleX = textPosition(editor, "yx") + 1;
+    const lastX = textPosition(editor, "zx") + 1;
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "2");
+    press(editor, "f");
+    press(editor, "x");
+    expect(editor.state.selection.from).toBe(middleX);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(lastX);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(lastX);
+    press(editor, ",");
+    expect(editor.state.selection.from).toBe(middleX);
+    press(editor, "F");
+    press(editor, "x");
+    expect(editor.state.selection.from).toBe(firstX);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(firstX);
+    press(editor, ",");
+    expect(editor.state.selection.from).toBe(middleX);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows phrase hints across Table Cells within one row", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(
+      "<table><tbody><tr><td><p>日本語</p></td><td><p>文章を読む</p></td></tr><tr><td><p>別の記録</p></td></tr></tbody></table>",
+    );
+    const first = textPosition(editor, "日本語");
+    const second = textPosition(editor, "文章を読む");
+    const nextRow = textPosition(editor, "別の記録");
+    editor.commands.setTextSelection(first);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    const forwardHints = vimFindHints(editor.state, 1);
+    const secondHint = forwardHints.find(({ position }) => position === second);
+    expect(secondHint).toBeDefined();
+    expect(forwardHints.every(({ position }) => position < nextRow)).toBe(true);
+    press(editor, "f");
+    for (const letter of secondHint!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(second);
+
+    const backwardHints = vimFindHints(editor.state, -1);
+    const firstHint = backwardHints.find(({ position }) => position === first);
+    expect(firstHint).toBeDefined();
+    press(editor, "F");
+    for (const letter of firstHint!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(first);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows directional Japanese phrase hints and filters them while typing", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const text = `前 A ${Array.from(
+      { length: 75 },
+      (_, index) => `${index % 2 ? "文章" : "日本語"}`,
+    ).join(" ")}`;
+    editor.commands.setContent(`<p>${text}</p>`);
+    const start = textPosition(editor, text);
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    const coordinates = vi
+      .spyOn(editor.view, "coordsAtPos")
+      .mockImplementation((position) => ({
+        left: position * 2,
+        right: position * 2 + 1,
+        top: 30,
+        bottom: 46,
+      }));
+    const hints = vimFindHints(editor.state, 1);
+    const multi = hints.find(({ label }) => label.length === 2);
+    expect(multi).toBeDefined();
+    expect(hints.every(({ label }) => /^[a-z]{1,3}$/u.test(label))).toBe(true);
+    press(editor, "f");
+    press(editor, "A");
+    expect(editor.state.selection.from).toBe(start + text.indexOf("A"));
+    editor.commands.setTextSelection(start);
+    press(editor, "f");
+    expect(root.querySelectorAll("[data-vim-find-hint]")).toHaveLength(
+      hints.length,
+    );
+    press(editor, multi!.label[0]!);
+    expect(
+      [...root.querySelectorAll<HTMLElement>("[data-vim-find-hint]")].every(
+        (label) => label.dataset.vimFindHint?.startsWith(multi!.label[0]!),
+      ),
+    ).toBe(true);
+    const partialHint = [
+      ...root.querySelectorAll<HTMLElement>("[data-vim-find-hint]"),
+    ].find((label) => label.dataset.vimFindHint === multi!.label);
+    expect(partialHint?.textContent).toBe(multi!.label);
+    expect(
+      partialHint?.querySelector(".memoka-find-hint-typed")?.textContent,
+    ).toBe(multi!.label[0]);
+    press(editor, multi!.label[1]!);
+    expect(editor.state.selection.from).toBe(multi!.position);
+    expect(root.querySelectorAll("[data-vim-find-hint]")).toHaveLength(0);
+
+    editor.commands.setTextSelection(start + text.length - 1);
+    const backwardHints = vimFindHints(editor.state, -1);
+    expect(backwardHints.length).toBeGreaterThan(0);
+    press(editor, "F");
+    for (const letter of backwardHints[0]!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(backwardHints[0]!.position);
+    press(editor, "f");
+    editor.commands.setTextSelection(start);
+    expect(root.querySelectorAll("[data-vim-find-hint]")).toHaveLength(0);
+
+    coordinates.mockRestore();
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("places a wrapped phrase hint at its visible first character", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>前 文章を読む</p>");
+    const position = textPosition(editor, "文章");
+    const target = editor.view.domAtPos(position, 1);
+    const bounding = vi
+      .spyOn(Range.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Range) {
+        return this.startContainer === target.node &&
+          this.startOffset === target.offset
+          ? new DOMRect(24, 20, 160, 42)
+          : new DOMRect();
+      });
+    const fragments = vi
+      .spyOn(Range.prototype, "getClientRects")
+      .mockImplementation(function (this: Range) {
+        return (this.startContainer === target.node &&
+        this.startOffset === target.offset
+          ? [new DOMRect(180, 20, 0, 18), new DOMRect(24, 44, 18, 18)]
+          : []) as unknown as DOMRectList;
+      });
+    const caret = vi.spyOn(editor.view, "coordsAtPos").mockReturnValue({
+      left: 180,
+      right: 181,
+      top: 20,
+      bottom: 38,
+    });
+    const overlay = new VimFindHintOverlay(editor.view);
+    overlay.update(
+      editor.view,
+      [{ position, character: "文", label: "s" }],
+      "",
+    );
+    const hint = root.querySelector<HTMLElement>("[data-vim-find-hint]");
+    expect(hint?.style.left).toBe("24px");
+    expect(hint?.style.top).toBe("44px");
+
+    overlay.destroy();
+    caret.mockRestore();
+    fragments.mockRestore();
+    bounding.mockRestore();
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("shows hints for Japanese phrases beginning with ASCII letters or digits", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const text = "前 Table内の文章 2026年の記録";
+    editor.commands.setContent(`<p>${text}</p>`);
+    const start = textPosition(editor, text);
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    const hints = vimFindHints(editor.state, 1);
+    const letterHint = hints.find(
+      ({ position }) => position === start + text.indexOf("Table"),
+    );
+    const digitHint = hints.find(
+      ({ position }) => position === start + text.indexOf("2026"),
+    );
+    expect(letterHint).toBeDefined();
+    expect(digitHint).toBeDefined();
+
+    press(editor, "f");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${digitHint!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of digitHint!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(digitHint!.position);
+
+    press(editor, "F");
+    const backwardLetterHint = vimFindHints(editor.state, -1).find(
+      ({ position }) => position === letterHint!.position,
+    );
+    expect(backwardLetterHint).toBeDefined();
+    for (const letter of backwardLetterHint!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(letterHint!.position);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("hints an ASCII-symbol phrase and uses uppercase only when lowercase is unavailable", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const text = "前 abcdefghijklmnopqrstuvwxyz A #日本語の文章";
+    editor.commands.setContent(`<p>${text}</p>`);
+    const start = textPosition(editor, text);
+    const symbol = start + text.indexOf("#");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    const hint = vimFindHints(editor.state, 1).find(
+      ({ position }) => position === symbol,
+    );
+    expect(hint?.label).toBe("S");
+    press(editor, "f");
+    press(editor, hint!.label);
+    expect(editor.state.selection.from).toBe(symbol);
+
+    editor.commands.setTextSelection(start);
+    press(editor, "f");
+    press(editor, "#");
+    expect(editor.state.selection.from).toBe(symbol);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("repeats a hint find as a character find, including a match inside a phrase", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    const text = "日本語の文章を作文する";
+    editor.commands.setContent(`<p>${text}</p>`);
+    const start = textPosition(editor, text);
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+
+    const hint = vimFindHints(editor.state, 1).find(
+      ({ character }) => character === "文",
+    );
+    expect(hint).toBeDefined();
+    press(editor, "2");
+    press(editor, "f");
+    expect(root.querySelectorAll("[data-vim-find-hint]")).toHaveLength(0);
+    press(editor, "Escape");
+    press(editor, "f");
+    for (const letter of hint!.label) press(editor, letter);
+    expect(editor.state.selection.from).toBe(hint!.position);
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(start + text.lastIndexOf("文"));
+    press(editor, ",");
+    expect(editor.state.selection.from).toBe(hint!.position);
 
     adapter.destroy();
     runtime.destroy();
