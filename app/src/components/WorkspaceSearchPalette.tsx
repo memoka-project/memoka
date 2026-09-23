@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { EditorNavigationDestination } from "../core/editor-navigation";
 import { contentOffsetAtTextOffset } from "../core/stable-position";
 import type { StableEditorPosition } from "../core/stable-position";
-import type { CoreRuntime } from "../core/runtime";
+import type { CoreRuntime, TrashPurgePreview } from "../core/runtime";
 import type { AttachmentRepository } from "../core/attachments";
 import { SymbolText } from "./SymbolText";
 import {
@@ -21,6 +21,7 @@ import {
 import { productEditorExtensions } from "../editor/extensions";
 import { SearchPane } from "./SearchPane";
 import { EventDateTime } from "./EventDateTime";
+import { ModalDialog } from "./ModalDialog";
 
 export interface WorkspaceSearchSession {
   readonly windowId: string;
@@ -56,6 +57,9 @@ export function WorkspaceSearchPalette({
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingPurge, setPendingPurge] = useState<TrashPurgePreview | null>(
+    null,
+  );
   const requestSequence = useRef(0);
   const response = searchState?.query === query ? searchState.response : null;
   const results = response?.results ?? [];
@@ -186,6 +190,7 @@ export function WorkspaceSearchPalette({
       else await runtime.restoreNoteFromTrash(result.noteId);
       setSearchState(null);
       setRefreshVersion((version) => version + 1);
+      focusTrashInput();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -193,119 +198,258 @@ export function WorkspaceSearchPalette({
     }
   };
 
+  const focusTrashInput = (): void => {
+    globalThis.setTimeout(
+      () =>
+        document
+          .querySelector<HTMLInputElement>(
+            '.workspace-search-overlay[data-search-target="trash"] input[role="combobox"]',
+          )
+          ?.focus(),
+      0,
+    );
+  };
+
+  const purgePreviewFor = (
+    result: WorkspaceSearchResult,
+  ): TrashPurgePreview | null => {
+    const entryId =
+      result.namespaceEntryId ??
+      runtime.snapshot().notes.find((note) => note.noteId === result.noteId)
+        ?.entryId;
+    if (!entryId) return null;
+    try {
+      return runtime.previewTrashPurge(entryId);
+    } catch {
+      return null;
+    }
+  };
+
+  const requestPurge = (result: WorkspaceSearchResult): void => {
+    if (busy || session.target !== "trash") return;
+    const preview = purgePreviewFor(result);
+    if (!preview) {
+      setError("Trashの対象が変わりました。検索結果を更新してください");
+      return;
+    }
+    if (!preview.available) {
+      setError(preview.reason ?? "この項目はTrashから削除できません");
+      return;
+    }
+    setPendingPurge(preview);
+  };
+
+  const confirmPurge = async (): Promise<void> => {
+    if (!pendingPurge || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await runtime.purgeTrashOperation(pendingPurge);
+      setPendingPurge(null);
+      setSearchState(null);
+      setRefreshVersion((version) => version + 1);
+      focusTrashInput();
+    } catch (cause) {
+      setPendingPurge(null);
+      setError(cause instanceof Error ? cause.message : String(cause));
+      focusTrashInput();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <SearchPane
-      ariaLabel={workspaceSearchLabel(session.target, session.scope)}
-      inputAriaLabel="ワークスペースを検索"
-      focusSurface="workspace-search"
-      query={query}
-      onQueryChange={(value) => {
-        setQuery(value);
-        setError(null);
-      }}
-      items={results}
-      itemId={(result) => result.resultId}
-      renderItem={(result, currentQuery) => (
-        <>
-          <span className="workspace-search-row-heading">
-            <span className="workspace-search-icon" aria-hidden="true">
-              {result.kind === "image"
-                ? "📷"
-                : result.kind === "group"
-                  ? "📁"
-                  : "📄"}
+    <>
+      <SearchPane
+        ariaLabel={workspaceSearchLabel(session.target, session.scope)}
+        inputAriaLabel="ワークスペースを検索"
+        focusSurface="workspace-search"
+        query={query}
+        onQueryChange={(value) => {
+          setQuery(value);
+          setError(null);
+        }}
+        items={results}
+        itemId={(result) => result.resultId}
+        renderItem={(result, currentQuery) => (
+          <>
+            <span className="workspace-search-row-heading">
+              <span className="workspace-search-icon" aria-hidden="true">
+                {result.kind === "image"
+                  ? "📷"
+                  : result.kind === "group"
+                    ? "📁"
+                    : "📄"}
+              </span>
+              {session.scope === "title" ? (
+                <span className="workspace-search-note-title">
+                  <SymbolText
+                    text={result.title}
+                    highlights={workspaceSearchMatchRanges(
+                      result.title,
+                      currentQuery,
+                    )}
+                  />
+                </span>
+              ) : (
+                <SearchResultPath result={result} query={currentQuery} />
+              )}
             </span>
-            {session.scope === "title" ? (
-              <span className="workspace-search-note-title">
-                <SymbolText
-                  text={result.title}
-                  highlights={workspaceSearchMatchRanges(
-                    result.title,
-                    currentQuery,
-                  )}
+            <span className="workspace-search-timestamp">
+              <EventDateTime value={result.updatedAt} />
+            </span>
+            {session.scope === "title" && (
+              <span className="workspace-search-title-hierarchy">
+                <HighlightedText
+                  value={formatSearchHierarchy(result.parentPath)}
+                  query={currentQuery}
                 />
               </span>
-            ) : (
-              <SearchResultPath result={result} query={currentQuery} />
             )}
-          </span>
-          <span className="workspace-search-timestamp">
-            <EventDateTime value={result.updatedAt} />
-          </span>
-          {session.scope === "title" && (
-            <span className="workspace-search-title-hierarchy">
-              <HighlightedText
-                value={formatSearchHierarchy(result.parentPath)}
-                query={currentQuery}
-              />
-            </span>
-          )}
-          {session.scope === "body" && (
-            <span className="workspace-search-preview-text">
-              <HighlightedText value={result.preview} query={currentQuery} />
-            </span>
-          )}
-        </>
-      )}
-      renderPreview={(result) =>
-        result?.kind === "image" &&
-        result.attachmentId &&
-        attachmentRepository ? (
-          <BufferImagePreview
-            key={result.attachmentId}
-            attachmentId={result.attachmentId}
-            title={result.title}
-            repository={attachmentRepository}
-          />
-        ) : result?.kind === "group" ? (
-          <div className="workspace-search-preview-document">
-            <p>
-              <SymbolText text={result.title} />
+            {session.scope === "body" && (
+              <span className="workspace-search-preview-text">
+                <HighlightedText value={result.preview} query={currentQuery} />
+              </span>
+            )}
+          </>
+        )}
+        renderPreview={(result) =>
+          result?.kind === "image" &&
+          result.attachmentId &&
+          attachmentRepository ? (
+            <BufferImagePreview
+              key={result.attachmentId}
+              attachmentId={result.attachmentId}
+              title={result.title}
+              repository={attachmentRepository}
+            />
+          ) : result?.kind === "group" ? (
+            <div className="workspace-search-preview-document">
+              <p>
+                <SymbolText text={result.title} />
+              </p>
+              <p>整理用グループです。rで同じ削除操作の項目を復元します。</p>
+            </div>
+          ) : result ? (
+            <WorkspaceSearchPreview
+              runtime={runtime}
+              result={result}
+              highlight={session.scope === "body"}
+              includeDeleted={session.target === "trash"}
+            />
+          ) : null
+        }
+        renderPreviewActions={
+          session.target === "trash"
+            ? (result) => {
+                if (!result) return null;
+                const preview = purgePreviewFor(result);
+                return (
+                  <div className="trash-search-actions">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void restoreResult(result)}
+                    >
+                      復元 (r)
+                    </button>
+                    <button
+                      type="button"
+                      className="sync-danger-button"
+                      disabled={busy || !preview?.available}
+                      title={preview?.reason}
+                      onClick={() => requestPurge(result)}
+                    >
+                      Trashから削除 (Shift-d)
+                    </button>
+                  </div>
+                );
+              }
+            : undefined
+        }
+        prompt={workspaceSearchPrompt(session.target, session.scope)}
+        countLabel={response ? `${results.length} results` : "searching…"}
+        onAccept={(result) => void openResult(result)}
+        onRestore={(result) => void restoreResult(result)}
+        onPurge={requestPurge}
+        onClose={onClose}
+        restoreFocus={session.restoreFocus}
+        commandContext={
+          session.target === "trash" ? "search.trash" : "search.insert"
+        }
+        busy={busy}
+        error={error}
+        empty={
+          response &&
+          !(session.scope === "body" && query.trim().length === 0) ? (
+            <p className="workspace-search-empty">一致するノートがありません</p>
+          ) : null
+        }
+        listFooter={
+          response && response.failures.length > 0 ? (
+            <p className="workspace-search-warning" role="status">
+              {response.failures.length}
+              件のNoteDoc本文を読み込めませんでした。
             </p>
-            <p>整理用グループです。rで同じ削除操作の項目を復元します。</p>
-          </div>
-        ) : result ? (
-          <WorkspaceSearchPreview
-            runtime={runtime}
-            result={result}
-            highlight={session.scope === "body"}
-            includeDeleted={session.target === "trash"}
-          />
-        ) : null
-      }
-      prompt={workspaceSearchPrompt(session.target, session.scope)}
-      countLabel={response ? `${results.length} results` : "searching…"}
-      onAccept={(result) => void openResult(result)}
-      onRestore={(result) => void restoreResult(result)}
-      onClose={onClose}
-      restoreFocus={session.restoreFocus}
-      commandContext={
-        session.target === "trash" ? "search.trash" : "search.insert"
-      }
-      busy={busy}
-      error={error}
-      empty={
-        response && !(session.scope === "body" && query.trim().length === 0) ? (
-          <p className="workspace-search-empty">一致するノートがありません</p>
-        ) : null
-      }
-      listFooter={
-        response && response.failures.length > 0 ? (
-          <p className="workspace-search-warning" role="status">
-            {response.failures.length}
-            件のNoteDoc本文を読み込めませんでした。
-          </p>
-        ) : null
-      }
-      focused={focused}
-      dataAttributes={{
-        "data-search-scope": session.scope,
-        "data-search-target": session.target,
-        "data-search-backend": response?.backend,
-        "data-search-diagnostic": response?.warning ?? undefined,
-      }}
-      idPrefix="workspace-search"
-    />
+          ) : null
+        }
+        focused={focused}
+        dataAttributes={{
+          "data-search-scope": session.scope,
+          "data-search-target": session.target,
+          "data-search-backend": response?.backend,
+          "data-search-diagnostic": response?.warning ?? undefined,
+        }}
+        idPrefix="workspace-search"
+      />
+      {pendingPurge && (
+        <ModalDialog
+          ariaLabel="Trashから削除の確認"
+          focusSurface="trash-purge-confirmation"
+          busy={busy}
+          initialFocus="first-control"
+          onClose={() => {
+            if (!busy) {
+              setPendingPurge(null);
+              focusTrashInput();
+            }
+          }}
+        >
+          <section data-modal-scroll>
+            <h3>Trashから削除しますか？</h3>
+            <p>
+              「{pendingPurge.title}」を含むノート{pendingPurge.noteCount}
+              件、グループ{pendingPurge.groupCount}
+              件をTrashから取り除きます。通常の操作では復元できなくなります。
+            </p>
+            <p>
+              <strong>本文データは物理的に消去されません。</strong>
+              現在の保存データや過去のバックアップに残る場合があります。
+            </p>
+            <div className="application-modal-actions">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setPendingPurge(null);
+                  focusTrashInput();
+                }}
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                className="sync-danger-button"
+                disabled={busy}
+                onClick={() => void confirmPurge()}
+              >
+                Trashから削除
+              </button>
+            </div>
+          </section>
+        </ModalDialog>
+      )}
+    </>
   );
 }
 

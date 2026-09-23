@@ -90,6 +90,7 @@ describe("Memoka declarative keymap", () => {
     );
     expect(searchKeymap.resolve("search.insert", "r")).toBeNull();
     expect(searchKeymap.resolve("search.trash", "r")).toBe("search.restore");
+    expect(searchKeymap.resolve("search.trash", "D")).toBe("search.purge");
     expect(searchKeymap.resolve("search.trash", "Enter")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Tab")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Ctrl+c")).toBe("search.close");

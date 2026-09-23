@@ -200,6 +200,7 @@ Treeの削除は永続消去ではなくmetadata上のTrash移動である。
 - 復元に必要な親が別operationのTrash内にある場合は、祖先を先に復元するまで拒否する。
 - 削除Noteを表示していたWindowは利用可能な既存BufferまたはEmpty Bufferへ移る。
 - live Noteが残らなくても代替Noteを暗黙作成しない。
-- 永続削除は実装しない。
+- Trashの完全削除は同期可能な、取り消せない論理削除マーカーとして記録する。同じTrash operationの現時点の対象を一括で隠し、遅れて届く復元より削除を優先する。別操作で削除済みの子孫は残し、削除対象の祖先の外へ配置を移して復元可能にする。管理Helpは対象外である。
+- NoteDoc本体、CRDT履歴、過去のバックアップ、添付実体は物理消去しない。通常のTree・Trash検索・CLI readerからは論理削除済み項目を除外する。
 
 Trash操作はWorkspace transactionであり、Editor本文のUndo/Redoや`.` repeatには含めない。

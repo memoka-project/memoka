@@ -1,22 +1,23 @@
 //! Workspace v4 uses the same parent-history projection as normalized Notes.
 //! Readers, CLI planning and migration share this interpretation.
 use crate::attachment::validate_uuid_v7;
-use crate::document_model::{ReadError, decode_document, workspace_json};
+use crate::document_model::{decode_document, workspace_json, ReadError};
 use crate::namespace::{Entry, Namespace};
 use crate::persistence::PersistedDocument;
-use crate::replicated_tree::{Placement, derive_tree};
+use crate::replicated_tree::{derive_tree, Placement};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use yrs::{Any, Map, MapPrelim, MapRef, Out, ReadTxn, StateVector, Transact};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 const LIMIT: usize = 1_000_000;
-const PLACEMENT_FIELDS: [&str; 4] = [
+const PLACEMENT_FIELDS: [&str; 5] = [
     "parent_entry_id",
     "position",
     "deleted_at",
     "trash_operation_id",
+    "purged_at",
 ];
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -35,6 +36,14 @@ struct Restoration {
     replica_id: String,
     deletion_id: String,
     entity_ids: Vec<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Purge {
+    operation_id: String,
+    deletion_id: String,
+    source_entry_id: String,
+    at: String,
 }
 struct Model {
     namespace: Namespace,
@@ -81,7 +90,7 @@ pub fn project(value: &Value) -> Result<Namespace, ReadError> {
     Ok(interpret(value)?.namespace)
 }
 fn interpret(value: &Value) -> Result<Model, ReadError> {
-    if value["schema_version"].as_i64() != Some(SCHEMA_VERSION) {
+    if !matches!(value["schema_version"].as_i64(), Some(4 | SCHEMA_VERSION)) {
         return Err(invalid("Unsupported replicated Workspace schema"));
     }
     let raw = &value["main_namespace"];
@@ -100,6 +109,13 @@ fn interpret(value: &Value) -> Result<Model, ReadError> {
     object(&raw["placements"])?;
     object(&raw["deletions"])?;
     object(&raw["restorations"])?;
+    let purges: BTreeMap<String, Purge> =
+        if value["schema_version"].as_i64() == Some(SCHEMA_VERSION) {
+            object(&raw["purges"])?;
+            serde_json::from_value(raw["purges"].clone())?
+        } else {
+            BTreeMap::new()
+        };
     let placements: BTreeMap<String, Placement> =
         serde_json::from_value(raw["placements"].clone())?;
     if placements.values().any(|edge| edge.region != "entries") {
@@ -158,9 +174,28 @@ fn interpret(value: &Value) -> Result<Model, ReadError> {
             .or_default()
             .extend(restoration.entity_ids.iter().cloned());
     }
+    for (entry_id, purge) in &purges {
+        id(entry_id)?;
+        id(&purge.operation_id)?;
+        id(&purge.deletion_id)?;
+        id(&purge.source_entry_id)?;
+        if !raw_entries.contains_key(entry_id)
+            || !deletions
+                .get(&purge.deletion_id)
+                .is_some_and(|deletion| deletion.entity_ids.contains(&purge.source_entry_id))
+            || chrono::DateTime::parse_from_rfc3339(&purge.at).is_err()
+        {
+            return Err(invalid("Invalid Namespace purge"));
+        }
+    }
     let mut active: BTreeMap<&str, &Deletion> = BTreeMap::new();
+    let mut deletion_history: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (key, deletion) in &deletions {
         for entity_id in &deletion.entity_ids {
+            deletion_history
+                .entry(entity_id.as_str())
+                .or_default()
+                .insert(key.as_str());
             if restored.get(key).is_some_and(|set| set.contains(entity_id)) {
                 continue;
             }
@@ -176,16 +211,43 @@ fn interpret(value: &Value) -> Result<Model, ReadError> {
         children.entry(&edge.parent_id).or_default().push(key);
     }
     let mut effective = BTreeMap::new();
+    let mut inherited_purges: BTreeMap<&str, &Purge> = BTreeMap::new();
     let mut entries = BTreeMap::new();
     let mut pending = vec![root];
     while let Some(parent) = pending.pop() {
         for child in children.get(parent).into_iter().flatten() {
-            let stamp = active
-                .get(child)
-                .copied()
-                .or_else(|| effective.get(parent).copied());
+            let parent_purge = inherited_purges.get(parent).copied();
+            let separately_deleted = parent_purge.is_some_and(|purge| {
+                deletion_history
+                    .get(child)
+                    .is_some_and(|history| history.iter().any(|id| *id != purge.deletion_id))
+            });
+            let mut stamp = active.get(child).copied();
+            if stamp.is_none() && !separately_deleted {
+                stamp = effective.get(parent).copied();
+            }
+            let purge = purges.get(*child).or_else(|| {
+                parent_purge.filter(|purge| {
+                    stamp.is_some_and(|deletion| deletion.operation_id == purge.deletion_id)
+                })
+            });
+            if let Some(purge) = purge {
+                stamp = deletions.get(&purge.deletion_id);
+            }
             if let Some(stamp) = stamp {
                 effective.insert(*child, stamp);
+            }
+            if let Some(purge) = purge {
+                inherited_purges.insert(*child, purge);
+            }
+            let mut projected_parent = parent;
+            if purge.is_none() {
+                while inherited_purges.contains_key(projected_parent) {
+                    projected_parent = parents
+                        .get(projected_parent)
+                        .map(|edge| edge.parent_id.as_str())
+                        .unwrap_or(root);
+                }
             }
             let mut value = raw_entries[*child].clone();
             let fields = value
@@ -201,10 +263,10 @@ fn interpret(value: &Value) -> Result<Model, ReadError> {
             }
             fields.insert(
                 "parent_entry_id".into(),
-                if parent == root {
+                if projected_parent == root {
                     Value::Null
                 } else {
-                    json!(parent)
+                    json!(projected_parent)
                 },
             );
             fields.insert("position".into(), json!(parents[*child].position));
@@ -213,6 +275,7 @@ fn interpret(value: &Value) -> Result<Model, ReadError> {
                 "trash_operation_id".into(),
                 json!(stamp.map(|stamp| &stamp.operation_id)),
             );
+            fields.insert("purged_at".into(), json!(purge.map(|purge| &purge.at)));
             let mut entry: Entry = serde_json::from_value(value)?;
             entry.entry_id = (*child).to_owned();
             entries.insert((*child).to_owned(), entry);
@@ -286,6 +349,42 @@ fn next(counter: &mut u64) -> Result<u64, ReadError> {
 }
 
 /// Migration candidate only; the Workspace migrator installs it after backup.
+pub fn migrate_v4(document: &PersistedDocument) -> Result<Vec<u8>, ReadError> {
+    if document.schema_version != 4 {
+        return Err(invalid("Only Workspace v4 can be upgraded"));
+    }
+    let before = crate::namespace::read_namespace(document)?;
+    let doc = decode_document(document)?;
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn
+            .get_map("workspace")
+            .ok_or_else(|| invalid("Workspace is missing"))?;
+        let ns = nested(&txn, &root, "main_namespace")?;
+        ns.insert(&mut txn, "purges", MapPrelim::default());
+        root.insert(&mut txn, "schema_version", SCHEMA_VERSION);
+    }
+    let snapshot = {
+        doc.transact()
+            .encode_state_as_update_v1(&StateVector::default())
+    };
+    let candidate = PersistedDocument {
+        schema_version: SCHEMA_VERSION,
+        snapshot: snapshot.clone(),
+        snapshot_revision: document.revision,
+        updates: Vec::new(),
+        ..document.clone()
+    };
+    let after = crate::namespace::read_namespace(&candidate)?;
+    if serde_json::to_value(&before.entries)? != serde_json::to_value(&after.entries)?
+        || before.notes != after.notes
+    {
+        return Err(invalid("Workspace v4 upgrade changed identities"));
+    }
+    Ok(snapshot)
+}
+
+/// Migration candidate only; the Workspace migrator installs it after backup.
 pub fn migrate(document: &PersistedDocument, replica_id: &str) -> Result<Vec<u8>, ReadError> {
     id(replica_id)?;
     if document.schema_version != 3 {
@@ -306,6 +405,7 @@ pub fn migrate(document: &PersistedDocument, replica_id: &str) -> Result<Vec<u8>
         let placements = ns.insert(&mut txn, "placements", MapPrelim::default());
         let deletions = ns.insert(&mut txn, "deletions", MapPrelim::default());
         ns.insert(&mut txn, "restorations", MapPrelim::default());
+        ns.insert(&mut txn, "purges", MapPrelim::default());
         let mut trash: BTreeMap<String, Deletion> = BTreeMap::new();
         for (key, entry) in &before.entries {
             let value = nested(&txn, &entries, key)?;
@@ -438,6 +538,7 @@ pub fn reconcile(
             }
             if entry.deleted_at != old.deleted_at
                 || entry.trash_operation_id != old.trash_operation_id
+                || entry.purged_at != old.purged_at
             {
                 return Err(invalid("Trash edits require observed deletion operations"));
             }
@@ -529,6 +630,7 @@ pub fn reconcile(
             for (field, item) in serde_json::to_value(entry)?.as_object().unwrap() {
                 if field == "entry_id"
                     || PLACEMENT_FIELDS.contains(&field.as_str())
+                    || field == "purged_at"
                     || (field == "name" && entry.target.is_some())
                 {
                     continue;
@@ -578,8 +680,8 @@ pub fn reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yrs::SharedRef;
     use yrs::updates::decoder::Decode;
+    use yrs::SharedRef;
     fn fixtures() -> Vec<Value> {
         serde_json::from_str(include_str!(
             "../../tests/fixtures/replicated-namespace-contract.json"
@@ -590,7 +692,7 @@ mod tests {
         PersistedDocument {
             kind: "workspace".into(),
             document_id: fixture["workspaceId"].as_str().unwrap().into(),
-            schema_version: SCHEMA_VERSION,
+            schema_version: 4,
             revision: 1,
             snapshot_revision: 1,
             snapshot: serde_json::from_value(fixture["snapshot"].clone()).unwrap(),
@@ -625,6 +727,7 @@ mod tests {
                 assert_eq!(original.snapshot, bytes);
                 let projected = crate::namespace::read_namespace(&PersistedDocument {
                     snapshot: converted,
+                    schema_version: SCHEMA_VERSION,
                     ..document
                 })
                 .unwrap();
@@ -634,6 +737,52 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn projects_a_v5_purge_marker_as_irreversibly_deleted() {
+        let fixture = &fixtures()[0];
+        let old = document(fixture);
+        let snapshot = migrate_v4(&old).unwrap();
+        let mut upgraded = PersistedDocument {
+            schema_version: SCHEMA_VERSION,
+            snapshot,
+            updates: vec![],
+            ..old
+        };
+        let before = crate::namespace::read_namespace(&upgraded).unwrap();
+        let entry = before
+            .entries
+            .values()
+            .find(|entry| entry.deleted_at.is_some())
+            .unwrap();
+        let entry_id = entry.entry_id.clone();
+        let deletion_id = entry.trash_operation_id.clone().unwrap();
+        let doc = decode_document(&upgraded).unwrap();
+        {
+            let mut txn = doc.transact_mut();
+            let root = txn.get_map("workspace").unwrap();
+            let ns = nested(&txn, &root, "main_namespace").unwrap();
+            let purges = nested(&txn, &ns, "purges").unwrap();
+            purges.insert(
+                &mut txn,
+                entry_id.as_str(),
+                any(&json!({
+                    "operationId": uuid::Uuid::now_v7().to_string(),
+                    "deletionId": deletion_id.clone(),
+                    "sourceEntryId": entry_id.clone(),
+                    "at": "2026-09-10T00:00:00.000Z"
+                }))
+                .unwrap(),
+            );
+        }
+        upgraded.snapshot = doc
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        let after = crate::namespace::read_namespace(&upgraded).unwrap();
+        assert_eq!(
+            after.entries[&entry_id].purged_at.as_deref(),
+            Some("2026-09-10T00:00:00.000Z")
+        );
     }
     #[test]
     fn native_moves_after_cycle_correction_preserve_stable_entry_identity() {

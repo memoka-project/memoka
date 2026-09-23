@@ -541,7 +541,7 @@ function isSupportedDocumentSchema(
   schemaVersion: number,
 ): boolean {
   return kind === "workspace"
-    ? schemaVersion === 3 || schemaVersion === 4
+    ? schemaVersion === 3 || schemaVersion === 4 || schemaVersion === 5
     : [2, 3, 4, 5, NOTE_DOC_SCHEMA_VERSION, 7].includes(schemaVersion);
 }
 

@@ -16,10 +16,12 @@ export interface SearchPaneProps<Item> {
   readonly itemId: (item: Item) => string;
   readonly renderItem: (item: Item, query: string) => ReactNode;
   readonly renderPreview: (item: Item | null) => ReactNode;
+  readonly renderPreviewActions?: (item: Item | null) => ReactNode;
   readonly prompt: ReactNode;
   readonly countLabel: ReactNode;
   readonly onAccept?: (item: Item) => void;
   readonly onRestore?: (item: Item) => void;
+  readonly onPurge?: (item: Item) => void;
   readonly initialSelectedItemId?: string | null;
   readonly onSelectionChange?: (item: Item | null) => void;
   readonly onClose: () => void;
@@ -46,10 +48,12 @@ export function SearchPane<Item>({
   itemId,
   renderItem,
   renderPreview,
+  renderPreviewActions,
   prompt,
   countLabel,
   onAccept,
   onRestore,
+  onPurge,
   initialSelectedItemId = null,
   onSelectionChange,
   onClose,
@@ -208,6 +212,8 @@ export function SearchPane<Item>({
                 if (previous) setSelectedItemId(itemId(previous));
               } else if (command === "search.restore" && selected) {
                 onRestore?.(selected);
+              } else if (command === "search.purge" && selected) {
+                onPurge?.(selected);
               } else if (command === "search.accept" && selected) {
                 onAccept?.(selected);
               }
@@ -219,7 +225,14 @@ export function SearchPane<Item>({
           </span>
         </div>
       </div>
-      {renderPreview(selected)}
+      {renderPreviewActions ? (
+        <div className="search-pane__preview-column">
+          {renderPreview(selected)}
+          {renderPreviewActions(selected)}
+        </div>
+      ) : (
+        renderPreview(selected)
+      )}
     </section>
   );
 }

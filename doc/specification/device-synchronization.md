@@ -14,7 +14,7 @@
 管理HelpはNote ID・配置・役割を共有する。有効化前に元端末で一つ作成し、参加端末は同じNote IDで
 同梱Markdownから本文を生成する。Helpの手動編集とタイトル変更も端末内に限定する。
 
-保存schemaはNoteDoc 7、WorkspaceMetadataDoc 4、SQLite 7である。既存Workspaceは検証付きで移行する。
+保存schemaはNoteDoc 7、WorkspaceMetadataDoc 5、SQLite 7である。既存Workspaceは検証付きで移行する。
 初回参加は新しい空の保存先への複製だけとし、既存コピーやバックアップ復旧先との合流は拒否する。
 旧schemaとの混在同期も拒否する。[検証の記録](../device-synchronization-implementation.md)に実行環境と未検証の範囲を記載する。
 
@@ -94,9 +94,9 @@ Yjs snapshotをRustで読み、Rustの編集deltaをYjsで再統合する双方�
 
 ## 5. TreeとTrash
 
-WorkspaceMetadataDoc 4の`main_namespace`は、従来のNamespace IDとEntry IDを維持する。
+WorkspaceMetadataDoc 5の`main_namespace`は、従来のNamespace IDとEntry IDを維持する。
 Entryの固定Mapは参照先、グループ名、作成・更新日時を持ち、配置とTrashは同じNamespace内の
-`placements`、`deletions`、`restorations`へ分離する。Note metadataへ配置・Trashの重複状態を保存しない。
+`placements`、`deletions`、`restorations`、`purges`へ分離する。Note metadataへ配置・Trashの重複状態を保存しない。
 管理HelpのNote ID、配置、役割も変換前後で一致させる。
 
 親と兄弟順はNoteと共通の親履歴の規則で導出する。循環の補正を受信時に書き戻さない。
@@ -106,6 +106,7 @@ Entryの固定Mapは参照先、グループ名、作成・更新日時を持ち
 
 復元の計画は取り消す削除操作へ束縛する。計画後に別の削除を受信しても、その削除まで取り消さない。
 取り消した操作に含まれるEntryは、別の削除や削除された祖先が残る場合、Trashに残る。
+v5 Workspaceの`purges`はEntry IDに対する単調な論理削除マーカーであり、受信順序や復元操作にかかわらず優先する。v4からv5へは保存済み文書の事前検査とバックアップを伴って移行し、旧版による復元を許さない。
 GUI、CLI、検索・履歴readerは同じ投影を利用する。RustのCLI計画用XML／metadata投影そのものを保存せず、
 既存のEntry共有型への差分だけをowner transactionへ渡す。
 

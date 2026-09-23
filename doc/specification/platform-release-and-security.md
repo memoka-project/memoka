@@ -83,7 +83,7 @@ repositoryやartifactへ含めない。
 `release-draft.yml`完了後、assetを取得してSHA-256、Updater署名、AppImageの起動、CLIと両sidecarを確認する。
 `release-publish.yml`を対象versionで実行し、試験済みdraftをそのまま公開する。build失敗・asset不足は公開しない。
 
-Workspaceは検証付きでDB/NoteDoc schema 7、WorkspaceMetadataDoc 4へ移行する。
+Workspaceは検証付きでDB/NoteDoc schema 7、WorkspaceMetadataDoc 5へ移行する。
 旧Namespace対応前の変換も含め、既存ID・内容・装飾・構造・添付hashを候補上で比較してから原子的に確定する。
 移行前のrollback copyを残す。更新前にはWorkspace全体を別媒体へコピーし、移行後のWorkspaceを旧版で開かない。
 H6超過・破損のpreflight拒否とrollback copyは外部バックアップの代わりではない。

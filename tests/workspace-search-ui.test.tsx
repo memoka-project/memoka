@@ -630,6 +630,79 @@ describe("Memoka Workspace search palette", () => {
     runtime.destroy();
   });
 
+  it("shows Trash actions and requires confirmation before permanent deletion", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "purge target",
+    });
+    const noteId = runtime.noteId;
+    await runtime.moveNoteToTrash(noteId);
+    const onClose = vi.fn();
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "title",
+          target: "trash",
+          origin: null,
+          applyDestination: vi.fn(() => null),
+          restoreFocus: vi.fn(),
+        }}
+        onClose={onClose}
+      />,
+    );
+    const input = screen.getByRole("combobox", {
+      name: "ワークスペースを検索",
+    });
+    await screen.findByRole("option", { name: /purge target/u });
+    expect(screen.getByRole("button", { name: "復元 (r)" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Trashから削除 (Shift-d)" }),
+    ).toBeTruthy();
+    fireEvent.keyDown(input, { key: "D", code: "KeyD", shiftKey: true });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Trashから削除の確認",
+    });
+    expect(dialog.textContent).toContain("Trashから削除しますか？");
+    expect(dialog.textContent).toContain("通常の操作では復元できなくなります");
+    expect(dialog.textContent).toContain("本文データは物理的に消去されません");
+    expect(dialog.textContent).toContain(
+      "現在の保存データや過去のバックアップに残る場合があります",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "キャンセル" }));
+    expect(
+      runtime.snapshot().notes.some((note) => note.noteId === noteId),
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trashから削除 (Shift-d)" }),
+    );
+    const confirm = await screen.findByRole("dialog", {
+      name: "Trashから削除の確認",
+    });
+    expect(
+      confirm.querySelector<HTMLButtonElement>(".sync-danger-button")
+        ?.textContent,
+    ).toBe("Trashから削除");
+    fireEvent.click(
+      confirm.querySelector<HTMLButtonElement>(".sync-danger-button")!,
+    );
+    await waitFor(() =>
+      expect(
+        runtime.snapshot().notes.some((note) => note.noteId === noteId),
+      ).toBe(false),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("option", { name: /purge target/u }),
+      ).toBeNull(),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    view.unmount();
+    runtime.destroy();
+  });
+
   it("renders title results as note title plus a smaller hierarchy line", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

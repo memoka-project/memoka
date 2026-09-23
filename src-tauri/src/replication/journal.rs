@@ -457,7 +457,7 @@ impl<'a> ReplicationEngine<'a> {
         let workspace = self
             .store
             .load_document("workspace", &config.workspace_id)?;
-        let unsupported: bool = self.store.connection.query_row("SELECT EXISTS(SELECT 1 FROM documents WHERE (kind='note' AND schema_version<>7) OR (kind='workspace' AND schema_version<>4) OR kind NOT IN ('workspace','note'))", [], |r| r.get(0))?;
+        let unsupported: bool = self.store.connection.query_row("SELECT EXISTS(SELECT 1 FROM documents WHERE (kind='note' AND schema_version<>7) OR (kind='workspace' AND schema_version<>5) OR kind NOT IN ('workspace','note'))", [], |r| r.get(0))?;
         if unsupported {
             return Err(error(
                 "SYNC_SCHEMA",

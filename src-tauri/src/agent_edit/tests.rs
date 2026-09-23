@@ -55,7 +55,7 @@ fn edits_normalized_notes_through_existing_descriptors_owner_commits_and_receipt
     let metadata = load_document(&store.connection, "workspace", WORKSPACE).unwrap();
     let snapshot =
         crate::replicated_namespace::migrate(&metadata, &uuid::Uuid::now_v7().to_string()).unwrap();
-    store.connection.execute("UPDATE documents SET schema_version=4,snapshot=?1 WHERE kind='workspace' AND document_id=?2", params![snapshot,WORKSPACE]).unwrap();
+    store.connection.execute("UPDATE documents SET schema_version=5,snapshot=?1 WHERE kind='workspace' AND document_id=?2", params![snapshot,WORKSPACE]).unwrap();
     drop(store);
     let before = current_note(&temp);
     let mut change = request(vec![replace("日本語", "日本語を編集")]);
@@ -130,7 +130,7 @@ fn edits_normalized_notes_through_existing_descriptors_owner_commits_and_receipt
         load_document(&reader.connection, "workspace", WORKSPACE)
             .unwrap()
             .schema_version,
-        4
+        5
     );
 }
 fn request(edits: Vec<Value>) -> EditRequest {

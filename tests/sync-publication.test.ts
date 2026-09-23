@@ -138,7 +138,7 @@ async function fixture() {
       kind,
       documentId,
       baseRevision: persisted.revision,
-      schemaVersion: kind === "note" ? 7 : 4,
+      schemaVersion: kind === "note" ? 7 : 5,
       update,
       snapshot: null,
     };

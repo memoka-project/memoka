@@ -7,6 +7,7 @@ export type SearchCommandId =
   | "search.select_previous"
   | "search.accept"
   | "search.restore"
+  | "search.purge"
   | "search.ignore"
   | "search.close";
 
@@ -15,6 +16,7 @@ export const SEARCH_COMMAND_IDS: readonly SearchCommandId[] = [
   "search.select_previous",
   "search.accept",
   "search.restore",
+  "search.purge",
   "search.ignore",
   "search.close",
 ];
@@ -88,6 +90,11 @@ export const searchKeymap = new DeclarativeKeymap<
       context: "search.trash",
       sequence: "r",
       command: "search.restore",
+    },
+    {
+      context: "search.trash",
+      sequence: "D",
+      command: "search.purge",
     },
     {
       context: "search.trash",

@@ -2673,6 +2673,21 @@ textarea {
   background: var(--memoka-color-surface-inset);
 }
 
+.search-pane__preview-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.trash-search-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--memoka-color-danger-border);
+}
+
 .workspace-search-preview-root {
   min-height: 0;
   overflow: auto;

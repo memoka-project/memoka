@@ -8,6 +8,128 @@ import {
 } from "../app/src/core/namespace";
 
 describe("Main Namespace", () => {
+  it("purges one Trash operation without removing an independently trashed child", async () => {
+    const persistence = new MemoryPersistencePort();
+    const runtime = await CoreRuntime.open(persistence);
+    try {
+      const parent = await runtime.createNamespaceGroup(null, "Parent");
+      const independent = await runtime.createNamespaceGroup(
+        parent.entryId,
+        "Earlier",
+      );
+      const child = await runtime.createNoteAtEntry(
+        "window-1",
+        parent.entryId,
+        "child",
+      );
+      await runtime.trashNamespaceEntry(independent.entryId);
+      await runtime.trashNamespaceEntry(parent.entryId);
+      const preview = runtime.previewTrashPurge(parent.entryId);
+      expect(preview).toMatchObject({
+        noteCount: 1,
+        groupCount: 1,
+        available: true,
+      });
+      expect(preview.entryIds).not.toContain(independent.entryId);
+      await runtime.purgeTrashOperation(preview);
+      expect(
+        runtime.snapshot().notes.some((note) => note.noteId === child.noteId),
+      ).toBe(false);
+      expect(
+        (await runtime.searchWorkspace("Parent", "title", 20, "trash")).results,
+      ).toEqual([]);
+      expect(
+        (await runtime.searchWorkspace("Earlier", "title", 20, "trash"))
+          .results,
+      ).toEqual([
+        expect.objectContaining({ namespaceEntryId: independent.entryId }),
+      ]);
+      await runtime.restoreNamespaceEntry(independent.entryId);
+      expect(
+        runtime
+          .snapshot()
+          .namespaceEntries.find(
+            (entry) => entry.entryId === independent.entryId,
+          ),
+      ).toMatchObject({ parentNoteId: null, deletedAt: undefined });
+      await expect(
+        runtime.restoreNamespaceEntry(parent.entryId),
+      ).rejects.toThrow();
+      await expect(runtime.purgeTrashOperation(preview)).rejects.toThrow();
+      expect(
+        await persistence.loadDocument("note", child.noteId),
+      ).toBeDefined();
+      const reopened = await CoreRuntime.open(persistence);
+      try {
+        expect(
+          reopened
+            .snapshot()
+            .notes.some((note) => note.noteId === child.noteId),
+        ).toBe(false);
+      } finally {
+        reopened.destroy();
+      }
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  it("refuses to purge a managed Help Note", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      const help = await runtime.openHelpNote("window-1");
+      await runtime.moveNoteToTrash(help.noteId);
+      const entryId = runtime
+        .snapshot()
+        .notes.find((note) => note.noteId === help.noteId)!.entryId!;
+      const preview = runtime.previewTrashPurge(entryId);
+      expect(preview).toMatchObject({
+        available: false,
+        reason: expect.stringContaining("Help"),
+      });
+      await expect(runtime.purgeTrashOperation(preview)).rejects.toThrow(
+        "Help",
+      );
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  it("rejects stale deletion confirmation after the Trash operation changes", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      const noteId = runtime.noteId;
+      await runtime.moveNoteToTrash(noteId);
+      const entryId = runtime
+        .snapshot()
+        .notes.find((note) => note.noteId === noteId)!.entryId!;
+      const preview = runtime.previewTrashPurge(entryId);
+      await runtime.restoreNoteFromTrash(noteId);
+      await expect(runtime.purgeTrashOperation(preview)).rejects.toThrow();
+      expect(
+        runtime.snapshot().notes.some((note) => note.noteId === noteId),
+      ).toBe(true);
+    } finally {
+      runtime.destroy();
+    }
+  });
+  it("purges a group-only Trash operation without removing any Notes", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    try {
+      const initialNotes = runtime.snapshot().notes.length;
+      const group = await runtime.createNamespaceGroup(null, "Unused group");
+      await runtime.trashNamespaceEntry(group.entryId);
+      const preview = runtime.previewTrashPurge(group.entryId);
+      expect(preview).toMatchObject({ noteCount: 0, groupCount: 1 });
+      await runtime.purgeTrashOperation(preview);
+      expect(runtime.snapshot().notes).toHaveLength(initialNotes);
+      expect(
+        (await runtime.searchWorkspace("Unused", "title", 20, "trash")).results,
+      ).toEqual([]);
+    } finally {
+      runtime.destroy();
+    }
+  });
   it("rejects invalid placements, parents and independent Entry identities", () => {
     const noteId = "01a30000-0000-7000-8000-000000000001";
     const entryId = "01a30000-0000-7000-8000-000000000002";

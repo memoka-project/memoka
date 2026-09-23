@@ -93,9 +93,10 @@ Note Bufferは`📄`、Image Bufferは`📷`で区別する。結果を確定す
 `:trash`はdeleted Noteとグループのtitle/path検索を同じpaneで開き、赤系のsemantic colorを使用する。
 グループは`📁`で表示し、存在しないNote/Sectionのpreviewを生成しない。
 
-- `r`だけが選択EntryのTrash operationをまとめて復元する。
+- `r`またはプレビュー下の「復元 (r)」で選択EntryのTrash operationをまとめて復元する。
+- `D`（`Shift-d`）またはプレビュー下の「Trashから削除 (Shift-d)」で確認ダイアログを開く。対象名とNote・グループ件数、通常の操作では復元不能になること、本文データは物理的に消去されず現在の保存データや過去のバックアップに残る場合があることを表示する。明示的な確定後に同じTrash operationの対象を論理削除する。対象が確認後に変わった場合は削除せず再確認を求める。管理Helpを含む操作はTrashから削除しない。
 - Enter/Tabは無効である。
-- 復元後もpaneを閉じず、残った結果を更新する。
+- 復元・Trashからの削除後もpaneを閉じず、残った結果を更新して検索入力へfocusを戻す。
 - Treeへ自動移動しない。
 - Esc/Ctrl-cだけがpaneを閉じる。
 

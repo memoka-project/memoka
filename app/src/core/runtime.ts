@@ -340,6 +340,17 @@ interface WorkspaceSearchProjectionCacheEntry {
 export interface NoteSearchNavigationResult
   extends EditorNavigationResult, NoteSearchNavigationStatus {}
 
+export interface TrashPurgePreview {
+  readonly entryId: string;
+  readonly deletionId: string;
+  readonly entryIds: readonly string[];
+  readonly noteCount: number;
+  readonly groupCount: number;
+  readonly title: string;
+  readonly available: boolean;
+  readonly reason?: string;
+}
+
 export const APPLICATION_WINDOW_LOCAL_STATE_ID = "application-window:main";
 
 const DEFAULT_APPLICATION_WINDOW_ID = "application-window-1";
@@ -1856,6 +1867,117 @@ export class CoreRuntime {
     return this.editNamespace({ kind: "restore", entryId, at: this.clock() });
   }
 
+  previewTrashPurge(entryId: string): TrashPurgePreview {
+    const entries = listNamespaceEntries(this.workspaceDocument.root);
+    const selected = entries.find((entry) => entry.entryId === entryId);
+    if (!selected?.deletedAt || !selected.trashOperationId || selected.purgedAt)
+      throw new Error("選択項目はTrashにありません");
+    const affected = entries
+      .filter(
+        (entry) =>
+          entry.deletedAt &&
+          !entry.purgedAt &&
+          entry.trashOperationId === selected.trashOperationId,
+      )
+      .sort((a, b) => a.entryId.localeCompare(b.entryId));
+    const help = affected.some(
+      (entry) =>
+        entry.target &&
+        readNoteMetadata(this.workspaceDocument, entry.target.id)
+          ?.systemRole === "help",
+    );
+    return {
+      entryId,
+      deletionId: selected.trashOperationId,
+      entryIds: affected.map((entry) => entry.entryId),
+      noteCount: affected.filter((entry) => entry.target).length,
+      groupCount: affected.filter((entry) => !entry.target).length,
+      title: selected.target
+        ? (readNoteMetadata(this.workspaceDocument, selected.target.id)
+            ?.title ?? "新しいノート")
+        : (selected.name ?? "無題のグループ"),
+      available: !help,
+      reason: help ? "管理HelpノートはTrashから削除できません" : undefined,
+    };
+  }
+
+  async purgeTrashOperation(expected: TrashPurgePreview): Promise<void> {
+    await this.localStateQueue.catch(() => undefined);
+    const current = this.previewTrashPurge(expected.entryId);
+    if (
+      !current.available ||
+      current.deletionId !== expected.deletionId ||
+      JSON.stringify(current.entryIds) !== JSON.stringify(expected.entryIds)
+    )
+      throw new Error(
+        current.reason ?? "Trashの対象が変わりました。再確認してください",
+      );
+    this.setSaving();
+    try {
+      await this.transactions.transact(
+        {
+          operationId: this.idFactory(),
+          scope: "workspace-structure",
+          documents: [this.workspace],
+        },
+        () => {
+          const at = this.clock();
+          const entries = listNamespaceEntries(this.workspaceDocument.root);
+          const purged = new Set(current.entryIds);
+          const byId = new Map(entries.map((entry) => [entry.entryId, entry]));
+          const reparented = entries.flatMap((entry) => {
+            if (
+              purged.has(entry.entryId) ||
+              !entry.parentEntryId ||
+              !purged.has(entry.parentEntryId)
+            )
+              return [];
+            let parentId: string | null = entry.parentEntryId;
+            while (parentId && purged.has(parentId))
+              parentId = byId.get(parentId)?.parentEntryId ?? null;
+            return [{ ...entry, parentEntryId: parentId }];
+          });
+          if (this.workspaceDocument.replicated) {
+            if (reparented.length) {
+              const changes = new Map(
+                reparented.map((entry) => [entry.entryId, entry]),
+              );
+              this.workspaceDocument.replicated.writeEntries(
+                entries.map((entry) => changes.get(entry.entryId) ?? entry),
+                new Set(changes.keys()),
+              );
+            }
+            this.workspaceDocument.replicated.purgeEntries(
+              current.entryIds,
+              current.deletionId,
+              this.idFactory(),
+              at,
+            );
+          } else {
+            const entries = readMainNamespace(
+              this.workspaceDocument.root,
+            ).entries;
+            this.workspaceDocument.doc.transact(() => {
+              for (const entry of reparented)
+                entries
+                  .get(entry.entryId)
+                  ?.set("parent_entry_id", entry.parentEntryId);
+              for (const id of current.entryIds)
+                entries.get(id)?.set("purged_at", at);
+            }, CORE_TRANSACTION_ORIGIN);
+          }
+        },
+      );
+      this.sectionCatalogRevision += 1;
+      this.internalLinkLabelRevision += 1;
+      this.queueWorkspaceSearchIndexRebuild();
+      this.setReady();
+    } catch (error) {
+      this.reportError(error);
+      throw error;
+    }
+  }
+
   createNoteAtEntry(
     windowId: string,
     selectedEntryId: string | null,
@@ -2566,7 +2688,9 @@ export class CoreRuntime {
           .split(/\s+/u)
           .filter(Boolean);
         const groups: WorkspaceSearchResult[] = entries
-          .filter((entry) => entry.deletedAt && !entry.target)
+          .filter(
+            (entry) => entry.deletedAt && !entry.purgedAt && !entry.target,
+          )
           .flatMap((entry) => {
             const path = namespacePath(entries, titles, entry.entryId);
             if (

@@ -42,7 +42,7 @@ it("uses the persisted copy identity for production bootstrap, new Notes and reo
   const persistence = new CurrentPersistence();
   const core = await CoreRuntime.open(persistence);
   cleanup.push(() => core.destroy());
-  expect(core.workspaceDocument.schemaVersion).toBe(4);
+  expect(core.workspaceDocument.schemaVersion).toBe(5);
   expect(core.workspaceDocument.replicated?.replicaId).toBe(replicaId);
   expect(core.noteDocument.schemaVersion).toBe(7);
   expect(core.noteDocument.replicated?.replicaId).toBe(replicaId);
@@ -104,6 +104,51 @@ function merge(workspace: WorkspaceDocument, peers: WorkspaceDocument[]) {
 }
 
 describe("replicated Main Namespace", () => {
+  it("keeps purge markers after a concurrent restoration update", () => {
+    const original = source();
+    const parent = group(original, "Deleted group");
+    edit(original, { kind: "trash", entryId: parent, at });
+    const restored = fork(original);
+    const purged = fork(original);
+    edit(restored, { kind: "restore", entryId: parent, at });
+    const deletionId = entries(purged).find(
+      (entry) => entry.entryId === parent,
+    )!.trashOperationId!;
+    purged.replicated!.purgeEntries([parent], deletionId, createUuidV7(), at);
+    merge(purged, [restored]);
+    expect(
+      entries(purged).find((entry) => entry.entryId === parent),
+    ).toMatchObject({
+      deletedAt: at,
+      purgedAt: at,
+    });
+    expect(() =>
+      edit(purged, { kind: "restore", entryId: parent, at }),
+    ).toThrow();
+  });
+  it("leaves independently trashed children restorable when a parent is purged", () => {
+    const workspace = source();
+    const parent = group(workspace, "Parent");
+    const child = group(workspace, "Independent", parent);
+    edit(workspace, { kind: "trash", entryId: child, at });
+    edit(workspace, { kind: "trash", entryId: parent, at });
+    const deletionId = entries(workspace).find(
+      (entry) => entry.entryId === parent,
+    )!.trashOperationId!;
+    workspace.replicated!.purgeEntries(
+      [parent],
+      deletionId,
+      createUuidV7(),
+      at,
+    );
+    expect(
+      entries(workspace).find((entry) => entry.entryId === child),
+    ).toMatchObject({ parentEntryId: null, purgedAt: undefined });
+    edit(workspace, { kind: "restore", entryId: child, at });
+    expect(
+      entries(workspace).find((entry) => entry.entryId === child),
+    ).toMatchObject({ parentEntryId: null, deletedAt: undefined });
+  });
   it("merges a Rust move and rename with a concurrent Yjs child creation in either order", () => {
     const original = keep(
       loadProductDocument(
@@ -166,7 +211,7 @@ describe("replicated Main Namespace", () => {
     expect(encodeProductDocument(old)).toEqual(bytes);
     expect(entries(normalized)).toEqual(expected);
     expect(listNoteMetadata(normalized)).toEqual(listNoteMetadata(old));
-    expect(normalized.schemaVersion).toBe(4);
+    expect(normalized.schemaVersion).toBe(5);
     expect(
       keep(cloneProductDocument(normalized) as WorkspaceDocument).replicated!
         .replicaId,
@@ -344,7 +389,7 @@ describe("replicated Main Namespace", () => {
         {
           kind: "workspace",
           documentId: metadata.id,
-          schemaVersion: 4,
+          schemaVersion: 5,
           baseRevision: 0,
           snapshot: encodeProductDocument(metadata),
           update: null,
@@ -379,7 +424,7 @@ describe("replicated Main Namespace", () => {
         stored.updates.map(({ update }) => update),
       ) as WorkspaceDocument,
     );
-    expect(reopened.schemaVersion).toBe(4);
+    expect(reopened.schemaVersion).toBe(5);
     expect(
       listNoteMetadata(reopened).find((item) => item.noteId === note.noteId)
         ?.deletedAt,

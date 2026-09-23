@@ -29,6 +29,8 @@ pub struct Entry {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub trash_operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purged_at: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,7 +42,10 @@ pub struct Namespace {
 
 pub fn read_namespace(document: &PersistedDocument) -> Result<Namespace, ReadError> {
     let value = workspace_json(document)?;
-    if document.schema_version == crate::replicated_namespace::SCHEMA_VERSION {
+    if matches!(
+        document.schema_version,
+        4 | crate::replicated_namespace::SCHEMA_VERSION
+    ) {
         return crate::replicated_namespace::project(&value);
     }
     if document.schema_version != WORKSPACE_SCHEMA
@@ -100,6 +105,9 @@ impl Namespace {
             }
             if entry.deleted_at.is_some() != entry.trash_operation_id.is_some() {
                 return Err(invalid("Namespace Trash metadata must be paired"));
+            }
+            if entry.purged_at.is_some() && entry.deleted_at.is_none() {
+                return Err(invalid("Purged Namespace entry must remain in Trash"));
             }
             if let Some(id) = &entry.trash_operation_id {
                 validate_uuid_v7(id, "trashOperationId")?;
@@ -164,15 +172,19 @@ impl Namespace {
 
     pub fn ordered(&self, include_trash: bool) -> Vec<(&Entry, usize)> {
         let mut children: BTreeMap<Option<&str>, Vec<&Entry>> = BTreeMap::new();
-        for entry in self
-            .entries
-            .values()
-            .filter(|entry| include_trash || entry.deleted_at.is_none())
-        {
-            children
-                .entry(entry.parent_entry_id.as_deref())
-                .or_default()
-                .push(entry);
+        for entry in self.entries.values().filter(|entry| {
+            entry.purged_at.is_none() && (include_trash || entry.deleted_at.is_none())
+        }) {
+            let mut parent = entry.parent_entry_id.as_deref();
+            while let Some(id) = parent {
+                let ancestor = &self.entries[id];
+                if ancestor.purged_at.is_none() && (include_trash || ancestor.deleted_at.is_none())
+                {
+                    break;
+                }
+                parent = ancestor.parent_entry_id.as_deref();
+            }
+            children.entry(parent).or_default().push(entry);
         }
         for siblings in children.values_mut() {
             siblings.sort_by(|a, b| (&a.position, &a.entry_id).cmp(&(&b.position, &b.entry_id)));
@@ -219,7 +231,9 @@ impl Namespace {
         let mut result = Vec::new();
         let mut cursor = self.entries.get(entry_id);
         while let Some(entry) = cursor {
-            result.push(self.name(entry));
+            if entry.purged_at.is_none() {
+                result.push(self.name(entry));
+            }
             cursor = entry
                 .parent_entry_id
                 .as_ref()
@@ -236,6 +250,11 @@ impl Namespace {
                 .as_ref()
                 .is_some_and(|target| target.id == note_id)
         })
+    }
+
+    pub fn is_purged_note(&self, note_id: &str) -> bool {
+        self.note_entry(note_id)
+            .is_some_and(|entry| entry.purged_at.is_some())
     }
 }
 

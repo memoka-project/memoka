@@ -109,9 +109,16 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
         .parse::<i64>()
         .map_err(|_| ReadError::new("UNSUPPORTED_SCHEMA", "Invalid database schema"))?;
     if version == DATABASE_SCHEMA {
-        return Ok(None);
+        let has_v4_workspace: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM documents WHERE kind='workspace' AND schema_version=4)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_v4_workspace {
+            return Ok(None);
+        }
     }
-    if !(2..=6).contains(&version) {
+    if !(2..=DATABASE_SCHEMA).contains(&version) {
         return Err(ReadError::new(
             "UNSUPPORTED_SCHEMA",
             "Unsupported database migration",
@@ -151,42 +158,61 @@ pub fn preflight(root: &Path) -> Result<Option<PreparedMigration>, ReadError> {
                 expected_notes.extend(namespace.notes.keys().cloned());
             })
         } else if kind == "workspace" {
-            let legacy = if document.schema_version == WORKSPACE_SCHEMA {
-                Ok((document.clone(), BTreeMap::new()))
-            } else {
-                migrate_workspace(&document).map(|(snapshot, mapping)| {
-                    (
-                        PersistedDocument {
-                            schema_version: WORKSPACE_SCHEMA,
-                            snapshot,
-                            snapshot_revision: document.revision,
-                            updates: Vec::new(),
-                            ..document.clone()
-                        },
-                        mapping,
-                    )
+            if document.schema_version == 4 {
+                crate::replicated_namespace::migrate_v4(&document).and_then(|snapshot| {
+                    let migrated = PersistedDocument {
+                        schema_version: crate::replicated_namespace::SCHEMA_VERSION,
+                        snapshot: snapshot.clone(),
+                        snapshot_revision: document.revision,
+                        updates: Vec::new(),
+                        ..document.clone()
+                    };
+                    let namespace = read_namespace(&migrated)?;
+                    expected_notes.extend(namespace.notes.keys().cloned());
+                    prepared.documents.push((document, snapshot));
+                    Ok(())
                 })
-            };
-            legacy.and_then(|(legacy, mapping)| {
-                let snapshot = crate::replicated_namespace::migrate(&legacy, &prepared.replica_id)?;
-                let migrated = PersistedDocument {
-                    schema_version: crate::replicated_namespace::SCHEMA_VERSION,
-                    snapshot: snapshot.clone(),
-                    snapshot_revision: document.revision,
-                    updates: Vec::new(),
-                    ..document.clone()
+            } else {
+                let legacy = if document.schema_version == WORKSPACE_SCHEMA {
+                    Ok((document.clone(), BTreeMap::new()))
+                } else {
+                    migrate_workspace(&document).map(|(snapshot, mapping)| {
+                        (
+                            PersistedDocument {
+                                schema_version: WORKSPACE_SCHEMA,
+                                snapshot,
+                                snapshot_revision: document.revision,
+                                updates: Vec::new(),
+                                ..document.clone()
+                            },
+                            mapping,
+                        )
+                    })
                 };
-                let namespace = read_namespace(&migrated)?;
-                expected_notes.extend(namespace.notes.keys().cloned());
-                prepared.documents.push((document, snapshot));
-                prepared.entry_ids.extend(mapping);
-                Ok(())
-            })
+                legacy.and_then(|(legacy, mapping)| {
+                    let snapshot =
+                        crate::replicated_namespace::migrate(&legacy, &prepared.replica_id)?;
+                    let migrated = PersistedDocument {
+                        schema_version: crate::replicated_namespace::SCHEMA_VERSION,
+                        snapshot: snapshot.clone(),
+                        snapshot_revision: document.revision,
+                        updates: Vec::new(),
+                        ..document.clone()
+                    };
+                    let namespace = read_namespace(&migrated)?;
+                    expected_notes.extend(namespace.notes.keys().cloned());
+                    prepared.documents.push((document, snapshot));
+                    prepared.entry_ids.extend(mapping);
+                    Ok(())
+                })
+            }
         } else if kind == "note" {
             actual_notes.insert(id.clone());
             crate::document_model::read_note(&document, true).and_then(|note| {
                 crate::document_model::register_section_owners(&note, &mut section_owners)?;
-                if document.schema_version != crate::replicated_note::SCHEMA_VERSION {
+                if version != DATABASE_SCHEMA
+                    && document.schema_version != crate::replicated_note::SCHEMA_VERSION
+                {
                     let snapshot =
                         crate::replicated_note::edit::migrate(&document, &prepared.replica_id)?;
                     prepared.documents.push((document, snapshot));

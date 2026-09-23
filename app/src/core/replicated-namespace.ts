@@ -12,13 +12,14 @@ import {
   type TreeProjection,
 } from "./replicated-tree";
 
-export const REPLICATED_WORKSPACE_SCHEMA_VERSION = 4;
+export const REPLICATED_WORKSPACE_SCHEMA_VERSION = 5;
 const MAX_OPERATIONS = 1_000_000;
 const PLACEMENT_FIELDS = [
   "parent_entry_id",
   "position",
   "deleted_at",
   "trash_operation_id",
+  "purged_at",
 ];
 
 interface TrashDeletion {
@@ -33,6 +34,12 @@ interface TrashRestoration {
   readonly replicaId: string;
   readonly deletionId: string;
   readonly entityIds: readonly string[];
+}
+interface TrashPurge {
+  readonly operationId: string;
+  readonly deletionId: string;
+  readonly sourceEntryId: string;
+  readonly at: string;
 }
 export interface NamespaceProjection {
   readonly entries: readonly NamespaceEntry[];
@@ -65,6 +72,7 @@ export class ReplicatedNamespace {
   readonly placements: Y.Map<Placement>;
   readonly deletions: Y.Map<TrashDeletion>;
   readonly restorations: Y.Map<TrashRestoration>;
+  readonly purges: Y.Map<TrashPurge> | Map<string, TrashPurge>;
   private projection?: NamespaceProjection;
   private counter = 0;
 
@@ -73,7 +81,11 @@ export class ReplicatedNamespace {
     readonly replicaId: string,
   ) {
     assertUuidV7(replicaId, "replicaId");
-    if (root.get("schema_version") !== REPLICATED_WORKSPACE_SCHEMA_VERSION)
+    if (
+      ![4, REPLICATED_WORKSPACE_SCHEMA_VERSION].includes(
+        Number(root.get("schema_version")),
+      )
+    )
       throw new Error("Unsupported replicated Workspace schema");
     const namespace = root.get("main_namespace") as Y.Map<unknown>;
     ({ namespaceId: this.namespaceId, entries: this.entries } =
@@ -81,6 +93,10 @@ export class ReplicatedNamespace {
     this.placements = map(namespace, "placements");
     this.deletions = map(namespace, "deletions");
     this.restorations = map(namespace, "restorations");
+    this.purges =
+      root.get("schema_version") === REPLICATED_WORKSPACE_SCHEMA_VERSION
+        ? map(namespace, "purges")
+        : new Map<string, TrashPurge>();
     namespace.observeDeep(() => {
       this.projection = undefined;
     });
@@ -162,8 +178,12 @@ export class ReplicatedNamespace {
       }
     }
     const activeDeletions = new Map<string, TrashDeletion[]>();
+    const deletionHistory = new Map<string, Set<string>>();
     for (const deletion of this.deletions.values()) {
       for (const id of deletion.entityIds) {
+        const history = deletionHistory.get(id) ?? new Set<string>();
+        history.add(deletion.operationId);
+        deletionHistory.set(id, history);
         if (restored.get(deletion.operationId)!.has(id)) continue;
         const active = activeDeletions.get(id) ?? [];
         active.push(deletion);
@@ -171,6 +191,7 @@ export class ReplicatedNamespace {
       }
     }
     const effective = new Map<string, TrashDeletion>();
+    const inheritedPurges = new Map<string, TrashPurge>();
     const pending = [this.namespaceId];
     const entries: NamespaceEntry[] = [];
     while (pending.length) {
@@ -179,8 +200,28 @@ export class ReplicatedNamespace {
         let deleted: TrashDeletion | undefined;
         for (const stamp of activeDeletions.get(id) ?? [])
           if (!deleted || compareDeletion(deleted, stamp) < 0) deleted = stamp;
-        deleted ??= effective.get(parent);
+        const parentPurge = inheritedPurges.get(parent);
+        const separatelyDeleted =
+          parentPurge &&
+          [...(deletionHistory.get(id) ?? [])].some(
+            (deletionId) => deletionId !== parentPurge.deletionId,
+          );
+        if (!deleted && !separatelyDeleted) deleted = effective.get(parent);
+        const ownPurge = this.purges.get(id);
+        const purge =
+          ownPurge ??
+          (parentPurge?.deletionId === deleted?.operationId
+            ? parentPurge
+            : undefined);
+        if (purge) deleted = this.deletions.get(purge.deletionId);
         if (deleted) effective.set(id, deleted);
+        if (purge) inheritedPurges.set(id, purge);
+        let projectedParent = parent;
+        if (!purge) {
+          while (inheritedPurges.has(projectedParent))
+            projectedParent =
+              tree.parents.get(projectedParent)?.parentId ?? this.namespaceId;
+        }
         const value = this.entries.get(id)!;
         if (
           !(value instanceof Y.Map) ||
@@ -190,12 +231,26 @@ export class ReplicatedNamespace {
             "Replicated Entry must keep placement and Trash in histories",
           );
         const edge = tree.parents.get(id)!;
+        if (purge) {
+          assertUuidV7(purge.operationId, "purge.operationId");
+          assertUuidV7(purge.deletionId, "purge.deletionId");
+          assertUuidV7(purge.sourceEntryId, "purge.sourceEntryId");
+          if (
+            !this.deletions
+              .get(purge.deletionId)
+              ?.entityIds.includes(purge.sourceEntryId) ||
+            !Number.isFinite(Date.parse(purge.at))
+          )
+            throw new Error("Invalid Namespace purge");
+        }
         entries.push(
           readNamespaceEntry(id, value, {
-            parentEntryId: parent === this.namespaceId ? null : parent,
+            parentEntryId:
+              projectedParent === this.namespaceId ? null : projectedParent,
             position: edge.position,
             deletedAt: deleted?.at,
             trashOperationId: deleted?.operationId,
+            purgedAt: purge?.at,
           }),
         );
         pending.push(id);
@@ -207,6 +262,59 @@ export class ReplicatedNamespace {
         compareString(a.entryId, b.entryId),
     );
     return (this.projection = { entries, tree, activeDeletions });
+  }
+
+  /** A purge marker is never removed; duplicate or late restoration cannot revive it. */
+  purgeEntries(
+    entryIds: readonly string[],
+    deletionId: string,
+    operationId: string,
+    at: string,
+  ): void {
+    if (this.root.get("schema_version") !== REPLICATED_WORKSPACE_SCHEMA_VERSION)
+      throw new Error(
+        "Workspace migration is required before permanent deletion",
+      );
+    assertUuidV7(operationId, "purge.operationId");
+    assertUuidV7(deletionId, "purge.deletionId");
+    if (!this.deletions.has(deletionId))
+      throw new Error("Unknown Trash operation");
+    const projection = this.project();
+    const entries = new Map(
+      projection.entries.map((entry) => [entry.entryId, entry]),
+    );
+    const sources = new Map<string, string>();
+    for (const id of entryIds) {
+      const entry = entries.get(id);
+      if (
+        !entry?.deletedAt ||
+        entry.trashOperationId !== deletionId ||
+        entry.purgedAt
+      )
+        throw new Error("Trash operation changed; confirm deletion again");
+      let source: string | undefined = id;
+      while (
+        source &&
+        !this.deletions.get(deletionId)!.entityIds.includes(source)
+      ) {
+        const parent: string | undefined =
+          projection.tree.parents.get(source)?.parentId;
+        source = parent === this.namespaceId ? undefined : parent;
+      }
+      if (!source)
+        throw new Error("Trash operation changed; confirm deletion again");
+      sources.set(id, source);
+    }
+    this.root.doc!.transact(() => {
+      for (const id of entryIds)
+        this.purges.set(id, {
+          operationId,
+          deletionId,
+          sourceEntryId: sources.get(id)!,
+          at,
+        });
+    });
+    this.projection = undefined;
   }
 
   /** Called within the Workspace owner's transaction, never by the network. */
@@ -376,7 +484,11 @@ export function replicatedNamespace(
   root: Y.Map<unknown>,
   replicaId?: string,
 ): ReplicatedNamespace | undefined {
-  if (root.get("schema_version") !== REPLICATED_WORKSPACE_SCHEMA_VERSION)
+  if (
+    ![4, REPLICATED_WORKSPACE_SCHEMA_VERSION].includes(
+      Number(root.get("schema_version")),
+    )
+  )
     return undefined;
   let model = models.get(root);
   if (!model) {
@@ -396,7 +508,7 @@ export function normalizeNamespace(
   const namespace = root.get("main_namespace") as Y.Map<unknown>;
   root.doc!.transact(() => {
     root.set("schema_version", REPLICATED_WORKSPACE_SCHEMA_VERSION);
-    for (const key of ["placements", "deletions", "restorations"])
+    for (const key of ["placements", "deletions", "restorations", "purges"])
       namespace.set(key, new Y.Map());
     const model = replicatedNamespace(root, replicaId)!;
     // Existing Entry maps retain their Yjs identity and their resource target.

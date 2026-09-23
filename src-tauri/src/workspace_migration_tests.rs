@@ -5,8 +5,8 @@ use crate::{
     read_service::hash_file,
     workspace_migration::{load_document, preflight},
 };
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, fs, path::Path};
 use yrs::{Map, ReadTxn, StateVector, Transact, Xml, XmlElementPrelim, XmlFragment, XmlOut};
 
@@ -70,6 +70,101 @@ fn contents(path: &Path) -> BTreeMap<String, String> {
             (name, value)
         })
         .collect()
+}
+
+#[test]
+fn upgrades_existing_v4_workspace_on_database_v7_without_changing_entries() {
+    let fixture = legacy_fixture();
+    drop(ProductStore::open(fixture.path()).unwrap());
+    let path = fixture.path().join("memoka.sqlite3");
+    let connection = Connection::open(&path).unwrap();
+    let id = "01a30000-0000-7000-8000-000000000001";
+    let current = load_document(&connection, "workspace", id).unwrap();
+    let before = read_namespace(&current).unwrap();
+    let doc = decode_document(&current).unwrap();
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn.get_map("workspace").unwrap();
+        let ns = match root.get(&txn, "main_namespace").unwrap() {
+            yrs::Out::YMap(map) => map,
+            _ => panic!("Namespace map missing"),
+        };
+        ns.remove(&mut txn, "purges");
+        root.insert(&mut txn, "schema_version", 4_i64);
+    }
+    let snapshot = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    connection.execute("UPDATE documents SET schema_version=4,snapshot=?1,snapshot_revision=revision WHERE kind='workspace' AND document_id=?2", params![snapshot,id]).unwrap();
+    let prepared = preflight(fixture.path()).unwrap().unwrap();
+    assert_eq!(prepared.documents.len(), 1);
+    drop(connection);
+    drop(ProductStore::open(fixture.path()).unwrap());
+    let connection = Connection::open(&path).unwrap();
+    let upgraded = load_document(&connection, "workspace", id).unwrap();
+    assert_eq!(upgraded.schema_version, 5);
+    let after = read_namespace(&upgraded).unwrap();
+    assert_eq!(
+        serde_json::to_value(before.entries).unwrap(),
+        serde_json::to_value(after.entries).unwrap()
+    );
+}
+
+#[test]
+fn upgrades_v4_workspace_with_pending_updates_on_database_v7() {
+    let fixture = legacy_fixture();
+    drop(ProductStore::open(fixture.path()).unwrap());
+    let path = fixture.path().join("memoka.sqlite3");
+    let connection = Connection::open(&path).unwrap();
+    let id = "01a30000-0000-7000-8000-000000000001";
+    let current = load_document(&connection, "workspace", id).unwrap();
+    let doc = decode_document(&current).unwrap();
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn.get_map("workspace").unwrap();
+        let ns = match root.get(&txn, "main_namespace").unwrap() {
+            yrs::Out::YMap(map) => map,
+            _ => panic!("Namespace map missing"),
+        };
+        ns.remove(&mut txn, "purges");
+        root.insert(&mut txn, "schema_version", 4_i64);
+    }
+    let snapshot = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    let state = doc.transact().state_vector();
+    {
+        let mut txn = doc.transact_mut();
+        let root = txn.get_map("workspace").unwrap();
+        root.insert(&mut txn, "updated_at", "2026-09-24T00:00:00.000Z");
+    }
+    let update = doc.transact().encode_state_as_update_v1(&state);
+    connection
+        .execute(
+            "UPDATE documents SET schema_version=4,revision=?1,snapshot_revision=?2,snapshot=?3 WHERE kind='workspace' AND document_id=?4",
+            params![current.revision + 1, current.revision, snapshot, id],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO document_updates(kind,document_id,revision,operation_id,update_blob) VALUES ('workspace',?1,?2,?3,?4)",
+            params![id, current.revision + 1, uuid::Uuid::now_v7().to_string(), update],
+        )
+        .unwrap();
+    let before = read_namespace(&load_document(&connection, "workspace", id).unwrap()).unwrap();
+    let prepared = preflight(fixture.path()).unwrap().unwrap();
+    assert_eq!(prepared.documents.len(), 1);
+    drop(connection);
+    drop(ProductStore::open(fixture.path()).unwrap());
+    let connection = Connection::open(&path).unwrap();
+    let upgraded = load_document(&connection, "workspace", id).unwrap();
+    assert_eq!(upgraded.schema_version, 5);
+    assert!(upgraded.updates.is_empty());
+    let after = read_namespace(&upgraded).unwrap();
+    assert_eq!(
+        serde_json::to_value(before.entries).unwrap(),
+        serde_json::to_value(after.entries).unwrap()
+    );
 }
 
 // Optional empty PM attributes/children have the same content meaning when
