@@ -61,13 +61,13 @@ describe("application key configuration", () => {
 
   it("maps the configured visual-character formatting sequence", () => {
     const config = mergeApplicationKeyConfig({
-      inlineFormatBindings: { "selection.format": ["fm"] },
+      inlineFormatBindings: { "selection.format": ["qm"] },
     });
     validateVimKeyConfig(config);
     const prefix = advanceVimInput(
       createVimInputState(),
       "visual-char",
-      "f",
+      "q",
       noteContext,
       config,
     );
@@ -78,6 +78,15 @@ describe("application key configuration", () => {
       resolvedCommand: "selection.format",
       action: { kind: "execute", command: "selection.format" },
     });
+    for (const sequence of ["fm", "tm"]) {
+      expect(() =>
+        validateVimKeyConfig(
+          mergeApplicationKeyConfig({
+            inlineFormatBindings: { "selection.format": [sequence] },
+          }),
+        ),
+      ).toThrow(/Ambiguous visual-char key bindings/u);
+    }
   });
 
   it("uses one configured navigation binding in Tree, Normal and Visual modes", () => {

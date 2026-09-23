@@ -46,6 +46,7 @@ import {
 } from "../editor/list-editing";
 import { projectListSelection } from "./list-selection";
 import { expandEmptyLineDeletion } from "./line-deletion";
+import { vimFindMotionTarget } from "./find-character";
 import {
   alignVimViewport,
   VIM_VIEWPORT_ALIGNMENT_META,
@@ -4030,13 +4031,16 @@ function dispatchSelection(
   if (focus) view.focus();
 }
 
-/** Move a Normal find target through the same caret and scroll path as motions. */
+/** Move a find target through the same caret and scroll path as motions. */
 export function moveVimFindToPosition(
   view: VimEditorView,
   position: number,
+  mode: "normal" | "visual-char" = "normal",
 ): boolean {
-  if (position === selectionCursor(view)) return false;
-  dispatchSelection(view, position, "normal");
+  const cursor =
+    mode === "visual-char" ? visualCharCursor(view) : selectionCursor(view);
+  if (position === cursor) return false;
+  dispatchSelection(view, position, mode);
   return true;
 }
 
@@ -5379,8 +5383,55 @@ export function runEditorVimOperator(
   operator: VimOperator,
   motion: VimCommand | "motion.table-cell-end",
   count = 1,
+  find?: { character: string; match?: number },
 ): EditorVimResult {
   const repetitions = normalizedCount(count);
+  const findDirection =
+    motion === "cursor.find-forward" || motion === "cursor.till-forward"
+      ? 1
+      : motion === "cursor.find-backward" || motion === "cursor.till-backward"
+        ? -1
+        : null;
+  const findMatch =
+    findDirection !== null && find
+      ? (find.match ??
+        vimFindMotionTarget(
+          view.state,
+          findDirection,
+          find.character,
+          repetitions,
+          false,
+        )?.match)
+      : undefined;
+  if (findDirection !== null && findMatch === undefined) {
+    return { handled: false, detail: `operator:${operator}:${motion}` };
+  }
+  const findRange: VimOperatorRange | null =
+    findDirection !== null && findMatch !== undefined
+      ? (() => {
+          const cursor = selectionCursor(view);
+          const till =
+            motion === "cursor.till-forward" ||
+            motion === "cursor.till-backward";
+          return {
+            cursor,
+            from:
+              findDirection === 1
+                ? cursor
+                : till
+                  ? exclusiveCharacterPosition(view, findMatch)
+                  : findMatch,
+            to:
+              findDirection === 1
+                ? till
+                  ? findMatch
+                  : exclusiveCharacterPosition(view, findMatch)
+                : exclusiveCharacterPosition(view, cursor),
+            structureRegister: null,
+            changeReplacement: null,
+          };
+        })()
+      : null;
   if (
     repetitions > 1 &&
     (motion === "motion.line-end" || motion === "motion.table-cell-end")
@@ -5391,7 +5442,8 @@ export function runEditorVimOperator(
     };
   }
   const explicitRange =
-    motion === "motion.table-cell-end"
+    findRange ??
+    (motion === "motion.table-cell-end"
       ? null
       : ((operator === "change" &&
         (motion === "motion.word-forward" ||
@@ -5403,12 +5455,13 @@ export function runEditorVimOperator(
             )
           : null) ??
         textObjectRange(view, motion, repetitions) ??
-        structuralMotionRange(view, motion, repetitions));
-  let line = explicitRange ? null : currentLogicalLine(view);
+        structuralMotionRange(view, motion, repetitions)));
+  let line = explicitRange && !findRange ? null : currentLogicalLine(view);
   const cell = explicitRange ? null : tableCellAtPosition(view);
   if (
     line &&
     cell &&
+    !findRange &&
     motion !== "cursor.logical-up" &&
     motion !== "cursor.logical-down"
   ) {

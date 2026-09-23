@@ -2311,6 +2311,382 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     root.remove();
   });
 
+  it("extends Visual Char selection with f/F and repeats from its inclusive cursor", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>a1b2b3c</p>");
+    const start = textPosition(editor, "a1b2b3c");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "v");
+
+    press(editor, "f");
+    press(editor, "b");
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(start + 2);
+    expect(editor.state.selection.from).toBe(start);
+    expect(editor.state.selection.to).toBe(start + 3);
+    press(editor, ";");
+    expect(visualCharCursor(editor.view)).toBe(start + 4);
+    expect(editor.state.selection.to).toBe(start + 5);
+    press(editor, ",");
+    expect(visualCharCursor(editor.view)).toBe(start + 2);
+    press(editor, "F");
+    press(editor, "a");
+    expect(visualCharCursor(editor.view)).toBe(start);
+    expect(editor.state.selection.from).toBe(start);
+    expect(editor.state.selection.to).toBe(start + 1);
+
+    press(editor, "Escape");
+    editor.commands.setTextSelection(start + 6);
+    press(editor, "v");
+    press(editor, "2");
+    press(editor, "F");
+    press(editor, "b");
+    expect(visualCharCursor(editor.view)).toBe(start + 2);
+    expect(editor.state.selection.from).toBe(start + 2);
+    expect(editor.state.selection.to).toBe(start + 7);
+    press(editor, ",");
+    expect(visualCharCursor(editor.view)).toBe(start + 4);
+    expect(editor.state.selection.from).toBe(start + 4);
+    expect(editor.state.selection.to).toBe(start + 7);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("uses Visual Char t/T and repeats past the previous match", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>a1x2x3x</p>");
+    const start = textPosition(editor, "a1x2x3x");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "v");
+    press(editor, "t");
+    press(editor, "x");
+    expect(visualCharCursor(editor.view)).toBe(start + 1);
+    expect(editor.state.selection.to).toBe(start + 2);
+    press(editor, ";");
+    expect(visualCharCursor(editor.view)).toBe(start + 3);
+    expect(editor.state.selection.to).toBe(start + 4);
+
+    press(editor, "Escape");
+    editor.commands.setTextSelection(start + 6);
+    press(editor, "v");
+    press(editor, "T");
+    press(editor, "x");
+    expect(visualCharCursor(editor.view)).toBe(start + 5);
+    expect(editor.state.selection.from).toBe(start + 5);
+    press(editor, ";");
+    expect(visualCharCursor(editor.view)).toBe(start + 3);
+    expect(editor.state.selection.from).toBe(start + 3);
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("uses f/F/t/T as Normal delete, yank, and change motions", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.focus();
+    await runtime.flush();
+    for (const [cursor, keys, expected] of [
+      [0, ["d", "f", "x"], "cdxefg"],
+      [0, ["d", "t", "x"], "xcdxefg"],
+      [8, ["d", "F", "x"], "abxcd"],
+      [8, ["d", "T", "x"], "abxcdx"],
+      [0, ["2", "d", "f", "x"], "efg"],
+      [0, ["d", "2", "f", "x"], "efg"],
+    ] as const) {
+      editor.commands.setContent("<p>abxcdxefg</p>");
+      const start = textPosition(editor, "abxcdxefg");
+      editor.commands.setTextSelection(start + cursor);
+      press(editor, "Escape");
+      for (const key of keys) press(editor, key);
+      expect(editor.state.doc.textContent).toBe(expected);
+      expect(adapter.vimSnapshot.mode).toBe("normal");
+    }
+
+    editor.commands.setContent("<p>abxcdxefg</p>");
+    editor.commands.setTextSelection(textPosition(editor, "abxcdxefg"));
+    press(editor, "y");
+    press(editor, "f");
+    press(editor, "x");
+    expect(adapter.vimSnapshot.register).toBe("text: abx");
+    expect(editor.state.doc.textContent).toBe("abxcdxefg");
+
+    editor.commands.setTextSelection(textPosition(editor, "abxcdxefg") + 8);
+    press(editor, "c");
+    press(editor, "T");
+    press(editor, "x");
+    expect(editor.state.doc.textContent).toBe("abxcdx");
+    expect(adapter.vimSnapshot.mode).toBe("insert");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("repeats a Normal character-find operator with its target character", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>ax ax ax</p>");
+    editor.commands.setTextSelection(textPosition(editor, "ax ax ax"));
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "f");
+    press(editor, "x");
+    expect(editor.state.doc.textContent).toBe(" ax ax");
+    press(editor, ".");
+    expect(editor.state.doc.textContent).toBe(" ax");
+
+    editor.commands.setContent("<p>a1x2x</p>");
+    editor.commands.setTextSelection(textPosition(editor, "a1x2x"));
+    press(editor, "d");
+    press(editor, "t");
+    press(editor, "x");
+    expect(editor.state.doc.textContent).toBe("x2x");
+    press(editor, ";");
+    expect(editor.state.selection.from).toBe(textPosition(editor, "2"));
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("uses phrase hints as Normal f operator motions", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>前 日本語の文章</p>");
+    const start = textPosition(editor, "前");
+    const target = textPosition(editor, "日本語");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    const hint = vimFindHints(editor.state, 1).find(
+      ({ position }) => position === target,
+    );
+    expect(hint).toBeDefined();
+    press(editor, "d");
+    press(editor, "f");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${hint!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of hint!.label) press(editor, letter);
+    expect(editor.state.doc.textContent).toBe("本語の文章");
+    expect(adapter.vimSnapshot.register).toBe("text: 前 日");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("uses phrase hints for Normal t operator motions without including the target", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>前 日本語の文章</p>");
+    editor.commands.setTextSelection(textPosition(editor, "前"));
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    const target = textPosition(editor, "日本語");
+    const hint = vimFindHints(editor.state, 1).find(
+      ({ position }) => position === target,
+    );
+    expect(hint).toBeDefined();
+
+    press(editor, "d");
+    press(editor, "t");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${hint!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of hint!.label) press(editor, letter);
+    expect(editor.state.doc.textContent).toBe("日本語の文章");
+    expect(adapter.vimSnapshot.register).toBe("text: 前");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps a find operator inside the current Table row without removing Cells", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent(
+      "<table><tbody><tr><td><p>a</p></td><td><p>x</p></td></tr><tr><td><p>x</p></td></tr></tbody></table>",
+    );
+    editor.commands.setTextSelection(textPosition(editor, "a"));
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "f");
+    press(editor, "x");
+
+    const table = editor.state.doc.firstChild;
+    expect(table?.type.name).toBe("table");
+    expect(table?.childCount).toBe(2);
+    expect(table?.child(0).childCount).toBe(2);
+    expect(table?.child(0).textContent).toBe("");
+    expect(table?.child(1).textContent).toBe("x");
+    expect(adapter.vimSnapshot.mode).toBe("normal");
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("moves a Visual Char selection with phrase hints in both directions", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>始 日本語の文章を読む</p>");
+    const start = textPosition(editor, "始");
+    const target = textPosition(editor, "日本語");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "v");
+
+    const forward = vimFindHints(
+      editor.state,
+      1,
+      visualCharCursor(editor.view),
+    ).find(({ position }) => position === target);
+    expect(forward).toBeDefined();
+    press(editor, "f");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${forward!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of forward!.label) press(editor, letter);
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(target);
+    expect(editor.state.selection.from).toBe(start);
+
+    const backward = vimFindHints(
+      editor.state,
+      -1,
+      visualCharCursor(editor.view),
+    ).find(({ position }) => position === start);
+    expect(backward).toBeDefined();
+    press(editor, "F");
+    for (const letter of backward!.label) press(editor, letter);
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(start);
+    expect(editor.state.selection.to).toBe(start + 1);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("moves a Visual Char selection with t/T phrase hints to the adjacent character", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      clock: () => "2026-07-27T00:00:00.000Z",
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>始 日本語の文章を読む</p>");
+    const start = textPosition(editor, "始");
+    const target = textPosition(editor, "日本語");
+    editor.commands.setTextSelection(start);
+    editor.commands.focus();
+    await runtime.flush();
+    press(editor, "Escape");
+    press(editor, "v");
+
+    const forward = vimFindHints(
+      editor.state,
+      1,
+      visualCharCursor(editor.view),
+    ).find(({ position }) => position === target);
+    expect(forward).toBeDefined();
+    press(editor, "t");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${forward!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of forward!.label) press(editor, letter);
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(target - 1);
+    expect(editor.state.selection.from).toBe(start);
+
+    const end = textPosition(editor, "読む");
+    press(editor, "Escape");
+    editor.commands.setTextSelection(end);
+    press(editor, "v");
+    const backward = vimFindHints(
+      editor.state,
+      -1,
+      visualCharCursor(editor.view),
+    ).find(({ position }) => position === target);
+    expect(backward).toBeDefined();
+    press(editor, "T");
+    expect(
+      root.querySelector(`[data-vim-find-hint="${backward!.label}"]`),
+    ).not.toBeNull();
+    for (const letter of backward!.label) press(editor, letter);
+    expect(adapter.vimSnapshot.mode).toBe("visual-char");
+    expect(visualCharCursor(editor.view)).toBe(target + 1);
+    expect(editor.state.selection.to).toBe(end + 1);
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it("finds across Table Cells but not beyond the current logical row", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

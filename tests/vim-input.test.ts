@@ -72,6 +72,137 @@ describe("Memoka Vim input grammar", () => {
       advanceVimInput(createVimInputState(), "normal", ";", noteContext),
     ).toMatchObject({ resolvedCommand: "cursor.find-repeat" });
   });
+
+  it("parses Visual Char f/F/t/T and repeat keys without leaving Visual mode", () => {
+    const started = advanceVimInput(
+      createVimInputState(),
+      "visual-char",
+      "f",
+      noteContext,
+    );
+    expect(started.state.pending).toMatchObject({
+      kind: "find-character",
+      key: "f",
+    });
+    expect(
+      advanceVimInput(started.state, "visual-char", "x", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-forward", argument: "x" });
+    const backward = advanceVimInput(
+      createVimInputState(),
+      "visual-char",
+      "F",
+      noteContext,
+    );
+    expect(
+      advanceVimInput(backward.state, "visual-char", "x", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-backward", argument: "x" });
+    for (const [key, command] of [
+      ["t", "cursor.till-forward"],
+      ["T", "cursor.till-backward"],
+    ] as const) {
+      const till = advanceVimInput(
+        createVimInputState(),
+        "visual-char",
+        key,
+        noteContext,
+      );
+      expect(till.state.pending).toMatchObject({
+        kind: "find-character",
+        key,
+      });
+      expect(
+        advanceVimInput(till.state, "visual-char", "x", noteContext),
+      ).toMatchObject({ resolvedCommand: command, argument: "x" });
+      const hintContext = { ...noteContext, findHints: ["ab"] };
+      const prefix = advanceVimInput(
+        till.state,
+        "visual-char",
+        "a",
+        hintContext,
+      );
+      expect(prefix.state.pending).toMatchObject({ typed: "a" });
+      expect(
+        advanceVimInput(prefix.state, "visual-char", "b", hintContext),
+      ).toMatchObject({
+        resolvedCommand: command,
+        argument: "ab",
+        findHint: true,
+      });
+    }
+    expect(
+      advanceVimInput(createVimInputState(), "visual-char", ";", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-repeat" });
+    expect(
+      advanceVimInput(createVimInputState(), "visual-char", ",", noteContext),
+    ).toMatchObject({ resolvedCommand: "cursor.find-reverse" });
+    expect(
+      advanceVimInput(createVimInputState(), "normal", "t", noteContext).state
+        .pending,
+    ).toMatchObject({ kind: "prefix", key: "t" });
+  });
+
+  it("parses f/F/t/T as counted Normal operator motions", () => {
+    for (const [operatorKey, operator, motionKey, command] of [
+      ["d", "delete", "f", "cursor.find-forward"],
+      ["y", "yank", "F", "cursor.find-backward"],
+      ["c", "change", "t", "cursor.till-forward"],
+      ["d", "delete", "T", "cursor.till-backward"],
+    ] as const) {
+      const started = advanceVimInput(
+        createVimInputState(),
+        "normal",
+        operatorKey,
+        noteContext,
+      );
+      const pending = advanceVimInput(
+        started.state,
+        "normal",
+        motionKey,
+        noteContext,
+      );
+      expect(pending.state.pending).toMatchObject({
+        kind: "find-character",
+        key: motionKey,
+        operator,
+      });
+      expect(
+        advanceVimInput(pending.state, "normal", "x", noteContext),
+      ).toMatchObject({
+        resolvedCommand: command,
+        operator,
+        argument: "x",
+      });
+      if (motionKey === "t" || motionKey === "T") {
+        expect(
+          advanceVimInput(pending.state, "normal", "a", {
+            ...noteContext,
+            findHints: ["a"],
+          }),
+        ).toMatchObject({
+          resolvedCommand: command,
+          operator,
+          argument: "a",
+          findHint: true,
+        });
+      }
+    }
+    const before = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      "2",
+      noteContext,
+    );
+    const operator = advanceVimInput(before.state, "normal", "d", noteContext);
+    const after = advanceVimInput(operator.state, "normal", "3", noteContext);
+    const find = advanceVimInput(after.state, "normal", "f", noteContext);
+    expect(
+      advanceVimInput(find.state, "normal", "x", noteContext),
+    ).toMatchObject({
+      sequence: "2d3fx",
+      operator: "delete",
+      count: 6,
+    });
+  });
   it("opens the symbol picker only in Insert, preserving Normal scrolling and IME", () => {
     expect(
       advanceVimInput(createVimInputState(), "insert", "Ctrl+e", noteContext)

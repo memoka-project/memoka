@@ -26,13 +26,17 @@ const UPPERCASE_HINT_ALPHABET = LOWERCASE_HINT_ALPHABET.toUpperCase();
 const HINT_SUFFIX_ALPHABET = [...LOWERCASE_HINT_ALPHABET];
 const MAX_HINTS_PER_INITIAL = HINT_SUFFIX_ALPHABET.length ** 2;
 
-function currentFindLine(state: EditorState): FindLine | null {
+function currentFindLine(
+  state: EditorState,
+  cursorOverride?: number,
+): FindLine | null {
   const lines = defaultVimBlockSemantics.logicalLines({ state });
   if (lines.length === 0) return null;
   const cursor =
-    state.selection instanceof NodeSelection
+    cursorOverride ??
+    (state.selection instanceof NodeSelection
       ? state.selection.from
-      : state.selection.head;
+      : state.selection.head);
   const line = lines[defaultVimBlockSemantics.currentLineIndex(lines, cursor)];
   if (!line || line.kind === "block-atom") return null;
   const positions = line.cursorPositions;
@@ -53,17 +57,77 @@ export function vimFindCharacterDestination(
   direction: VimFindDirection,
   character: string,
   count: number,
+  cursorOverride?: number,
 ): number | null {
-  const current = currentFindLine(state);
+  return (
+    vimFindMotionTarget(
+      state,
+      direction,
+      character,
+      count,
+      false,
+      cursorOverride,
+    )?.destination ?? null
+  );
+}
+
+export interface VimFindMotionTarget {
+  match: number;
+  destination: number;
+}
+
+export function vimFindMotionTarget(
+  state: EditorState,
+  direction: VimFindDirection,
+  character: string,
+  count: number,
+  till: boolean,
+  cursorOverride?: number,
+  skipMatch?: number,
+): VimFindMotionTarget | null {
+  const current = currentFindLine(state, cursorOverride);
   if (!current) return null;
   const matches = current.positions.flatMap((position, index) =>
     (direction === 1 ? position > current.cursor : position < current.cursor) &&
-    current.characters[index] === character
+    current.characters[index] === character &&
+    position !== skipMatch
       ? [position]
       : [],
   );
   if (direction === -1) matches.reverse();
-  return matches[Math.max(1, count) - 1] ?? null;
+  const match = matches[Math.max(1, count) - 1];
+  if (match === undefined) return null;
+  const destination = till
+    ? current.positions[current.positions.indexOf(match) - direction]
+    : match;
+  return destination === undefined ? null : { match, destination };
+}
+
+/** Resolve an exact phrase hint without re-searching for its first character. */
+export function vimFindHintMotionTarget(
+  state: EditorState,
+  direction: VimFindDirection,
+  hint: VimFindHint,
+  till: boolean,
+  cursorOverride?: number,
+): VimFindMotionTarget | null {
+  const current = currentFindLine(state, cursorOverride);
+  if (!current) return null;
+  const index = current.positions.indexOf(hint.position);
+  if (
+    index < 0 ||
+    current.characters[index] !== hint.character ||
+    (direction === 1
+      ? hint.position <= current.cursor
+      : hint.position >= current.cursor)
+  )
+    return null;
+  const destination = till
+    ? current.positions[index - direction]
+    : hint.position;
+  return destination === undefined
+    ? null
+    : { match: hint.position, destination };
 }
 
 /** Expand less-preferred slots first; leave short labels for nearer phrases. */
@@ -135,8 +199,9 @@ export function allocateVimFindHintLabels(
 export function vimFindHints(
   state: EditorState,
   direction: VimFindDirection,
+  cursorOverride?: number,
 ): VimFindHint[] {
-  const current = currentFindLine(state);
+  const current = currentFindLine(state, cursorOverride);
   if (!current) return [];
   const { positions, characters, cursor } = current;
   const hardBoundaryBefore = positions.map(

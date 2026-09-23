@@ -74,13 +74,16 @@ falseの場合は現在論理行端で止まる。Tableの同じ論理行に属�
 `f/F/;/,`は`whichwrap`に関係なく現在の論理行を越えない。Tableでは同じrow内のCellをまたげるが、別rowには移動しない。
 文字検索は書記素クラスタ単位で大文字・小文字を区別し、対象がなければcaretを動かさない。
 `f/F`の入力待ちは`Esc`で取り消せる。Count付きの`f/F`は通常の1文字検索のみ行う。
+Normal単独の`t/T`は文字検索へ割り当てず、既存の`t` Tab操作を維持する。
+Normalの`d/y/c`には`f/F/t/T{文字}`をmotionとして指定できる。`f/F`は一致文字を範囲に含め、
+`t/T`は一致文字を含めず、その手前/直後までを範囲にする。Countは一致文字を数える。
 
-Countなしの`f/F`では、検索方向にある日本語を含むphraseの先頭へ英字1〜3文字のhintを表示する。
+Countなしの`f/F/t/T`では、検索方向にある日本語を含むphraseの先頭へ英字1〜3文字のhintを表示する。
 phrase境界は設定中の日本語word分割方式を使い、日本語を含まない単位を除外する。
 半角英数字・半角記号で始まるphraseも対象とする。
 同じ方向に通常の文字検索で到達できる英字をhint先頭には使わない。使用可能な小文字の1〜3文字labelを使い切ってから大文字を先頭とするlabelを使い、近い候補から
 小文字を優先して短いprefix-freeなlabelを割り当てる。3文字以内で割り当てられない候補は表示しない。
-label入力中は、入力済みprefixに一致しないhintを消す。label確定でphrase先頭へ移動する。
+label入力中は、入力済みprefixに一致しないhintを消す。label確定時、`f/F`はphrase先頭へ、`t/T`はその直前/直後へ移動する。
 hintの表示位置はphrase先頭の文字位置とし、表示行先頭で折り返した場合も前の表示行末には置かない。
 文書・選択・focusが変わればhint入力を取り消す。hintは文書やUndoへ保存しない。
 hint後の`;`/`,`は選んだphraseの先頭文字を通常の文字検索として繰り返すため、同じ文字がphrase途中に
@@ -208,6 +211,10 @@ Vimとは異なり`vip`はVisual Charを維持する。`ip`の複数Countは未�
 
 `v`でcaret下の文字を含むVisual Charへ入る。最初の`h/l`からheadを正しく移動し、
 開始文字をselectionへ含める。motion、operator、`m`によるmark変更を使用できる。
+`f/F/t/T/;/,`はVisual Charのinclusiveなheadを起点に論理行内で検索し、anchorを保ったままheadを移す。
+`t/T`は一致文字の直前/直後にheadを置く。`;`/`,`は直前の`f/F/t/T`の移動種別を保ち、
+`t/T`の繰り返しでは同じ一致文字を再利用しない。
+Countなしの`f/F/t/T`では同じphrase hintを表示する。
 
 `s`は`c`と同じselection changeで、削除からInsert終了までを1 Undo単位にする。
 `r{char}`は選択内の各文字を指定文字へ置換してNormalへ戻る。Unicode code point単位で置換し、

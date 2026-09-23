@@ -175,6 +175,7 @@ line_break_segmentation = "fine"
 `table.action_picker`は廃止済みである。Context Actionsは固定Leader categoryの`<Leader>a`を使う。
 
 同じsurfaceで完全一致またはprefix関係になる曖昧binding、application予約sequenceと衝突するTree bindingを拒否する。
+Visual Charでは`f/F/t/T`が文字検索の入力待ちになるため、それらをprefixに使う設定bindingも曖昧として拒否する。
 
 ## 5. Leader namespace
 

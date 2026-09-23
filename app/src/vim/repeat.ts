@@ -147,6 +147,7 @@ export function replayVimRepeat(
       descriptor.operator,
       descriptor.command,
       effectiveCount,
+      descriptor.argument ? { character: descriptor.argument } : undefined,
     );
   }
   if (descriptor.command === "replace.character" && descriptor.argument) {

@@ -111,7 +111,8 @@ import { VimLogicalLineGutter } from "./logical-line-gutter";
 import { VimVisualLineOverlay } from "./visual-line-overlay";
 import { VimFindHintOverlay } from "./find-hint-overlay";
 import {
-  vimFindCharacterDestination,
+  vimFindHintMotionTarget,
+  vimFindMotionTarget,
   vimFindHints,
   type VimFindDirection,
   type VimFindHint,
@@ -502,9 +503,12 @@ export class ProductVimSession {
   private findHints: VimFindHint[] = [];
   private findOriginDoc: ProseMirrorNode | null = null;
   private findOriginCursor: number | null = null;
+  private findOriginAnchor: number | null = null;
   private lastCharacterFind: {
     direction: VimFindDirection;
     character: string;
+    till: boolean;
+    match: number | null;
   } | null = null;
   private refreshFrame: number | null = null;
   private focusRefreshTimer: number | null = null;
@@ -693,7 +697,10 @@ export class ProductVimSession {
               if (
                 this.input.pending?.kind === "find-character" &&
                 (next.state.doc !== this.findOriginDoc ||
-                  selectionCursor(next) !== this.findOriginCursor)
+                  (this.mode === "visual-char"
+                    ? visualCharCursor(next)
+                    : selectionCursor(next)) !== this.findOriginCursor ||
+                  next.state.selection.anchor !== this.findOriginAnchor)
               ) {
                 this.input = createVimInputState();
                 this.clearFindHints(next);
@@ -2034,12 +2041,20 @@ export class ProductVimSession {
     if (resolution.state.pending?.kind === "find-character") {
       if (!wasFinding) {
         this.findOriginDoc = view.state.doc;
-        this.findOriginCursor = selectionCursor(view);
+        this.findOriginCursor =
+          this.mode === "visual-char"
+            ? visualCharCursor(view)
+            : selectionCursor(view);
+        this.findOriginAnchor = view.state.selection.anchor;
         this.findHints = resolution.state.pending.count
           ? []
           : vimFindHints(
               view.state,
-              resolution.state.pending.key === "f" ? 1 : -1,
+              resolution.state.pending.key === "f" ||
+                resolution.state.pending.key === "t"
+                ? 1
+                : -1,
+              this.findOriginCursor,
             );
       }
       this.findHintOverlay?.update(
@@ -2095,10 +2110,13 @@ export class ProductVimSession {
 
     const command = resolution.resolvedCommand;
     if (
-      command === "cursor.find-forward" ||
-      command === "cursor.find-backward" ||
-      command === "cursor.find-repeat" ||
-      command === "cursor.find-reverse"
+      !resolution.operator &&
+      (command === "cursor.find-forward" ||
+        command === "cursor.find-backward" ||
+        command === "cursor.till-forward" ||
+        command === "cursor.till-backward" ||
+        command === "cursor.find-repeat" ||
+        command === "cursor.find-reverse")
     ) {
       event.preventDefault();
       const repeat =
@@ -2111,26 +2129,59 @@ export class ProductVimSession {
           : (this.lastCharacterFind?.direction ?? 1)
         : command === "cursor.find-forward"
           ? 1
-          : -1;
+          : command === "cursor.till-forward"
+            ? 1
+            : -1;
+      const till = repeat
+        ? (this.lastCharacterFind?.till ?? false)
+        : command === "cursor.till-forward" ||
+          command === "cursor.till-backward";
       const character =
         selectedHint?.character ??
         (repeat ? this.lastCharacterFind?.character : resolution.argument);
-      const position =
-        selectedHint?.position ??
-        (character
-          ? vimFindCharacterDestination(
+      const cursor =
+        this.mode === "visual-char"
+          ? visualCharCursor(view)
+          : selectionCursor(view);
+      const target = selectedHint
+        ? vimFindHintMotionTarget(
+            view.state,
+            direction,
+            selectedHint,
+            till,
+            cursor,
+          )
+        : character
+          ? vimFindMotionTarget(
               view.state,
               direction,
               character,
               resolution.count,
+              till,
+              cursor,
+              repeat && till
+                ? (this.lastCharacterFind?.match ?? undefined)
+                : undefined,
             )
-          : null);
+          : null;
+      if (this.mode === "visual-char") this.visualCharToLineEnd = false;
       const moved =
-        position !== null && position !== undefined
-          ? moveVimFindToPosition(view, position)
+        target !== null
+          ? moveVimFindToPosition(
+              view,
+              target.destination,
+              this.mode === "visual-char" ? "visual-char" : "normal",
+            )
           : false;
       if (!repeat && character)
-        this.lastCharacterFind = { direction, character };
+        this.lastCharacterFind = {
+          direction,
+          character,
+          till,
+          match: target?.match ?? null,
+        };
+      else if (repeat && target && this.lastCharacterFind)
+        this.lastCharacterFind.match = target.match;
       this.action = `find:${command}:${moved ? "changed" : "boundary"}`;
       this.emit();
       this.scheduleCaretRefresh(view);
@@ -2583,6 +2634,32 @@ export class ProductVimSession {
 
     if (command) {
       event.preventDefault();
+      const operatorFindDirection: VimFindDirection | null =
+        command === "cursor.find-forward" || command === "cursor.till-forward"
+          ? 1
+          : command === "cursor.find-backward" ||
+              command === "cursor.till-backward"
+            ? -1
+            : null;
+      const operatorFindCharacter =
+        selectedHint?.character ?? resolution.argument;
+      const operatorFind =
+        resolution.operator &&
+        operatorFindDirection !== null &&
+        operatorFindCharacter
+          ? {
+              character: operatorFindCharacter,
+              match:
+                selectedHint?.position ??
+                vimFindMotionTarget(
+                  view.state,
+                  operatorFindDirection,
+                  operatorFindCharacter,
+                  resolution.count,
+                  false,
+                )?.match,
+            }
+          : undefined;
       if (
         this.mode === "visual-char" &&
         (command.startsWith("motion.") ||
@@ -2667,6 +2744,7 @@ export class ProductVimSession {
         !resolution.operator &&
         (command.startsWith("cursor.screen-") ||
           command.startsWith("viewport.scroll-"));
+      const docBeforeCommand = view.state.doc;
       const result: EditorVimResult = screenMotion
         ? (() => {
             const target = viewportNavigationTarget(
@@ -2704,6 +2782,7 @@ export class ProductVimSession {
                 resolution.operator,
                 command,
                 resolution.count,
+                operatorFind,
               )
             : command === "replace.character" && resolution.argument
               ? runEditorReplaceCharacter(
@@ -2746,6 +2825,18 @@ export class ProductVimSession {
             : selectionCursor(view));
       if (result.handled && jumpOrigin && jumpCursor !== afterJumpCursor)
         this.options.onRecordJump?.(jumpOrigin);
+      if (operatorFind && operatorFindDirection !== null)
+        this.lastCharacterFind = {
+          direction: operatorFindDirection,
+          character: operatorFind.character,
+          till:
+            command === "cursor.till-forward" ||
+            command === "cursor.till-backward",
+          match:
+            view.state.doc === docBeforeCommand
+              ? (operatorFind.match ?? null)
+              : null,
+        };
       const repeatDescriptor = result.handled
         ? createVimRepeatDescriptor({
             mode: this.mode,
@@ -2753,7 +2844,7 @@ export class ProductVimSession {
             operator: resolution.operator,
             count: resolution.count,
             countExplicit: resolution.countExplicit ?? false,
-            argument: resolution.argument,
+            argument: operatorFind?.character ?? resolution.argument,
             tableRectangle: tableRectangle ?? undefined,
             visualChar: visualChar ?? undefined,
           })
@@ -2847,6 +2938,7 @@ export class ProductVimSession {
     this.findHints = [];
     this.findOriginDoc = null;
     this.findOriginCursor = null;
+    this.findOriginAnchor = null;
     this.findHintOverlay?.update(view, [], "");
   }
 
