@@ -243,6 +243,13 @@ export interface TiptapEditorAdapterOptions {
   ) =>
     | (EditorNavigationResult & NoteSearchNavigationStatus)
     | Promise<EditorNavigationResult & NoteSearchNavigationStatus>;
+  onNoteWordSearch?: (
+    origin: NoteSearchOrigin,
+    direction: NoteSearchDirection,
+    count: number,
+  ) =>
+    | (EditorNavigationResult & NoteSearchNavigationStatus)
+    | Promise<EditorNavigationResult & NoteSearchNavigationStatus>;
   onCommandLine?: () => void;
   onCommandPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
@@ -498,6 +505,10 @@ export class TiptapEditorAdapter {
       onNoteSearchRepeat: options.onNoteSearchRepeat
         ? (cursor, direction, count) =>
             this.handleNoteSearchRepeat(cursor, direction, count)
+        : undefined,
+      onNoteWordSearch: options.onNoteWordSearch
+        ? (cursor, direction, count) =>
+            this.handleNoteWordSearch(cursor, direction, count)
         : undefined,
       onInlineFormat: () => this.requestInlineFormatPicker(),
       onSymbolPicker: () => this.requestSymbolPicker(),
@@ -2411,16 +2422,35 @@ export class TiptapEditorAdapter {
     direction: NoteSearchDirection,
     count: number,
   ): Promise<EditorNavigationResult> {
-    const editor = this.currentEditor;
-    const origin = this.noteSearchOrigin(cursor);
-    if (!origin || !this.options.onNoteSearchRepeat) {
-      return { handled: false, detail: "search:note:unavailable" };
-    }
-    const result = await this.options.onNoteSearchRepeat(
-      origin,
+    return this.handleNoteSearchNavigation(
+      cursor,
       direction,
       count,
+      this.options.onNoteSearchRepeat,
     );
+  }
+
+  private handleNoteWordSearch(
+    cursor: number,
+    direction: NoteSearchDirection,
+    count: number,
+  ): Promise<EditorNavigationResult> {
+    const search = this.options.onNoteWordSearch;
+    return this.handleNoteSearchNavigation(cursor, direction, count, search);
+  }
+
+  private async handleNoteSearchNavigation(
+    cursor: number,
+    direction: NoteSearchDirection,
+    count: number,
+    search: TiptapEditorAdapterOptions["onNoteWordSearch"],
+  ): Promise<EditorNavigationResult> {
+    const editor = this.currentEditor;
+    const origin = this.noteSearchOrigin(cursor);
+    if (!origin || !search) {
+      return { handled: false, detail: "search:note:unavailable" };
+    }
+    const result = await search(origin, direction, count);
     if (
       result.destination &&
       editor === this.currentEditor &&

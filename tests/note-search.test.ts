@@ -15,6 +15,10 @@ import {
   selectNoteSearchMatch,
 } from "../app/src/core/note-search";
 import {
+  deriveNoteWordSearchProjection,
+  noteWordAtOrigin,
+} from "../app/src/core/note-word-search";
+import {
   createBodyChunks,
   createSectionXml,
   insertChildSection,
@@ -48,6 +52,138 @@ function press(editor: Editor, key: string): void {
 }
 
 describe("Memoka current NoteDoc search", () => {
+  it("prefers the next keyword over punctuation and stays on the same logical line", () => {
+    const unit = {
+      order: 0,
+      sectionId: "section",
+      blockId: "block",
+      offset: 0,
+      text: "!? 漢字\n!?",
+      kind: "text" as const,
+    };
+    const location = (offset: number) => ({
+      sectionId: unit.sectionId,
+      blockId: unit.blockId,
+      offset,
+    });
+    expect(noteWordAtOrigin([unit], location(0))).toBe("漢字");
+    expect(noteWordAtOrigin([unit], location(3))).toBe("漢字");
+    expect(noteWordAtOrigin([unit], location(5))).toBeNull();
+    expect(noteWordAtOrigin([unit], location(6))).toBe("!?");
+    expect(
+      noteWordAtOrigin([{ ...unit, kind: "atom" }], location(0)),
+    ).toBeNull();
+  });
+  it("runs * and # through the Normal keyboard path and keeps n/N direction", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const note = runtime.getNoteHandle(runtime.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const blockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([blockToYXml(paragraph(blockId, "漢字 漢字 漢字"))]),
+      );
+    });
+    const root = editorRoot();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    let start = -1;
+    editor.state.doc.descendants((node, position) => {
+      if (node.attrs.blockId === blockId) {
+        start = position + 1;
+        return false;
+      }
+      return start < 0;
+    });
+    expect(start).toBeGreaterThan(0);
+    press(editor, "Escape");
+    editor.commands.setTextSelection(start);
+    press(editor, "*");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(editor.state.selection.from).toBe(start + 3);
+    press(editor, "n");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(editor.state.selection.from).toBe(start + 6);
+    press(editor, "#");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(editor.state.selection.from).toBe(start + 3);
+    press(editor, "n");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(editor.state.selection.from).toBe(start);
+    press(editor, "N");
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(editor.state.selection.from).toBe(start + 3);
+    adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+  it("selects a Unicode keyword on the logical line and repeats exact whole-token matches", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const note = runtime.getNoteHandle(runtime.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const blockId = createUuidV7();
+    note.doc.transact(() => {
+      note.body.delete(0, note.body.length);
+      note.body.insert(
+        0,
+        createBodyChunks([
+          blockToYXml(
+            paragraph(blockId, "漢字 漢字語 漢字\nカタカナ カタカナ"),
+          ),
+        ]),
+      );
+    });
+    const root = editorRoot();
+    const { adapter } = runtime.editorForTesting("window-1", root);
+    const captured = adapter.captureNoteSearchOrigin();
+    expect(captured).not.toBeNull();
+    const originAt = (offset: number) => ({
+      ...captured!,
+      location: { sectionId: note.noteId, blockId, offset },
+    });
+    const units = deriveNoteSearchProjection(note, "").units;
+    expect(noteWordAtOrigin(units, originAt(0).location)).toBe("漢字");
+    expect(noteWordAtOrigin(units, originAt(3).location)).toBe("漢字語");
+    expect(noteWordAtOrigin(units, originAt(9).location)).toBeNull();
+    expect(
+      deriveNoteWordSearchProjection(note, "漢字").matches.map(
+        (match) => match.offset,
+      ),
+    ).toEqual([0, 7]);
+
+    const forward = await runtime.searchNoteWord(
+      "window-1",
+      originAt(0),
+      "forward",
+    );
+    expect(forward).toMatchObject({
+      destination: { offset: 7 },
+      matchCount: 2,
+    });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(7), "forward"),
+    ).toMatchObject({ destination: { offset: 0 }, wrapped: true });
+    expect(
+      await runtime.searchNoteWord("window-1", originAt(7), "backward"),
+    ).toMatchObject({ destination: { offset: 0 }, direction: "backward" });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(0), "forward"),
+    ).toMatchObject({ destination: { offset: 7 }, direction: "backward" });
+    const absent = await runtime.searchNoteWord(
+      "window-1",
+      originAt(9),
+      "forward",
+    );
+    expect(absent).toMatchObject({ detail: "search:note:no-word" });
+    expect(
+      await runtime.repeatNoteSearch("window-1", originAt(7), "forward"),
+    ).toMatchObject({ destination: { offset: 0 }, direction: "backward" });
+    adapter.destroy();
+    root.remove();
+  });
   it("uses the last / or ? direction for n and reverses it for N", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const note = runtime.getNoteHandle(runtime.noteId).current;

@@ -561,10 +561,17 @@ describe("Memoka Vim input grammar", () => {
   it("maps current-note search and counted repeats from Normal mode", () => {
     expect(resolveKey("normal", "/", noteContext)).toBe("note.search");
     expect(resolveKey("normal", "?", noteContext)).toBe("note.search_backward");
+    expect(resolveKey("normal", "*", noteContext)).toBe(
+      "note.search_word_forward",
+    );
+    expect(resolveKey("normal", "#", noteContext)).toBe(
+      "note.search_word_backward",
+    );
     expect(resolveKey("normal", "n", noteContext)).toBe("note.search_next");
     expect(resolveKey("normal", "N", noteContext)).toBe("note.search_previous");
     expect(resolveKey("insert", "/", noteContext)).toBeNull();
     expect(resolveKey("visual-char", "n", noteContext)).toBeNull();
+    expect(resolveKey("visual-char", "*", noteContext)).toBeNull();
 
     const three = advanceVimInput(
       createVimInputState(),
@@ -578,6 +585,13 @@ describe("Memoka Vim input grammar", () => {
       resolvedCommand: "note.search_next",
       count: 3,
       sequence: "3n",
+    });
+    expect(
+      advanceVimInput(three.state, "normal", "*", noteContext),
+    ).toMatchObject({
+      resolvedCommand: "note.search_word_forward",
+      count: 3,
+      sequence: "3*",
     });
   });
 

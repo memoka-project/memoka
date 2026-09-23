@@ -318,6 +318,11 @@ export interface ProductVimSessionOptions {
     direction: NoteSearchDirection,
     count: number,
   ) => EditorNavigationResult | Promise<EditorNavigationResult>;
+  onNoteWordSearch?: (
+    cursor: number,
+    direction: NoteSearchDirection,
+    count: number,
+  ) => EditorNavigationResult | Promise<EditorNavigationResult>;
   onInlineFormat?: () => boolean;
   onSymbolPicker?: () => boolean;
   onCodeBlockActions?: (selection: CodeBlockActionSelection) => boolean;
@@ -2096,7 +2101,8 @@ export class ProductVimSession {
         this.options.onMessage?.(
           leaderShortcutMessage(
             resolution.action.resolution,
-            this.options.keyConfig?.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey,
+            this.options.keyConfig?.leaderKey ??
+              DEFAULT_APPLICATION_KEY_CONFIG.leaderKey,
           ),
         );
         this.action = `leader:${resolution.action.resolution.kind}`;
@@ -2576,6 +2582,19 @@ export class ProductVimSession {
       this.startNoteSearchRepeat(
         view,
         command === "note.search_next" ? "forward" : "backward",
+        resolution.count,
+      );
+      return true;
+    }
+
+    if (
+      command === "note.search_word_forward" ||
+      command === "note.search_word_backward"
+    ) {
+      event.preventDefault();
+      this.startNoteWordSearch(
+        view,
+        command === "note.search_word_forward" ? "forward" : "backward",
         resolution.count,
       );
       return true;
@@ -3733,12 +3752,38 @@ export class ProductVimSession {
     direction: NoteSearchDirection,
     count: number,
   ): void {
+    this.startNoteSearchOperation(
+      view,
+      direction,
+      count,
+      this.options.onNoteSearchRepeat,
+    );
+  }
+
+  private startNoteWordSearch(
+    view: EditorView,
+    direction: NoteSearchDirection,
+    count: number,
+  ): void {
+    this.startNoteSearchOperation(
+      view,
+      direction,
+      count,
+      this.options.onNoteWordSearch,
+    );
+  }
+
+  private startNoteSearchOperation(
+    view: EditorView,
+    direction: NoteSearchDirection,
+    count: number,
+    search: ProductVimSessionOptions["onNoteSearchRepeat"],
+  ): void {
     if (this.navigationInFlight) {
       this.action = "search:note:busy";
       this.emit();
       return;
     }
-    const search = this.options.onNoteSearchRepeat;
     if (!search) {
       this.action = "search:note:unavailable";
       this.emit();

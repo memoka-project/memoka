@@ -170,6 +170,10 @@ import {
   type NoteSearchLocation,
 } from "./note-search";
 import { deriveNoteFuzzySearchProjection } from "./note-fuzzy-search";
+import {
+  deriveNoteWordSearchProjection,
+  noteWordAtOrigin,
+} from "./note-word-search";
 import { getJapaneseSegmentationConfiguration } from "./japanese-segmentation";
 import {
   deriveInternalLinkCandidates,
@@ -315,7 +319,7 @@ interface PendingWindowViewUpdate {
 interface WindowNoteSearchState {
   readonly query: string;
   readonly direction: NoteSearchDirection;
-  readonly mode: "literal" | "fuzzy-migemo";
+  readonly mode: "literal" | "fuzzy-migemo" | "word-exact";
   readonly migemoPattern: string;
   readonly wordSegmentation: string;
   readonly noteId: string;
@@ -2231,6 +2235,46 @@ export class CoreRuntime {
     );
   }
 
+  searchNoteWord(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    direction: NoteSearchDirection,
+    count = 1,
+  ): Promise<NoteSearchNavigationResult> {
+    const windowState = this.windows.get(windowId);
+    if (!windowState) throw new Error(`Unknown window: ${windowId}`);
+    const note = this.getNoteHandle(origin.stable.noteId).current;
+    const units =
+      note.kind === "note"
+        ? deriveNoteSearchProjection(
+            note,
+            "",
+            windowState.focusedSectionId ?? note.noteId,
+          ).units
+        : [];
+    const query = noteWordAtOrigin(units, origin.location);
+    if (!query) {
+      return Promise.resolve({
+        handled: false,
+        detail: "search:note:no-word",
+        query: null,
+        matchCount: 0,
+        matchIndex: null,
+        wrapped: false,
+      });
+    }
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      direction,
+      count,
+      true,
+      "word-exact",
+      "",
+    );
+  }
+
   selectFuzzyNoteSearch(
     windowId: string,
     origin: NoteSearchOrigin,
@@ -2296,7 +2340,7 @@ export class CoreRuntime {
     direction: NoteSearchDirection,
     count: number,
     replacePattern: boolean,
-    mode: "literal" | "fuzzy-migemo",
+    mode: "literal" | "fuzzy-migemo" | "word-exact",
     migemoPattern: string,
     selectedLocation?: NoteSearchLocation,
   ): Promise<NoteSearchNavigationResult> {
@@ -2347,7 +2391,9 @@ export class CoreRuntime {
               migemoPattern,
               scopeSectionId,
             )
-          : deriveNoteSearchProjection(note, query, scopeSectionId);
+          : mode === "word-exact"
+            ? deriveNoteWordSearchProjection(note, query, scopeSectionId)
+            : deriveNoteSearchProjection(note, query, scopeSectionId);
     const nextSearchState: WindowNoteSearchState = {
       query,
       direction: replacePattern ? direction : (cached?.direction ?? direction),
@@ -3049,6 +3095,8 @@ export class CoreRuntime {
           }),
       onNoteSearchRepeat: (origin, direction, count) =>
         this.repeatNoteSearch(windowId, origin, direction, count),
+      onNoteWordSearch: (origin, direction, count) =>
+        this.searchNoteWord(windowId, origin, direction, count),
       onCommandLine: options.onCommandLine,
       onCommandPicker: options.onCommandPicker,
       onApplicationCommand: options.onApplicationCommand,

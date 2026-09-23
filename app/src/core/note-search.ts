@@ -309,6 +309,10 @@ function normalizeSearchText(value: string): {
   return { value: normalized, sourceOffsets };
 }
 
+export function normalizeNoteSearchToken(value: string): string {
+  return normalizeSearchText(value).value;
+}
+
 function searchableBlockId(
   nodeName: string | undefined,
   attrs: Readonly<Record<string, unknown>> | undefined,
