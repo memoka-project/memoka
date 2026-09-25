@@ -77,23 +77,38 @@ function clampedPosition(state: EditorState, position: number): number {
   return Math.max(0, Math.min(position, state.doc.content.size));
 }
 
+function completeUnicodeContext(value: string): string {
+  const first = value.charCodeAt(0);
+  const last = value.charCodeAt(value.length - 1);
+  const start = first >= 0xdc00 && first <= 0xdfff ? 1 : 0;
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? value.length - 1 : value.length;
+  return value.slice(start, end);
+}
+
 function surroundingText(
   state: EditorState,
   position: number,
 ): Pick<StableEditorPosition, "before" | "after"> {
   const cursor = clampedPosition(state, position);
+  // textBetween uses UTF-16 offsets. A fixed-width context can cut through an
+  // emoji at either edge, leaving a lone surrogate that native JSON rejects.
   return {
-    before: state.doc.textBetween(
-      Math.max(0, cursor - CONTEXT_LENGTH),
-      cursor,
-      "",
-      "\uFFFC",
+    before: completeUnicodeContext(
+      state.doc.textBetween(
+        Math.max(0, cursor - CONTEXT_LENGTH),
+        cursor,
+        "",
+        "\uFFFC",
+      ),
     ),
-    after: state.doc.textBetween(
-      cursor,
-      Math.min(state.doc.content.size, cursor + CONTEXT_LENGTH),
-      "",
-      "\uFFFC",
+    after: completeUnicodeContext(
+      state.doc.textBetween(
+        cursor,
+        Math.min(state.doc.content.size, cursor + CONTEXT_LENGTH),
+        "",
+        "\uFFFC",
+      ),
     ),
   };
 }
@@ -131,18 +146,44 @@ function contextOffset(
   text: string,
   saved: StableEditorPosition,
 ): number | null {
-  if (saved.before) {
-    const index = text.indexOf(saved.before);
-    if (index >= 0) return index + saved.before.length;
-  }
-  if (saved.after) {
-    const index = text.indexOf(saved.after);
-    if (index >= 0) return index;
-  }
   if (!saved.before && !saved.after) {
     return Math.max(0, Math.min(saved.offset, text.length));
   }
-  return null;
+  const offsets = new Set<number>();
+  for (const [context, endOffset] of [
+    [saved.before, saved.before.length],
+    [saved.after, 0],
+  ] as const) {
+    if (!context) continue;
+    let from = 0;
+    while (from <= text.length - context.length) {
+      const index = text.indexOf(context, from);
+      if (index < 0) break;
+      offsets.add(index + endOffset);
+      from = index + 1;
+    }
+  }
+  let best: { offset: number; matches: number; distance: number } | null = null;
+  for (const offset of offsets) {
+    const matches =
+      Number(
+        Boolean(saved.before) &&
+          text.slice(Math.max(0, offset - saved.before.length), offset) ===
+            saved.before,
+      ) +
+      Number(
+        Boolean(saved.after) &&
+          text.slice(offset, offset + saved.after.length) === saved.after,
+      );
+    const distance = Math.abs(offset - saved.offset);
+    if (
+      !best ||
+      matches > best.matches ||
+      (matches === best.matches && distance < best.distance)
+    )
+      best = { offset, matches, distance };
+  }
+  return best?.offset ?? null;
 }
 
 export function contentOffsetAtTextOffset(

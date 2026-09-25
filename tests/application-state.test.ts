@@ -70,7 +70,7 @@ describe("Memoka Application Window pure state", () => {
     const state = initialState();
 
     expect(state).toMatchObject({
-      schemaVersion: 10,
+      schemaVersion: 12,
       applicationWindowId: "application-window-1",
       activeTabId: "tab-1",
       tabs: [
@@ -129,7 +129,7 @@ describe("Memoka Application Window pure state", () => {
     const migrated = migrateApplicationWindowState(legacy);
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(10);
+    expect(state.schemaVersion).toBe(12);
     expect(state.tabs[0]?.leftSidebar).toMatchObject({
       utility: "tree",
       tree: { selectedEntryId: null, collapsedEntryIds: [] },
@@ -152,7 +152,7 @@ describe("Memoka Application Window pure state", () => {
 
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(10);
+    expect(state.schemaVersion).toBe(12);
     expect(state.windows["window-1"]!.view.collapsedSectionIds).toEqual([]);
     expect(() => validateApplicationWindowState(state)).not.toThrow();
   });
@@ -178,12 +178,108 @@ describe("Memoka Application Window pure state", () => {
 
     expect(migrated.changed).toBe(true);
     const state = migrated.state as ApplicationWindowState;
-    expect(state.schemaVersion).toBe(10);
+    expect(state.schemaVersion).toBe(12);
     expect(state.windows["window-1"]!.view).toMatchObject({
       collapsedCodeBlockIds: [],
       detailsFoldOverrides: {},
     });
     expect(() => validateApplicationWindowState(state)).not.toThrow();
+  });
+
+  it("migrates schema 10 Window state without losing its active caret", () => {
+    const legacy = structuredClone(initialState());
+    (legacy as { schemaVersion: number }).schemaVersion = 10;
+    legacy.windows["window-1"].view.selection = { anchor: 7, head: 7 };
+    delete (
+      legacy.windows["window-1"].view as Partial<
+        (typeof legacy.windows)["window-1"]["view"]
+      >
+    ).stableCaret;
+    delete (
+      legacy.windows["window-1"] as Partial<(typeof legacy.windows)["window-1"]>
+    ).noteViews;
+
+    const migrated = migrateApplicationWindowState(legacy);
+    const state = migrated.state as ApplicationWindowState;
+    expect(migrated.changed).toBe(true);
+    expect(state.schemaVersion).toBe(12);
+    expect(state.windows["window-1"].view.selection).toEqual({
+      anchor: 7,
+      head: 7,
+    });
+    expect(state.windows["window-1"].view.stableCaret).toBeNull();
+    expect(state.windows["window-1"].noteViews).toEqual({});
+    expect(() => validateApplicationWindowState(state)).not.toThrow();
+  });
+
+  it("migrates schema 11 while retaining remembered Note positions", () => {
+    let legacy = updateWindowView(initialState(), "window-1", {
+      selection: { anchor: 12, head: 12 },
+      scrollTop: 240,
+      caretViewportTop: 70,
+    });
+    legacy = openBufferInWindow(legacy, "window-1", createNoteBuffer(NOTE_B));
+    (legacy as { schemaVersion: number }).schemaVersion = 11;
+    delete (
+      legacy.windows["window-1"].view as Partial<
+        (typeof legacy.windows)["window-1"]["view"]
+      >
+    ).caretViewportTop;
+    for (const remembered of Object.values(
+      legacy.windows["window-1"].noteViews,
+    ))
+      delete (remembered as Partial<typeof remembered>).caretViewportTop;
+
+    const migrated = migrateApplicationWindowState(legacy);
+    const state = migrated.state as ApplicationWindowState;
+    expect(migrated.changed).toBe(true);
+    expect(state.schemaVersion).toBe(12);
+    expect(state.windows["window-1"].noteViews[NOTE_A]).toMatchObject({
+      selection: { anchor: 12, head: 12 },
+      scrollTop: 240,
+      caretViewportTop: null,
+    });
+    expect(() => validateApplicationWindowState(state)).not.toThrow();
+  });
+
+  it("remembers Note caret, Focused Section and scroll independently in each Window", () => {
+    let state = initialState();
+    state = splitWindow(state, {
+      targetWindowId: "window-1",
+      newWindowId: "window-2",
+      splitId: "split-1",
+      direction: "vertical",
+    });
+    state = updateWindowView(state, "window-1", {
+      selection: { anchor: 12, head: 12 },
+      scrollTop: 240,
+      caretViewportTop: 70,
+      focusedSectionId: NOTE_A,
+    });
+    state = updateWindowView(state, "window-2", {
+      selection: { anchor: 5, head: 5 },
+      scrollTop: 80,
+      caretViewportTop: 30,
+    });
+    state = openBufferInWindow(state, "window-1", createNoteBuffer(NOTE_B));
+    state = openBufferInWindow(state, "window-2", createNoteBuffer(NOTE_B));
+    state = openBufferInWindow(state, "window-1", createNoteBuffer(NOTE_A));
+    state = openBufferInWindow(state, "window-2", createNoteBuffer(NOTE_A));
+    expect(state.windows["window-1"].view).toMatchObject({
+      mode: "normal",
+      selection: { anchor: 12, head: 12 },
+      scrollTop: 240,
+      caretViewportTop: 70,
+      focusedSectionId: NOTE_A,
+    });
+    expect(state.windows["window-2"].view).toMatchObject({
+      selection: { anchor: 5, head: 5 },
+      scrollTop: 80,
+      caretViewportTop: 30,
+    });
+    expect(
+      reloadApplicationWindowState(serializeApplicationWindowState(state)),
+    ).toMatchObject({ windows: state.windows });
   });
 
   it("creates and splits a Window without attaching a Buffer", () => {

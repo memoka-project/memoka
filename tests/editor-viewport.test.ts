@@ -2,6 +2,7 @@ import { Plugin } from "@tiptap/pm/state";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { saveStableEditorPosition } from "../app/src/core/stable-position";
 import { parseMarkdownNote } from "../app/src/editor/markdown-paste";
 import { defaultVimBlockSemantics as semantics } from "../app/src/vim/block-semantics";
 
@@ -128,14 +129,16 @@ async function harness() {
     runtime,
     adapter,
     editor,
+    root,
     scroll,
     lines,
     start,
     press,
     reflow,
     expectVisible,
-    destroy() {
-      adapter.destroy();
+    destroy(extraAdapter?: { destroy(): void }) {
+      extraAdapter?.destroy();
+      if (!editor.isDestroyed) adapter.destroy();
       runtime.destroy();
       scroll.remove();
       vi.restoreAllMocks();
@@ -145,6 +148,94 @@ async function harness() {
 }
 
 describe("Editor viewport scroll intent", () => {
+  it("restores the caret's screen position after a Note remount and late layout shift", async () => {
+    const h = await harness();
+    let replacement: { destroy(): void } | undefined;
+    try {
+      const caret = h.start(20);
+      h.scroll.scrollTop = 350;
+      h.editor.commands.setTextSelection(caret);
+      h.adapter.captureWindowViewBeforeLayoutChange();
+      await h.runtime.flushDurableState();
+      expect(
+        h.runtime.snapshot().applicationWindow.windows["window-1"]?.view
+          .caretViewportTop,
+      ).toBe(50);
+
+      h.adapter.destroy();
+      h.scroll.scrollTop = 0;
+      const remounted = h.runtime.editorForTesting("window-1", h.root, {
+        directBodyOnly: false,
+        scrollElement: h.scroll,
+      });
+      replacement = remounted.adapter;
+      let shift = 120;
+      const lines = semantics.logicalLines(remounted.editor.view);
+      vi.spyOn(remounted.editor.view, "coordsAtPos").mockImplementation(
+        (position) => {
+          const y =
+            semantics.currentLineIndex(lines, position) * 20 +
+            shift -
+            h.scroll.scrollTop;
+          return { left: 40, right: 40, top: y, bottom: y + 18 };
+        },
+      );
+      await frame();
+      expect(remounted.editor.state.selection.head).toBe(caret);
+      expect(h.scroll.scrollTop).toBe(470);
+
+      shift = 200;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.scroll.scrollTop).toBe(550);
+      expect(remounted.editor.state.selection.head).toBe(caret);
+
+      h.scroll.dispatchEvent(new Event("wheel"));
+      shift = 280;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.scroll.scrollTop).toBe(550);
+    } finally {
+      h.destroy(replacement);
+    }
+  });
+
+  it("keeps a restored Note caret when restoring its saved scroll position", async () => {
+    const h = await harness();
+    try {
+      const caret = h.start(10);
+      h.scroll.scrollTop = 180;
+      h.editor.commands.setTextSelection(caret);
+      h.scroll.dispatchEvent(new Event("wheel"));
+      const saved = saveStableEditorPosition(
+        h.runtime.noteDocument,
+        h.editor.view,
+        caret,
+      );
+      expect(
+        h.adapter.applyNavigationDestination(
+          { kind: "stable", noteId: h.runtime.noteId, saved },
+          "jump:note-open:restored",
+          { reveal: false },
+        ),
+      ).toBe("jump:note-open:restored");
+
+      h.scroll.scrollTop = 240;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.editor.state.selection.head).toBe(caret);
+      h.expectVisible();
+      h.scroll.dispatchEvent(new Event("wheel"));
+      h.scroll.scrollTop = 300;
+      h.scroll.dispatchEvent(new Event("scroll"));
+      await frame();
+      expect(h.editor.state.selection.head).not.toBe(caret);
+      h.expectVisible();
+    } finally {
+      h.destroy();
+    }
+  });
+
   it.each(["v", "V"])(
     "preserves %s mode during screen-row motions",
     async (key) => {

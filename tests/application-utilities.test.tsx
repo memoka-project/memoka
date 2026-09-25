@@ -28,6 +28,8 @@ import {
   insertChildSection,
 } from "../app/src/core/section-model";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { MemoryPersistencePort } from "../app/src/core/persistence";
+import type { TiptapEditorAdapter } from "../app/src/editor/tiptap-adapter";
 import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 import {
@@ -1229,6 +1231,101 @@ describe("Memoka Application utilities", () => {
       );
     });
 
+    view.unmount();
+  });
+
+  it("restores a Help body caret after keyboard navigation through Tree", async () => {
+    class ReplicatedPersistence extends MemoryPersistencePort {
+      readonly replicaId = createUuidV7();
+      override async manifest() {
+        return {
+          ...(await super.manifest()),
+          databaseSchemaVersion: 7,
+          replicaId: this.replicaId,
+        };
+      }
+    }
+    const originalOpen = CoreRuntime.open.bind(CoreRuntime);
+    vi.spyOn(CoreRuntime, "open").mockImplementation((_port, options) =>
+      originalOpen(new ReplicatedPersistence(), options),
+    );
+    const openHelp = vi.spyOn(CoreRuntime.prototype, "openHelpNote");
+    const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+    const view = render(<App />);
+    const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted =
+        view.container.querySelector<HTMLElement>(".memoka-editor");
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "help" } });
+    await act(async () => {
+      fireEvent.keyDown(command, { key: "Enter" });
+      await openHelp.mock.results[0]!.value;
+    });
+    const helpEditor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        '.memoka-editor[data-vim-mode="normal"]',
+      );
+      if (!mounted || mounted.dataset.noteId === editor.dataset.noteId)
+        throw new Error("Help editor did not mount");
+      return mounted;
+    });
+    await waitFor(() => expect(document.activeElement).toBe(helpEditor));
+    const helpAdapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    if (!helpAdapter) throw new Error("Help adapter did not attach");
+    let paragraphStart = -1;
+    helpAdapter.editor.state.doc.descendants((node, position) => {
+      if (
+        paragraphStart < 0 &&
+        node.isText &&
+        node.text?.includes("Memokaでは")
+      )
+        paragraphStart = position + node.text.indexOf("Memokaでは");
+    });
+    if (paragraphStart < 0) throw new Error("Help paragraph was not found");
+    helpAdapter.editor.commands.setTextSelection(paragraphStart);
+    const runtime = openHelp.mock.contexts[0] as CoreRuntime;
+    await waitFor(() =>
+      expect(
+        runtime.snapshot().applicationWindow.windows["window-1"].view.selection
+          ?.head,
+      ).toBe(paragraphStart),
+    );
+    await runtime.flush();
+    const before =
+      runtime.snapshot().applicationWindow.windows["window-1"].view;
+    expect(before.stableCaret?.blockId).not.toBe("");
+    fireEvent.keyDown(helpEditor, { key: "w", code: "KeyW", ctrlKey: true });
+    fireEvent.keyDown(helpEditor, { key: "h", code: "KeyH" });
+    await waitFor(() => expect(document.activeElement).toBe(tree));
+    fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
+    await waitFor(() =>
+      expect(view.container.querySelector(".window-title")?.textContent).toBe(
+        "新しいノート",
+      ),
+    );
+    tree.focus();
+    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
+    fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
+    await waitFor(() =>
+      expect(
+        view.container.querySelector(".window-title")?.textContent,
+      ).toContain("Memoka help"),
+    );
+    await runtime.flush();
+    expect(
+      runtime.snapshot().applicationWindow.windows["window-1"].view.selection
+        ?.head,
+    ).toBe(before.selection?.head);
+    const restoredAdapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    expect(restoredAdapter?.editor.state.selection.head).toBe(paragraphStart);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(restoredAdapter?.editor.state.selection.head).toBe(paragraphStart);
     view.unmount();
   });
 

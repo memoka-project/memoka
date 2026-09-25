@@ -5,7 +5,11 @@ import type {
   SectionProperties,
   SectionSnapshot,
 } from "./section-model";
-import type { VimMode, WindowSelection } from "./window-state";
+import type {
+  VimMode,
+  WindowLocalViewState,
+  WindowSelection,
+} from "./window-state";
 import type {
   ApplicationFocusOwner,
   SidebarSide,
@@ -164,7 +168,9 @@ export interface CoreCommandPayloads {
     update: {
       mode?: VimMode;
       selection?: WindowSelection | null;
+      stableCaret?: WindowLocalViewState["stableCaret"];
       scrollTop?: number;
+      caretViewportTop?: number | null;
       collapsedSectionIds?: string[];
       collapsedCodeBlockIds?: string[];
       detailsFoldOverrides?: Record<string, boolean>;

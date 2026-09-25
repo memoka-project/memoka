@@ -1,5 +1,6 @@
 import { assertUuidV7 } from "./ids";
 import type { VimMode } from "../vim/input";
+import type { StableEditorPosition } from "./stable-position";
 
 export type { VimMode } from "../vim/input";
 
@@ -8,10 +9,29 @@ export interface WindowSelection {
   head: number;
 }
 
+/** JSON-safe form of the Editor's relative, edit-stable caret position. */
+export interface StoredWindowCaret extends Omit<
+  StableEditorPosition,
+  "relative"
+> {
+  relative: number[];
+}
+
+export interface RememberedNoteView {
+  selection: WindowSelection | null;
+  scrollTop: number;
+  caretViewportTop: number | null;
+  focusedSectionId: string | null;
+  stableCaret: StoredWindowCaret | null;
+}
+
 export interface WindowLocalViewState {
   mode: VimMode;
   selection: WindowSelection | null;
+  stableCaret: StoredWindowCaret | null;
   scrollTop: number;
+  /** Caret's pixel distance below the viewport top at the saved scroll position. */
+  caretViewportTop: number | null;
   /** null means the NoteDoc Root Section. */
   focusedSectionId: string | null;
   /** Closed Sections in this Window only; IDs outside the mounted Focus are retained. */
@@ -33,7 +53,9 @@ export function createWindowLocalViewState(
   return {
     mode,
     selection: null,
+    stableCaret: null,
     scrollTop: 0,
+    caretViewportTop: null,
     focusedSectionId: null,
     collapsedSectionIds: [],
     collapsedCodeBlockIds: [],
@@ -98,6 +120,14 @@ export function validateWindowLocalViewState(
   ) {
     throw new Error("Window-local scrollTop must be non-negative");
   }
+  if (
+    state.caretViewportTop !== null &&
+    (typeof state.caretViewportTop !== "number" ||
+      !Number.isFinite(state.caretViewportTop) ||
+      state.caretViewportTop < 0)
+  ) {
+    throw new Error("Window-local caret viewport top must be non-negative");
+  }
   if (state.selection !== null) {
     if (
       !state.selection ||
@@ -108,6 +138,30 @@ export function validateWindowLocalViewState(
     ) {
       throw new Error("Window-local selection must contain valid positions");
     }
+  }
+  if (state.stableCaret !== null) {
+    const caret = state.stableCaret;
+    if (
+      !caret ||
+      typeof caret !== "object" ||
+      typeof caret.noteId !== "string" ||
+      typeof caret.blockId !== "string" ||
+      !Number.isInteger(caret.offset) ||
+      caret.offset < 0 ||
+      typeof caret.before !== "string" ||
+      typeof caret.after !== "string" ||
+      !Array.isArray(caret.relative) ||
+      caret.relative.some(
+        (byte) => !Number.isInteger(byte) || byte < 0 || byte > 255,
+      )
+    ) {
+      throw new Error("Window-local stable caret is invalid");
+    }
+    assertUuidV7(caret.noteId, "window caret Note ID");
+    if (caret.sectionId !== undefined)
+      assertUuidV7(caret.sectionId, "window caret Section ID");
+    if (caret.relativeEntityId !== undefined)
+      assertUuidV7(caret.relativeEntityId, "window caret entity ID");
   }
   if (state.focusedSectionId !== null) {
     if (typeof state.focusedSectionId !== "string") {
@@ -156,4 +210,36 @@ export function validateWindowLocalViewState(
       throw new Error(`Details fold override must be boolean: ${blockId}`);
     }
   }
+}
+
+export function rememberedNoteView(
+  view: WindowLocalViewState,
+): RememberedNoteView {
+  return {
+    selection: view.selection ? { ...view.selection } : null,
+    scrollTop: view.scrollTop,
+    caretViewportTop: view.caretViewportTop,
+    focusedSectionId: view.focusedSectionId,
+    stableCaret: view.stableCaret ? structuredClone(view.stableCaret) : null,
+  };
+}
+
+export function validateRememberedNoteView(
+  value: unknown,
+): asserts value is RememberedNoteView {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Remembered Note view must be an object");
+  for (const key of [
+    "selection",
+    "scrollTop",
+    "caretViewportTop",
+    "focusedSectionId",
+    "stableCaret",
+  ])
+    if (!(key in value))
+      throw new Error(`Remembered Note view requires ${key}`);
+  validateWindowLocalViewState({
+    ...createWindowLocalViewState(),
+    ...value,
+  });
 }

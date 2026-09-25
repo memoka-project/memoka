@@ -104,6 +104,7 @@ import {
   ManagedCrdtDocument,
 } from "./transaction-gateway";
 import {
+  rememberedNoteView,
   validateWindowViewState,
   type WindowLocalViewState,
   type WindowViewState,
@@ -188,7 +189,10 @@ import {
   type TreeMoveDirection,
 } from "./note-tree";
 import { siblingPositionSeed } from "./sibling-position";
-import { type StableEditorPosition } from "./stable-position";
+import {
+  saveStableEditorPosition,
+  type StableEditorPosition,
+} from "./stable-position";
 import {
   deriveWorkspaceSearchDocumentAsync,
   filterWorkspaceSearchCatalog,
@@ -308,7 +312,9 @@ interface PendingWindowViewUpdate {
   readonly update: {
     mode?: WindowViewState["mode"];
     selection?: WindowViewState["selection"];
+    stableCaret?: WindowLocalViewState["stableCaret"];
     scrollTop?: number;
+    caretViewportTop?: number | null;
     collapsedSectionIds?: string[];
     collapsedCodeBlockIds?: string[];
     detailsFoldOverrides?: Record<string, boolean>;
@@ -380,6 +386,10 @@ export class CoreRuntime {
 
   private readonly notePersistence = new Map<string, NotePersistenceSession>();
   private readonly agentEditors = new Map<TiptapEditorAdapter, string>();
+  private readonly windowEditorAdapters = new Map<
+    string,
+    TiptapEditorAdapter
+  >();
   private externalCommit: Promise<void> | null = null;
   private commandsInFlight = 0;
   private readonly noteLoads = new Map<
@@ -402,7 +412,11 @@ export class CoreRuntime {
   private readonly imageReturnOrigins = new Map<string, StableEditorPosition>();
   private readonly pendingNavigations = new Map<
     string,
-    { destination: EditorNavigationDestination; detail: string }
+    {
+      destination: EditorNavigationDestination;
+      detail: string;
+      restoreView?: boolean;
+    }
   >();
   private readonly optimisticSectionFocuses = new Map<
     string,
@@ -1526,6 +1540,7 @@ export class CoreRuntime {
     attachmentId: string,
     origin?: StableEditorPosition | null,
   ): Promise<{ windowId: string; attachmentId: string }> {
+    await this.captureWindowViewBeforeNoteChange(windowId);
     const buffer = createImageBuffer(attachmentId);
     const result = await this.commitApplicationWindowMutation(
       this.idFactory(),
@@ -2222,6 +2237,7 @@ export class CoreRuntime {
     const applied = adapter.applyNavigationDestination(
       pending.destination,
       pending.detail,
+      pending.restoreView ? { reveal: false } : undefined,
     );
     if (applied) this.pendingNavigations.delete(windowId);
     return applied;
@@ -2948,6 +2964,45 @@ export class CoreRuntime {
     if (!this.isLiveNote(result.noteId)) {
       return { handled: false, detail: "jump:search:missing-note" };
     }
+    if (!result.blockId && result.sectionId === result.noteId) {
+      if (current) {
+        const opened = await this.navigateNoteOpen(
+          windowId,
+          current,
+          result.noteId,
+          "jump:search:changed",
+        );
+        return {
+          handled: opened.handled,
+          detail: opened.handled ? "jump:search:changed" : opened.detail,
+        };
+      }
+      try {
+        const remembered =
+          this.requireApplicationWindowState().windows[windowId].noteViews[
+            result.noteId
+          ];
+        if (
+          !remembered?.stableCaret &&
+          !remembered?.selection &&
+          !remembered?.focusedSectionId &&
+          !remembered?.scrollTop
+        ) {
+          return this.openNavigationDestination(
+            windowId,
+            { kind: "document-start", noteId: result.noteId },
+            "jump:search:changed",
+          );
+        }
+        await this.openNote(windowId, result.noteId);
+        return { handled: true, detail: "jump:search:changed" };
+      } catch (error) {
+        return {
+          handled: false,
+          detail: `jump:open:error:${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
     const destination: EditorNavigationDestination = result.blockId
       ? {
           kind: "search-match",
@@ -3055,6 +3110,7 @@ export class CoreRuntime {
     windowId: string,
     current: StableEditorPosition,
     noteId: string,
+    detail = "jump:note-open:changed",
   ): Promise<EditorNavigationResult> {
     const windowState = this.windows.get(windowId);
     if (!windowState) throw new Error(`Unknown window: ${windowId}`);
@@ -3072,14 +3128,30 @@ export class CoreRuntime {
     ) {
       return { handled: true, detail: "jump:note-open:unchanged" };
     }
-    const jumpList = this.jumpListFor(windowId);
-    return this.openNavigationDestination(
-      windowId,
-      { kind: "document-start", noteId },
-      "jump:note-open:changed",
-      () => jumpList.recordOrigin(current),
-      undefined,
-    );
+    const remembered = applicationWindow.windows[windowId].noteViews[noteId];
+    if (
+      !remembered?.stableCaret &&
+      !remembered?.selection &&
+      !remembered?.focusedSectionId &&
+      !remembered?.scrollTop
+    ) {
+      return this.openNavigationDestination(
+        windowId,
+        { kind: "document-start", noteId },
+        detail,
+        () => this.jumpListFor(windowId).recordOrigin(current),
+      );
+    }
+    try {
+      await this.openNote(windowId, noteId);
+      this.jumpListFor(windowId).recordOrigin(current);
+      return { handled: true, detail };
+    } catch (error) {
+      return {
+        handled: false,
+        detail: `jump:open:error:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   repeatStoreFor(windowId: string): VimRepeatStore {
@@ -3148,8 +3220,18 @@ export class CoreRuntime {
       repeatStore: this.repeatStoreFor(windowId),
       visualSelectionStore: this.visualSelectionStoreFor(windowId),
       getWindowState: () => this.requireContentWindowState(windowId),
-      onSelectionUpdate: (editor, activeSectionId) => {
+      onSelectionUpdate: (editor, activeSectionId, caretViewportTop) => {
         const selection = editor.state.selection;
+        let stableCaret: WindowLocalViewState["stableCaret"] = null;
+        const current = handle.current;
+        if (current.kind === "note") {
+          try {
+            const saved = saveStableEditorPosition(current, editor.view);
+            stableCaret = { ...saved, relative: [...saved.relative] };
+          } catch {
+            // Keep the raw selection when the Editor is between bindings.
+          }
+        }
         this.persistWindowUpdate(
           windowId,
           {
@@ -3163,6 +3245,8 @@ export class CoreRuntime {
                   ? selection.$headCell.pos
                   : selection.head,
             },
+            stableCaret,
+            caretViewportTop,
           },
           attachedNoteId,
           activeSectionId,
@@ -3170,8 +3254,12 @@ export class CoreRuntime {
       },
       onModeChange: (mode) =>
         this.persistWindowUpdate(windowId, { mode }, attachedNoteId),
-      onScrollUpdate: (scrollTop) =>
-        this.persistWindowUpdate(windowId, { scrollTop }, attachedNoteId),
+      onScrollUpdate: (scrollTop, caretViewportTop) =>
+        this.persistWindowUpdate(
+          windowId,
+          { scrollTop, caretViewportTop },
+          attachedNoteId,
+        ),
       onVimSnapshot: options.onVimSnapshot,
       onCaretSectionChange: options.onCaretSectionChange,
       onCaretExternalLinkChange: options.onCaretExternalLinkChange,
@@ -3395,6 +3483,7 @@ export class CoreRuntime {
     });
     this.applyPendingNavigation(windowId, adapter);
     this.agentEditors.set(adapter, attachedNoteId);
+    this.windowEditorAdapters.set(windowId, adapter);
     return adapter;
   }
 
@@ -3499,6 +3588,7 @@ export class CoreRuntime {
     }
     this.pendingWindowViewUpdates.clear();
     this.inFlightWindowViewUpdates.clear();
+    this.windowEditorAdapters.clear();
     if (this.workspaceSearchIndexDocumentTimer !== null) {
       globalThis.clearTimeout(this.workspaceSearchIndexDocumentTimer);
       this.workspaceSearchIndexDocumentTimer = null;
@@ -3712,10 +3802,14 @@ export class CoreRuntime {
         ? [entry.target.id]
         : [],
     );
-    let next = structuredClone(this.requireApplicationWindowState());
     const removedNotes = new Set(
       request.kind === "trash" ? plan.affectedNoteIds : [],
     );
+    if (removedNotes.size)
+      for (const state of this.windows.values())
+        if (state.noteId && removedNotes.has(state.noteId))
+          await this.captureWindowViewBeforeNoteChange(state.windowId);
+    let next = structuredClone(this.requireApplicationWindowState());
     const fallbackNoteId = plan.entries.find(
       (entry) => entry.entryId === plan.fallbackEntryId,
     )?.target?.id;
@@ -5133,6 +5227,8 @@ export class CoreRuntime {
       ) {
         throw new Error(`Unknown Section: ${targetId}`);
       }
+      if (this.windows.get(windowId)?.noteId !== noteId)
+        await this.captureWindowViewBeforeNoteChange(windowId);
       return this.commitApplicationWindowMutation(
         envelope.operationId,
         fault,
@@ -5181,7 +5277,14 @@ export class CoreRuntime {
             targetId === noteId ? null : targetId;
           next.windows[windowId].view.selection =
             selection ?? (preserveView ? window.view.selection : null);
-          if (!preserveView) next.windows[windowId].view.scrollTop = 0;
+          if (!preserveView) next.windows[windowId].view.stableCaret = null;
+          if (!preserveView) {
+            next.windows[windowId].view.scrollTop = 0;
+            next.windows[windowId].view.caretViewportTop = null;
+          }
+          next.windows[windowId].noteViews[noteId] = rememberedNoteView(
+            next.windows[windowId].view,
+          );
           return {
             state: next,
             changed: true,
@@ -5246,6 +5349,7 @@ export class CoreRuntime {
       this.jumpLists.delete(windowId);
       this.imageReturnOrigins.delete(windowId);
       this.pendingNavigations.delete(windowId);
+      this.windowEditorAdapters.delete(windowId);
       this.optimisticSectionFocuses.delete(windowId);
       this.repeatStores.delete(windowId);
       this.visualSelectionStores.delete(windowId);
@@ -5258,8 +5362,8 @@ export class CoreRuntime {
   ): Promise<{ noteId: string; windowId: string }> {
     const { noteId, windowId, fault } = envelope.payload;
     this.requireLiveMetadata(noteId);
-    await this.ensureNoteLoaded(noteId);
-    await this.localStateQueue.catch(() => undefined);
+    const handle = await this.ensureNoteLoaded(noteId);
+    await this.captureWindowViewBeforeNoteChange(windowId);
     const current = this.requireApplicationWindowState();
     if (!current.windows[windowId]) {
       throw new Error(`Unknown window: ${windowId}`);
@@ -5272,6 +5376,32 @@ export class CoreRuntime {
         mode: "normal",
       },
     );
+    const targetView = next.windows[windowId].view;
+    const explicit = this.pendingNavigations.get(windowId);
+    if (explicit?.destination.noteId === noteId && !explicit.restoreView) {
+      targetView.focusedSectionId = null;
+      targetView.selection = null;
+      targetView.stableCaret = null;
+      targetView.scrollTop = 0;
+      targetView.caretViewportTop = null;
+      next.windows[windowId].noteViews[noteId] = rememberedNoteView(targetView);
+    }
+    if (
+      targetView.focusedSectionId &&
+      (handle.current.kind !== "note" ||
+        !findSectionById(
+          handle.current.rootSection,
+          targetView.focusedSectionId,
+        ))
+    ) {
+      targetView.focusedSectionId = null;
+      targetView.selection = null;
+      targetView.scrollTop = 0;
+      targetView.caretViewportTop = null;
+      next.windows[windowId].noteViews[noteId] = rememberedNoteView(targetView);
+    }
+    const previousBufferId = current.windows[windowId].bufferId;
+    const noteChanged = previousBufferId !== createNoteBuffer(noteId).id;
     this.localStateQueue = this.localStateQueue
       .catch(() => undefined)
       .then(async () => {
@@ -5286,6 +5416,19 @@ export class CoreRuntime {
           const pending = this.pendingNavigations.get(windowId);
           if (pending && pending.destination.noteId !== noteId) {
             this.pendingNavigations.delete(windowId);
+          }
+          if (noteChanged && !this.pendingNavigations.has(windowId)) {
+            const saved = next.windows[windowId].view.stableCaret;
+            if (saved?.noteId === noteId)
+              this.pendingNavigations.set(windowId, {
+                destination: {
+                  kind: "stable",
+                  noteId,
+                  saved: { ...saved, relative: new Uint8Array(saved.relative) },
+                },
+                detail: "jump:note-open:restored",
+                restoreView: true,
+              });
           }
           this.syncActiveNoteFromApplicationWindow();
           this.setReady();
@@ -5302,7 +5445,9 @@ export class CoreRuntime {
     envelope: CoreCommandEnvelope<"note.open_help">,
   ): Promise<CoreCommandResults["note.open_help"]> {
     const { windowId, newNoteId, synchronizedAt, fault } = envelope.payload;
-    await this.localStateQueue.catch(() => undefined);
+    if (envelope.payload.activate !== false)
+      await this.captureWindowViewBeforeNoteChange(windowId);
+    else await this.localStateQueue.catch(() => undefined);
     const currentApplicationState = this.requireApplicationWindowState();
     if (!currentApplicationState.windows[windowId]) {
       throw new Error(`Unknown window: ${windowId}`);
@@ -5591,6 +5736,8 @@ export class CoreRuntime {
       windowId,
       fault,
     } = input;
+    if (windowId && this.applicationWindowState)
+      await this.captureWindowViewBeforeNoteChange(windowId);
     if (this.notes.has(noteId) || this.workspaceDocument.notes.has(noteId)) {
       throw new Error(`Duplicate note: ${noteId}`);
     }
@@ -6557,7 +6704,9 @@ export class CoreRuntime {
     update: {
       mode?: WindowViewState["mode"];
       selection?: WindowViewState["selection"];
+      stableCaret?: WindowLocalViewState["stableCaret"];
       scrollTop?: number;
+      caretViewportTop?: number | null;
       collapsedSectionIds?: string[];
       collapsedCodeBlockIds?: string[];
       detailsFoldOverrides?: Record<string, boolean>;
@@ -6620,7 +6769,23 @@ export class CoreRuntime {
     });
   }
 
-  private flushPendingWindowViewUpdates(): void {
+  private async captureWindowViewBeforeNoteChange(
+    windowId: string,
+  ): Promise<void> {
+    const adapter = this.windowEditorAdapters.get(windowId);
+    const noteId = this.windows.get(windowId)?.noteId;
+    if (
+      adapter &&
+      !adapter.editor.isDestroyed &&
+      noteId &&
+      this.agentEditors.get(adapter) === noteId
+    )
+      adapter.captureWindowViewBeforeLayoutChange();
+    await this.flushPendingWindowViewUpdates();
+    await this.localStateQueue.catch(() => undefined);
+  }
+
+  private flushPendingWindowViewUpdates(): Promise<void> {
     if (this.windowViewUpdateFrame !== null) {
       cancelAnimationFrame(this.windowViewUpdateFrame);
       this.windowViewUpdateFrame = null;
@@ -6631,17 +6796,19 @@ export class CoreRuntime {
     }
     const updates = [...this.pendingWindowViewUpdates];
     this.pendingWindowViewUpdates.clear();
-    for (const [windowId, pending] of updates) {
-      this.persistWindowUpdateNow(windowId, pending);
-    }
+    return Promise.all(
+      updates.map(([windowId, pending]) =>
+        this.persistWindowUpdateNow(windowId, pending),
+      ),
+    ).then(() => undefined);
   }
 
   private persistWindowUpdateNow(
     windowId: string,
     pending: PendingWindowViewUpdate,
-  ): void {
+  ): Promise<void> {
     this.inFlightWindowViewUpdates.set(windowId, pending);
-    void this.executeCommand({
+    return this.executeCommand({
       name: "window.update_view",
       operationId: this.idFactory(),
       source: "editor",
@@ -6652,6 +6819,7 @@ export class CoreRuntime {
         activeSectionId: pending.activeSectionId,
       },
     })
+      .then(() => undefined)
       .catch((error: unknown) => this.reportError(error))
       .finally(() => {
         if (this.inFlightWindowViewUpdates.get(windowId) === pending) {

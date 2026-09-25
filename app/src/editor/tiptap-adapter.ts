@@ -182,12 +182,16 @@ export interface TiptapEditorAdapterOptions {
   registerStore?: VimRegisterStore;
   repeatStore?: VimRepeatStore;
   visualSelectionStore?: VimVisualSelectionStore;
-  onSelectionUpdate?: (editor: Editor, activeSectionId: string | null) => void;
+  onSelectionUpdate?: (
+    editor: Editor,
+    activeSectionId: string | null,
+    caretViewportTop: number | null,
+  ) => void;
   onCaretSectionChange?: (sectionId: string | null) => void;
   onCaretExternalLinkChange?: (href: string | null) => void;
   getWindowState?: () => WindowViewState;
   onModeChange?: (mode: WindowViewState["mode"]) => void;
-  onScrollUpdate?: (scrollTop: number) => void;
+  onScrollUpdate?: (scrollTop: number, caretViewportTop: number | null) => void;
   onVimSnapshot?: (snapshot: VimSessionSnapshot) => void;
   scrollElement?: HTMLElement;
   restoreScrollOnAttach?: boolean;
@@ -375,6 +379,12 @@ export class TiptapEditorAdapter {
   private viewportCaretFrame: number | null = null;
   private viewportScrollIntent: "caret" | "viewport" = "viewport";
   private viewportAlignment: VimViewportAlignment | null = null;
+  private scrollRestoration: {
+    editor: Editor;
+    caretViewportTop: number;
+    expiresAt: number;
+  } | null = null;
+  private scrollRestoreGeneration = 0;
   private readonly viewportResizeObserver: ResizeObserver | null;
   private suppressSelectionUpdate = false;
   private observedDocument: ProductDocument | null = null;
@@ -1497,12 +1507,20 @@ export class TiptapEditorAdapter {
       this.suppressSelectionUpdate = previousSuppression;
     }
     if (!applied) return null;
-    if (options.reveal !== false)
+    if (options.reveal === false) {
+      // Restoring a Window's saved scrollTop can briefly put its restored
+      // caret outside the viewport. Treat that programmatic scroll as
+      // caret-owned so viewport reconciliation scrolls to the caret rather
+      // than moving the selection to a nearby visible block (e.g. a Table).
+      this.viewportScrollIntent = "caret";
+      this.viewportAlignment = null;
+    } else {
       this.revealNavigationSelection(
         destination.kind === "section-start"
           ? destination.alignment
           : undefined,
       );
+    }
     return resolvedDetail;
   }
 
@@ -1527,8 +1545,12 @@ export class TiptapEditorAdapter {
     this.options.onSelectionUpdate?.(
       editor,
       sectionIdAtEditorSelection(editor.state),
+      this.caretViewportTop(editor),
     );
-    this.options.onScrollUpdate?.(this.scrollElement.scrollTop);
+    this.options.onScrollUpdate?.(
+      this.scrollElement.scrollTop,
+      this.caretViewportTop(editor),
+    );
   }
 
   destroy(): void {
@@ -1591,6 +1613,8 @@ export class TiptapEditorAdapter {
       window.cancelAnimationFrame(this.sectionDepthScrollFrame);
     }
     this.sectionDepthScrollLock = null;
+    this.scrollRestoration = null;
+    this.scrollRestoreGeneration += 1;
     this.pendingSectionDepthShift = null;
     this.cancelSelectionUpdate();
     if (this.scrollTimer !== null) window.clearTimeout(this.scrollTimer);
@@ -1703,6 +1727,13 @@ export class TiptapEditorAdapter {
             );
           if (transaction.getMeta(VIM_VIEWPORT_SCROLL_META))
             this.handleViewportScrollIntent();
+          if (
+            this.scrollRestoration &&
+            (transaction.selectionSet ||
+              transaction.docChanged ||
+              transaction.scrolledIntoView)
+          )
+            this.scrollRestoration = null;
           const alignment = transaction.getMeta(VIM_VIEWPORT_ALIGNMENT_META);
           if (
             alignment === "center" ||
@@ -1921,6 +1952,7 @@ export class TiptapEditorAdapter {
   private restoreWindowState(editor: Editor): void {
     const state = this.options.getWindowState?.();
     if (!state) return;
+    this.scrollRestoration = null;
     if (state.selection) {
       const maximum = editor.state.doc.content.size;
       const anchor = Math.max(0, Math.min(state.selection.anchor, maximum));
@@ -1933,11 +1965,76 @@ export class TiptapEditorAdapter {
       }
     }
     if (this.options.restoreScrollOnAttach !== false) {
+      const generation = ++this.scrollRestoreGeneration;
       requestAnimationFrame(() => {
+        if (
+          generation !== this.scrollRestoreGeneration ||
+          editor !== this.currentEditor ||
+          editor.isDestroyed
+        )
+          return;
         this.scrollElement.scrollTop =
           this.sectionDepthScrollLock?.scrollTop ?? state.scrollTop;
+        if (state.caretViewportTop !== null) {
+          this.scrollRestoration = {
+            editor,
+            caretViewportTop: state.caretViewportTop,
+            expiresAt: Date.now() + 2000,
+          };
+          this.alignRestoredCaretViewport();
+        }
       });
     }
+  }
+
+  private caretViewportTop(
+    editor: Editor,
+    includeOffscreen = false,
+  ): number | null {
+    if (editor.isDestroyed) return null;
+    const viewport = this.scrollElement.getBoundingClientRect();
+    if (viewport.height <= 0) return null;
+    try {
+      const top =
+        editor.view.coordsAtPos(editor.state.selection.head, 1).top -
+        viewport.top;
+      if (
+        !Number.isFinite(top) ||
+        (!includeOffscreen && (top < 0 || top >= viewport.height))
+      )
+        return null;
+      return top;
+    } catch {
+      return null;
+    }
+  }
+
+  private alignRestoredCaretViewport(): boolean {
+    const saved = this.scrollRestoration;
+    if (!saved) return false;
+    if (
+      saved.editor !== this.currentEditor ||
+      saved.editor.isDestroyed ||
+      Date.now() > saved.expiresAt
+    ) {
+      this.scrollRestoration = null;
+      return false;
+    }
+    const top = this.caretViewportTop(saved.editor, true);
+    if (top === null) return false;
+    const viewport = this.scrollElement.getBoundingClientRect();
+    const target = Math.min(
+      saved.caretViewportTop,
+      Math.max(0, viewport.height - 20),
+    );
+    const delta = top - target;
+    if (Math.abs(delta) >= 1)
+      this.scrollElement.scrollTop = Math.max(
+        0,
+        Math.round(this.scrollElement.scrollTop + delta),
+      );
+    const aligned = this.caretViewportTop(saved.editor);
+    return aligned !== null && Math.abs(aligned - target) < 2;
   }
 
   private cancelSelectionUpdate(): void {
@@ -1975,7 +2072,11 @@ export class TiptapEditorAdapter {
         this.projectedCaretSectionId = activeSectionId;
         this.options.onCaretSectionChange?.(activeSectionId);
       }
-      this.options.onSelectionUpdate?.(latest, activeSectionId);
+      this.options.onSelectionUpdate?.(
+        latest,
+        activeSectionId,
+        this.caretViewportTop(latest),
+      );
     });
   }
 
@@ -1991,6 +2092,8 @@ export class TiptapEditorAdapter {
   }
 
   private revealNavigationSelection(alignment?: VimViewportAlignment): void {
+    this.scrollRestoration = null;
+    this.scrollRestoreGeneration += 1;
     const editor = this.currentEditor;
     const reveal = (): void => {
       if (editor !== this.currentEditor || editor.isDestroyed) return;
@@ -2482,13 +2585,18 @@ export class TiptapEditorAdapter {
     if (this.scrollTimer !== null) window.clearTimeout(this.scrollTimer);
     this.scrollTimer = window.setTimeout(() => {
       this.scrollTimer = null;
-      this.options.onScrollUpdate?.(this.scrollElement.scrollTop);
+      this.options.onScrollUpdate?.(
+        this.scrollElement.scrollTop,
+        this.caretViewportTop(this.currentEditor),
+      );
     }, 100);
   };
 
   private readonly handleViewportScrollIntent = (): void => {
     this.viewportScrollIntent = "viewport";
     this.viewportAlignment = null;
+    this.scrollRestoration = null;
+    this.scrollRestoreGeneration += 1;
   };
 
   private readonly handleViewportPointerDown = (event: PointerEvent): void => {
@@ -2529,6 +2637,7 @@ export class TiptapEditorAdapter {
     if (viewport.height <= 0) return;
     const cursor = this.vimSession.currentCursorPosition();
     if (cursor === null) return;
+    if (this.alignRestoredCaretViewport()) return;
     if (this.viewportAlignment !== null) {
       alignVimViewport(
         editor.view,

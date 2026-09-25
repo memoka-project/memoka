@@ -161,6 +161,9 @@ Undo/Redo historyは実行中sessionのEditor stateに属し、アプリ再起�
 
 同じNoteDocを複数Windowで開いた場合、本文とrevisionは共有する。caret、mode、selection、Focused Section、
 fold、scroll、Jump ListはWindowごとに分離する。
+各WindowはNote別の安定caret位置、Focused Section、scroll、viewport内のcaretの高さをlocal UI stateに保持し、Note切替と再起動後に復元する。復元直後の再layoutではcaretの高さを基準にscrollを補正する。明示的なjump先は保存位置より優先し、Window closeでそのWindowの記憶を破棄する。
+保存scrollの適用や再layoutによってcaretが一時的にviewport外へ出ても、復元中はcaretを別の可視位置へ移さず、必要ならviewportを補正する。wheelなどのユーザー操作によるscrollは従来どおりviewportを優先する。
+相対位置が解決できない場合は、同じblock内で一致する文脈を優先し、文脈が繰り返されるときは保存時のoffsetに最も近い候補を選ぶ。
 
 ## 9. Tree projectionと検索projection
 
@@ -186,6 +189,7 @@ previous Window IDは旧保存dataでは省略可能であり、未設定なら�
 Windowを閉じる際は残ったTabから無効なprevious参照を除く。
 
 Section foldとFocused SectionもWindow-localである。同じNoteを別Windowで開いても表示範囲は独立する。
+保存するカーソル位置の前後文脈はサロゲートペアを途中で分割せず、JSONとして有効な文字列にする。
 Visual selection、IME composition、検索query、Command-line入力、picker選択は一時stateであり、
 通常は再起動後へ持ち越さない。
 
