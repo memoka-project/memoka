@@ -8,6 +8,8 @@ import {
   type WorkspaceSearchResult,
   type WorkspaceSearchScope,
 } from "./workspace-search";
+import { matchWorkspaceBodyLine } from "./workspace-search-matcher";
+import type { WorkspaceQueryTerm } from "./workspace-search-matcher";
 
 export const WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION = 10;
 
@@ -64,7 +66,7 @@ export interface WorkspaceSearchIndexHierarchyUpdateRequest {
 }
 
 export type WorkspaceSearchIndexStrategy =
-  "all-titles" | "empty" | "trigram" | "japanese-gram" | "scan";
+  "all-titles" | "empty" | "trigram" | "japanese-gram" | "scan" | "ranked-body";
 
 export interface WorkspaceSearchIndexQueryRequest {
   readonly schemaVersion: number;
@@ -78,6 +80,8 @@ export interface WorkspaceSearchIndexQueryRequest {
   readonly matchExpression: string;
   readonly limit: number;
   readonly excludedNoteIds: readonly string[];
+  readonly migemoPatterns?: readonly (string | null)[];
+  readonly noteScores?: Readonly<Record<string, number>>;
 }
 
 export interface WorkspaceSearchIndexHit {
@@ -193,6 +197,10 @@ export function workspaceSearchIndexQuery(
   scope: WorkspaceSearchScope = "title",
   limit = 20,
   excludedNoteIds: readonly string[] = [],
+  rankedBody?: {
+    readonly terms: readonly WorkspaceQueryTerm[];
+    readonly noteScores: Readonly<Record<string, number>>;
+  },
 ): WorkspaceSearchIndexQueryRequest {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
     throw new Error("Workspace search result limit must be between 1 and 100");
@@ -207,15 +215,17 @@ export function workspaceSearchIndexQuery(
       : ("scan" as const);
   });
   const strategy: WorkspaceSearchIndexStrategy =
-    normalizedTerms.length === 0
-      ? scope === "title"
-        ? "all-titles"
-        : "empty"
-      : termStrategies.every((candidate) => candidate === "trigram")
-        ? "trigram"
-        : termStrategies.every((candidate) => candidate === "japanese-gram")
-          ? "japanese-gram"
-          : "scan";
+    rankedBody && scope === "body"
+      ? "ranked-body"
+      : normalizedTerms.length === 0
+        ? scope === "title"
+          ? "all-titles"
+          : "empty"
+        : termStrategies.every((candidate) => candidate === "trigram")
+          ? "trigram"
+          : termStrategies.every((candidate) => candidate === "japanese-gram")
+            ? "japanese-gram"
+            : "scan";
   return {
     schemaVersion: WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
     workspaceId,
@@ -233,6 +243,8 @@ export function workspaceSearchIndexQuery(
         : normalizedQuery,
     limit,
     excludedNoteIds: [...new Set(excludedNoteIds)].sort(),
+    migemoPatterns: rankedBody?.terms.map((term) => term.migemoPattern),
+    noteScores: rankedBody?.noteScores,
   };
 }
 
@@ -402,6 +414,57 @@ export class MemoryWorkspaceSearchIndexPort implements WorkspaceSearchIndexPort 
       ).filter(({ noteId }) => !excluded.has(noteId)),
       failures: [],
     };
+    if (request.strategy === "ranked-body") {
+      const terms: WorkspaceQueryTerm[] = request.normalizedTerms.map(
+        (literal, index) => ({
+          literal,
+          migemoPattern: request.migemoPatterns?.[index] ?? null,
+        }),
+      );
+      const candidates: Array<{ hit: WorkspaceSearchIndexHit; score: number }> =
+        [];
+      for (const document of catalog.documents) {
+        for (const block of document.blocks) {
+          const match = matchWorkspaceBodyLine(block.text, terms);
+          if (!match) continue;
+          const section = document.sections?.find(
+            ({ sectionId }) => sectionId === block.sectionId,
+          );
+          candidates.push({
+            hit: {
+              resultId: `${document.noteId}:${block.kind}:line:${block.logicalLineNumber}`,
+              noteId: document.noteId,
+              sectionId: block.sectionId,
+              title: section?.title ?? document.title,
+              parentPath: section?.parentPath ?? document.parentPath,
+              updatedAt: document.updatedAt,
+              kind: "body",
+              text: block.text,
+              blockId: block.blockId,
+              logicalLineNumber: block.logicalLineNumber,
+              sectionLineNumber: block.sectionLineNumber,
+              lineIndex: block.lineIndex,
+              sourceOffset: block.sourceOffset,
+            },
+            score:
+              match.score * 6 + (request.noteScores?.[document.noteId] ?? 0),
+          });
+        }
+      }
+      return {
+        status: "ready",
+        hits: candidates
+          .sort(
+            (a, b) =>
+              b.score - a.score ||
+              b.hit.updatedAt.localeCompare(a.hit.updatedAt) ||
+              a.hit.noteId.localeCompare(b.hit.noteId) ||
+              (a.hit.logicalLineNumber ?? 0) - (b.hit.logicalLineNumber ?? 0),
+          )
+          .slice(0, request.limit)
+          .map(({ hit }) => hit),
+      };
+    }
     return {
       status: "ready",
       hits: filterWorkspaceSearchCatalog(

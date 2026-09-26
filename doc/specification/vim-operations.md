@@ -417,10 +417,9 @@ Treeの折り畳み・選択はTabごとのEntry IDで管理する。既存confi
 | `<Leader>a` | Editor文脈のContext Actions     |
 | `<Leader>b` | load済みBuffer検索              |
 | `<Leader>c` | Command Picker                  |
-| `<Leader>f` | title/path検索                  |
-| `<Leader>g` | 本文検索                        |
+| `<Leader>f` | Note名・祖先path検索            |
+| `<Leader>s` | Workspace本文検索               |
 | `<Leader>o` | Outline toggle                  |
-| `<Leader>s` | Note内検索                      |
 | `<Leader>t` | Tree toggle                     |
 | `<Leader>C` | Config / Settings（予約）       |
 | `<Leader>h` | History / Recent / Jump（予約） |

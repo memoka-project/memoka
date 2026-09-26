@@ -2570,8 +2570,8 @@ textarea {
 }
 
 .workspace-search-row-heading > .workspace-search-note-title {
-  flex: 1 1 auto;
-  max-width: none;
+  flex: 0 1 auto;
+  max-width: 62%;
 }
 
 .workspace-search-line-number {
@@ -2581,13 +2581,21 @@ textarea {
 }
 
 .workspace-search-title-hierarchy {
-  display: block;
-  margin: 3px 0 0 58px;
+  display: inline-block;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workspace-search-open-indicator {
+  flex: none;
+  color: var(--memoka-color-link-muted);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .workspace-search-preview-text {
@@ -2698,7 +2706,7 @@ textarea {
 }
 
 .workspace-search-preview-root--centerable {
-  padding-block: calc(50% - 1em) 50%;
+  padding-block: var(--workspace-search-preview-padding, 22px);
 }
 
 .workspace-search-preview-document {

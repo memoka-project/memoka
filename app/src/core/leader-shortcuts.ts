@@ -12,7 +12,6 @@ export type LeaderShortcutId =
   | "note-actions"
   | "outline"
   | "paste"
-  | "note-search"
   | "tree"
   | "view"
   | "workspace"
@@ -26,7 +25,6 @@ export type LeaderActiveCommandId =
   | "workspace.search_title"
   | "workspace.search_body"
   | "utility.toggle-outline"
-  | "note.search"
   | "utility.toggle-tree";
 
 interface LeaderShortcutBase {
@@ -94,14 +92,14 @@ export const LEADER_SHORTCUT_CATALOG: readonly LeaderShortcut[] = [
   {
     id: "title-search",
     key: "f",
-    label: "Title Search",
+    label: "Note Search",
     status: "active",
     command: "workspace.search_title",
     surfaces: ALL_SURFACES,
   },
   {
     id: "body-search",
-    key: "g",
+    key: "s",
     label: "Body Search",
     status: "active",
     command: "workspace.search_body",
@@ -142,14 +140,6 @@ export const LEADER_SHORTCUT_CATALOG: readonly LeaderShortcut[] = [
     label: "Paste / Yank History",
     status: "reserved",
     surfaces: ALL_SURFACES,
-  },
-  {
-    id: "note-search",
-    key: "s",
-    label: "Note Search",
-    status: "active",
-    command: "note.search",
-    surfaces: ["editor", "sidebar"],
   },
   {
     id: "tree",

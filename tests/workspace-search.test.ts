@@ -718,7 +718,7 @@ describe("Memoka Workspace search", () => {
     expect(adapter.vimSnapshot.action).toBe("search:workspace:title:open");
 
     expect(press(editor, " ").defaultPrevented).toBe(true);
-    expect(press(editor, "g").defaultPrevented).toBe(true);
+    expect(press(editor, "s").defaultPrevented).toBe(true);
     expect(onWorkspaceSearch.mock.calls[1][1]).toBe("body");
     expect(adapter.vimSnapshot.action).toBe("search:workspace:body:open");
 

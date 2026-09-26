@@ -3081,6 +3081,7 @@ dependencies = [
  "process-wrap",
  "pulldown-cmark",
  "rand 0.8.8",
+ "regex",
  "reqwest",
  "rpassword",
  "rusqlite",

@@ -843,9 +843,9 @@ describe("Memoka Vim input grammar", () => {
       noteContext,
     );
     expect(
-      advanceVimInput(bodyLeader.state, "normal", "g", noteContext),
+      advanceVimInput(bodyLeader.state, "normal", "s", noteContext),
     ).toMatchObject({
-      sequence: " g",
+      sequence: " s",
       resolvedCommand: "workspace.search_body",
       action: { kind: "execute", command: "workspace.search_body" },
     });
@@ -855,7 +855,6 @@ describe("Memoka Vim input grammar", () => {
       ["o", "utility.toggle-outline"],
       ["b", "workspace.search_buffers"],
       ["c", "application.command_picker"],
-      ["s", "note.search"],
     ] as const) {
       const utilityLeader = advanceVimInput(
         createVimInputState(),

@@ -283,7 +283,7 @@ describe("Main Namespace", () => {
       expect(
         await runtime.searchWorkspace("renamed child", "title"),
       ).toMatchObject({
-        backend: "sqlite-fts",
+        backend: "metadata",
         results: [
           expect.objectContaining({
             noteId: note.noteId,

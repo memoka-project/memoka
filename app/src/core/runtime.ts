@@ -207,6 +207,26 @@ import {
   workspaceSearchJapaneseGrams,
 } from "./workspace-search";
 import {
+  compileWorkspaceQuery,
+  matchWorkspaceBodyLine,
+  matchWorkspaceTitleTerm,
+  mergeWorkspaceMatchRanges,
+  workspaceMatchRanges,
+  type WorkspaceQueryTerm,
+} from "./workspace-search-matcher";
+import {
+  emptySearchRankingState,
+  learnSearchRankingSelection,
+  rankWorkspaceResults,
+  rankingNoteScore,
+  readSearchRankingState,
+  recordSearchRankingOpen,
+  type RankedWorkspaceResult,
+  type SearchRankingContext,
+  type SearchRankingState,
+} from "./workspace-search-ranking";
+import { loadNoteMigemo } from "./note-migemo";
+import {
   WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
   supportsWorkspaceSearchIndex,
   workspaceSearchIndexQuery,
@@ -491,6 +511,7 @@ export class CoreRuntime {
     typeof globalThis.setTimeout
   > | null = null;
   private workspaceSearchIndexWarning: string | null = null;
+  private searchRankingState: SearchRankingState = emptySearchRankingState();
   private localStateQueue: Promise<void> = Promise.resolve();
   /**
    * Window-local projections are not part of NoteDoc durability. Merge all
@@ -2640,7 +2661,7 @@ export class CoreRuntime {
           ...(await deriveWorkspaceSearchDocumentAsync(
             document,
             metadata.title,
-            noteAncestorPath(noteMetadata, metadata.noteId),
+            noteAncestorPath(noteMetadata, metadata),
             metadata.updatedAt,
             metadata.parentNoteId,
           )),
@@ -2684,8 +2705,78 @@ export class CoreRuntime {
     scope: WorkspaceSearchScope = "title",
     limit = 20,
     target: WorkspaceSearchTarget = "workspace",
+    windowId = "window-1",
   ): Promise<WorkspaceSearchResponse> {
     const startedAt = performance.now();
+    if (target === "workspace" && scope === "title") {
+      const useMigemo = query
+        .trim()
+        .split(/\s+/u)
+        .some((word) => /^[a-z][a-z-]*$/u.test(word) && word.length <= 128);
+      const migemo = useMigemo
+        ? await loadNoteMigemo().catch(() => null)
+        : null;
+      const terms = compileWorkspaceQuery(query, migemo);
+      const catalog = this.workspaceMetadataSearchCatalog("workspace");
+      const context = this.searchRankingContext(windowId);
+      const candidates: RankedWorkspaceResult[] = [];
+      for (const result of filterWorkspaceSearchCatalog(
+        catalog,
+        "",
+        "title",
+        catalog.documents.length || 1,
+      )) {
+        const titleMatches = terms.map((term) =>
+          matchWorkspaceTitleTerm(result.title, term),
+        );
+        const pathMatches = terms.map((term) =>
+          matchWorkspaceTitleTerm(result.parentPath, term),
+        );
+        if (titleMatches.some((match, index) => !match && !pathMatches[index]))
+          continue;
+        const matched = {
+          ...result,
+          query,
+          matchScore:
+            terms.length === 0
+              ? 0
+              : titleMatches.reduce(
+                  (sum, match) => sum + (match?.score ?? 0),
+                  0,
+                ) / terms.length,
+          pathMatchScore:
+            terms.length === 0
+              ? 0
+              : pathMatches.reduce(
+                  (sum, match) => sum + (match?.score ?? 0),
+                  0,
+                ) / terms.length,
+          titleRanges: mergeWorkspaceMatchRanges(
+            titleMatches.flatMap((match) => match?.ranges ?? []),
+          ),
+          pathRanges: mergeWorkspaceMatchRanges(
+            pathMatches.flatMap((match) => match?.ranges ?? []),
+          ),
+          openStatus: this.searchOpenStatus(result.noteId, context),
+        };
+        candidates.push({
+          result: matched,
+          match: matched.matchScore,
+          pathMatch: matched.pathMatchScore,
+        });
+      }
+      return {
+        scope,
+        results: rankWorkspaceResults(candidates, context, limit).map(
+          ({ result }) => result,
+        ),
+        failures: [],
+        backend: "metadata",
+        elapsedMs: performance.now() - startedAt,
+        warning: null,
+        migemoUnavailable: useMigemo && !migemo,
+      };
+    }
     if (target !== "workspace") {
       if (scope !== "title") {
         throw new Error(`${target} search only supports note titles`);
@@ -2754,20 +2845,144 @@ export class CoreRuntime {
         warning: null,
       };
     }
-    // Opening ,g with an empty query must be constant-time. In particular it
-    // must not drain a pending 100 MB NoteDoc projection before the user has
-    // typed anything.
-    if (scope === "body" && query.trim().length === 0) {
+    if (scope === "body") {
+      return this.searchWorkspaceBodyRanked(query, limit, windowId, startedAt);
+    }
+    throw new Error(`Unsupported Workspace search scope: ${scope}`);
+  }
+
+  private rankedBodyResult(
+    entry: {
+      resultId: string;
+      noteId: string;
+      sectionId: string;
+      title: string;
+      parentPath: string;
+      updatedAt: string;
+      kind: "body";
+      text: string;
+      blockId: string | null;
+      logicalLineNumber: number | null;
+      sectionLineNumber: number | null;
+      lineIndex: number;
+      sourceOffset: number;
+    },
+    query: string,
+    terms: readonly WorkspaceQueryTerm[],
+  ): RankedWorkspaceResult | null {
+    const matched = matchWorkspaceBodyLine(entry.text, terms);
+    if (!matched) return null;
+    const result = workspaceSearchResultFromIndexedEntry(
+      entry,
+      query,
+      "body",
+      matched.ranges[0]?.from ?? 0,
+    );
+    if (!result) return null;
+    return {
+      result: {
+        ...result,
+        title: noteDisplayTitle(
+          readNoteMetadata(this.workspaceDocument, entry.noteId)?.title ??
+            result.title,
+        ),
+        matchScore: matched.score,
+        pathMatchScore: 0,
+        lineRanges: matched.ranges,
+        previewRanges: workspaceMatchRanges(result.preview, terms, "body"),
+        matchPatterns: terms.map((term) => term.migemoPattern),
+      },
+      match: matched.score,
+      pathMatch: 0,
+    };
+  }
+
+  private rankedBodyCatalog(
+    catalog: WorkspaceSearchCatalog,
+    query: string,
+    terms: readonly WorkspaceQueryTerm[],
+  ): RankedWorkspaceResult[] {
+    const output: RankedWorkspaceResult[] = [];
+    for (const document of catalog.documents) {
+      const sections = new Map(
+        document.sections?.map((section) => [section.sectionId, section]),
+      );
+      for (const block of document.blocks) {
+        const section = sections.get(block.sectionId);
+        const matched = this.rankedBodyResult(
+          {
+            resultId: `${document.noteId}:${block.kind}:line:${block.logicalLineNumber}`,
+            noteId: document.noteId,
+            sectionId: block.sectionId,
+            title: section?.title ?? document.title,
+            parentPath: section?.parentPath ?? document.parentPath,
+            updatedAt: document.updatedAt,
+            kind: "body",
+            text: block.text,
+            blockId: block.blockId,
+            logicalLineNumber: block.logicalLineNumber,
+            sectionLineNumber: block.sectionLineNumber,
+            lineIndex: block.lineIndex,
+            sourceOffset: block.sourceOffset,
+          },
+          query,
+          terms,
+        );
+        if (matched) output.push(matched);
+      }
+    }
+    return output;
+  }
+
+  private async searchWorkspaceBodyRanked(
+    query: string,
+    limit: number,
+    windowId: string,
+    startedAt: number,
+  ): Promise<WorkspaceSearchResponse> {
+    const index = this.workspaceSearchIndex;
+    if (!query.trim()) {
       return {
-        scope,
+        scope: "body",
         results: [],
         failures: [],
-        backend: this.workspaceSearchIndex ? "sqlite-fts" : "crdt-fallback",
+        backend: index ? "sqlite-fts" : "crdt-fallback",
         elapsedMs: performance.now() - startedAt,
         warning: null,
       };
     }
-    const index = this.workspaceSearchIndex;
+    const useMigemo = query
+      .trim()
+      .split(/\s+/u)
+      .some((word) => /^[a-z][a-z-]*$/u.test(word) && word.length <= 128);
+    const migemo = useMigemo ? await loadNoteMigemo().catch(() => null) : null;
+    const terms = compileWorkspaceQuery(query, migemo);
+    const context = this.searchRankingContext(windowId);
+    const noteScores = Object.fromEntries(
+      [...context.paths.keys()].flatMap((noteId) => {
+        const score = rankingNoteScore(noteId, context);
+        return score > 0 ? [[noteId, score]] : [];
+      }),
+    );
+    const finish = (
+      candidates: readonly RankedWorkspaceResult[],
+      failures: WorkspaceSearchCatalog["failures"],
+      backend: WorkspaceSearchResponse["backend"],
+      warning: string | null,
+    ): WorkspaceSearchResponse => ({
+      scope: "body",
+      results: rankWorkspaceResults(candidates, context, limit).map(
+        ({ result }) => ({
+          ...result,
+          openStatus: this.searchOpenStatus(result.noteId, context),
+        }),
+      ),
+      failures,
+      backend,
+      elapsedMs: performance.now() - startedAt,
+      warning,
+      migemoUnavailable: useMigemo && !migemo,
+    });
     if (index) {
       if (this.pendingWorkspaceSearchIndexHierarchyBaseRevision !== null) {
         this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
@@ -2784,39 +2999,33 @@ export class CoreRuntime {
         this.workspaceDocument.workspaceId,
         this.workspace.revision,
         query,
-        scope,
+        "body",
         limit,
         dirtyNoteIds,
+        { terms, noteScores },
       );
       try {
         const indexed = await index.queryWorkspaceSearchIndex(request);
         if (indexed.status === "ready") {
           this.workspaceSearchIndexWarning = null;
-          const indexedResults = indexed.hits
-            .map((hit) =>
-              workspaceSearchResultFromIndexedEntry(hit, query, scope),
-            )
-            .filter((result): result is WorkspaceSearchResult =>
-              Boolean(result),
+          const candidates = indexed.hits.flatMap((hit) => {
+            if (hit.kind !== "body") return [];
+            const result = this.rankedBodyResult(
+              { ...hit, kind: "body" },
+              query,
+              terms,
             );
-          const dirtyResults = filterWorkspaceSearchCatalog(
-            dirtyCatalog,
-            query,
-            scope,
-            limit,
+            return result ? [result] : [];
+          });
+          return finish(
+            [
+              ...candidates,
+              ...this.rankedBodyCatalog(dirtyCatalog, query, terms),
+            ],
+            dirtyCatalog.failures,
+            dirtyNoteIds.length ? "sqlite-fts+crdt" : "sqlite-fts",
+            null,
           );
-          return {
-            results: this.mergeWorkspaceSearchResults(
-              indexedResults,
-              dirtyResults,
-              limit,
-            ),
-            failures: dirtyCatalog.failures,
-            scope,
-            backend: dirtyNoteIds.length > 0 ? "sqlite-fts+crdt" : "sqlite-fts",
-            elapsedMs: performance.now() - startedAt,
-            warning: null,
-          };
         }
         this.queueWorkspaceSearchIndexRebuild();
       } catch (error) {
@@ -2824,23 +3033,16 @@ export class CoreRuntime {
           error instanceof Error ? error.message : String(error);
         this.queueWorkspaceSearchIndexRebuild();
       }
-    }
-    if (!index) {
-      // The browser/test fallback has no SQLite dirty-note contract to make a
-      // live projection stable. Let the pending persistence chain settle
-      // before the cooperative projection yields; otherwise the revision can
-      // advance midway through a large NoteDoc scan and the coherent-snapshot
-      // guard correctly discards every result.
+    } else {
       await Promise.all(
         [...this.notePersistence.values()].map((session) => session.flush()),
       );
     }
-    return this.workspaceSearchFallback(
-      await this.cachedWorkspaceSearchCatalog(),
-      query,
-      scope,
-      limit,
-      startedAt,
+    const catalog = await this.cachedWorkspaceSearchCatalog();
+    return finish(
+      this.rankedBodyCatalog(catalog, query, terms),
+      catalog.failures,
+      "crdt-fallback",
       this.workspaceSearchIndexWarning,
     );
   }
@@ -2857,7 +3059,7 @@ export class CoreRuntime {
       const handle = this.notes.get(noteId);
       if (!noteMetadata || noteMetadata.deletedAt || !handle) continue;
       if (handle.current.kind !== "note") continue;
-      const parentPath = noteAncestorPath(metadata, noteId);
+      const parentPath = noteAncestorPath(metadata, noteMetadata);
       const cached = this.workspaceSearchProjectionCache.get(noteId);
       if (
         cached?.sourceRevision === handle.revision &&
@@ -2917,33 +3119,6 @@ export class CoreRuntime {
     const promise = this.buildWorkspaceSearchCatalog(false);
     this.workspaceSearchFallbackCatalogCache = { signature, promise };
     return promise;
-  }
-
-  private mergeWorkspaceSearchResults(
-    indexed: readonly WorkspaceSearchResult[],
-    dirty: readonly WorkspaceSearchResult[],
-    limit: number,
-  ): WorkspaceSearchResult[] {
-    const inputOrder = new Map<string, number>();
-    const unique = new Map<string, WorkspaceSearchResult>();
-    for (const result of [...indexed, ...dirty]) {
-      if (unique.has(result.resultId)) continue;
-      inputOrder.set(result.resultId, inputOrder.size);
-      unique.set(result.resultId, result);
-    }
-    return [...unique.values()]
-      .sort((left, right) => {
-        const updated = right.updatedAt.localeCompare(left.updatedAt);
-        if (updated !== 0) return updated;
-        const document = left.noteId.localeCompare(right.noteId);
-        if (document !== 0) return document;
-        return (
-          (left.logicalLineNumber ?? 0) - (right.logicalLineNumber ?? 0) ||
-          (inputOrder.get(left.resultId) ?? 0) -
-            (inputOrder.get(right.resultId) ?? 0)
-        );
-      })
-      .slice(0, limit);
   }
 
   async navigateWorkspaceSearchResult(
@@ -3626,6 +3801,11 @@ export class CoreRuntime {
     );
     const liveNoteIds = new Set(metadata.map(({ noteId }) => noteId));
     const persistedStates = await this.persistence.loadLocalStates();
+    this.searchRankingState = readSearchRankingState(
+      persistedStates.find(
+        ({ windowId }) => windowId === this.searchRankingLocalStateId(),
+      )?.state,
+    );
     const restored = this.restoreApplicationWindowState(
       persistedStates,
       liveNoteIds,
@@ -3650,6 +3830,81 @@ export class CoreRuntime {
     );
     await this.primeInternalLinkCandidates();
     this.queueWorkspaceSearchIndexStartupValidation();
+  }
+
+  private searchRankingLocalStateId(): string {
+    return `search-ranking:${this.workspaceDocument.workspaceId}`;
+  }
+
+  private searchRankingContext(windowId: string): SearchRankingContext {
+    const state = this.requireApplicationWindowState();
+    const metadata = listNoteMetadata(this.workspaceDocument).filter(
+      ({ deletedAt }) => !deletedAt,
+    );
+    const paths = new Map(
+      metadata.map((note) => [
+        note.noteId,
+        `${noteAncestorPath(metadata, note)}/${noteDisplayTitle(note.title)}`,
+      ]),
+    );
+    const openNoteIds = new Set<string>();
+    for (const window of Object.values(state.windows)) {
+      const buffer = window.bufferId ? state.buffers[window.bufferId] : null;
+      if (buffer?.kind === "note") openNoteIds.add(buffer.noteId);
+    }
+    const window = state.windows[windowId];
+    const buffer = window?.bufferId ? state.buffers[window.bufferId] : null;
+    return {
+      state: this.searchRankingState,
+      now: this.clock(),
+      activeNoteId: buffer?.kind === "note" ? buffer.noteId : null,
+      openNoteIds,
+      paths,
+    };
+  }
+
+  captureWorkspaceSearchRankingContext(windowId: string): SearchRankingContext {
+    return this.searchRankingContext(windowId);
+  }
+
+  private searchOpenStatus(
+    noteId: string,
+    context: SearchRankingContext,
+  ): WorkspaceSearchResult["openStatus"] {
+    if (context.activeNoteId === noteId) return "current";
+    if (context.state.previousNoteId === noteId) return "previous";
+    return context.openNoteIds.has(noteId) ? "other" : undefined;
+  }
+
+  async learnWorkspaceSearchSelection(
+    windowId: string,
+    selected: WorkspaceSearchResult,
+    skipped: readonly WorkspaceSearchResult[],
+    rankingContext = this.searchRankingContext(windowId),
+  ): Promise<void> {
+    const asRanked = (
+      result: WorkspaceSearchResult,
+    ): RankedWorkspaceResult => ({
+      result,
+      match: result.matchScore ?? 0,
+      pathMatch: result.pathMatchScore ?? 0,
+    });
+    const next = learnSearchRankingSelection(
+      this.searchRankingState,
+      asRanked(selected),
+      skipped.map(asRanked),
+      rankingContext,
+    );
+    if (next === this.searchRankingState) return;
+    this.localStateQueue = this.localStateQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.transactions.persistLocalStates(this.idFactory(), [
+          { windowId: this.searchRankingLocalStateId(), state: { ...next } },
+        ]);
+        this.searchRankingState = next;
+      });
+    await this.localStateQueue;
   }
 
   private restoreApplicationWindowState(
@@ -5313,14 +5568,29 @@ export class CoreRuntime {
         validateApplicationWindowState(planned.state);
         result = planned.result;
         if (!planned.changed) return;
+        const nextRanking = this.rankingAfterWindowChanges(
+          previous,
+          planned.state,
+        );
         this.setSaving();
         try {
           await this.transactions.persistLocalStates(
             operationId,
-            [toApplicationLocalStateCommit(planned.state)],
+            [
+              toApplicationLocalStateCommit(planned.state),
+              ...(nextRanking === this.searchRankingState
+                ? []
+                : [
+                    {
+                      windowId: this.searchRankingLocalStateId(),
+                      state: { ...nextRanking },
+                    },
+                  ]),
+            ],
             fault,
           );
           this.applicationWindowState = planned.state;
+          this.searchRankingState = nextRanking;
           this.cleanupClosedWindows(previous, planned.state);
           this.syncActiveNoteFromApplicationWindow();
           this.setReady();
@@ -5334,6 +5604,29 @@ export class CoreRuntime {
       throw new Error("Application Window mutation returned no result");
     }
     return result;
+  }
+
+  private rankingAfterWindowChanges(
+    previous: ApplicationWindowState | null,
+    next: ApplicationWindowState,
+  ): SearchRankingState {
+    let ranking = this.searchRankingState;
+    for (const [windowId, window] of Object.entries(next.windows)) {
+      const oldWindow = previous?.windows[windowId];
+      if (oldWindow?.bufferId === window.bufferId) continue;
+      const buffer = window.bufferId ? next.buffers[window.bufferId] : null;
+      if (buffer?.kind !== "note") continue;
+      const oldBuffer = oldWindow?.bufferId
+        ? previous?.buffers[oldWindow.bufferId]
+        : null;
+      ranking = recordSearchRankingOpen(
+        ranking,
+        buffer.noteId,
+        oldBuffer?.kind === "note" ? oldBuffer.noteId : null,
+        this.clock(),
+      );
+    }
+    return ranking;
   }
 
   private cleanupClosedWindows(
@@ -5402,17 +5695,41 @@ export class CoreRuntime {
     }
     const previousBufferId = current.windows[windowId].bufferId;
     const noteChanged = previousBufferId !== createNoteBuffer(noteId).id;
+    const previousBuffer = previousBufferId
+      ? current.buffers[previousBufferId]
+      : null;
+    const previousNoteId =
+      previousBuffer?.kind === "note" ? previousBuffer.noteId : null;
     this.localStateQueue = this.localStateQueue
       .catch(() => undefined)
       .then(async () => {
         this.setSaving();
         try {
+          const nextRanking = noteChanged
+            ? recordSearchRankingOpen(
+                this.searchRankingState,
+                noteId,
+                previousNoteId,
+                this.clock(),
+              )
+            : this.searchRankingState;
           await this.transactions.persistLocalStates(
             envelope.operationId,
-            [toApplicationLocalStateCommit(next)],
+            [
+              toApplicationLocalStateCommit(next),
+              ...(noteChanged
+                ? [
+                    {
+                      windowId: this.searchRankingLocalStateId(),
+                      state: { ...nextRanking },
+                    },
+                  ]
+                : []),
+            ],
             fault,
           );
           this.applicationWindowState = next;
+          this.searchRankingState = nextRanking;
           const pending = this.pendingNavigations.get(windowId);
           if (pending && pending.destination.noteId !== noteId) {
             this.pendingNavigations.delete(windowId);
@@ -5792,6 +6109,10 @@ export class CoreRuntime {
         this.applicationWindowState.windows[candidateWindowId]?.bufferId !==
           nextApplicationState.windows[candidateWindowId].bufferId,
     );
+    const nextRanking = this.rankingAfterWindowChanges(
+      this.applicationWindowState,
+      nextApplicationState,
+    );
     this.setSaving();
     try {
       await this.transactions.transact(
@@ -5799,7 +6120,17 @@ export class CoreRuntime {
           operationId,
           scope: "workspace-structure",
           documents: [this.workspace, note],
-          localStates: [toApplicationLocalStateCommit(nextApplicationState)],
+          localStates: [
+            toApplicationLocalStateCommit(nextApplicationState),
+            ...(nextRanking === this.searchRankingState
+              ? []
+              : [
+                  {
+                    windowId: this.searchRankingLocalStateId(),
+                    state: { ...nextRanking },
+                  },
+                ]),
+          ],
           fault,
         },
         () => {
@@ -5849,6 +6180,7 @@ export class CoreRuntime {
       );
       this.notes.set(noteId, note);
       this.applicationWindowState = nextApplicationState;
+      this.searchRankingState = nextRanking;
       this.syncActiveNoteFromApplicationWindow();
       for (const changedWindowId of changedWindowIds) {
         this.pendingNavigations.delete(changedWindowId);
@@ -5964,51 +6296,44 @@ export class CoreRuntime {
       }));
   }
 
-  private workspaceSearchFallback(
-    catalog: WorkspaceSearchCatalog,
-    query: string,
-    scope: WorkspaceSearchScope,
-    limit: number,
-    startedAt: number,
-    warning: string | null,
-  ): WorkspaceSearchResponse {
-    return {
-      scope,
-      results: filterWorkspaceSearchCatalog(catalog, query, scope, limit),
-      failures: catalog.failures,
-      backend: "crdt-fallback",
-      elapsedMs: performance.now() - startedAt,
-      warning,
-    };
-  }
-
   private workspaceMetadataSearchCatalog(
-    target: Exclude<WorkspaceSearchTarget, "workspace">,
+    target: WorkspaceSearchTarget,
   ): WorkspaceSearchCatalog {
     const notes = listNoteMetadata(this.workspaceDocument);
     const candidates =
-      target === "buffers"
-        ? (() => {
-            const bufferedNoteIds = new Set(
-              Object.values(this.requireApplicationWindowState().buffers)
-                .filter((buffer) => buffer.kind === "note")
-                .map((buffer) => buffer.noteId),
-            );
-            return notes
-              .filter(
-                ({ noteId, deletedAt }) =>
-                  !deletedAt && bufferedNoteIds.has(noteId),
-              )
-              .map((note) => ({
-                noteId: note.noteId,
-                sectionId: note.noteId,
-                title: noteDisplayTitle(note.title),
-                parentPath: noteAncestorPath(notes, note.noteId),
-                shortId: note.noteId.slice(-8),
-                updatedAt: note.updatedAt,
-              }));
-          })()
-        : deriveTrashSearchCandidates(notes);
+      target === "workspace"
+        ? notes
+            .filter(({ deletedAt }) => !deletedAt)
+            .map((note) => ({
+              noteId: note.noteId,
+              sectionId: note.noteId,
+              title: noteDisplayTitle(note.title),
+              parentPath: noteAncestorPath(notes, note),
+              shortId: note.noteId.slice(-8),
+              updatedAt: note.updatedAt,
+            }))
+        : target === "buffers"
+          ? (() => {
+              const bufferedNoteIds = new Set(
+                Object.values(this.requireApplicationWindowState().buffers)
+                  .filter((buffer) => buffer.kind === "note")
+                  .map((buffer) => buffer.noteId),
+              );
+              return notes
+                .filter(
+                  ({ noteId, deletedAt }) =>
+                    !deletedAt && bufferedNoteIds.has(noteId),
+                )
+                .map((note) => ({
+                  noteId: note.noteId,
+                  sectionId: note.noteId,
+                  title: noteDisplayTitle(note.title),
+                  parentPath: noteAncestorPath(notes, note),
+                  shortId: note.noteId.slice(-8),
+                  updatedAt: note.updatedAt,
+                }));
+            })()
+          : deriveTrashSearchCandidates(notes);
     return {
       documents: candidates.map((candidate) => ({
         noteId: candidate.noteId,
@@ -6289,10 +6614,7 @@ export class CoreRuntime {
         ...(await deriveWorkspaceSearchDocumentAsync(
           sourceDocument,
           metadata.title,
-          noteAncestorPath(
-            listNoteMetadata(this.workspaceDocument),
-            metadata.noteId,
-          ),
+          noteAncestorPath(listNoteMetadata(this.workspaceDocument), metadata),
           metadata.updatedAt,
           metadata.parentNoteId,
         )),

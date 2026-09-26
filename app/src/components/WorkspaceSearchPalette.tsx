@@ -1,6 +1,6 @@
 import { Editor, Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { EditorNavigationDestination } from "../core/editor-navigation";
@@ -18,6 +18,7 @@ import {
   type WorkspaceSearchScope,
   type WorkspaceSearchTarget,
 } from "../core/workspace-search";
+import { workspaceMatchRanges } from "../core/workspace-search-matcher";
 import { productEditorExtensions } from "../editor/extensions";
 import { SearchPane } from "./SearchPane";
 import { EventDateTime } from "./EventDateTime";
@@ -72,7 +73,13 @@ export function WorkspaceSearchPalette({
   useEffect(() => {
     const sequence = ++requestSequence.current;
     void runtime
-      .searchWorkspace(debouncedQuery, session.scope, 20, session.target)
+      .searchWorkspace(
+        debouncedQuery,
+        session.scope,
+        20,
+        session.target,
+        session.windowId,
+      )
       .then(async (response) => {
         if (session.target !== "buffers" || !attachmentRepository) {
           return response;
@@ -136,6 +143,7 @@ export function WorkspaceSearchPalette({
     runtime,
     session.scope,
     session.target,
+    session.windowId,
     debouncedQuery,
     refreshVersion,
   ]);
@@ -144,6 +152,9 @@ export function WorkspaceSearchPalette({
     if (busy || session.target === "trash" || result.kind === "group") return;
     setBusy(true);
     setError(null);
+    const rankingContext = runtime.captureWorkspaceSearchRankingContext(
+      session.windowId,
+    );
     try {
       if (result.kind === "image" && result.attachmentId) {
         await runtime.openImage(
@@ -169,6 +180,17 @@ export function WorkspaceSearchPalette({
       ) {
         setError("検索結果の位置を現在のEditorへ反映できませんでした");
         return;
+      }
+      if (session.target === "workspace") {
+        const position = results.findIndex(
+          (candidate) => candidate.resultId === result.resultId,
+        );
+        await runtime.learnWorkspaceSearchSelection(
+          session.windowId,
+          result,
+          position > 0 ? results.slice(0, position) : [],
+          rankingContext,
+        );
       }
       onClose();
     } catch (cause) {
@@ -281,16 +303,43 @@ export function WorkspaceSearchPalette({
                     ? "📁"
                     : "📄"}
               </span>
-              {session.scope === "title" ? (
-                <span className="workspace-search-note-title">
-                  <SymbolText
-                    text={result.title}
-                    highlights={workspaceSearchMatchRanges(
-                      result.title,
-                      currentQuery,
-                    )}
-                  />
+              {result.openStatus && (
+                <span
+                  className="workspace-search-open-indicator"
+                  aria-label={
+                    result.openStatus === "previous"
+                      ? "直前に開いたノート"
+                      : result.openStatus === "current"
+                        ? "現在のノート"
+                        : "開いているノート"
+                  }
+                >
+                  {result.openStatus === "previous"
+                    ? "↶"
+                    : result.openStatus === "current"
+                      ? "●"
+                      : "○"}
                 </span>
+              )}
+              {session.scope === "title" ? (
+                <>
+                  <span className="workspace-search-note-title">
+                    <SymbolText
+                      text={result.title}
+                      highlights={
+                        result.titleRanges ??
+                        workspaceSearchMatchRanges(result.title, currentQuery)
+                      }
+                    />
+                  </span>
+                  <span className="workspace-search-title-hierarchy">
+                    <HighlightedText
+                      value={formatSearchHierarchy(result.parentPath)}
+                      query={currentQuery}
+                      ranges={result.pathRanges}
+                    />
+                  </span>
+                </>
               ) : (
                 <SearchResultPath result={result} query={currentQuery} />
               )}
@@ -298,17 +347,13 @@ export function WorkspaceSearchPalette({
             <span className="workspace-search-timestamp">
               <EventDateTime value={result.updatedAt} />
             </span>
-            {session.scope === "title" && (
-              <span className="workspace-search-title-hierarchy">
-                <HighlightedText
-                  value={formatSearchHierarchy(result.parentPath)}
-                  query={currentQuery}
-                />
-              </span>
-            )}
             {session.scope === "body" && (
               <span className="workspace-search-preview-text">
-                <HighlightedText value={result.preview} query={currentQuery} />
+                <HighlightedText
+                  value={result.preview}
+                  query={currentQuery}
+                  ranges={result.previewRanges}
+                />
               </span>
             )}
           </>
@@ -386,11 +431,21 @@ export function WorkspaceSearchPalette({
           ) : null
         }
         listFooter={
-          response && response.failures.length > 0 ? (
-            <p className="workspace-search-warning" role="status">
-              {response.failures.length}
-              件のNoteDoc本文を読み込めませんでした。
-            </p>
+          response?.migemoUnavailable ||
+          (response && response.failures.length > 0) ? (
+            <div className="workspace-search-warning" role="status">
+              {response.migemoUnavailable && (
+                <p>
+                  Migemo辞書を読み込めませんでした。通常の検索を使用します。
+                </p>
+              )}
+              {response.failures.length > 0 && (
+                <p>
+                  {response.failures.length}
+                  件のNoteDoc本文を読み込めませんでした。
+                </p>
+              )}
+            </div>
           ) : null
         }
         focused={focused}
@@ -467,9 +522,6 @@ function SearchResultPath({
     .join("/");
   return (
     <span className="workspace-search-result-path">
-      {hierarchy && (
-        <span className="workspace-search-hierarchy">{hierarchy}/</span>
-      )}
       <span className="workspace-search-note-title">
         <SymbolText
           text={result.title}
@@ -479,6 +531,9 @@ function SearchResultPath({
           )}
         />
       </span>
+      {hierarchy && (
+        <span className="workspace-search-hierarchy">/{hierarchy}</span>
+      )}
       {result.logicalLineNumber !== null && (
         <span className="workspace-search-line-number">
           L{result.logicalLineNumber}
@@ -497,8 +552,16 @@ function formatSearchHierarchy(parentPath: string): string {
   return hierarchy ? `/${hierarchy}` : "/";
 }
 
-function HighlightedText({ value, query }: { value: string; query: string }) {
-  const ranges = workspaceSearchMatchRanges(value, query);
+function HighlightedText({
+  value,
+  query,
+  ranges: suppliedRanges,
+}: {
+  value: string;
+  query: string;
+  ranges?: readonly { from: number; to: number }[];
+}) {
+  const ranges = suppliedRanges ?? workspaceSearchMatchRanges(value, query);
   if (ranges.length === 0) return value;
   const parts: ReactNode[] = [];
   let cursor = 0;
@@ -563,25 +626,68 @@ function WorkspaceSearchPreview({
       element.replaceChildren();
       return;
     }
+    let frame: number | null = null;
+    let observer: MutationObserver | null = null;
+    let resizeObserver: ResizeObserver | null = null;
     const timer = globalThis.setTimeout(() => {
       const publishResult = (): void => {
         if (currentGeneration !== generation.current || !editor.current) {
           return;
         }
-        editor.current.view.dispatch(
-          editor.current.state.tr.setMeta(searchPreviewHighlightKey, {
+        const preview = editor.current;
+        const position = highlight
+          ? previewBlockPosition(preview, result.blockId)
+          : null;
+        const transaction = preview.state.tr.setMeta(
+          searchPreviewHighlightKey,
+          {
             result,
             enabled: highlight,
-          } satisfies SearchPreviewHighlightMeta),
+          } satisfies SearchPreviewHighlightMeta,
         );
+        // The viewport plugin renders offscreen BodyChunks as plain text. Put
+        // the preview selection in the target block so its chunk is rendered
+        // before locating the inline highlight in the DOM.
+        if (position !== null) {
+          transaction.setSelection(
+            TextSelection.near(transaction.doc.resolve(position + 1)),
+          );
+        }
+        preview.view.dispatch(transaction);
         setStatus({ resultId: result.resultId, message: "" });
         if (highlight) {
-          window.requestAnimationFrame(() => {
+          const scroll = viewport.current;
+          if (!preview || !scroll) return;
+          const fallback = previewBlockElement(preview, result.blockId);
+          let passes = 0;
+          let retries = 0;
+          const schedule = (): void => {
+            if (frame === null) frame = window.requestAnimationFrame(attempt);
+          };
+          const attempt = (): void => {
+            frame = null;
             if (currentGeneration !== generation.current) return;
-            root.current
-              ?.querySelector<HTMLElement>(".workspace-search-preview-match")
-              ?.scrollIntoView?.({ block: "center", inline: "nearest" });
+            if (centerPreviewMatch(scroll, element, fallback)) {
+              passes += 1;
+              if (passes < 2) schedule();
+              else {
+                observer?.disconnect();
+                resizeObserver?.disconnect();
+              }
+            } else if (++retries < 30) {
+              schedule();
+            }
+          };
+          observer = new MutationObserver(schedule);
+          observer.observe(element, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ["class", "style"],
           });
+          resizeObserver = new ResizeObserver(schedule);
+          resizeObserver.observe(scroll);
+          schedule();
         } else if (viewport.current) {
           viewport.current.scrollTop = 0;
         }
@@ -633,6 +739,9 @@ function WorkspaceSearchPreview({
     }, 150);
     return () => {
       globalThis.clearTimeout(timer);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      resizeObserver?.disconnect();
     };
   }, [highlight, includeDeleted, result, runtime]);
 
@@ -655,6 +764,59 @@ function WorkspaceSearchPreview({
       </div>
     </div>
   );
+}
+
+function previewBlockElement(
+  editor: Editor,
+  blockId: string | null,
+): HTMLElement | null {
+  const position = previewBlockPosition(editor, blockId);
+  if (position === null) return null;
+  const node = editor.view.nodeDOM(position);
+  return node instanceof HTMLElement
+    ? node
+    : node instanceof Text
+      ? node.parentElement
+      : null;
+}
+
+function previewBlockPosition(
+  editor: Editor,
+  blockId: string | null,
+): number | null {
+  if (!blockId) return null;
+  let position: number | null = null;
+  editor.state.doc.descendants((node, nodePosition) => {
+    if (node.attrs.blockId !== blockId) return true;
+    position = nodePosition;
+    return false;
+  });
+  return position;
+}
+
+function centerPreviewMatch(
+  viewport: HTMLElement,
+  root: HTMLElement,
+  fallback: HTMLElement | null,
+): boolean {
+  const match = root.querySelector<HTMLElement>(
+    ".workspace-search-preview-match",
+  );
+  const target =
+    match && match.getBoundingClientRect().height > 0 ? match : fallback;
+  if (!target?.isConnected) return false;
+  const viewportRect = viewport.getBoundingClientRect();
+  const height = viewport.clientHeight || viewportRect.height;
+  if (height <= 0) return false;
+  viewport.style.setProperty(
+    "--workspace-search-preview-padding",
+    `${Math.max(22, height / 2 - 16)}px`,
+  );
+  const targetRect = target.getBoundingClientRect();
+  if (targetRect.height <= 0) return false;
+  viewport.scrollTop +=
+    targetRect.top - viewportRect.top - height / 2 + targetRect.height / 2;
+  return true;
 }
 
 function workspaceSearchLabel(
@@ -698,12 +860,24 @@ function workspaceSearchPrompt(
 ): string {
   if (target === "buffers") return "b›";
   if (target === "trash") return "trash›";
-  return scope === "title" ? "f›" : "g›";
+  return scope === "title" ? "f›" : "s›";
 }
 
 interface SearchPreviewHighlightMeta {
   readonly result: WorkspaceSearchResult;
   readonly enabled: boolean;
+}
+
+function bodyHighlightRanges(
+  text: string,
+  result: WorkspaceSearchResult,
+): readonly { from: number; to: number }[] {
+  if (text === result.lineText && result.lineRanges) return result.lineRanges;
+  const terms = workspaceSearchTerms(result.query).map((literal, index) => ({
+    literal,
+    migemoPattern: result.matchPatterns?.[index] ?? null,
+  }));
+  return workspaceMatchRanges(text, terms, "body");
 }
 
 const searchPreviewHighlightKey = new PluginKey<DecorationSet>(
@@ -762,9 +936,7 @@ function previewDecorations(
   if (matches !== 1 && decorations.length === 0) {
     document.descendants((node, nodePosition) => {
       if (!node.isTextblock) return true;
-      if (
-        workspaceSearchMatchRanges(node.textContent, result.query).length < 1
-      ) {
+      if (bodyHighlightRanges(node.textContent, result).length < 1) {
         return true;
       }
       appendPreviewDecorations(decorations, node, nodePosition, {
@@ -787,10 +959,7 @@ function appendPreviewDecorations(
 ): void {
   if (node.isTextblock) {
     const sourceOffset = result.matchOffset - result.lineMatchOffset;
-    for (const range of workspaceSearchMatchRanges(
-      result.lineText,
-      result.query,
-    )) {
+    for (const range of bodyHighlightRanges(result.lineText, result)) {
       const from =
         nodePosition +
         1 +
@@ -820,7 +989,7 @@ function appendPreviewDecorations(
   node.descendants((child, childOffset) => {
     if (!child.isTextblock) return true;
     const text = child.textBetween(0, child.content.size, "", "\n");
-    for (const range of workspaceSearchMatchRanges(text, result.query)) {
+    for (const range of bodyHighlightRanges(text, result)) {
       const from =
         nodePosition +
         1 +

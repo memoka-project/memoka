@@ -53,7 +53,13 @@ describe("Memoka Workspace search palette", () => {
     fireEvent.change(input, { target: { value: "de" } });
     fireEvent.change(input, { target: { value: "debounce" } });
     await waitFor(() =>
-      expect(search).toHaveBeenCalledWith("debounce", "title", 20, "workspace"),
+      expect(search).toHaveBeenCalledWith(
+        "debounce",
+        "title",
+        20,
+        "workspace",
+        "window-1",
+      ),
     );
     expect(search.mock.calls.map(([query]) => query)).not.toContain("d");
     expect(search.mock.calls.map(([query]) => query)).not.toContain("de");
@@ -135,6 +141,12 @@ describe("Memoka Workspace search palette", () => {
       // Past-event assertions must not race the shared display clock's tick.
       clock: () => "2026-08-04T00:00:00.000Z",
     });
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: "op-ui-index-fallback",
+      source: "ui",
+      payload: { noteId: runtime.noteId, text: "fallback body target" },
+    });
     await runtime.flush();
     index.failQuery = new Error("injected FTS failure");
     const view = render(
@@ -142,7 +154,7 @@ describe("Memoka Workspace search palette", () => {
         runtime={runtime}
         session={{
           windowId: "window-1",
-          scope: "title",
+          scope: "body",
           target: "workspace",
           origin: null,
           applyDestination: () => null,
@@ -150,6 +162,13 @@ describe("Memoka Workspace search palette", () => {
         }}
         onClose={vi.fn()}
       />,
+    );
+
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "ワークスペースを検索" }),
+      {
+        target: { value: "fallback" },
+      },
     );
 
     await screen.findByRole("option", { name: /fallback target/u });
@@ -514,6 +533,116 @@ describe("Memoka Workspace search palette", () => {
     root.remove();
   });
 
+  it("centers a body match inside the preview viewport", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "long preview",
+    });
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: "op-preview-scroll",
+      source: "ui",
+      payload: {
+        noteId: runtime.noteId,
+        text: `${"other line\n".repeat(40)}needle near the end`,
+      },
+    });
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains("workspace-search-preview-root")) {
+          return new DOMRect(0, 100, 600, 400);
+        }
+        if (this.classList.contains("workspace-search-preview-match")) {
+          return new DOMRect(0, 700, 100, 20);
+        }
+        return originalRect.call(this);
+      });
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "body",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "ワークスペースを検索" }),
+      { target: { value: "needle" } },
+    );
+    const viewport = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>(
+        ".workspace-search-preview-root",
+      );
+      if (!element) throw new Error("Preview viewport is not rendered");
+      return element;
+    });
+    await waitFor(() => expect(viewport.scrollTop).toBe(410));
+    expect(
+      viewport.style.getPropertyValue("--workspace-search-preview-padding"),
+    ).toBe("184px");
+    rectSpy.mockRestore();
+    view.unmount();
+    runtime.destroy();
+  });
+
+  it("renders an offscreen Help BodyChunk before previewing its match", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "search preview",
+    });
+    await runtime.openHelpNote("window-1");
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "body",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "ワークスペースを検索" }),
+      { target: { value: "mem" } },
+    );
+    const target = await waitFor(() => {
+      const option = screen
+        .getAllByRole("option")
+        .find((element) =>
+          element.textContent?.includes("Memokaでは、文字を入力する状態"),
+        );
+      if (!option) throw new Error("Help body match is missing");
+      return option;
+    });
+    fireEvent.click(target);
+    await waitFor(() => {
+      expect(target.getAttribute("aria-selected")).toBe("true");
+      const match = view.container.querySelector<HTMLElement>(
+        ".workspace-search-preview-match",
+      );
+      expect(match?.textContent).toBe("Mem");
+      expect(
+        match
+          ?.closest("[data-body-chunk]")
+          ?.getAttribute("data-body-chunk-virtualized"),
+      ).toBe("false");
+    });
+    view.unmount();
+    runtime.destroy();
+  });
+
   it("reuses one structured preview Editor between matches in the same Note", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
@@ -703,7 +832,7 @@ describe("Memoka Workspace search palette", () => {
     runtime.destroy();
   });
 
-  it("renders title results as note title plus a smaller hierarchy line", async () => {
+  it("renders Note titles before their paths and marks current and previous Notes", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "workspace root note",
@@ -755,6 +884,13 @@ describe("Memoka Workspace search palette", () => {
       nestedResult.querySelector(".workspace-search-title-hierarchy")
         ?.textContent,
     ).toBe("/");
+    expect(
+      rootResult.querySelector('[aria-label="直前に開いたノート"]')
+        ?.textContent,
+    ).toBe("↶");
+    expect(
+      nestedResult.querySelector('[aria-label="現在のノート"]')?.textContent,
+    ).toBe("●");
 
     view.unmount();
     runtime.destroy();

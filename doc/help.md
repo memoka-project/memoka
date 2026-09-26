@@ -504,7 +504,7 @@ Treeの構造変更はEditor本文のUndo、Redo、`.`には含まれません�
 
 ### Note内検索
 
-Normalの`/`または`<Leader>s`で前方、`?`で後方に現在のFocused Section subtreeを検索します。Rootを表示している場合は
+Normalの`/`で前方、`?`で後方に現在のFocused Section subtreeを検索します。Rootを表示している場合は
 Note全体が対象です。`Enter`、`Esc`、`Ctrl-c`で検索入力を閉じ、`[count]n`は直前の`/`・`?`・`*`・`#`と同方向、
 `[count]N`は逆方向の一致へ循環移動します。外部linkは表示されているlink textだけを検索し、URL自体は対象にしません。
 
@@ -521,14 +521,17 @@ Normalの`[count]*`はカーソル上の語を前方、`[count]#`は後方に検
 
 ### Workspace検索
 
-| Key         | 対象                                  |
-| ----------- | ------------------------------------- |
-| `<Leader>f` | Section titleと祖先pathを検索します。 |
-| `<Leader>g` | Sectionの直接本文を検索します。       |
-| `<Leader>b` | 読み込み済みBufferを検索します。      |
+| Key         | 対象                                    |
+| ----------- | --------------------------------------- |
+| `<Leader>f` | Note名とNote Tree祖先pathを検索します。 |
+| `<Leader>s` | Sectionの直接本文を検索します。         |
+| `<Leader>b` | 読み込み済みBufferを検索します。        |
 
 空白で区切った語はAND条件になります。検索paneでは入力欄にfocusしたまま文字を入力でき、矢印keyまたは
 `Ctrl-p`と`Ctrl-n`で結果を選びます。`Enter`または`Tab`で開き、`Esc`または`Ctrl-c`で取り消します。
+`f`はNoteを1件ずつ表示し、Section titleは検索しません。Note名を先に、祖先pathを後に表示します。
+`s`は一致した本文行ごとに表示します。小文字ローマ字（`no-to`、`kensaku`など）はMigemoで日本語にも一致するため、IMEをOFFにしたまま検索できます。
+候補順には文字の一致度と、端末内に保存する開いた履歴、現在開いているNote、階層の近さを使い、選択に応じて調整します。
 
 ### Internal Linkと外部link
 
@@ -610,10 +613,9 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 | `<Leader>a` | Context Actions         | 利用可能 |
 | `<Leader>b` | Buffer Search           | 利用可能 |
 | `<Leader>c` | Command Picker          | 利用可能 |
-| `<Leader>f` | Title Search            | 利用可能 |
-| `<Leader>g` | Body Search             | 利用可能 |
+| `<Leader>f` | Note Search             | 利用可能 |
+| `<Leader>s` | Body Search             | 利用可能 |
 | `<Leader>o` | Outline                 | 利用可能 |
-| `<Leader>s` | Note Search             | 利用可能 |
 | `<Leader>t` | Tree                    | 利用可能 |
 | `<Leader>C` | Config / Settings       | 予約済み |
 | `<Leader>h` | History / Recent / Jump | 予約済み |

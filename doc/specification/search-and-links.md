@@ -20,7 +20,7 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 
 ## 2. Note内検索
 
-`/`または`<Leader>s`は前方、`?`は後方のactive WindowのNote内検索を開く。入力欄のpromptは開いた方向を表示する。
+`/`は前方、`?`は後方のactive WindowのNote内検索を開く。入力欄のpromptは開いた方向を表示する。
 
 - 既定scopeは現在のFocused Section subtreeである。
 - Root focusではNoteDoc全体を対象にする。
@@ -51,25 +51,26 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 Internal Linkも現在表示されるtitle textを対象にし、atomic node全体へcaretを置く。
 一致位置を表示できないhidden attributeへ移動して検索を停止させてはならない。
 
-## 3. title検索
+## 3. Note検索
 
-`<Leader>f`はlive NoteDocにあるRoot/Section titleと祖先pathを検索する。Root titleはNote titleであり、
-非Root titleも独立した検索結果になる。
+`<Leader>f`はlive Noteを1 Note 1件で検索する。対象はNote名とNote Treeの祖先Note・グループ名であり、
+Section titleは対象にしない。空queryでは全live Noteを候補にする。
 
-- 1行目に一致したRoot/Section titleを表示する。
-- titleの下に更新日時とNamespace祖先（グループを含む）・Note内Section祖先をつないだ親階層を補助行として表示し、Workspace直下のRootは`/`とする。
-- 階層は小さく暗いtextにする。
-- 長い表示はNote titleを優先し、祖先側を省略する。
-- 更新日時の新しい順にsortする。
+- Note名を先に、Note Tree祖先pathを小さく暗いtextで後に表示する。Workspace直下は`/`とする。
+- 長い表示はNote名を優先し、祖先側を省略する。開いているNoteと直前のNoteは印を付ける。
 - 更新日時は`YYYY/MM/DD HH:mm:ss (8m ago)`のように絶対日時と経過時間を常時併記し、狭い幅では折り返す。
 - file iconには`📄`を使う。
 
-各tokenは対象titleまたはいずれかの祖先titleに一致すればよい。title自体が一致しなくても、
-ancestorを含む全tokenのAND条件を満たせば結果に含める。
+各tokenはNote名か祖先pathのいずれかにあいまい一致またはMigemoで一致すればよい。
+Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い英字だけの一致では採用しない。
+候補順は文字の一致度を主とし、開いた履歴、現在開いているNote、直前のNote、現在のNoteとの階層の近さを加味する。
+開いた履歴は14日半減期で端末内のWorkspace別local stateへ保存する。上位候補を飛ばして選択した際は特徴量差で重みを学習し、
+初期値の0.5〜2倍に制限する。候補は全件を評価してから20件へ絞る。
 
 ## 4. 本文検索
 
-`<Leader>g`はlive Noteの直接本文を検索する。結果はNoteの更新日時が新しい順である。
+`<Leader>s`はlive Noteの直接本文を検索する。各tokenは同じ論理行で部分一致またはMigemo一致を要する。
+結果は一致行ごとに表示し、一致度とNoteの利用履歴・Window文脈で順位を決めてから20件へ絞る。
 
 各結果へ次を表示する。
 
@@ -81,6 +82,9 @@ ancestorを含む全tokenのAND条件を満たせば結果に含める。
 
 previewでは一致部分が上下中央付近に見えるようscrollし、すべての一致をhighlightする。
 検索結果用pathはquery時に解決し、本文FTS rowへ`parent_path`を複製しない。
+小文字ローマ字と`-`のtokenは同梱辞書でMigemo照合し、IMEをOFFにしたまま日本語を探せる。
+Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い英字だけの一致では採用しない。
+辞書が読めなければ通常の検索を続け、paneに状態を示す。日本語の直接入力も従来どおり検索できる。
 
 ## 5. Buffer検索
 
@@ -108,7 +112,7 @@ Workspace検索indexはschema 10の再構築可能なSQLite派生dataである�
 ListItemを1行へ集約せず、内部Blockを表示順に走査する。ParagraphのHard Breakは個別行として索引化し、
 内部ParagraphのBlock ID、行index、UTF-16 offsetを検索結果と移動先で共有する。旧indexはbackgroundで再構築する。
 
-- titleと本文を用途別にqueryできる同一index subsystemで管理する。
+- 本文検索を再構築可能なindexで管理し、Note検索にはWorkspaceのNote metadataを使う。
 - 本文は論理行と表示snippetを検索できる形で保持する。
 - Note ID、Section ID、block位置、論理行番号、確定revisionを結果へ結び付ける。
 - 祖先pathは保存せず、WorkspaceMetadataDocからquery時に解決する。

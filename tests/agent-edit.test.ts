@@ -175,7 +175,7 @@ describe("external edit delivery recovery", () => {
         await publish(() => source.renameNote(noteId!, "Hidden child")),
       ).toBe(1);
       expect(await runtime.searchWorkspace("Hidden", "title")).toMatchObject({
-        backend: "sqlite-fts",
+        backend: "metadata",
         results: [expect.objectContaining({ noteId, parentPath: "/Parent" })],
       });
       expect(

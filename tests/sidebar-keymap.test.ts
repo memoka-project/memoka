@@ -127,7 +127,7 @@ describe("Memoka Sidebar application keymap", () => {
       action: { kind: "execute", command: "workspace.search_title" },
     });
     const bodyLeader = advanceSidebarInput(createSidebarInputState(), key(" "));
-    expect(advanceSidebarInput(bodyLeader.state, key("g"))).toMatchObject({
+    expect(advanceSidebarInput(bodyLeader.state, key("s"))).toMatchObject({
       state: { pending: null },
       action: { kind: "execute", command: "workspace.search_body" },
     });
@@ -136,7 +136,6 @@ describe("Memoka Sidebar application keymap", () => {
       ["o", "utility.toggle-outline"],
       ["b", "workspace.search_buffers"],
       ["c", "application.command_picker"],
-      ["s", "note.search"],
     ] as const) {
       const utilityLeader = advanceSidebarInput(
         createSidebarInputState(),

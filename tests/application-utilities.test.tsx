@@ -1394,11 +1394,16 @@ describe("Memoka Application utilities", () => {
 
     fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "s", code: "KeyS" });
-    const noteSearch = await screen.findByRole("textbox", {
-      name: "ノート内を検索",
+    const bodySearch = await screen.findByRole("combobox", {
+      name: "ワークスペースを検索",
     });
-    expect(document.activeElement).toBe(noteSearch);
-    fireEvent.keyDown(noteSearch, { key: "Escape", code: "Escape" });
+    expect(
+      bodySearch
+        .closest("[data-search-scope]")
+        ?.getAttribute("data-search-scope"),
+    ).toBe("body");
+    expect(document.activeElement).toBe(bodySearch);
+    fireEvent.keyDown(bodySearch, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(tree), {
       timeout: 3_000,
     });
@@ -1669,8 +1674,16 @@ describe("Memoka Application utilities", () => {
 
     fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "s", code: "KeyS" });
-    await screen.findByText(/Note Search · この画面では利用できません/);
-    expect(document.activeElement).toBe(emptyWindow);
+    const bodySearch = await screen.findByRole("combobox", {
+      name: "ワークスペースを検索",
+    });
+    expect(
+      bodySearch
+        .closest("[data-search-scope]")
+        ?.getAttribute("data-search-scope"),
+    ).toBe("body");
+    fireEvent.keyDown(bodySearch, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
     tree.focus();
     fireEvent.keyDown(tree, { key: "Enter" });

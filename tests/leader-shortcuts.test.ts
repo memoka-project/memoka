@@ -25,8 +25,13 @@ describe("Leader shortcut catalog", () => {
       shortcut: { id: "context-actions" },
     });
     expect(resolveLeaderShortcut("s", "empty-window")).toMatchObject({
-      kind: "unavailable",
-      shortcut: { id: "note-search" },
+      kind: "execute",
+      shortcut: { id: "body-search" },
+      command: "workspace.search_body",
+    });
+    expect(resolveLeaderShortcut("g", "editor")).toEqual({
+      kind: "unmapped",
+      key: "g",
     });
     const reserved = resolveLeaderShortcut("p", "empty-window");
     expect(reserved).toMatchObject({

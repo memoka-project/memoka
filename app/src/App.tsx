@@ -2475,46 +2475,12 @@ export function App({
     setCommandMessage(`workspace.search.${target}.${scope} · application`);
   };
 
-  const openNoteSearchFromApplication = (restoreFocus: () => void): void => {
-    const adapter = editorAdapters.current.get(effectiveTargetWindowId);
-    const origin = adapter?.captureNoteSearchOrigin() ?? null;
-    if (!adapter || !origin || targetWindow?.noteId === null) {
-      setCommandMessage("Note Search · 検索対象のNoteがありません");
-      queueMicrotask(restoreFocus);
-      return;
-    }
-    openNoteSearch({
-      windowId: effectiveTargetWindowId,
-      direction: "forward",
-      origin,
-      applyDestination: (destination, detail) =>
-        applyNavigationDestinationToWindow(
-          effectiveTargetWindowId,
-          destination,
-          detail,
-        ),
-      requestInputMethodDeactivation: () =>
-        adapter.requestInputMethodDeactivation(),
-      visibleWords: () => adapter.noteSearchVisibleWords(),
-      locationAt: (position) => adapter.noteSearchLocation(position),
-      showHints: (hints, typed) => adapter.showNoteSearchHints(hints, typed),
-      clearHints: () => adapter.clearNoteSearchHints(),
-      viewport: () => adapter.noteSearchViewport(),
-      onViewChange: (listener) => adapter.onNoteSearchViewChange(listener),
-      restoreFocus,
-      focusResult: () => requestEditorFocus(effectiveTargetWindowId),
-    });
-    setCommandMessage("note.search · application");
-  };
-
   const executeLeaderCommand = (
     command: LeaderActiveCommandId,
     restoreFocus: () => void,
   ): void => {
     if (command === "application.command_picker") {
       openCommandPicker({ restoreFocus });
-    } else if (command === "note.search") {
-      openNoteSearchFromApplication(restoreFocus);
     } else if (command === "context.action_picker") {
       const shortcut = leaderShortcutForCommand(command);
       setCommandMessage(
