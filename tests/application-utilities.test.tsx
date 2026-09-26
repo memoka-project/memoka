@@ -1234,6 +1234,39 @@ describe("Memoka Application utilities", () => {
     view.unmount();
   });
 
+  it.each(["editor", "sidebar"] as const)(
+    "focuses the already open Note after selecting it with Leader-f from %s",
+    async (surface) => {
+      const view = render(<App />);
+      const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      if (surface === "editor") enterNormal(editor);
+      else tree.focus();
+      const source = surface === "editor" ? editor : tree;
+      fireEvent.keyDown(source, { key: " ", code: "Space" });
+      fireEvent.keyDown(source, { key: "f", code: "KeyF" });
+      const search = await screen.findByRole("combobox", {
+        name: "ワークスペースを検索",
+      });
+      await screen.findByRole("option");
+      expect(document.activeElement).toBe(search);
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("combobox", { name: "ワークスペースを検索" }),
+        ).toBeNull();
+        expect(document.activeElement).toBe(editor);
+      });
+      view.unmount();
+    },
+  );
+
   it("restores a Help body caret after keyboard navigation through Tree", async () => {
     class ReplicatedPersistence extends MemoryPersistencePort {
       readonly replicaId = createUuidV7();

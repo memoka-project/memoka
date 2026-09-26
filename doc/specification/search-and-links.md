@@ -62,6 +62,7 @@ Section titleは対象にしない。空queryでは全live Noteを候補にす�
 - file iconには`📄`を使う。
 
 各tokenはNote名か祖先pathのいずれかにあいまい一致またはMigemoで一致すればよい。
+結果を開いた後は対象NoteのEditorへfocusを移す。既に同じNoteを開いている場合も同様とする。
 Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い英字だけの一致では採用しない。
 候補順は文字の一致度を主とし、開いた履歴、現在開いているNote、直前のNote、現在のNoteとの階層の近さを加味する。
 開いた履歴は14日半減期で端末内のWorkspace別local stateへ保存する。上位候補を飛ばして選択した際は特徴量差で重みを学習し、

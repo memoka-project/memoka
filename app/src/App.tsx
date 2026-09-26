@@ -1074,9 +1074,21 @@ export function App({
       setInlineFormatPicker(null);
       setTableActionPicker(null);
       setCodeActionPicker(null);
-      setWorkspaceSearch(session);
+      setWorkspaceSearch({
+        ...session,
+        focusResult: () => {
+          if (!runtime) {
+            session.restoreFocus();
+            return;
+          }
+          void runtime.focusEditorWindow(session.windowId).then(
+            () => requestEditorFocus(session.windowId),
+            () => session.restoreFocus(),
+          );
+        },
+      });
     },
-    [clearEditorFocusRequests],
+    [clearEditorFocusRequests, requestEditorFocus, runtime],
   );
 
   const openNoteSearch = useCallback(

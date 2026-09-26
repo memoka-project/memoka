@@ -33,6 +33,7 @@ export interface WorkspaceSearchSession {
     destination: EditorNavigationDestination,
     detail: string,
   ) => string | null;
+  readonly focusResult?: () => void;
   readonly restoreFocus: () => void;
 }
 
@@ -193,6 +194,7 @@ export function WorkspaceSearchPalette({
         );
       }
       onClose();
+      queueMicrotask(session.focusResult ?? session.restoreFocus);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
