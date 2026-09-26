@@ -16,6 +16,7 @@ const SUPPORTED_MARKS = [
   "link",
   "highlight",
 ] as const;
+const SUPPORTED_MARK_NAMES = new Set<string>(SUPPORTED_MARKS);
 const DISALLOWED_BLOCKS = new Set([
   "sectionHeader",
   "codeBlock",
@@ -30,6 +31,7 @@ export interface InlineFormatSelection {
   readonly to: number;
   readonly text: string;
   readonly existingHref: string | null;
+  readonly hasFormatting: boolean;
 }
 
 export type InlineFormatResult =
@@ -76,6 +78,9 @@ export function captureInlineFormatSelection(
     to: selection.to,
     text: doc.textBetween(selection.from, selection.to, "\n", "\uFFFC"),
     existingHref: uniformLinkHref(content.textNodes),
+    hasFormatting: content.textNodes.some((node) =>
+      node.marks.some((mark) => SUPPORTED_MARK_NAMES.has(mark.type.name)),
+    ),
   };
 }
 

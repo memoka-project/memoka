@@ -5,6 +5,7 @@ import {
 } from "../core/application-command";
 import { workspaceSearchMatchRanges } from "../core/workspace-search";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface ApplicationCommandPickerSession {
   readonly restoreFocus: () => void;
@@ -22,6 +23,7 @@ export function ApplicationCommandPicker({
   focused?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const { record } = usePickerRecents();
   const commands = useMemo(() => filterApplicationCommands(query), [query]);
 
   return (
@@ -33,6 +35,7 @@ export function ApplicationCommandPicker({
       onQueryChange={setQuery}
       items={commands}
       itemId={(command) => command.id}
+      recentKind="command"
       renderItem={(command, currentQuery) => (
         <span className="command-picker__row">
           <strong>
@@ -60,7 +63,10 @@ export function ApplicationCommandPicker({
       )}
       prompt="cmd›"
       countLabel={`${commands.length} commands`}
-      onAccept={onSelect}
+      onAccept={(command) => {
+        onSelect(command);
+        record("command", command.id);
+      }}
       onClose={onClose}
       restoreFocus={session.restoreFocus}
       empty={

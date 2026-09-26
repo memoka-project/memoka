@@ -3,6 +3,8 @@ import {
   type SymbolPickerSession,
 } from "./components/SymbolPicker";
 import { SymbolText } from "./components/SymbolText";
+import { PickerRecentsProvider } from "./components/PickerRecents";
+import type { PickerRecentsPort } from "./platform/picker-recents";
 import {
   useCallback,
   useEffect,
@@ -247,6 +249,7 @@ export interface AppProps {
   initialJapaneseWordSegmentation?: JapaneseWordSegmentationMode;
   initialJapaneseLineBreakSegmentation?: JapaneseLineBreakSegmentationMode;
   applicationConfig?: ApplicationConfigPort;
+  pickerRecents?: PickerRecentsPort;
   applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
   keyConfigWarning?: string | null;
@@ -272,6 +275,7 @@ export function App({
   initialJapaneseWordSegmentation = DEFAULT_JAPANESE_WORD_SEGMENTATION,
   initialJapaneseLineBreakSegmentation = DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
   applicationConfig: applicationConfigOverride,
+  pickerRecents,
   applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
   keyConfigWarning = null,
@@ -3502,7 +3506,7 @@ export function App({
     );
   };
 
-  return (
+  const main = (
     <main
       ref={appRoot}
       className={`app-shell${applicationActive ? "" : " app-shell--inactive"}${updateProgress ? " app-shell--update-busy" : ""}${shutdownProgress ? " app-shell--shutdown-busy" : ""}`}
@@ -3847,6 +3851,7 @@ export function App({
       ) : fontPicker ? (
         <FontPicker
           session={fontPicker}
+          recentKind={`font-${fontPicker.target}`}
           onPreview={(selectedFontFamily) => {
             if (fontPicker.target === "ui") {
               setFontFamily(selectedFontFamily);
@@ -4002,6 +4007,9 @@ export function App({
         </div>
       )}
     </main>
+  );
+  return (
+    <PickerRecentsProvider port={pickerRecents}>{main}</PickerRecentsProvider>
   );
 }
 
@@ -4739,6 +4747,7 @@ function EditorWindow({
           windowId,
           selectedText: request.selectedText,
           existingHref: request.existingHref,
+          hasFormatting: request.hasFormatting,
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),

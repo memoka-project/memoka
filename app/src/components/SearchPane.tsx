@@ -4,6 +4,8 @@ import {
   searchKeymap,
   type SearchKeymapContext,
 } from "../core/search-keymap";
+import { rankPickerItems, type PickerRecentKind } from "../core/picker-recents";
+import { usePickerRecents } from "./picker-recents-state";
 
 const queryGraphemes = new Intl.Segmenter(undefined, {
   granularity: "grapheme",
@@ -27,6 +29,9 @@ export interface SearchPaneProps<Item> {
   /** Best match first. The pane presents the best match nearest the input. */
   readonly items: readonly Item[];
   readonly itemId: (item: Item) => string;
+  readonly recentKind?: PickerRecentKind;
+  readonly recentPriority?: (item: Item) => number;
+  readonly maxItems?: number;
   readonly renderItem: (item: Item, query: string) => ReactNode;
   readonly renderPreview: (item: Item | null) => ReactNode;
   readonly renderPreviewActions?: (item: Item | null) => ReactNode;
@@ -59,6 +64,9 @@ export function SearchPane<Item>({
   onQueryChange,
   items,
   itemId,
+  recentKind,
+  recentPriority,
+  maxItems,
   renderItem,
   renderPreview,
   renderPreviewActions,
@@ -82,12 +90,26 @@ export function SearchPane<Item>({
   dataAttributes = {},
   idPrefix = "search-pane",
 }: SearchPaneProps<Item>) {
+  const { state: pickerRecents } = usePickerRecents();
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     initialSelectedItemId,
   );
-  const displayedItems = useMemo(() => [...items].reverse(), [items]);
+  const displayedItems = useMemo(() => {
+    const ranked = recentKind
+      ? rankPickerItems(
+          items,
+          recentKind,
+          pickerRecents,
+          itemId,
+          recentPriority,
+        )
+      : [...items];
+    return (
+      maxItems === undefined ? ranked : ranked.slice(0, maxItems)
+    ).reverse();
+  }, [items, recentKind, pickerRecents, itemId, recentPriority, maxItems]);
   const requestedIndex = selectedItemId
     ? displayedItems.findIndex((item) => itemId(item) === selectedItemId)
     : -1;

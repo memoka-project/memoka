@@ -161,6 +161,7 @@ export interface BlockTypePickerRequest {
 export interface InlineFormatPickerRequest {
   readonly selectedText: string;
   readonly existingHref: string | null;
+  readonly hasFormatting: boolean;
   readonly apply: (action: InlineFormatAction) => InlineFormatResult;
 }
 
@@ -901,6 +902,7 @@ export class TiptapEditorAdapter {
     this.options.onInlineFormatPicker({
       selectedText: selection.text,
       existingHref: selection.existingHref,
+      hasFormatting: selection.hasFormatting,
       apply: (action) => this.applyInlineFormat(selection, action),
     });
     return true;

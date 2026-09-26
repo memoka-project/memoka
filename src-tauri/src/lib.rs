@@ -466,6 +466,8 @@ pub fn run() {
         application_config::application_config_revision,
         application_config::application_theme_save,
         application_config::application_font_family_save,
+        application_config::picker_recents_load,
+        application_config::picker_recents_record,
         application_config::application_note_appearance_save,
         application_config::application_zoom_percent_save,
         application_config::application_note_max_width_px_save,

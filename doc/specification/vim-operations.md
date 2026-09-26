@@ -125,7 +125,7 @@ ZWJ・肌色・国旗・keycapを含むgrapheme内部には入れず、既存空
 候補は固定Unicode Emoji 17.0のfully-qualified/componentと導入済みLucideの全canonical Iconを同梱する。
 Lucide aliasは検索・token認識に使うが候補行を重複させない。完全一致、前方一致、単語一致、部分一致の順で、同順位は
 catalog順とする。空queryでは絵文字catalog順、Lucide名順に並べる。全件検索し表示は先頭200件まで、総件数と絞り込み案内を出す。
-候補・SVG geometryは必要時に読み込み、起動時に全SVGを生成しない。履歴・favoriteは持たない。
+候補・SVG geometryは必要時に読み込み、起動時に全SVGを生成しない。選択履歴による並び替えは[共通検索pane](search-and-links.md)に従う。favoriteは持たない。
 
 | Key               | 動作                                                                          |
 | ----------------- | ----------------------------------------------------------------------------- |

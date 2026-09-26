@@ -271,6 +271,7 @@ Insert中に入力箇所の外の文字を変更した場合やSection構造を�
 
 選択後に`m`を押すと共通検索paneが開き、斜体、太字、打ち消し、inline code、highlight、外部link、
 全装飾解除を選べます。同じ装飾を再度選んだ場合はtoggleせず、変更なしになります。
+選択範囲の一部でも装飾や外部linkがあれば全装飾解除を入力欄に最も近い位置に、なければ最も遠い位置に表示します。
 
 ### Visual Line
 
@@ -635,6 +636,7 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 
 NormalまたはSidebarなどのapplication surfaceで`:`を押すと、画面下部にCommand-lineが開きます。
 `Enter`で実行し、`Esc`または`Ctrl-c`で取り消します。`<Leader>c`ではcommandを検索して選べます。
+Commandや文字装飾などの選択候補は、絞り込み後に最近確定したものから表示します。履歴はこの端末でWorkspaceを切り替えても、アプリを再起動しても引き継ぎます。Note・本文などの検索結果の順位には影響しません。
 MemokaのCommand-lineは完全なVim Ex parserではありません。
 
 | Command                                           | 動作                                                                               |

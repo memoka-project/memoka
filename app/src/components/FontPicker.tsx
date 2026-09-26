@@ -6,6 +6,8 @@ import {
   type ApplicationFontDefinition,
 } from "../core/application-appearance";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
+import type { PickerRecentKind } from "../core/picker-recents";
 
 export interface FontPickerSession {
   readonly initialFontFamily: string;
@@ -18,17 +20,20 @@ export function FontPicker({
   onPreview,
   onAccept,
   onCancel,
+  recentKind = "font-ui",
   focused = true,
 }: {
   session: FontPickerSession;
   onPreview: (fontFamily: string) => void;
   onAccept: (fontFamily: string) => Promise<void>;
   onCancel: () => void;
+  recentKind?: Extract<PickerRecentKind, `font-${string}`>;
   focused?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   const initialItem = useMemo(
     () => fontDefinitionForFamily(session.initialFontFamily),
     [session.initialFontFamily],
@@ -58,6 +63,7 @@ export function FontPicker({
     setError(null);
     try {
       await onAccept(font.family);
+      record(recentKind, font.id);
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -80,6 +86,7 @@ export function FontPicker({
       }}
       items={fonts}
       itemId={(font) => font.id}
+      recentKind={recentKind}
       initialSelectedItemId={initialItem.id}
       onSelectionChange={preview}
       renderItem={(font) => (

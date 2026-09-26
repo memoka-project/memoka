@@ -20,6 +20,10 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 - 一致文字列を結果とpreviewで背景highlightする。
 - Note previewの背景は通常のNote Editorと同じsurface色にする。Trashのpreviewは危険操作を示す色を使う。
 
+Command、Visual Charの文字装飾、block種類とAlert種類、絵文字・Lucide、Code Actionと言語、Table Action、Theme、Fontの選択候補は、queryで絞り込んだ後に種類ごとの直近の確定順で並べる。未使用候補は元のcatalog順を保つ。表示数に上限がある場合も並べ替えてから絞る。確定したIDは端末のアプリ設定ディレクトリへ種類ごとに最大100件保存し、Workspace切替と再起動後も利用する。Theme・Fontの開始時の選択は現在の設定値を優先する。
+Note・本文・Buffer・Trash・履歴検索、グループ名・URL入力、Tableのsize gridにはこの順序を適用しない。
+Visual Charの文字装飾では、選択範囲の一部でも対応する装飾や外部linkがあれば「全装飾を解除」を一致候補の最優先に、なければ最後に置く。他の一致候補は直近の確定順とする。
+
 ## 2. Note内検索
 
 `/`は前方、`?`は後方のactive WindowのNote内検索を開く。入力欄のpromptは開いた方向を表示する。
