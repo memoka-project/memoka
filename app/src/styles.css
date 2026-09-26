@@ -2523,7 +2523,7 @@ textarea {
 
 .workspace-search-row-heading {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   gap: 7px;
   min-width: 0;
 }
@@ -2537,13 +2537,23 @@ textarea {
 }
 
 .workspace-search-icon {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
   flex: none;
+  height: 16px;
   font-family: system-ui, sans-serif;
+}
+
+.workspace-search-icon .tree-icon {
+  flex-basis: 14px;
+  width: 14px;
+  height: 14px;
 }
 
 .workspace-search-result-path {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   flex: 1 1 auto;
   gap: 5px;
   min-width: 0;
@@ -2554,7 +2564,7 @@ textarea {
   min-width: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
   color: var(--memoka-color-text-subtle);
   direction: rtl;
 }
@@ -2565,6 +2575,7 @@ textarea {
   min-width: 24px;
   overflow: hidden;
   color: var(--memoka-color-text);
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2588,14 +2599,23 @@ textarea {
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
 }
 
 .workspace-search-open-indicator {
+  align-self: center;
   flex: none;
-  color: var(--memoka-color-link-muted);
-  font-size: 14px;
+  margin-left: -3px;
+  font-size: 4.5px;
   line-height: 1;
+}
+
+.workspace-search-open-indicator--current {
+  color: var(--memoka-color-success);
+}
+
+.workspace-search-open-indicator--other {
+  color: var(--memoka-color-link);
 }
 
 .workspace-search-preview-text {

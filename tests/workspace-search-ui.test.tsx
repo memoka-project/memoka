@@ -587,8 +587,7 @@ describe("Memoka Workspace search palette", () => {
     const option = await screen.findByRole("option");
     expect(option.textContent).toContain("L1");
     expect(
-      option.querySelector(".workspace-search-note-title")?.nextElementSibling
-        ?.textContent,
+      option.querySelector(".workspace-search-line-number")?.textContent,
     ).toBe("L1");
     expect(option.querySelector(".workspace-search-match")?.textContent).toBe(
       "needle",
@@ -911,7 +910,7 @@ describe("Memoka Workspace search palette", () => {
     runtime.destroy();
   });
 
-  it("renders Note titles before their paths and marks current and previous Notes", async () => {
+  it("renders file-text icons and marks only Notes open in the current Window", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "workspace root note",
@@ -958,19 +957,109 @@ describe("Memoka Workspace search palette", () => {
     expect(
       rootResult.querySelector(".workspace-search-title-hierarchy")
         ?.textContent,
-    ).toBe("/");
+    ).toBe(" / ");
     expect(
       nestedResult.querySelector(".workspace-search-title-hierarchy")
         ?.textContent,
-    ).toBe("/");
+    ).toBe(" / ");
     expect(
-      rootResult.querySelector('[aria-label="直前に開いたノート"]')
-        ?.textContent,
-    ).toBe("↶");
+      rootResult.querySelector('[data-tree-icon="file-text"]'),
+    ).toBeTruthy();
     expect(
-      nestedResult.querySelector('[aria-label="現在のノート"]')?.textContent,
-    ).toBe("●");
+      nestedResult.querySelector('[data-tree-icon="file-text"]'),
+    ).toBeTruthy();
+    expect(
+      rootResult.querySelector(".workspace-search-open-indicator"),
+    ).toBeNull();
+    const indicator = nestedResult.querySelector(
+      '.workspace-search-open-indicator--current[aria-label="現在のウィンドウで開いているノート"]',
+    );
+    expect(indicator?.textContent).toBe("●");
+    expect(
+      nestedResult.querySelector(".workspace-search-note-title")
+        ?.nextElementSibling,
+    ).toBe(indicator);
 
+    view.unmount();
+    runtime.destroy();
+  });
+
+  it("spaces hierarchy slashes without shifting path match highlights", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "parent",
+    });
+    const middle = await runtime.createChildNote("window-1", runtime.noteId);
+    await runtime.renameNote(middle.noteId, "middle");
+    const leaf = await runtime.createChildNote("window-1", middle.noteId);
+    await runtime.renameNote(leaf.noteId, "leaf");
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "title",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "ワークスペースを検索" }),
+      { target: { value: "middle" } },
+    );
+    const leafResult = await screen.findByText("leaf", {
+      selector: ".workspace-search-note-title",
+    });
+    const path = leafResult
+      .closest('[role="option"]')
+      ?.querySelector(".workspace-search-title-hierarchy");
+    expect(path?.textContent).toBe(" / parent / middle");
+    expect(path?.querySelector("mark")?.textContent).toBe("middle");
+    view.unmount();
+    runtime.destroy();
+  });
+
+  it("marks a Note open in another Window with a blue indicator after its title", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "other window note",
+    });
+    const otherNoteId = runtime.noteId;
+    await runtime.createNoteAfter("window-1", otherNoteId, "current note");
+    const split = await runtime.splitEditorWindow("window-1", "vertical");
+    await runtime.openNote(split.windowId, otherNoteId);
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "title",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
+    const otherResult = screen
+      .getByText("other window note", {
+        selector: ".workspace-search-note-title",
+      })
+      .closest('[role="option"]');
+    const indicator = otherResult?.querySelector(
+      '.workspace-search-open-indicator--other[aria-label="別のウィンドウで開いているノート"]',
+    );
+    expect(indicator?.textContent).toBe("●");
+    expect(
+      otherResult?.querySelector(".workspace-search-note-title")
+        ?.nextElementSibling,
+    ).toBe(indicator);
     view.unmount();
     runtime.destroy();
   });

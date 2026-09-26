@@ -84,7 +84,7 @@ export interface WorkspaceSearchResult {
   readonly lineRanges?: readonly { from: number; to: number }[];
   readonly previewRanges?: readonly { from: number; to: number }[];
   readonly matchPatterns?: readonly (string | null)[];
-  readonly openStatus?: "current" | "other" | "previous";
+  readonly openStatus?: "current" | "other";
   readonly attachmentId?: string;
   /** Group results have no Note/Section resource; only this placement is restored. */
   readonly namespaceEntryId?: string;

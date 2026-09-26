@@ -9,6 +9,7 @@ import type { StableEditorPosition } from "../core/stable-position";
 import type { CoreRuntime, TrashPurgePreview } from "../core/runtime";
 import type { AttachmentRepository } from "../core/attachments";
 import { SymbolText } from "./SymbolText";
+import { TreeIcon } from "./tree-presentation";
 import {
   WORKSPACE_SEARCH_RESULT_LIMIT,
   normalizeWorkspaceSearchText,
@@ -300,30 +301,14 @@ export function WorkspaceSearchPalette({
           <>
             <span className="workspace-search-row-heading">
               <span className="workspace-search-icon" aria-hidden="true">
-                {result.kind === "image"
-                  ? "📷"
-                  : result.kind === "group"
-                    ? "📁"
-                    : "📄"}
+                {result.kind === "image" ? (
+                  "📷"
+                ) : result.kind === "group" ? (
+                  "📁"
+                ) : (
+                  <TreeIcon name="file-text" />
+                )}
               </span>
-              {result.openStatus && (
-                <span
-                  className="workspace-search-open-indicator"
-                  aria-label={
-                    result.openStatus === "previous"
-                      ? "直前に開いたノート"
-                      : result.openStatus === "current"
-                        ? "現在のノート"
-                        : "開いているノート"
-                  }
-                >
-                  {result.openStatus === "previous"
-                    ? "↶"
-                    : result.openStatus === "current"
-                      ? "●"
-                      : "○"}
-                </span>
-              )}
               {session.scope === "title" ? (
                 <>
                   <span className="workspace-search-note-title">
@@ -335,11 +320,15 @@ export function WorkspaceSearchPalette({
                       }
                     />
                   </span>
+                  <SearchOpenIndicator status={result.openStatus} />
                   <span className="workspace-search-title-hierarchy">
                     <HighlightedText
                       value={formatSearchHierarchy(result.parentPath)}
                       query={currentQuery}
-                      ranges={result.pathRanges}
+                      ranges={formatSearchHierarchyRanges(
+                        result.parentPath,
+                        result.pathRanges,
+                      )}
                     />
                   </span>
                 </>
@@ -518,11 +507,10 @@ function SearchResultPath({
   result: WorkspaceSearchResult;
   query: string;
 }) {
-  const hierarchy = result.parentPath
-    .split("/")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("/");
+  const hierarchy =
+    result.parentPath && result.parentPath !== "/"
+      ? formatSearchHierarchy(result.parentPath)
+      : null;
   return (
     <span className="workspace-search-result-path">
       <span className="workspace-search-note-title">
@@ -534,8 +522,9 @@ function SearchResultPath({
           )}
         />
       </span>
+      <SearchOpenIndicator status={result.openStatus} />
       {hierarchy && (
-        <span className="workspace-search-hierarchy">/{hierarchy}</span>
+        <span className="workspace-search-hierarchy">{hierarchy}</span>
       )}
       {result.logicalLineNumber !== null && (
         <span className="workspace-search-line-number">
@@ -546,13 +535,47 @@ function SearchResultPath({
   );
 }
 
+function SearchOpenIndicator({
+  status,
+}: {
+  status: WorkspaceSearchResult["openStatus"];
+}) {
+  if (!status) return null;
+  return (
+    <span
+      className={`workspace-search-open-indicator workspace-search-open-indicator--${status}`}
+      role="img"
+      aria-label={
+        status === "current"
+          ? "現在のウィンドウで開いているノート"
+          : "別のウィンドウで開いているノート"
+      }
+    >
+      ●
+    </span>
+  );
+}
+
 function formatSearchHierarchy(parentPath: string): string {
-  const hierarchy = parentPath
-    .split("/")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join("/");
-  return hierarchy ? `/${hierarchy}` : "/";
+  return (parentPath || "/").replaceAll("/", " / ");
+}
+
+function formatSearchHierarchyRanges(
+  parentPath: string,
+  ranges: readonly { from: number; to: number }[] | undefined,
+): Array<{ from: number; to: number }> | undefined {
+  if (!ranges) return undefined;
+  const offsetWithSeparatorSpaces = (offset: number): number => {
+    let slashes = 0;
+    for (let index = 0; index < offset; index += 1) {
+      if (parentPath[index] === "/") slashes += 1;
+    }
+    return offset + slashes * 2;
+  };
+  return ranges.map(({ from, to }) => ({
+    from: offsetWithSeparatorSpaces(from),
+    to: offsetWithSeparatorSpaces(to),
+  }));
 }
 
 function HighlightedText({

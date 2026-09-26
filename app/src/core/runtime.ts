@@ -3892,7 +3892,6 @@ export class CoreRuntime {
     context: SearchRankingContext,
   ): WorkspaceSearchResult["openStatus"] {
     if (context.activeNoteId === noteId) return "current";
-    if (context.state.previousNoteId === noteId) return "previous";
     return context.openNoteIds.has(noteId) ? "other" : undefined;
   }
 

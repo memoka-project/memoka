@@ -58,10 +58,10 @@ Internal Linkも現在表示されるtitle textを対象にし、atomic node全�
 `<Leader>f`はlive Noteを1 Note 1件で検索する。対象はNote名とNote Treeの祖先Note・グループ名であり、
 Section titleは対象にしない。空queryでは全live Noteを候補にする。
 
-- Note名を先に、Note Tree祖先pathを小さく暗いtextで後に表示する。Workspace直下は`/`とする。
-- 長い表示はNote名を優先し、祖先側を省略する。開いているNoteと直前のNoteは印を付ける。
+- Note名を先に、Note Tree祖先pathを小さく暗いtextで後に表示する。icon・Note名・状態の●は縦中央を揃え、祖先pathはNote名の下端に揃える。祖先pathの`/`の左右には空白を置く。Workspace直下の`/`も前後に空白を付けて表示する。
+- 長い表示はNote名を優先し、祖先側を省略する。Note名の右に小さい●を置き、現在のWindowで開いているNoteは緑系、別のWindowで開いているNoteは青系とする。直前に開いたかどうかは印で区別しない。
 - 更新日時は`YYYY/MM/DD HH:mm:ss (8m ago)`のように絶対日時と経過時間を常時併記し、狭い幅では折り返す。
-- file iconには`📄`を使う。
+- Noteのfile iconにはLucide `file-text`を使う。
 
 各tokenはNote名か祖先pathのいずれかにあいまい一致またはMigemoで一致すればよい。
 結果を開いた後は対象NoteのEditorへfocusを移す。既に同じNoteを開いている場合も同様とする。
@@ -93,7 +93,7 @@ Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い
 ## 5. Buffer検索
 
 `<Leader>b`、`:buffers`、`:ls`はtitle検索と同じUIを使い、現在load済みのlive Bufferへ対象を限定する。
-Note Bufferは`📄`、Image Bufferは`📷`で区別する。結果を確定するとactive Windowへ選択Bufferを表示する。
+Note BufferはLucide `file-text`、Image Bufferは`📷`で区別する。結果を確定するとactive Windowへ選択Bufferを表示する。
 独立したBuffers Sidebarは持たない。
 
 ## 6. Trash検索

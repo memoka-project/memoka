@@ -246,9 +246,9 @@ describe("Workspace smart search", () => {
 
     const reopened = await CoreRuntime.open(persistence, { idFactory });
     const results = (await reopened.searchWorkspace("", "title")).results;
-    expect(results.find(({ noteId }) => noteId === firstId)?.openStatus).toBe(
-      "previous",
-    );
+    expect(
+      results.find(({ noteId }) => noteId === firstId)?.openStatus,
+    ).toBeUndefined();
     reopened.destroy();
 
     const result = (noteId: string) => ({ noteId }) as WorkspaceSearchResult;
