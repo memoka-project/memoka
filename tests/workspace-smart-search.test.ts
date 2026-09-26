@@ -120,6 +120,39 @@ describe("Workspace smart search", () => {
     runtime.destroy();
   });
 
+  it("returns up to 100 body matches from indexed and fallback searches", async () => {
+    const index = new MemoryWorkspaceSearchIndexPort();
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "many matches",
+      workspaceSearchIndex: index,
+    });
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: "op-smart-many-body-matches",
+      source: "ui",
+      payload: {
+        noteId: runtime.noteId,
+        text: Array.from(
+          { length: 120 },
+          (_, position) => `123 entry ${position}`,
+        ).join("\n"),
+      },
+    });
+    await runtime.flush();
+    const indexed = await runtime.searchWorkspace("123", "body");
+    expect(indexed.backend).toBe("sqlite-fts");
+    expect(indexed.results).toHaveLength(100);
+    expect(new Set(indexed.results.map(({ resultId }) => resultId)).size).toBe(
+      100,
+    );
+    index.failQuery = new Error("injected index failure");
+    const fallback = await runtime.searchWorkspace("123", "body");
+    expect(fallback.backend).toBe("crdt-fallback");
+    expect(fallback.results).toHaveLength(100);
+    runtime.destroy();
+  });
+
   it("does not treat a partial ASCII Migemo syllable as a match", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

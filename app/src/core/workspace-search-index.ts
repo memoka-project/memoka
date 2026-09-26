@@ -1,4 +1,5 @@
 import {
+  WORKSPACE_SEARCH_RESULT_LIMIT,
   filterWorkspaceSearchCatalog,
   normalizeWorkspaceSearchText,
   workspaceSearchTerms,
@@ -195,7 +196,7 @@ export function workspaceSearchIndexQuery(
   workspaceRevision: number,
   query: string,
   scope: WorkspaceSearchScope = "title",
-  limit = 20,
+  limit = WORKSPACE_SEARCH_RESULT_LIMIT,
   excludedNoteIds: readonly string[] = [],
   rankedBody?: {
     readonly terms: readonly WorkspaceQueryTerm[];

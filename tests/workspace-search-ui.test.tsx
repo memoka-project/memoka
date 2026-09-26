@@ -26,6 +26,44 @@ function deterministicIds() {
 }
 
 describe("Memoka Workspace search palette", () => {
+  it("edits the query with Ctrl-h and Ctrl-u without moving input focus", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "query keys",
+    });
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "body",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    const input = screen.getByRole<HTMLInputElement>("combobox", {
+      name: "ワークスペースを検索",
+    });
+    fireEvent.change(input, { target: { value: "ab😀cd" } });
+    input.setSelectionRange(4, 4);
+    fireEvent.keyDown(input, { key: "h", ctrlKey: true });
+    expect(input.value).toBe("abcd");
+    await waitFor(() => expect(input.selectionStart).toBe(2));
+    fireEvent.keyDown(input, { key: "u", ctrlKey: true });
+    expect(input.value).toBe("cd");
+    await waitFor(() => expect(input.selectionStart).toBe(0));
+    input.setSelectionRange(0, 1);
+    fireEvent.keyDown(input, { key: "h", ctrlKey: true });
+    expect(input.value).toBe("d");
+    expect(document.activeElement).toBe(input);
+    view.unmount();
+    runtime.destroy();
+  });
+
   it("debounces rapid query input and never submits intermediate text", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
@@ -56,13 +94,54 @@ describe("Memoka Workspace search palette", () => {
       expect(search).toHaveBeenCalledWith(
         "debounce",
         "title",
-        20,
+        100,
         "workspace",
         "window-1",
       ),
     );
     expect(search.mock.calls.map(([query]) => query)).not.toContain("d");
     expect(search.mock.calls.map(([query]) => query)).not.toContain("de");
+    view.unmount();
+    runtime.destroy();
+  });
+
+  it("shows up to 100 matching body lines in the result list", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "many body matches",
+    });
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: "op-ui-many-body-matches",
+      source: "ui",
+      payload: {
+        noteId: runtime.noteId,
+        text: Array.from(
+          { length: 120 },
+          (_, position) => `123 entry ${position}`,
+        ).join("\n"),
+      },
+    });
+    const view = render(
+      <WorkspaceSearchPalette
+        runtime={runtime}
+        session={{
+          windowId: "window-1",
+          scope: "body",
+          target: "workspace",
+          origin: null,
+          applyDestination: () => null,
+          restoreFocus: vi.fn(),
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "ワークスペースを検索" }),
+      { target: { value: "123" } },
+    );
+    await screen.findByText("100 results");
+    expect(screen.getAllByRole("option")).toHaveLength(100);
     view.unmount();
     runtime.destroy();
   });

@@ -10,6 +10,7 @@ import type { CoreRuntime, TrashPurgePreview } from "../core/runtime";
 import type { AttachmentRepository } from "../core/attachments";
 import { SymbolText } from "./SymbolText";
 import {
+  WORKSPACE_SEARCH_RESULT_LIMIT,
   normalizeWorkspaceSearchText,
   workspaceSearchMatchRanges,
   workspaceSearchTerms,
@@ -77,7 +78,7 @@ export function WorkspaceSearchPalette({
       .searchWorkspace(
         debouncedQuery,
         session.scope,
-        20,
+        WORKSPACE_SEARCH_RESULT_LIMIT,
         session.target,
         session.windowId,
       )
@@ -124,7 +125,7 @@ export function WorkspaceSearchPalette({
             .sort((left, right) =>
               right.updatedAt.localeCompare(left.updatedAt),
             )
-            .slice(0, 20),
+            .slice(0, WORKSPACE_SEARCH_RESULT_LIMIT),
         };
       })
       .then(

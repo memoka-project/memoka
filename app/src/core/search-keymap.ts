@@ -9,6 +9,8 @@ export type SearchCommandId =
   | "search.restore"
   | "search.purge"
   | "search.ignore"
+  | "search.delete_previous"
+  | "search.delete_to_start"
   | "search.close";
 
 export const SEARCH_COMMAND_IDS: readonly SearchCommandId[] = [
@@ -18,6 +20,8 @@ export const SEARCH_COMMAND_IDS: readonly SearchCommandId[] = [
   "search.restore",
   "search.purge",
   "search.ignore",
+  "search.delete_previous",
+  "search.delete_to_start",
   "search.close",
 ];
 
@@ -65,6 +69,16 @@ export const searchKeymap = new DeclarativeKeymap<
       context: "search.insert",
       sequence: "Ctrl+c",
       command: "search.close",
+    },
+    {
+      context: "search.insert",
+      sequence: "Ctrl+h",
+      command: "search.delete_previous",
+    },
+    {
+      context: "search.insert",
+      sequence: "Ctrl+u",
+      command: "search.delete_to_start",
     },
     {
       context: "search.trash",
@@ -116,6 +130,16 @@ export const searchKeymap = new DeclarativeKeymap<
       sequence: "Ctrl+c",
       command: "search.close",
     },
+    {
+      context: "search.trash",
+      sequence: "Ctrl+h",
+      command: "search.delete_previous",
+    },
+    {
+      context: "search.trash",
+      sequence: "Ctrl+u",
+      command: "search.delete_to_start",
+    },
   ],
   SEARCH_COMMAND_IDS,
 );
@@ -129,7 +153,13 @@ export function searchKeySequence(event: {
   if (event.metaKey || event.altKey) return null;
   if (event.ctrlKey) {
     const key = event.key.toLocaleLowerCase();
-    return key === "c" || key === "n" || key === "p" ? `Ctrl+${key}` : null;
+    return key === "c" ||
+      key === "h" ||
+      key === "n" ||
+      key === "p" ||
+      key === "u"
+      ? `Ctrl+${key}`
+      : null;
   }
   return event.key;
 }

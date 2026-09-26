@@ -5,6 +5,19 @@ import {
   type SearchKeymapContext,
 } from "../core/search-keymap";
 
+const queryGraphemes = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
+
+function previousQueryGraphemeStart(value: string, caret: number): number {
+  let previous = 0;
+  for (const { index } of queryGraphemes.segment(value)) {
+    if (index >= caret) break;
+    previous = index;
+  }
+  return previous;
+}
+
 export interface SearchPaneProps<Item> {
   readonly ariaLabel: string;
   readonly inputAriaLabel: string;
@@ -118,6 +131,28 @@ export function SearchPane<Item>({
     queueMicrotask(restoreFocus);
   };
 
+  const deleteQuery = (
+    field: HTMLInputElement,
+    direction: "previous" | "start",
+  ): void => {
+    const value = field.value;
+    const start = field.selectionStart ?? value.length;
+    const end = field.selectionEnd ?? start;
+    const from =
+      direction === "start"
+        ? 0
+        : start === end
+          ? previousQueryGraphemeStart(value, start)
+          : start;
+    const to = direction === "start" ? start : end;
+    if (from === to) return;
+    setSelectedItemId(null);
+    onQueryChange(value.slice(0, from) + value.slice(to));
+    queueMicrotask(() => {
+      if (input.current === field) field.setSelectionRange(from, from);
+    });
+  };
+
   return (
     <section
       className={`workspace-search-overlay search-pane focus-surface${focused ? " focus-surface--focused" : ""}${className ? ` ${className}` : ""}`}
@@ -210,6 +245,10 @@ export function SearchPane<Item>({
               } else if (command === "search.select_previous") {
                 const previous = displayedItems[Math.max(0, selectedIndex - 1)];
                 if (previous) setSelectedItemId(itemId(previous));
+              } else if (command === "search.delete_previous") {
+                deleteQuery(event.currentTarget, "previous");
+              } else if (command === "search.delete_to_start") {
+                deleteQuery(event.currentTarget, "start");
               } else if (command === "search.restore" && selected) {
                 onRestore?.(selected);
               } else if (command === "search.purge" && selected) {

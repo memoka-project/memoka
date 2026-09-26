@@ -88,12 +88,24 @@ describe("Memoka declarative keymap", () => {
     expect(searchKeymap.resolve("search.insert", "Escape")).toBe(
       "search.close",
     );
+    expect(searchKeymap.resolve("search.insert", "Ctrl+h")).toBe(
+      "search.delete_previous",
+    );
+    expect(searchKeymap.resolve("search.insert", "Ctrl+u")).toBe(
+      "search.delete_to_start",
+    );
     expect(searchKeymap.resolve("search.insert", "r")).toBeNull();
     expect(searchKeymap.resolve("search.trash", "r")).toBe("search.restore");
     expect(searchKeymap.resolve("search.trash", "D")).toBe("search.purge");
     expect(searchKeymap.resolve("search.trash", "Enter")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Tab")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Ctrl+c")).toBe("search.close");
+    expect(searchKeymap.resolve("search.trash", "Ctrl+h")).toBe(
+      "search.delete_previous",
+    );
+    expect(searchKeymap.resolve("search.trash", "Ctrl+u")).toBe(
+      "search.delete_to_start",
+    );
     expect(
       searchKeySequence({
         key: "N",
@@ -102,6 +114,14 @@ describe("Memoka declarative keymap", () => {
         altKey: false,
       }),
     ).toBe("Ctrl+n");
+    expect(
+      searchKeySequence({
+        key: "H",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+      }),
+    ).toBe("Ctrl+h");
     expect(
       searchKeySequence({
         key: "Enter",

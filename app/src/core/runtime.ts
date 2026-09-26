@@ -194,6 +194,7 @@ import {
   type StableEditorPosition,
 } from "./stable-position";
 import {
+  WORKSPACE_SEARCH_RESULT_LIMIT,
   deriveWorkspaceSearchDocumentAsync,
   filterWorkspaceSearchCatalog,
   normalizeWorkspaceSearchText,
@@ -2703,7 +2704,7 @@ export class CoreRuntime {
   async searchWorkspace(
     query: string,
     scope: WorkspaceSearchScope = "title",
-    limit = 20,
+    limit = WORKSPACE_SEARCH_RESULT_LIMIT,
     target: WorkspaceSearchTarget = "workspace",
     windowId = "window-1",
   ): Promise<WorkspaceSearchResponse> {
@@ -3187,12 +3188,31 @@ export class CoreRuntime {
           sectionLineNumber: result.sectionLineNumber ?? 1,
           offset: result.matchOffset,
           query: result.query,
+          alignment: result.kind === "body" ? "center" : undefined,
         }
       : {
           kind: "section-start",
           noteId: result.noteId,
           sectionId: result.sectionId,
         };
+    if (result.kind === "body") {
+      const detail = "jump:search:changed";
+      if (
+        windowState.noteId === result.noteId &&
+        !windowState.focusedSectionId
+      ) {
+        if (current) this.jumpListFor(windowId).recordOrigin(current);
+        return { handled: true, detail, destination };
+      }
+      return this.openNavigationDestination(
+        windowId,
+        destination,
+        detail,
+        current
+          ? () => this.jumpListFor(windowId).recordOrigin(current)
+          : undefined,
+      );
+    }
     return this.focusNavigationSection(
       windowId,
       result.noteId,

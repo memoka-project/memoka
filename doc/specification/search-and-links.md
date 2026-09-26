@@ -14,9 +14,11 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 - 結果は下から上へ並べ、開始時は最下項目を選択する。
 - 上下矢印で選択し、選択行が常に一覧viewport内へ入るようscrollする。
 - mouse hoverでは選択を変えず、clickで選択する。
+- 入力中のCtrl-hは直前の1 grapheme（選択範囲があればその範囲）を削除し、Ctrl-uは入力欄の先頭からcaret直前までを削除する。削除後も入力欄のfocusとcaret位置を維持する。
 - Esc/Ctrl-cで閉じる。
 - queryはUnicode正規化後、空白区切りtokenのAND条件として扱う。
 - 一致文字列を結果とpreviewで背景highlightする。
+- Note previewの背景は通常のNote Editorと同じsurface色にする。Trashのpreviewは危険操作を示す色を使う。
 
 ## 2. Note内検索
 
@@ -66,12 +68,12 @@ Section titleは対象にしない。空queryでは全live Noteを候補にす�
 Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い英字だけの一致では採用しない。
 候補順は文字の一致度を主とし、開いた履歴、現在開いているNote、直前のNote、現在のNoteとの階層の近さを加味する。
 開いた履歴は14日半減期で端末内のWorkspace別local stateへ保存する。上位候補を飛ばして選択した際は特徴量差で重みを学習し、
-初期値の0.5〜2倍に制限する。候補は全件を評価してから20件へ絞る。
+初期値の0.5〜2倍に制限する。候補は全件を評価してから100件へ絞る。
 
 ## 4. 本文検索
 
 `<Leader>s`はlive Noteの直接本文を検索する。各tokenは同じ論理行で部分一致またはMigemo一致を要する。
-結果は一致行ごとに表示し、一致度とNoteの利用履歴・Window文脈で順位を決めてから20件へ絞る。
+結果は一致行ごとに表示し、一致度とNoteの利用履歴・Window文脈で順位を決めてから100件へ絞る。
 
 各結果へ次を表示する。
 
@@ -82,6 +84,7 @@ Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い
 - Note Treeから解決した現在の祖先path
 
 previewでは一致部分が上下中央付近に見えるようscrollし、すべての一致をhighlightする。
+結果を確定すると対象Note全体を表示し、Section focusを解除して一致する本文位置へcaretを移す。caretは`zz`相当でEditor Windowの上下中央に配置し、遅延描画後も維持する。既に対象Note全体を表示している場合はEditorを維持する。
 検索結果用pathはquery時に解決し、本文FTS rowへ`parent_path`を複製しない。
 小文字ローマ字と`-`のtokenは同梱辞書でMigemo照合し、IMEをOFFにしたまま日本語を探せる。
 Migemo辞書が返す未完成ローマ字の候補は、入力tokenより短い英字だけの一致では採用しない。

@@ -1516,7 +1516,8 @@ export class TiptapEditorAdapter {
       this.viewportAlignment = null;
     } else {
       this.revealNavigationSelection(
-        destination.kind === "section-start"
+        destination.kind === "section-start" ||
+          destination.kind === "search-match"
           ? destination.alignment
           : undefined,
       );

@@ -328,6 +328,49 @@ describe("Editor viewport scroll intent", () => {
       h.destroy();
     }
   });
+
+  it("centers a Workspace body search match like zz and retains it after layout", async () => {
+    const h = await harness();
+    try {
+      let blockId = "";
+      h.editor.state.doc.descendants((node) => {
+        if (
+          node.type.name === "paragraph" &&
+          node.textContent === "Paragraph 3-2"
+        ) {
+          blockId = node.attrs.blockId;
+          return false;
+        }
+        return true;
+      });
+      expect(blockId).not.toBe("");
+      expect(
+        h.adapter.applyNavigationDestination(
+          {
+            kind: "search-match",
+            noteId: h.runtime.noteId,
+            sectionId: h.runtime.noteId,
+            blockId,
+            sectionLineNumber: 1,
+            offset: 0,
+            query: "Paragraph 3-2",
+            alignment: "center",
+          },
+          "jump:search:changed",
+        ),
+      ).toBe("jump:search:changed");
+      const caretTop = () =>
+        h.editor.view.coordsAtPos(h.editor.state.selection.from).top;
+      expect(caretTop()).toBeCloseTo(41, 0);
+      await frame();
+      expect(caretTop()).toBeCloseTo(41, 0);
+      h.reflow(30, "resize");
+      await frame();
+      expect(caretTop()).toBeCloseTo(41, 0);
+    } finally {
+      h.destroy();
+    }
+  });
   it.each(["above", "below"] as const)(
     "skips partially clipped rows when scrolling the caret %s the viewport",
     async (edge) => {

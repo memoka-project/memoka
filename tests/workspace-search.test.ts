@@ -603,13 +603,14 @@ describe("Memoka Workspace search", () => {
     runtime.destroy();
   });
 
-  it("routes a child Section result by changing only Window-local focus", async () => {
+  it("opens a body result in the whole Note and moves to its match", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "parent",
     });
     const noteId = runtime.noteId;
     const targetSectionId = createUuidV7();
+    const blockId = createUuidV7();
     const note = runtime.getNoteHandle(noteId).current;
     if (note.kind !== "note") throw new Error("Expected NoteDoc");
     note.doc.transact(() => {
@@ -618,7 +619,7 @@ describe("Memoka Workspace search", () => {
         createSectionXml(targetSectionId, "target child", [
           blockToYXml({
             type: "paragraph",
-            blockId: createUuidV7(),
+            blockId,
             content: [{ type: "text", text: "section needle" }],
           }),
         ]),
@@ -646,13 +647,150 @@ describe("Memoka Workspace search", () => {
     expect(
       runtime.snapshot().applicationWindow.windows["window-1"]?.bufferId,
     ).toBe(`note:${noteId}`);
-    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(
-      targetSectionId,
-    );
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+    expect(navigation.destination).toMatchObject({
+      kind: "search-match",
+      alignment: "center",
+    });
+    expect(
+      adapter.applyNavigationDestination(
+        navigation.destination!,
+        navigation.detail,
+      ),
+    ).toBe(navigation.detail);
+    let matchPosition = -1;
+    adapter.editor.state.doc.descendants((node, position) => {
+      if (node.attrs.blockId === blockId) matchPosition = position + 1;
+    });
+    expect(adapter.editor.state.selection.from).toBe(matchPosition);
     expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
 
     adapter.destroy();
     root.remove();
+    runtime.destroy();
+  });
+
+  it("clears an existing Section focus when opening a body match", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "whole note",
+    });
+    const noteId = runtime.noteId;
+    const childId = createUuidV7();
+    const blockId = createUuidV7();
+    const note = runtime.noteDocument;
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(childId, "child", [
+          blockToYXml({
+            type: "paragraph",
+            blockId,
+            content: [{ type: "text", text: "find this text" }],
+          }),
+        ]),
+      );
+    });
+    await runtime.focusSection("window-1", noteId, childId);
+    const focusedRoot = editorRoot();
+    const focused = runtime.editorForTesting("window-1", focusedRoot, {
+      directBodyOnly: false,
+    });
+    const origin = focused.adapter.captureStablePosition();
+    if (!origin) throw new Error("Stable origin was unavailable");
+    const result = filterWorkspaceSearchCatalog(
+      await runtime.workspaceSearchCatalog(),
+      "find this text",
+      "body",
+    )[0]!;
+    const navigation = await runtime.navigateWorkspaceSearchResult(
+      "window-1",
+      origin,
+      result,
+    );
+    expect(navigation).toMatchObject({
+      handled: true,
+      detail: "jump:search:changed",
+    });
+    expect(navigation.destination).toBeUndefined();
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+    focused.adapter.destroy();
+    focusedRoot.remove();
+
+    const fullRoot = editorRoot();
+    const full = runtime.editorForTesting("window-1", fullRoot, {
+      directBodyOnly: false,
+    });
+    expect(full.editor.view.dom.dataset.sectionId).toBe(noteId);
+    let matchPosition = -1;
+    full.editor.state.doc.descendants((node, position) => {
+      if (node.attrs.blockId === blockId) matchPosition = position + 1;
+    });
+    expect(full.editor.state.selection.from).toBe(matchPosition);
+    expect(runtime.applyPendingNavigation("window-1", full.adapter)).toBeNull();
+    expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
+    full.adapter.destroy();
+    fullRoot.remove();
+    runtime.destroy();
+  });
+
+  it("ignores a target Note's remembered Section focus for a body result", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "source",
+    });
+    const sourceId = runtime.noteId;
+    const target = await runtime.createNoteAtEnd("window-1", "target");
+    const childId = createUuidV7();
+    const blockId = createUuidV7();
+    const note = runtime.noteDocument;
+    note.doc.transact(() => {
+      insertChildSection(
+        note.rootSection,
+        createSectionXml(childId, "child", [
+          blockToYXml({
+            type: "paragraph",
+            blockId,
+            content: [{ type: "text", text: "remembered body match" }],
+          }),
+        ]),
+      );
+    });
+    await runtime.focusSection("window-1", target.noteId, childId);
+    await runtime.openNote("window-1", sourceId);
+    const result = filterWorkspaceSearchCatalog(
+      await runtime.workspaceSearchCatalog(),
+      "remembered body match",
+      "body",
+    )[0]!;
+    const sourceRoot = editorRoot();
+    const source = runtime.editorForTesting("window-1", sourceRoot, {
+      directBodyOnly: false,
+    });
+    const origin = source.adapter.captureStablePosition();
+    if (!origin) throw new Error("Stable origin was unavailable");
+    const navigation = await runtime.navigateWorkspaceSearchResult(
+      "window-1",
+      origin,
+      result,
+    );
+    expect(navigation.handled).toBe(true);
+    expect(runtime.windows.get("window-1")?.noteId).toBe(target.noteId);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+    source.adapter.destroy();
+    sourceRoot.remove();
+    const targetRoot = editorRoot();
+    const targetView = runtime.editorForTesting("window-1", targetRoot, {
+      directBodyOnly: false,
+    });
+    expect(targetView.editor.view.dom.dataset.sectionId).toBe(target.noteId);
+    let matchPosition = -1;
+    targetView.editor.state.doc.descendants((node, position) => {
+      if (node.attrs.blockId === blockId) matchPosition = position + 1;
+    });
+    expect(targetView.editor.state.selection.from).toBe(matchPosition);
+    targetView.adapter.destroy();
+    targetRoot.remove();
     runtime.destroy();
   });
 

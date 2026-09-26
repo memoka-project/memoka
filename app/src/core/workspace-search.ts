@@ -8,6 +8,7 @@ import {
 import { yXmlTextVisibleText } from "./yxml-text";
 
 export type WorkspaceSearchScope = "title" | "body";
+export const WORKSPACE_SEARCH_RESULT_LIMIT = 100;
 export type WorkspaceSearchTarget = "workspace" | "buffers" | "trash";
 export type WorkspaceSearchBlockKind = "body";
 export type WorkspaceSearchResultKind =
@@ -323,7 +324,7 @@ export function filterWorkspaceSearchCatalog(
   catalog: WorkspaceSearchCatalog,
   query: string,
   scope: WorkspaceSearchScope = "title",
-  limit = 20,
+  limit = WORKSPACE_SEARCH_RESULT_LIMIT,
 ): WorkspaceSearchResult[] {
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new Error("Workspace search result limit must be positive");
