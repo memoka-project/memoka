@@ -29,7 +29,9 @@ import {
 } from "../app/src/core/section-model";
 import { CoreRuntime } from "../app/src/core/runtime";
 import { MemoryPersistencePort } from "../app/src/core/persistence";
+import { MemoryCommandHistoryPort } from "../app/src/platform/command-history";
 import type { TiptapEditorAdapter } from "../app/src/editor/tiptap-adapter";
+import { defaultVimBlockSemantics } from "../app/src/vim/block-semantics";
 import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 import {
@@ -1267,6 +1269,51 @@ describe("Memoka Application utilities", () => {
     },
   );
 
+  it("opens a numeric Command history candidate at the logical line", async () => {
+    const port = new MemoryCommandHistoryPort();
+    await port.record("1");
+    const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+    const view = render(<App commandHistory={port} />);
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const adapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    if (!adapter) throw new Error("Editor adapter did not attach");
+    const lines = defaultVimBlockSemantics.logicalLines(adapter.editor.view);
+    adapter.editor.commands.setTextSelection(lines[1]!.cursorPositions[0]!);
+    enterNormal(editor);
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
+    fireEvent.keyDown(editor, { key: "c", code: "KeyC" });
+    const picker = await screen.findByRole("combobox", {
+      name: "Memoka Commandを検索",
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("option")
+          .some((option) => option.textContent?.includes(":1")),
+      ).toBe(true),
+    );
+    fireEvent.change(picker, { target: { value: "1" } });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("combobox", { name: "Memoka Commandを検索" }),
+      ).toBeNull();
+      expect(adapter.editor.state.selection.head).toBe(
+        lines[0]!.cursorPositions[0],
+      );
+      expect(document.activeElement).toBe(editor);
+    });
+    view.unmount();
+  });
+
   it("restores a Help body caret after keyboard navigation through Tree", async () => {
     class ReplicatedPersistence extends MemoryPersistencePort {
       readonly replicaId = createUuidV7();
@@ -1386,6 +1433,55 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
     view.unmount();
   });
+
+  it.each(["editor", "sidebar"] as const)(
+    "moves from a numeric Command-line address to the Editor logical line from %s",
+    async (surface) => {
+      const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+      const view = render(<App />);
+      await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      const adapter = attachEditor.mock.results.at(-1)?.value as
+        TiptapEditorAdapter | undefined;
+      if (!adapter) throw new Error("Editor adapter did not attach");
+      const lines = defaultVimBlockSemantics.logicalLines(adapter.editor.view);
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+      adapter.editor.commands.setTextSelection(lines[1]!.cursorPositions[0]!);
+      let command: HTMLInputElement;
+      if (surface === "editor") {
+        command = openCommandLine(editor);
+      } else {
+        const tree = screen.getByRole("tree", { name: "ノートツリー" });
+        tree.focus();
+        fireEvent.keyDown(tree, {
+          key: ":",
+          code: "Semicolon",
+          shiftKey: true,
+        });
+        command = screen.getByRole("textbox", {
+          name: "Memoka Command",
+        }) as HTMLInputElement;
+      }
+      fireEvent.change(command, { target: { value: "1" } });
+      fireEvent.keyDown(command, { key: "Enter" });
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("textbox", { name: "Memoka Command" }),
+        ).toBeNull();
+        expect(adapter.editor.state.selection.head).toBe(
+          lines[0]!.cursorPositions[0],
+        );
+        expect(document.activeElement).toBe(editor);
+      });
+      view.unmount();
+    },
+  );
 
   it("routes application-wide commands while a Sidebar utility owns focus", async () => {
     const view = render(<App />);
@@ -1772,6 +1868,7 @@ describe("Memoka Application utilities", () => {
       <ApplicationCommandLine
         session={session}
         onExecute={onExecute}
+        onGoToLine={vi.fn()}
         onClose={onClose}
       />,
     );
@@ -1819,6 +1916,7 @@ describe("Memoka Application utilities", () => {
       <ApplicationCommandLine
         session={{ restoreFocus: vi.fn(), initialValue: "colorscheme " }}
         onExecute={vi.fn()}
+        onGoToLine={vi.fn()}
         onClose={vi.fn()}
       />,
     );

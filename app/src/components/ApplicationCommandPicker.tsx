@@ -23,6 +23,11 @@ export interface ApplicationCommandPickerSession {
 
 export type ApplicationCommandPickerSelection =
   | {
+      readonly kind: "line";
+      readonly value: string;
+      readonly lineNumber: number;
+    }
+  | {
       readonly kind: "execute";
       readonly value: string;
       readonly command: ApplicationCommandDefinition;
@@ -151,6 +156,11 @@ export function ApplicationCommandPicker({
     if (busy) return;
     const value = itemCommandValue(item);
     const parsed = parseApplicationCommand(value);
+    if (parsed.kind === "line") {
+      void recordCommand(value);
+      onSelect({ kind: "line", value, lineNumber: parsed.lineNumber });
+      return;
+    }
     if (
       parsed.kind === "command" &&
       applicationCommandArgumentIsComplete(parsed.command, parsed.argument)
@@ -194,24 +204,33 @@ export function ApplicationCommandPicker({
           </strong>
           <span>
             {item.kind === "history" ? "履歴 · " : ""}
-            {item.command?.description ?? "未対応のCommand"}
+            {item.command?.description ??
+              (parseApplicationCommand(item.value).kind === "line"
+                ? "指定した論理行へ移動する"
+                : "未対応のCommand")}
           </span>
         </span>
       )}
       renderPreview={(item) => {
         const command = item?.command;
         const help = command ? applicationCommandArgumentHelp(command) : null;
+        const parsed = item
+          ? parseApplicationCommand(itemCommandValue(item))
+          : null;
         const description = help
           ? help.description
           : command
             ? `${command.description}。`
-            : "未対応のCommandです。Command-lineで編集できます。";
-        const parsed = item
-          ? parseApplicationCommand(itemCommandValue(item))
-          : null;
+            : parsed?.kind === "line"
+              ? "現在のNoteの指定した論理行へ移動します。"
+              : "未対応のCommandです。Command-lineで編集できます。";
         const complete =
-          parsed?.kind === "command" &&
-          applicationCommandArgumentIsComplete(parsed.command, parsed.argument);
+          parsed?.kind === "line" ||
+          (parsed?.kind === "command" &&
+            applicationCommandArgumentIsComplete(
+              parsed.command,
+              parsed.argument,
+            ));
         return (
           <div className="workspace-search-preview-pane command-picker__preview">
             {item && (

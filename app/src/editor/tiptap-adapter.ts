@@ -56,6 +56,7 @@ import {
   type VimImeDeactivationResult,
   type VimSessionSnapshot,
 } from "../vim/session";
+import { defaultVimBlockSemantics } from "../vim/block-semantics";
 import {
   sectionHeaderPosition,
   sectionSnapshotForPut,
@@ -1536,6 +1537,27 @@ export class TiptapEditorAdapter {
     this.currentEditor.view.focus();
     this.revealNavigationSelection();
     return true;
+  }
+
+  focusLogicalLine(lineNumber: number, detail: string): number | null {
+    if (
+      this.currentEditor.isDestroyed ||
+      !Number.isSafeInteger(lineNumber) ||
+      lineNumber < 1
+    ) {
+      return null;
+    }
+    const lines = defaultVimBlockSemantics.logicalLines(
+      this.currentEditor.view,
+    );
+    const index = Math.min(lineNumber - 1, lines.length - 1);
+    const target = lines[index];
+    if (!target) return null;
+    const position = target.cursorPositions[0] ?? target.from;
+    if (!this.vimSession.applyNavigationPosition(position, detail)) return null;
+    this.currentEditor.view.focus();
+    this.revealNavigationSelection();
+    return index + 1;
   }
 
   /** Capture the live view before React reparents/remounts a split subtree.

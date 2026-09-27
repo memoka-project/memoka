@@ -418,6 +418,7 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
 
 export type ApplicationCommandParseResult =
   | { readonly kind: "empty" }
+  | { readonly kind: "line"; readonly lineNumber: number }
   | {
       readonly kind: "command";
       readonly command: ApplicationCommandDefinition;
@@ -430,6 +431,12 @@ export function parseApplicationCommand(
 ): ApplicationCommandParseResult {
   const source = input.trim().replace(/^:/u, "").trim();
   if (!source) return { kind: "empty" };
+  if (/^\d+$/u.test(source)) {
+    const lineNumber = Number(source);
+    return Number.isSafeInteger(lineNumber) && lineNumber > 0
+      ? { kind: "line", lineNumber }
+      : { kind: "error", message: "行番号は1以上の整数で指定してください" };
+  }
   const [name, ...arguments_] = source.split(/\s+/u);
   const normalized = name.toLocaleLowerCase();
   const command = APPLICATION_COMMANDS.find(

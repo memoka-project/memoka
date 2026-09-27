@@ -21,6 +21,7 @@ export interface ApplicationCommandLineSession {
 export function ApplicationCommandLine({
   session,
   onExecute,
+  onGoToLine,
   onClose,
   focused = true,
 }: {
@@ -30,6 +31,7 @@ export function ApplicationCommandLine({
     message: string,
     argument: string | null,
   ) => void;
+  onGoToLine: (lineNumber: number) => void;
   onClose: () => void;
   focused?: boolean;
 }) {
@@ -62,6 +64,10 @@ export function ApplicationCommandLine({
     const saved = record(value);
     if (parsed.kind === "error") {
       setError(parsed.message);
+      return;
+    }
+    if (parsed.kind === "line") {
+      onGoToLine(parsed.lineNumber);
       return;
     }
     if (parsed.command.id === "application.quit") {

@@ -111,6 +111,7 @@ describe("Command history", () => {
         <ApplicationCommandLine
           session={{ restoreFocus: vi.fn() }}
           onExecute={onExecute}
+          onGoToLine={vi.fn()}
           onClose={vi.fn()}
         />
       </CommandHistoryProvider>,
@@ -153,6 +154,7 @@ describe("Command history", () => {
         <ApplicationCommandLine
           session={{ restoreFocus: vi.fn() }}
           onExecute={vi.fn()}
+          onGoToLine={vi.fn()}
           onClose={vi.fn()}
         />
       </CommandHistoryProvider>,
@@ -169,6 +171,7 @@ describe("Command history", () => {
         <ApplicationCommandLine
           session={{ restoreFocus: vi.fn() }}
           onExecute={vi.fn()}
+          onGoToLine={vi.fn()}
           onClose={vi.fn()}
         />
       </CommandHistoryProvider>,
@@ -176,6 +179,29 @@ describe("Command history", () => {
     await act(async () => {});
     fireEvent.keyDown(input(), { key: "p", ctrlKey: true });
     expect(input().value).toBe("unknown arg");
+  });
+
+  it("submits a numeric logical line address and records it in history", async () => {
+    const port = new MemoryCommandHistoryPort();
+    const onGoToLine = vi.fn();
+    render(
+      <CommandHistoryProvider port={port}>
+        <ApplicationCommandLine
+          session={{ restoreFocus: vi.fn() }}
+          onExecute={vi.fn()}
+          onGoToLine={onGoToLine}
+          onClose={vi.fn()}
+        />
+      </CommandHistoryProvider>,
+    );
+    fireEvent.change(input(), { target: { value: "12" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(onGoToLine).toHaveBeenCalledWith(12);
+    await waitFor(async () => expect(await port.load()).toEqual(["12"]));
+    fireEvent.change(input(), { target: { value: "0" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(screen.getByRole("alert").textContent).toContain("1以上");
+    expect(onGoToLine).toHaveBeenCalledTimes(1);
   });
 
   it("describes and validates every optional command argument", () => {
@@ -290,6 +316,36 @@ describe("Command history", () => {
     expect(onSelect).toHaveBeenCalledWith({
       kind: "transfer",
       value: "unknown arg",
+    });
+  });
+
+  it("opens a numeric history entry as a logical line destination", async () => {
+    const port = new MemoryCommandHistoryPort();
+    await port.record("12");
+    const onSelect = vi.fn();
+    render(
+      <CommandHistoryProvider port={port}>
+        <ApplicationCommandPicker
+          session={{ restoreFocus: vi.fn() }}
+          onSelect={onSelect}
+          onClose={vi.fn()}
+        />
+      </CommandHistoryProvider>,
+    );
+    const field = pickerInput();
+    await waitFor(() =>
+      expect(optionText().some((text) => text.includes(":12"))).toBe(true),
+    );
+    fireEvent.change(field, { target: { value: "12" } });
+    expect(screen.getByRole("option").textContent).toContain("論理行へ移動");
+    expect(
+      screen.getByText("現在のNoteの指定した論理行へ移動します。"),
+    ).toBeTruthy();
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: "line",
+      value: "12",
+      lineNumber: 12,
     });
   });
 

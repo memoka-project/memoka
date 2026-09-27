@@ -2686,6 +2686,40 @@ export function App({
     }
   };
 
+  const goToLogicalLine = (
+    lineNumber: number,
+    origin: ApplicationCommandLineSession | null = commandLine,
+  ): void => {
+    const windowId = effectiveTargetWindowId;
+    setCommandLine(null);
+    setCommandPicker(null);
+    if (!editorAdapters.current.has(windowId)) {
+      setCommandMessage("移動先のNoteが開かれていません");
+      queueMicrotask(() => origin?.restoreFocus());
+      return;
+    }
+    void runtime.focusEditorWindow(windowId).then(
+      () => {
+        const actualLine = editorAdapters.current
+          .get(windowId)
+          ?.focusLogicalLine(lineNumber, `command:line:${lineNumber}`);
+        if (actualLine === undefined || actualLine === null) {
+          setCommandMessage("移動先の論理行を表示できませんでした");
+          queueMicrotask(() => origin?.restoreFocus());
+          return;
+        }
+        setCommandMessage(`:${lineNumber} · ${actualLine}行目`);
+        requestEditorFocus(windowId);
+      },
+      (cause) => {
+        setCommandMessage(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+        queueMicrotask(() => origin?.restoreFocus());
+      },
+    );
+  };
+
   const executeApplicationCommand = (
     command: ApplicationCommandId,
     message: string,
@@ -3956,6 +3990,10 @@ export function App({
           onSelect={(selection) => {
             const restoreFocus = commandPicker.restoreFocus;
             setCommandPicker(null);
+            if (selection.kind === "line") {
+              goToLogicalLine(selection.lineNumber, commandPicker);
+              return;
+            }
             if (selection.kind === "execute") {
               executeApplicationCommand(
                 selection.command.id,
@@ -3978,6 +4016,7 @@ export function App({
         <ApplicationCommandLine
           session={commandLine}
           onExecute={executeApplicationCommand}
+          onGoToLine={goToLogicalLine}
           onClose={() => setCommandLine(null)}
           focused
         />

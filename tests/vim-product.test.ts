@@ -142,6 +142,32 @@ function ancestorBlockIdAt(
 }
 
 describe("Memoka keyboard-only Vim golden scenario", () => {
+  it("moves an Ex line address to the visible logical line, including Hard Breaks", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { editor, adapter } = runtime.editorForTesting("window-1", root);
+    try {
+      editor.commands.setContent("<p>first<br>second</p><p>third</p>");
+      const lines = defaultVimBlockSemantics.logicalLines(editor.view);
+      expect(lines).toHaveLength(3);
+      const original = editor.state.doc;
+      expect(adapter.focusLogicalLine(2, "command:line:2")).toBe(2);
+      expect(editor.state.selection.head).toBe(lines[1]!.cursorPositions[0]);
+      expect(editor.view.hasFocus()).toBe(true);
+      expect(adapter.vimSnapshot.mode).toBe("normal");
+      expect(adapter.vimSnapshot.action).toBe("command:line:2");
+      expect(adapter.focusLogicalLine(99, "command:line:99")).toBe(3);
+      expect(editor.state.selection.head).toBe(lines[2]!.cursorPositions[0]);
+      expect(adapter.focusLogicalLine(0, "command:line:0")).toBeNull();
+      expect(editor.state.doc.eq(original)).toBe(true);
+    } finally {
+      adapter.destroy();
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
   it.each(["normal", "insert"])(
     "exits a nested ordinary list in %s mode without changing any items",
     async (mode) => {
