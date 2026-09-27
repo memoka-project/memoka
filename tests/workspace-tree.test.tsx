@@ -27,6 +27,17 @@ function selectedId(tree: HTMLElement): string | undefined {
   return tree.querySelector('[role="treeitem"][aria-selected="true"]')?.id;
 }
 
+async function focusApplicationTree(tree: HTMLElement): Promise<void> {
+  tree.focus();
+  await waitFor(() =>
+    expect(
+      document
+        .querySelector(".app-shell")
+        ?.getAttribute("data-application-focus"),
+    ).toBe("left-sidebar"),
+  );
+}
+
 describe("Workspace Tree", () => {
   it("keeps guides visible when their parent is virtualized offscreen", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
@@ -41,13 +52,13 @@ describe("Workspace Tree", () => {
       const props = treeProps(runtime);
       const view = render(<WorkspaceTree {...props} />);
       const tree = screen.getByRole("tree", { name: "ノートツリー" });
-      fireEvent.scroll(tree, { target: { scrollTop: 600 } });
+      fireEvent.scroll(tree, { target: { scrollTop: 720 } });
       expect(screen.queryByText("Parent")).toBeNull();
       const guide = tree.querySelector<HTMLElement>(
         `[data-tree-guide="${parent.entryId}"]`,
       )!;
       expect(guide).not.toBeNull();
-      expect(Number.parseInt(guide.style.top)).toBe(360);
+      expect(Number.parseInt(guide.style.top)).toBe(480);
       const nextRoot = screen
         .getByText("Next root")
         .closest<HTMLElement>('[role="treeitem"]')!;
@@ -137,18 +148,18 @@ describe("Workspace Tree", () => {
       });
       tree.scrollTop = 0;
       key("L");
-      expect(selectedId(tree)).toBe(`tree-note-${ids[9]}`);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[8]}`);
       key("f", true);
-      expect(selectedId(tree)).toBe(`tree-note-${ids[17]}`);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[16]}`);
       expect(tree.scrollTop).toBe(240);
       key("z");
       key("t");
-      expect(tree.scrollTop).toBe(450); // document end clamps placement
+      expect(tree.scrollTop).toBe(480); // document end clamps placement
       key("g");
       key("g");
-      expect(selectedId(tree)).toBe(`tree-note-${ids[0]}`);
+      expect(selectedId(tree)).toBe("tree-note-utility:all-notes");
       key("o", true);
-      expect(selectedId(tree)).toBe(`tree-note-${ids[17]}`);
+      expect(selectedId(tree)).toBe(`tree-note-${ids[16]}`);
       expect(document.activeElement).toBe(tree);
       expect(runtime.jumpListFor("window-1").snapshot().back).toEqual([]);
       await runtime.flush();
@@ -156,7 +167,7 @@ describe("Workspace Tree", () => {
       view = render(<WorkspaceTree {...treeProps(runtime)} />);
       tree = screen.getByRole("tree", { name: "ノートツリー" });
       key("i", true);
-      expect(selectedId(tree)).toBe(`tree-note-${ids[0]}`);
+      expect(selectedId(tree)).toBe("tree-note-utility:all-notes");
       key("2");
       key("Escape");
       expect(props.onClose).not.toHaveBeenCalled();
@@ -168,6 +179,8 @@ describe("Workspace Tree", () => {
   it("creates and moves hierarchy by keyboard without an inline rename UI", async () => {
     const view = render(<App />);
     let tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    await focusApplicationTree(tree);
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
     const initial = tree.querySelector<HTMLElement>(
       '[role="treeitem"][aria-selected="true"]',
     );
@@ -217,7 +230,7 @@ describe("Workspace Tree", () => {
 
     fireEvent.keyDown(tree, { key: "D", code: "KeyD", shiftKey: true });
     await waitFor(() =>
-      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(1),
+      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(2),
     );
     expect(
       tree.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
@@ -229,6 +242,8 @@ describe("Workspace Tree", () => {
   it("selects a clicked Note and opens it on a second click", async () => {
     const view = render(<App />);
     const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    await focusApplicationTree(tree);
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
     const rootId = selectedId(tree)!;
     const rootEditor = await waitFor(() => {
       const editor =
@@ -303,7 +318,7 @@ describe("Workspace Tree", () => {
     await waitFor(() =>
       expect(rootRow.getAttribute("aria-expanded")).toBe("false"),
     );
-    expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(1);
+    expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(2);
     fireEvent.keyDown(tree, { key: "ArrowRight" });
     await waitFor(() =>
       expect(rootRow.getAttribute("aria-expanded")).toBe("true"),
@@ -340,13 +355,14 @@ describe("Workspace Tree", () => {
         expect(selectedId(tree)).toBe(`tree-note-${entryId}`);
         expect(document.activeElement).toBe(tree);
       };
-      select("ArrowUp", rootId);
+      select("ArrowUp", "utility:all-notes");
+      select("ArrowDown", rootId);
       select("ArrowRight", child.entryId);
       select("ArrowRight", grandchild.entryId);
       select("ArrowRight", grandchild.entryId);
       select("ArrowLeft", child.entryId);
       select("ArrowLeft", child.entryId); // collapse
-      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(3);
+      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(4);
       select("ArrowDown", sibling.entryId); // skip the hidden grandchild
       select("ArrowDown", sibling.entryId);
       select("ArrowUp", child.entryId);
@@ -354,10 +370,10 @@ describe("Workspace Tree", () => {
       select("ArrowUp", rootId);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowDown", sibling.entryId);
-      expect(tree.scrollTop).toBe(3 * 30);
+      expect(tree.scrollTop).toBe(4 * 30);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowUp", rootId);
-      expect(tree.scrollTop).toBe(0);
+      expect(tree.scrollTop).toBe(30);
       view.unmount();
     } finally {
       runtime.destroy();
@@ -408,13 +424,21 @@ describe("Workspace Tree", () => {
   it("keeps Tree focus and reports an error when a selected Note cannot open", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
+      await runtime.updateSidebar({
+        side: "left",
+        tree: {
+          selectedEntryId: runtime.snapshot().namespaceEntries[0]!.entryId,
+        },
+      });
       const props = treeProps(runtime);
       props.onOpenNote = vi.fn(async () => {
         throw new Error("Cannot open Note");
       });
       const view = render(<WorkspaceTree {...props} />);
       const tree = screen.getByRole("tree", { name: "ノートツリー" });
-      const row = tree.querySelector('[role="treeitem"]')!;
+      const row = tree.querySelector(
+        '[role="treeitem"][aria-selected="true"]',
+      )!;
       fireEvent.mouseDown(row);
       fireEvent.click(row);
       expect((await screen.findByRole("alert")).textContent).toBe(
@@ -431,12 +455,14 @@ describe("Workspace Tree", () => {
   it("moves a Note by two sibling positions with a physical 2 Shift J sequence", async () => {
     const view = render(<App />);
     let tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    await focusApplicationTree(tree);
+    fireEvent.keyDown(tree, { key: "ArrowDown" });
     const firstNoteId = tree.querySelector<HTMLElement>(
       '[role="treeitem"][aria-selected="true"]',
     )?.id;
     if (!firstNoteId) throw new Error("Initial Tree item did not mount");
 
-    for (let expectedCount = 2; expectedCount <= 4; expectedCount += 1) {
+    for (let expectedCount = 3; expectedCount <= 5; expectedCount += 1) {
       tree.focus();
       fireEvent.keyDown(tree, { key: "A", code: "KeyA", shiftKey: true });
       await waitFor(() =>
@@ -450,6 +476,7 @@ describe("Workspace Tree", () => {
     tree.focus();
     fireEvent.keyDown(tree, { key: "g", code: "KeyG" });
     fireEvent.keyDown(tree, { key: "g", code: "KeyG" });
+    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
     await waitFor(() =>
       expect(
         tree.querySelector<HTMLElement>(
@@ -476,10 +503,11 @@ describe("Workspace Tree", () => {
         (item) => item.id,
       );
       expect(movedOrder).toEqual([
-        originalOrder[1],
-        originalOrder[2],
         originalOrder[0],
+        originalOrder[2],
         originalOrder[3],
+        originalOrder[1],
+        originalOrder[4],
       ]);
     });
     view.unmount();

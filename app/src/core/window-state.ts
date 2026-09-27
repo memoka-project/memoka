@@ -1,6 +1,7 @@
 import { assertUuidV7 } from "./ids";
 import type { VimMode } from "../vim/input";
 import type { StableEditorPosition } from "./stable-position";
+import type { AllNotesCaret } from "./all-notes";
 
 export type { VimMode } from "../vim/input";
 
@@ -23,12 +24,14 @@ export interface RememberedNoteView {
   caretViewportTop: number | null;
   focusedSectionId: string | null;
   stableCaret: StoredWindowCaret | null;
+  allNotesCaret?: AllNotesCaret | null;
 }
 
 export interface WindowLocalViewState {
   mode: VimMode;
   selection: WindowSelection | null;
   stableCaret: StoredWindowCaret | null;
+  allNotesCaret?: AllNotesCaret | null;
   scrollTop: number;
   /** Caret's pixel distance below the viewport top at the saved scroll position. */
   caretViewportTop: number | null;
@@ -54,6 +57,7 @@ export function createWindowLocalViewState(
     mode,
     selection: null,
     stableCaret: null,
+    allNotesCaret: null,
     scrollTop: 0,
     caretViewportTop: null,
     focusedSectionId: null,
@@ -163,6 +167,20 @@ export function validateWindowLocalViewState(
     if (caret.relativeEntityId !== undefined)
       assertUuidV7(caret.relativeEntityId, "window caret entity ID");
   }
+  if (state.allNotesCaret !== undefined && state.allNotesCaret !== null) {
+    const caret = state.allNotesCaret;
+    if (
+      typeof caret !== "object" ||
+      (caret.noteId !== null && typeof caret.noteId !== "string") ||
+      (caret.column !== "title" && caret.column !== "updatedAt") ||
+      !Number.isSafeInteger(caret.offset) ||
+      caret.offset < 0
+    ) {
+      throw new Error("Window-local all-notes caret is invalid");
+    }
+    if (caret.noteId !== null)
+      assertUuidV7(caret.noteId, "all-notes caret Note ID");
+  }
   if (state.focusedSectionId !== null) {
     if (typeof state.focusedSectionId !== "string") {
       throw new Error("Window-local view requires focusedSectionId");
@@ -221,6 +239,7 @@ export function rememberedNoteView(
     caretViewportTop: view.caretViewportTop,
     focusedSectionId: view.focusedSectionId,
     stableCaret: view.stableCaret ? structuredClone(view.stableCaret) : null,
+    allNotesCaret: view.allNotesCaret ? { ...view.allNotesCaret } : null,
   };
 }
 

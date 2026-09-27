@@ -66,6 +66,7 @@ import {
   readNoteMetadata,
   readNoteTitle,
   readNotePlainText,
+  replaceNoteBlocks,
   readNoteUpdatedAt,
   renameRootSection,
   renameNoteMetadata,
@@ -110,6 +111,7 @@ import {
   type WindowViewState,
 } from "./window-state";
 import {
+  ALL_NOTES_TREE_ENTRY_ID,
   activeEditorWindow,
   activeTab,
   adjacentTabPageId,
@@ -143,6 +145,16 @@ import {
   type WindowFocusDirection,
   type WindowFocusOrder,
 } from "./application-state";
+import {
+  ALL_NOTES_DOCUMENT_ID,
+  ALL_NOTES_TITLE,
+  AllNotesTableProjection,
+  allNotesCaretAt,
+  allNotesCaretPosition,
+  allNotesRows,
+  type AllNotesRow,
+  type AllNotesCaret,
+} from "./all-notes";
 import type { WindowLayoutEdit } from "./window-layout";
 import {
   TiptapEditorAdapter,
@@ -261,6 +273,7 @@ export interface RuntimeSnapshot {
    * retraverse a large Note Tree.
    */
   notes: readonly NoteMetadata[];
+  allNotesRows: readonly AllNotesRow[];
   namespaceEntries: readonly NamespaceTreeNode[];
   loadedNoteIds: string[];
   applicationWindow: ApplicationWindowState;
@@ -298,7 +311,7 @@ export interface RuntimeWindowState extends WindowLocalViewState {
   windowId: string;
   noteId: string | null;
   attachmentId: string | null;
-  bufferKind: "note" | "image" | null;
+  bufferKind: "note" | "image" | "all-notes" | null;
 }
 
 type RuntimeListener = (snapshot: RuntimeSnapshot) => void;
@@ -334,6 +347,7 @@ interface PendingWindowViewUpdate {
     mode?: WindowViewState["mode"];
     selection?: WindowViewState["selection"];
     stableCaret?: WindowLocalViewState["stableCaret"];
+    allNotesCaret?: WindowLocalViewState["allNotesCaret"];
     scrollTop?: number;
     caretViewportTop?: number | null;
     collapsedSectionIds?: string[];
@@ -544,6 +558,11 @@ export class CoreRuntime {
   private activeNoteId: string | null = null;
   private applicationWindowState: ApplicationWindowState | null = null;
   private noteMetadataProjectionCache: readonly NoteMetadata[] | null = null;
+  private allNotesRowsCache: readonly AllNotesRow[] | null = null;
+  private allNotesHandle: ManagedCrdtDocument<ProductDocument> | null = null;
+  private readonly allNotesTable = new AllNotesTableProjection();
+  private allNotesDocumentSignature = "";
+  private allNotesProjectedRows: readonly AllNotesRow[] = [];
   private observedWorkspaceNotes: Y.Map<unknown> | null = null;
   private namespaceProjectionCache: readonly NamespaceTreeNode[] | null = null;
   private unsubscribeWorkspaceReplacement: (() => void) | null = null;
@@ -564,6 +583,9 @@ export class CoreRuntime {
     if (affectsApplicationProjection) {
       this.noteMetadataProjectionCache = null;
       this.namespaceProjectionCache = null;
+    }
+    if (events.some((event) => event.changes.keys.size > 0)) {
+      this.allNotesRowsCache = null;
     }
   };
 
@@ -779,6 +801,8 @@ export class CoreRuntime {
 
   getNoteHandle(noteId?: string): ManagedCrdtDocument<ProductDocument> {
     const resolvedNoteId = noteId ?? this.requireActiveNoteId();
+    if (resolvedNoteId === ALL_NOTES_DOCUMENT_ID)
+      return this.ensureAllNotesHandle();
     const handle = this.notes.get(resolvedNoteId);
     if (!handle || handle.current.kind !== "note") {
       throw new Error(`NoteDoc is not loaded: ${resolvedNoteId}`);
@@ -863,6 +887,7 @@ export class CoreRuntime {
 
   snapshot(): RuntimeSnapshot {
     const notes = this.applicationNoteMetadata();
+    const allNotes = this.allNotesRows();
     const metadata = notes.find(({ noteId }) => noteId === this.activeNoteId);
     const noteHandle = this.activeNoteId
       ? this.notes.get(this.activeNoteId)
@@ -875,6 +900,7 @@ export class CoreRuntime {
       noteId: this.activeNoteId,
       title: metadata?.title ?? "",
       notes,
+      allNotesRows: allNotes,
       namespaceEntries: (this.namespaceProjectionCache ??= Object.freeze(
         namespaceTreeNodes(this.workspaceDocument),
       )),
@@ -1555,6 +1581,59 @@ export class CoreRuntime {
       source: "ui",
       payload: { noteId, windowId },
     });
+  }
+
+  async openAllNotes(windowId: string, caret?: AllNotesCaret): Promise<void> {
+    this.ensureAllNotesHandle();
+    await this.captureWindowViewBeforeNoteChange(windowId);
+    const buffer: BufferState = {
+      id: ALL_NOTES_TREE_ENTRY_ID,
+      kind: "utility",
+      utility: "all-notes",
+    };
+    await this.commitApplicationWindowMutation(
+      this.idFactory(),
+      undefined,
+      (current) => {
+        const opened = openBufferInWindow(current, windowId, buffer, {
+          mode: "normal",
+        });
+        const next = caret
+          ? updateWindowView(opened, windowId, {
+              allNotesCaret: caret,
+              stableCaret: null,
+              selection: null,
+            })
+          : opened;
+        return {
+          state: next,
+          changed:
+            caret !== undefined ||
+            current.windows[windowId]?.bufferId !== buffer.id ||
+            current.focusOwner.area !== "window" ||
+            current.focusOwner.windowId !== windowId,
+          result: { windowId },
+        };
+      },
+    );
+  }
+
+  restoreAllNotesCaret(windowId: string, adapter: TiptapEditorAdapter): void {
+    if (this.windows.get(windowId)?.bufferKind !== "all-notes") return;
+    const saved =
+      this.requireApplicationWindowState().windows[windowId]?.view
+        .allNotesCaret;
+    const caret = saved ?? {
+      noteId: this.allNotesRows()[0]?.noteId ?? null,
+      column: "title" as const,
+      offset: 0,
+    };
+    const position = allNotesCaretPosition(
+      adapter.editor.state.doc,
+      caret,
+      this.allNotesTable,
+    );
+    adapter.editor.commands.setTextSelection(position);
   }
 
   async openImage(
@@ -2276,6 +2355,7 @@ export class CoreRuntime {
     }
 
     const jumpList = this.jumpListFor(windowId);
+    const current = this.allNotesJumpPosition(windowId, request.current);
     if (request.kind === "follow-link") {
       const target = this.resolveSectionLocation(request.target.sectionId);
       if (!target || !this.isLiveNote(target.noteId)) {
@@ -2292,28 +2372,43 @@ export class CoreRuntime {
         target.noteId === request.current.noteId &&
         !windowState.focusedSectionId
       ) {
-        jumpList.recordOrigin(request.current);
+        jumpList.recordOrigin(current);
         return { handled: true, detail: "jump:gf:changed", destination };
       }
       return this.openNavigationDestination(
         windowId,
         destination,
         "jump:gf:changed",
-        () => jumpList.recordOrigin(request.current),
+        () => jumpList.recordOrigin(current),
       );
     }
 
     const beforeMove = jumpList.snapshot();
     const target =
       request.kind === "back"
-        ? jumpList.back(request.current, (entry) =>
-            this.isLiveNote(entry.noteId),
+        ? jumpList.back(
+            current,
+            (entry) =>
+              entry.noteId === ALL_NOTES_DOCUMENT_ID ||
+              this.isLiveNote(entry.noteId),
           )
-        : jumpList.forward(request.current, (entry) =>
-            this.isLiveNote(entry.noteId),
+        : jumpList.forward(
+            current,
+            (entry) =>
+              entry.noteId === ALL_NOTES_DOCUMENT_ID ||
+              this.isLiveNote(entry.noteId),
           );
     if (!target) {
       return { handled: false, detail: `jump:${request.kind}:empty` };
+    }
+    if (target.noteId === ALL_NOTES_DOCUMENT_ID) {
+      try {
+        await this.openAllNotes(windowId, target.allNotesCaret);
+      } catch (error) {
+        jumpList.restore(beforeMove);
+        throw error;
+      }
+      return { handled: true, detail: `jump:${request.kind}:changed` };
     }
     const destination: EditorNavigationDestination = {
       kind: "stable",
@@ -2340,6 +2435,23 @@ export class CoreRuntime {
       undefined,
       () => jumpList.restore(beforeMove),
     );
+  }
+
+  private allNotesJumpPosition(
+    windowId: string,
+    position: StableEditorPosition,
+  ): StableEditorPosition {
+    if (position.noteId !== ALL_NOTES_DOCUMENT_ID) return position;
+    const adapter = this.windowEditorAdapters.get(windowId);
+    if (!adapter || adapter.editor.isDestroyed) return position;
+    return {
+      ...position,
+      allNotesCaret: allNotesCaretAt(
+        adapter.editor.state.doc,
+        adapter.editor.state.selection.head,
+        this.allNotesTable,
+      ),
+    };
   }
 
   searchNote(
@@ -2766,11 +2878,45 @@ export class CoreRuntime {
           pathMatch: matched.pathMatchScore,
         });
       }
+      const rankedResults = rankWorkspaceResults(
+        candidates,
+        context,
+        limit,
+      ).map(({ result }) => result);
+      const allNotesMatches =
+        query.trim().length > 0 &&
+        terms.every((term) => matchWorkspaceTitleTerm(ALL_NOTES_TITLE, term));
+      const allNotesResult: WorkspaceSearchResult | null = allNotesMatches
+        ? {
+            resultId: ALL_NOTES_TREE_ENTRY_ID,
+            noteId: ALL_NOTES_DOCUMENT_ID,
+            sectionId: ALL_NOTES_DOCUMENT_ID,
+            title: ALL_NOTES_TITLE,
+            parentPath: "/",
+            updatedAt: "",
+            kind: "all-notes",
+            preview: "",
+            lineText: ALL_NOTES_TITLE,
+            blockId: null,
+            logicalLineNumber: null,
+            sectionLineNumber: null,
+            lineIndex: 0,
+            matchOffset: 0,
+            lineMatchOffset: 0,
+            query,
+            titleRanges: mergeWorkspaceMatchRanges(
+              terms.flatMap(
+                (term) =>
+                  matchWorkspaceTitleTerm(ALL_NOTES_TITLE, term)?.ranges ?? [],
+              ),
+            ),
+          }
+        : null;
       return {
         scope,
-        results: rankWorkspaceResults(candidates, context, limit).map(
-          ({ result }) => result,
-        ),
+        results: allNotesResult
+          ? [allNotesResult, ...rankedResults].slice(0, limit)
+          : rankedResults,
         failures: [],
         backend: "metadata",
         elapsedMs: performance.now() - startedAt,
@@ -3408,8 +3554,10 @@ export class CoreRuntime {
   ): TiptapEditorAdapter {
     const state = this.requireContentWindowState(windowId);
     const attachedNoteId = state.noteId;
+    const readOnly = attachedNoteId === ALL_NOTES_DOCUMENT_ID;
     const handle = this.getNoteHandle(state.noteId);
     const adapter = new TiptapEditorAdapter(handle, element, {
+      readOnly,
       directBodyOnly: options.directBodyOnly,
       registerStore: this.vimRegister,
       repeatStore: this.repeatStoreFor(windowId),
@@ -3427,6 +3575,13 @@ export class CoreRuntime {
             // Keep the raw selection when the Editor is between bindings.
           }
         }
+        const allNotesCaret = readOnly
+          ? allNotesCaretAt(
+              editor.state.doc,
+              selection.head,
+              this.allNotesTable,
+            )
+          : null;
         this.persistWindowUpdate(
           windowId,
           {
@@ -3441,6 +3596,7 @@ export class CoreRuntime {
                   : selection.head,
             },
             stableCaret,
+            allNotesCaret,
             caretViewportTop,
           },
           attachedNoteId,
@@ -3464,7 +3620,10 @@ export class CoreRuntime {
       readExplicitClipboard: options.readExplicitClipboard,
       scrollElement: options.scrollElement,
       onNavigate: (request) => this.navigateEditor(windowId, request),
-      onRecordJump: (origin) => this.jumpListFor(windowId).recordOrigin(origin),
+      onRecordJump: (origin) =>
+        this.jumpListFor(windowId).recordOrigin(
+          this.allNotesJumpPosition(windowId, origin),
+        ),
       onNavigationDestination: options.onNavigationDestination,
       onOpenImage: options.onOpenImage,
       onWorkspaceSearch: options.onWorkspaceSearch,
@@ -3677,7 +3836,7 @@ export class CoreRuntime {
       internalLinkPopupId: options.internalLinkPopupId,
     });
     this.applyPendingNavigation(windowId, adapter);
-    this.agentEditors.set(adapter, attachedNoteId);
+    if (!readOnly) this.agentEditors.set(adapter, attachedNoteId);
     this.windowEditorAdapters.set(windowId, adapter);
     return adapter;
   }
@@ -3803,6 +3962,8 @@ export class CoreRuntime {
     this.unsubscribeWorkspaceReplacement = null;
     for (const session of this.notePersistence.values()) session.destroy();
     for (const handle of this.notes.values()) handle.current.doc.destroy();
+    this.allNotesHandle?.current.doc.destroy();
+    this.allNotesHandle = null;
     this.workspace.current.doc.destroy();
     this.jumpLists.clear();
     this.sidebarJumpLists.clear();
@@ -4025,7 +4186,11 @@ export class CoreRuntime {
     );
     for (const tab of next.tabs) {
       const tree = tab.leftSidebar.tree;
-      if (tree.selectedEntryId && !liveEntryIds.has(tree.selectedEntryId)) {
+      if (
+        tree.selectedEntryId &&
+        tree.selectedEntryId !== ALL_NOTES_TREE_ENTRY_ID &&
+        !liveEntryIds.has(tree.selectedEntryId)
+      ) {
         tree.selectedEntryId = null;
         changed = true;
       }
@@ -6884,6 +7049,82 @@ export class CoreRuntime {
     return this.noteMetadataProjectionCache;
   }
 
+  private allNotesRows(): readonly AllNotesRow[] {
+    if (!this.allNotesRowsCache) {
+      this.allNotesRowsCache = Object.freeze(
+        allNotesRows(listNoteMetadata(this.workspaceDocument)),
+      );
+    }
+    if (this.allNotesHandle) this.syncAllNotesDocument(this.allNotesRowsCache);
+    return this.allNotesRowsCache;
+  }
+
+  private ensureAllNotesHandle(): ManagedCrdtDocument<ProductDocument> {
+    if (!this.allNotesHandle) {
+      const rows = this.allNotesRows();
+      this.allNotesHandle = new ManagedCrdtDocument<ProductDocument>(
+        createNoteDocument(
+          ALL_NOTES_DOCUMENT_ID,
+          [...this.allNotesTable.blocks(rows)],
+          ALL_NOTES_TITLE,
+        ),
+        0,
+      );
+      this.allNotesDocumentSignature = JSON.stringify(rows);
+      this.allNotesProjectedRows = rows;
+    }
+    return this.allNotesHandle;
+  }
+
+  private syncAllNotesDocument(rows: readonly AllNotesRow[]): void {
+    const signature = JSON.stringify(rows);
+    if (signature === this.allNotesDocumentSignature) return;
+    const previousRows = this.allNotesProjectedRows;
+    this.allNotesDocumentSignature = signature;
+    this.allNotesProjectedRows = rows;
+    const handle = this.allNotesHandle;
+    if (!handle || handle.current.kind !== "note") return;
+    const attached = [...this.windowEditorAdapters.entries()]
+      .filter(
+        ([windowId]) => this.windows.get(windowId)?.bufferKind === "all-notes",
+      )
+      .map(([windowId, adapter]) => ({
+        windowId,
+        adapter,
+        caret: allNotesCaretAt(
+          adapter.editor.state.doc,
+          adapter.editor.state.selection.head,
+          this.allNotesTable,
+        ),
+      }));
+    replaceNoteBlocks(handle.current, this.allNotesTable.blocks(rows));
+    for (const { windowId, adapter, caret } of attached) {
+      const previousIndex = previousRows.findIndex(
+        (row) => row.noteId === caret.noteId,
+      );
+      const nextCaret =
+        caret.noteId === null || rows.some((row) => row.noteId === caret.noteId)
+          ? caret
+          : {
+              ...caret,
+              noteId:
+                rows[Math.min(Math.max(previousIndex, 0), rows.length - 1)]
+                  ?.noteId ?? null,
+            };
+      const position = allNotesCaretPosition(
+        adapter.editor.state.doc,
+        nextCaret,
+        this.allNotesTable,
+      );
+      adapter.editor.commands.setTextSelection(position);
+      this.persistWindowUpdate(
+        windowId,
+        { allNotesCaret: nextCaret },
+        ALL_NOTES_DOCUMENT_ID,
+      );
+    }
+  }
+
   private observeWorkspaceMetadata(document: ProductDocument): void {
     if (document.kind !== "workspace") {
       throw new Error("Core runtime workspace handle is invalid");
@@ -6894,6 +7135,7 @@ export class CoreRuntime {
     this.observedWorkspaceNotes = document.root;
     this.observedWorkspaceNotes.observeDeep(this.handleWorkspaceMetadataChange);
     this.noteMetadataProjectionCache = null;
+    this.allNotesRowsCache = null;
     this.namespaceProjectionCache = null;
   }
 
@@ -6903,7 +7145,10 @@ export class CoreRuntime {
     if (!window) throw new Error(`Unknown window: ${windowId}`);
     const buffer =
       window.bufferId === null ? undefined : state.buffers[window.bufferId];
-    const noteId = this.contentBufferNoteId(buffer);
+    const noteId =
+      buffer?.kind === "utility" && buffer.utility === "all-notes"
+        ? ALL_NOTES_DOCUMENT_ID
+        : this.contentBufferNoteId(buffer);
     const attachmentId = buffer?.kind === "image" ? buffer.attachmentId : null;
     if (window.bufferId !== null && !noteId && !attachmentId) {
       throw new Error(
@@ -6928,7 +7173,9 @@ export class CoreRuntime {
       bufferKind:
         buffer?.kind === "note" || buffer?.kind === "image"
           ? buffer.kind
-          : null,
+          : buffer?.kind === "utility" && buffer.utility === "all-notes"
+            ? "all-notes"
+            : null,
       ...view,
     };
   }
@@ -6960,7 +7207,12 @@ export class CoreRuntime {
     if (!window) return false;
     const buffer =
       window.bufferId === null ? undefined : state.buffers[window.bufferId];
-    return buffer?.kind === "note" && buffer.noteId === noteId;
+    return (
+      (buffer?.kind === "note" && buffer.noteId === noteId) ||
+      (buffer?.kind === "utility" &&
+        buffer.utility === "all-notes" &&
+        noteId === ALL_NOTES_DOCUMENT_ID)
+    );
   }
 
   private isLiveContentBuffer(
@@ -6976,7 +7228,9 @@ export class CoreRuntime {
     liveNoteIds: ReadonlySet<string>,
   ): boolean {
     return (
-      this.isLiveContentBuffer(buffer, liveNoteIds) || buffer?.kind === "image"
+      this.isLiveContentBuffer(buffer, liveNoteIds) ||
+      buffer?.kind === "image" ||
+      (buffer?.kind === "utility" && buffer.utility === "all-notes")
     );
   }
 
@@ -7046,6 +7300,7 @@ export class CoreRuntime {
       mode?: WindowViewState["mode"];
       selection?: WindowViewState["selection"];
       stableCaret?: WindowLocalViewState["stableCaret"];
+      allNotesCaret?: WindowLocalViewState["allNotesCaret"];
       scrollTop?: number;
       caretViewportTop?: number | null;
       collapsedSectionIds?: string[];
@@ -7119,9 +7374,24 @@ export class CoreRuntime {
       adapter &&
       !adapter.editor.isDestroyed &&
       noteId &&
-      this.agentEditors.get(adapter) === noteId
-    )
+      (this.agentEditors.get(adapter) === noteId ||
+        noteId === ALL_NOTES_DOCUMENT_ID)
+    ) {
       adapter.captureWindowViewBeforeLayoutChange();
+      if (noteId === ALL_NOTES_DOCUMENT_ID) {
+        this.persistWindowUpdate(
+          windowId,
+          {
+            allNotesCaret: allNotesCaretAt(
+              adapter.editor.state.doc,
+              adapter.editor.state.selection.head,
+              this.allNotesTable,
+            ),
+          },
+          noteId,
+        );
+      }
+    }
     await this.flushPendingWindowViewUpdates();
     await this.localStateQueue.catch(() => undefined);
   }

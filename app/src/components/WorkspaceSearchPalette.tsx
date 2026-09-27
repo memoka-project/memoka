@@ -159,6 +159,12 @@ export function WorkspaceSearchPalette({
       session.windowId,
     );
     try {
+      if (result.kind === "all-notes") {
+        await runtime.openAllNotes(session.windowId);
+        onClose();
+        queueMicrotask(session.focusResult ?? session.restoreFocus);
+        return;
+      }
       if (result.kind === "image" && result.attachmentId) {
         await runtime.openImage(
           session.windowId,
@@ -306,7 +312,9 @@ export function WorkspaceSearchPalette({
                 ) : result.kind === "group" ? (
                   "📁"
                 ) : (
-                  <TreeIcon name="file-text" />
+                  <TreeIcon
+                    name={result.kind === "all-notes" ? "sheet" : "file-text"}
+                  />
                 )}
               </span>
               {session.scope === "title" ? (
@@ -336,9 +344,11 @@ export function WorkspaceSearchPalette({
                 <SearchResultPath result={result} query={currentQuery} />
               )}
             </span>
-            <span className="workspace-search-timestamp">
-              <EventDateTime value={result.updatedAt} />
-            </span>
+            {result.kind !== "all-notes" && (
+              <span className="workspace-search-timestamp">
+                <EventDateTime value={result.updatedAt} />
+              </span>
+            )}
             {session.scope === "body" && (
               <span className="workspace-search-preview-text">
                 <HighlightedText
@@ -360,6 +370,10 @@ export function WorkspaceSearchPalette({
               title={result.title}
               repository={attachmentRepository}
             />
+          ) : result?.kind === "all-notes" ? (
+            <div className="workspace-search-preview-document">
+              <p>すべてのノートを開く</p>
+            </div>
           ) : result?.kind === "group" ? (
             <div className="workspace-search-preview-document">
               <p>

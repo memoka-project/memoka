@@ -13,7 +13,8 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
-import { activeTab } from "../core/application-state";
+import { ALL_NOTES_TREE_ENTRY_ID, activeTab } from "../core/application-state";
+import { ALL_NOTES_TITLE } from "../core/all-notes";
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
   type ApplicationKeyConfig,
@@ -94,7 +95,22 @@ export function WorkspaceTree({
     [localCollapsedNoteIds],
   );
   const entries = useMemo(
-    () => deriveVisibleNoteTree(snapshot.namespaceEntries, collapsed),
+    () => [
+      {
+        note: {
+          noteId: ALL_NOTES_TREE_ENTRY_ID,
+          parentNoteId: null,
+          notePosition: "",
+          createdAt: "",
+          updatedAt: "",
+          title: ALL_NOTES_TITLE,
+        },
+        depth: 0,
+        hasChildren: false,
+        expanded: true,
+      },
+      ...deriveVisibleNoteTree(snapshot.namespaceEntries, collapsed),
+    ],
     [snapshot.namespaceEntries, collapsed],
   );
   const selectedEntryId = entries.some(
@@ -196,6 +212,14 @@ export function WorkspaceTree({
 
   const openEntry = async (entryId: string | null): Promise<void> => {
     if (!entryId || busy) return;
+    if (entryId === ALL_NOTES_TREE_ENTRY_ID) {
+      if (entryId !== selectedEntryId) persistTree(entryId);
+      await run(async () => {
+        await runtime.openAllNotes(targetWindowId);
+        onRequestEditorFocus(targetWindowId);
+      });
+      return;
+    }
     const entry = snapshot.namespaceEntries.find(
       (entry) => entry.entryId === entryId,
     );
@@ -218,7 +242,11 @@ export function WorkspaceTree({
   };
 
   const create = async (kind: "root" | "child" | "sibling"): Promise<void> => {
-    if (kind !== "root" && !selectedEntryId) return;
+    if (
+      kind !== "root" &&
+      (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID)
+    )
+      return;
     await run(async () => {
       const result = await runtime.createNoteAtEntry(
         targetWindowId,
@@ -248,7 +276,7 @@ export function WorkspaceTree({
     direction: TreeMoveDirection,
     count: number,
   ): Promise<void> => {
-    if (!selectedEntryId) return;
+    if (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID) return;
     await run(async () => {
       for (let index = 0; index < count; index += 1) {
         const result = await runtime.moveNamespaceEntry(
@@ -274,7 +302,7 @@ export function WorkspaceTree({
   };
 
   const trash = async (): Promise<void> => {
-    if (!selectedEntryId) return;
+    if (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID) return;
     await run(async () => {
       const result = await runtime.trashNamespaceEntry(selectedEntryId);
       setLocalTreeState((current) => ({
@@ -291,7 +319,7 @@ export function WorkspaceTree({
   ): void => {
     const selected = entries[selectedIndex] ?? null;
     if (isSidebarFoldCommand(command)) {
-      if (selectedEntryId)
+      if (selectedEntryId && selectedEntryId !== ALL_NOTES_TREE_ENTRY_ID)
         persistTree(
           selectedEntryId,
           foldSidebarSubtree(
@@ -325,6 +353,7 @@ export function WorkspaceTree({
         scrollHeight: entries.length * TREE_ROW_HEIGHT_PX,
         history: runtime.sidebarJumpListFor(tab.id, "tree"),
         resolveHistoryId: (id) => {
+          if (id === ALL_NOTES_TREE_ENTRY_ID) return id;
           let entry = snapshot.namespaceEntries.find(
             (item) => item.entryId === id,
           );
@@ -522,11 +551,13 @@ export function WorkspaceTree({
                 )}
                 <TreeIcon
                   name={
-                    namespaceById.get(entry.note.noteId)?.targetNoteId
-                      ? "file-text"
-                      : entry.hasChildren && entry.expanded
-                        ? "folder-open"
-                        : "folder-closed"
+                    entry.note.noteId === ALL_NOTES_TREE_ENTRY_ID
+                      ? "sheet"
+                      : namespaceById.get(entry.note.noteId)?.targetNoteId
+                        ? "file-text"
+                        : entry.hasChildren && entry.expanded
+                          ? "folder-open"
+                          : "folder-closed"
                   }
                 />
                 <span className="tree-title">

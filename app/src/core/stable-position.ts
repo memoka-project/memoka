@@ -1,5 +1,6 @@
 import { createMappablePosition } from "@tiptap/extension-collaboration";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { AllNotesCaret } from "./all-notes";
 import { Selection, type EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { ySyncPluginKey } from "@tiptap/y-tiptap";
@@ -23,6 +24,8 @@ export interface StableEditorPosition {
   after: string;
   relative: Uint8Array;
   relativeEntityId?: string;
+  /** Window-local semantic anchor for the transient all-notes document. */
+  allNotesCaret?: AllNotesCaret;
 }
 
 export interface ResolvedStableEditorPosition {

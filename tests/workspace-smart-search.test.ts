@@ -176,10 +176,12 @@ describe("Workspace smart search", () => {
       });
     }
     const titleResults = (await runtime.searchWorkspace("te", "title")).results;
-    expect(titleResults.map(({ noteId }) => noteId)).toEqual([
-      japaneseNote.noteId,
+    expect(titleResults.map(({ kind }) => kind)).toEqual([
+      "all-notes",
+      "title",
     ]);
-    expect(titleResults[0]?.titleRanges).toEqual([{ from: 0, to: 1 }]);
+    expect(titleResults[1]?.noteId).toBe(japaneseNote.noteId);
+    expect(titleResults[1]?.titleRanges).toEqual([{ from: 0, to: 1 }]);
     const bodyResults = (await runtime.searchWorkspace("te", "body")).results;
     expect(bodyResults.map(({ noteId }) => noteId)).toEqual([
       japaneseNote.noteId,

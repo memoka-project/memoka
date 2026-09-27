@@ -61,6 +61,8 @@ Internal Linkも現在表示されるtitle textを対象にし、atomic node全�
 
 `<Leader>f`はlive Noteを1 Note 1件で検索する。対象はNote名とNote Treeの祖先Note・グループ名であり、
 Section titleは対象にしない。空queryでは全live Noteを候補にする。
+検索語が「すべてのノート」に一致する場合だけ、その読み取り専用Bufferを開く特別候補を加える。
+空queryでは特別候補を表示しない。
 
 - Note名を先に、Note Tree祖先pathを小さく暗いtextで後に表示する。icon・Note名・状態の●は縦中央を揃え、祖先pathはNote名の下端に揃える。祖先pathの`/`の左右には空白を置く。Workspace直下の`/`も前後に空白を付けて表示する。
 - 長い表示はNote名を優先し、祖先側を省略する。Note名の右に小さい●を置き、現在のWindowで開いているNoteは緑系、別のWindowで開いているNoteは青系とする。直前に開いたかどうかは印で区別しない。

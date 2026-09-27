@@ -1,4 +1,5 @@
 import { Editor, Extension } from "@tiptap/core";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import { replicatedNotePluginKey } from "../core/replicated-editor-binding";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import {
@@ -178,6 +179,8 @@ export interface TableActionPickerRequest {
 export type CodeActionPickerRequest = CodeBlockActionRequest;
 
 export interface TiptapEditorAdapterOptions {
+  /** Metadata-derived views share Vim navigation but never accept edits. */
+  readOnly?: boolean;
   onRecordJump?: (origin: StableEditorPosition) => void;
   /** Internal unit-test harness; production windows always render a Section. */
   directBodyOnly?: boolean;
@@ -422,7 +425,10 @@ export class TiptapEditorAdapter {
       ? null
       : createNormalModeImeGuard();
     this.vimSession = new ProductVimSession({
-      initialMode: options.getWindowState?.().mode ?? "insert",
+      initialMode: options.readOnly
+        ? "normal"
+        : (options.getWindowState?.().mode ?? "insert"),
+      readOnly: options.readOnly,
       getRootNoteId: () => {
         const current = this.handle.current;
         return current.kind === "note" ? current.noteId : null;
@@ -1672,8 +1678,10 @@ export class TiptapEditorAdapter {
       null;
     const editor = new Editor({
       element: this.element,
+      editable: !this.options.readOnly,
       extensions: [
         ...productEditorExtensions(document, {
+          readOnly: this.options.readOnly,
           resolveInternalLinkTitle: this.options.resolveInternalLinkTitle,
           focusedSectionId: focusedSectionId,
           directBodyOnly: this.options.directBodyOnly,
@@ -1701,10 +1709,31 @@ export class TiptapEditorAdapter {
             });
           },
         }),
+        ...(this.options.readOnly
+          ? [
+              Extension.create({
+                name: "memokaReadOnlyDocument",
+                priority: 10_000,
+                addProseMirrorPlugins() {
+                  return [
+                    new Plugin({
+                      filterTransaction(transaction) {
+                        return (
+                          !transaction.docChanged ||
+                          Boolean(transaction.getMeta(ySyncPluginKey))
+                        );
+                      },
+                    }),
+                  ];
+                },
+              }),
+            ]
+          : []),
         blockTypeSlashTrigger({
           enabled: () => {
             const snapshot = this.vimSession.snapshot();
             return (
+              !this.options.readOnly &&
               snapshot.mode === "insert" &&
               !snapshot.composing &&
               Boolean(this.options.onBlockTypePicker)
@@ -1720,11 +1749,17 @@ export class TiptapEditorAdapter {
       editorProps: {
         attributes: {
           class: "memoka-editor",
-          spellcheck: "true",
+          spellcheck: this.options.readOnly ? "false" : "true",
+          "aria-readonly": this.options.readOnly ? "true" : "false",
+          ...(this.options.readOnly ? { tabindex: "0" } : {}),
           "data-note-id": document.noteId,
           "data-section-id": focusedSectionId,
         },
         handleDrop: (view, event) => {
+          if (this.options.readOnly) {
+            event.preventDefault();
+            return true;
+          }
           const files = Array.from(event.dataTransfer?.files ?? []);
           if (files.length === 0 || !this.options.attachmentRepository) {
             return false;

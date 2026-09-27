@@ -54,6 +54,7 @@ import {
   type BackupDialogSession,
 } from "./components/BackupDialog";
 import { noteDisplayTitle, type NoteDocument } from "./core/documents";
+import { ALL_NOTES_DOCUMENT_ID, ALL_NOTES_TITLE } from "./core/all-notes";
 import type {
   WorkspaceSearchScope,
   WorkspaceSearchTarget,
@@ -3513,7 +3514,13 @@ export function App({
         collapsedSectionIds={windowState.collapsedSectionIds}
         collapsedCodeBlockIds={windowState.collapsedCodeBlockIds}
         detailsFoldOverrides={windowState.detailsFoldOverrides}
-        label={note ? noteDisplayTitle(note.title) : "Unknown note"}
+        label={
+          windowState.noteId === ALL_NOTES_DOCUMENT_ID
+            ? ALL_NOTES_TITLE
+            : note
+              ? noteDisplayTitle(note.title)
+              : "Unknown note"
+        }
         focused={focused}
         internalLinkLabelRevision={snapshot.internalLinkLabelRevision}
         focusRequest={focusRequest}
@@ -4710,6 +4717,7 @@ function EditorWindow({
   const adapterRef = useRef<TiptapEditorAdapter | null>(null);
   const focusedSectionRef = useRef(focusedSectionId);
   const boundDocument = runtime.getNoteHandle(noteId).current;
+  const readOnly = noteId === ALL_NOTES_DOCUMENT_ID;
   const sectionBindingKey =
     boundDocument.kind === "note" && boundDocument.replicated
       ? null
@@ -4757,6 +4765,12 @@ function EditorWindow({
     setVimSnapshot(null);
     setInternalLinkCompletion(null);
     setCaretExternalLink(null);
+    const focusAttachedEditor = (): void => {
+      const current = adapterRef.current;
+      if (!current) return;
+      if (readOnly) current.editor.view.dom.focus();
+      else current.editor.commands.focus();
+    };
     const adapter = runtime.attachEditor(windowId, attachedRoot, {
       onVimSnapshot: setVimSnapshot,
       onCaretSectionChange: (sectionId) => {
@@ -4788,7 +4802,7 @@ function EditorWindow({
               destination,
               detail,
             ) ?? null,
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onBlockTypePicker: ({ blockId }) =>
         onBlockTypePicker({
@@ -4798,7 +4812,7 @@ function EditorWindow({
             adapter.transformBlock(blockId, target, true, options),
           attach: () =>
             adapter.chooseAttachmentFiles({ blockId, consumeSlash: true }),
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onInlineFormatPicker: (request) =>
         onInlineFormatPicker({
@@ -4807,7 +4821,7 @@ function EditorWindow({
           existingHref: request.existingHref,
           hasFormatting: request.hasFormatting,
           apply: request.apply,
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onSymbolPicker: (request) =>
         onSymbolPicker({
@@ -4833,7 +4847,7 @@ function EditorWindow({
                 ?.activeWindowId === windowId &&
               adapterRef.current === adapter
             )
-              adapter.editor.commands.focus();
+              focusAttachedEditor();
           },
         }),
       onCodeActionPicker: (request) =>
@@ -4842,14 +4856,14 @@ function EditorWindow({
           selection: request.selection,
           copy: request.copy,
           setLanguage: request.setLanguage,
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onTableActionPicker: (request) =>
         onTableActionPicker({
           windowId,
           selection: request.selection,
           apply: request.apply,
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onMessage,
       onNoteSearch: (origin, direction) =>
@@ -4874,15 +4888,15 @@ function EditorWindow({
           viewport: () => adapterRef.current?.noteSearchViewport() ?? null,
           onViewChange: (listener) =>
             adapterRef.current?.onNoteSearchViewChange(listener) ?? (() => {}),
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onCommandLine: () =>
         onCommandLine({
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onCommandPicker: () =>
         onCommandPicker({
-          restoreFocus: () => adapterRef.current?.editor.commands.focus(),
+          restoreFocus: focusAttachedEditor,
         }),
       onOpenImage: (attachmentId, newTab, origin) =>
         newTab
@@ -4897,11 +4911,12 @@ function EditorWindow({
       attachmentRepository,
     });
     adapterRef.current = adapter;
+    if (readOnly) runtime.restoreAllNotesCaret(windowId, adapter);
     adapter.setFocusSurfaceActive(focusedRef.current);
     onAdapterChange(windowId, adapter);
     if (restoreEditorFocusOnAttach.current) {
       restoreEditorFocusOnAttach.current = false;
-      adapter.editor.commands.focus();
+      focusAttachedEditor();
     }
     return () => {
       if (attachedRoot.contains(attachedRoot.ownerDocument.activeElement)) {
@@ -4916,6 +4931,7 @@ function EditorWindow({
     attachmentRepository,
     windowId,
     noteId,
+    readOnly,
     sectionBindingKey,
     onWorkspaceSearch,
     onBlockTypePicker,
@@ -4957,17 +4973,25 @@ function EditorWindow({
       // return DOM focus to the previous contenteditable while the Core
       // transaction is settling, so project the committed owner back to the
       // corresponding Editor before keyboard input can remain in that Window.
-      adapter.editor.view.focus();
+      if (readOnly) adapter.editor.view.dom.focus();
+      else adapter.editor.view.focus();
     }
-  }, [canApplyFocusRequest, focused, noteId]);
+  }, [canApplyFocusRequest, focused, noteId, readOnly]);
 
   useEffect(() => {
     const adapter = adapterRef.current;
     if (focusRequest <= 0 || !canApplyFocusRequest() || !adapter) return;
     if (adapter.editor.view.dom.dataset.noteId !== noteId) return;
-    adapter.editor.commands.focus();
+    if (readOnly) adapter.editor.view.dom.focus();
+    else adapter.editor.commands.focus();
     onFocusRequestApplied(focusRequest);
-  }, [canApplyFocusRequest, focusRequest, noteId, onFocusRequestApplied]);
+  }, [
+    canApplyFocusRequest,
+    focusRequest,
+    noteId,
+    onFocusRequestApplied,
+    readOnly,
+  ]);
 
   useEffect(() => {
     adapterRef.current?.refreshInternalLinkLabels();
@@ -4997,7 +5021,9 @@ function EditorWindow({
     caretSectionProjection.focusedSectionId === focusedSectionId
       ? caretSectionProjection.sectionId
       : focusedSectionId;
-  const sectionBreadcrumb = runtime.sectionBreadcrumb(noteId, caretSectionId);
+  const sectionBreadcrumb = readOnly
+    ? [{ sectionId: ALL_NOTES_DOCUMENT_ID, title: ALL_NOTES_TITLE }]
+    : runtime.sectionBreadcrumb(noteId, caretSectionId);
   const showBreadcrumb = sectionBreadcrumb.length > 1;
 
   const moveCaretToBreadcrumbSection = (sectionId: string): void => {
@@ -5086,7 +5112,12 @@ function EditorWindow({
         </div>
       )}
       <div className="window-statusline">
-        {focused && <span className="window-mode">{modeLabel(mode)}</span>}
+        {focused && (
+          <span className="window-mode">
+            {modeLabel(mode)}
+            {readOnly ? " · READ ONLY" : ""}
+          </span>
+        )}
         <span className="window-title">
           {showBreadcrumb ? (
             <nav className="window-breadcrumb" aria-label="Section breadcrumb">

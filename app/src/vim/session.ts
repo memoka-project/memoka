@@ -275,6 +275,7 @@ export interface VimNativeFilePutRequest {
 }
 
 export interface ProductVimSessionOptions {
+  readOnly?: boolean;
   onRecordJump?: (origin: StableEditorPosition) => void;
   initialMode: VimMode;
   /** The persisted Note ID; a Focused child Section never matches this ID. */
@@ -432,6 +433,33 @@ const cursorHistoryKey = Symbol("memoka-cursor-history");
 function isVisualMode(mode: VimMode): mode is VimVisualMode {
   return (
     mode === "visual-char" || mode === "visual-line" || mode === "visual-block"
+  );
+}
+
+function readOnlyVimCommand(command: VimCommand): boolean {
+  return (
+    command === "mode.normal" ||
+    command.startsWith("mode.visual-") ||
+    command.startsWith("cursor.") ||
+    command.startsWith("motion.") ||
+    command.startsWith("viewport.") ||
+    command.startsWith("navigation.") ||
+    command.startsWith("note.search") ||
+    command.startsWith("workspace.search") ||
+    command.startsWith("section.focus-") ||
+    command.startsWith("section.fold-") ||
+    command.startsWith("utility.") ||
+    command.startsWith("window.") ||
+    command.startsWith("tab.") ||
+    command === "application.command_line" ||
+    command === "application.command_picker" ||
+    command === "table.next_cell" ||
+    command === "table.previous_cell" ||
+    command === "operator.yank" ||
+    command === "line.yank" ||
+    command === "selection.yank" ||
+    command === "selection.reselect" ||
+    command.startsWith("text-object.")
   );
 }
 
@@ -670,10 +698,20 @@ export class ProductVimSession {
               this.scheduleCaretRefresh(view);
               return false;
             },
-            beforeinput: (view, event) =>
-              this.handleBeforeInput(view, event as InputEvent),
-            paste: (view, event) =>
-              this.handlePaste(view, event as ClipboardEvent),
+            beforeinput: (view, event) => {
+              if (this.options.readOnly) {
+                event.preventDefault();
+                return true;
+              }
+              return this.handleBeforeInput(view, event as InputEvent);
+            },
+            paste: (view, event) => {
+              if (this.options.readOnly) {
+                event.preventDefault();
+                return true;
+              }
+              return this.handlePaste(view, event as ClipboardEvent);
+            },
             input: (view, event) => {
               const input = event as InputEvent;
               if (signalsComposition(input)) this.setComposing(true);
@@ -1801,6 +1839,10 @@ export class ProductVimSession {
   }
 
   private handleKeyDown(view: EditorView, event: KeyboardEvent): boolean {
+    if (this.options.readOnly && event.key === "Enter") {
+      event.preventDefault();
+      return true;
+    }
     if (event.ctrlKey && event.key === "Enter") {
       this.scheduleFreshParagraphNormalization(
         view,
@@ -2072,6 +2114,17 @@ export class ProductVimSession {
     }
 
     if (resolution.action.kind === "pending") {
+      if (
+        this.options.readOnly &&
+        resolution.state.pending?.kind === "operator" &&
+        resolution.state.pending.operator !== "yank"
+      ) {
+        event.preventDefault();
+        this.input = createVimInputState();
+        this.action = "readonly:blocked";
+        this.emit();
+        return true;
+      }
       event.preventDefault();
       this.action =
         resolution.action.detail === "pending:count"
@@ -2115,6 +2168,18 @@ export class ProductVimSession {
     }
 
     const command = resolution.resolvedCommand;
+    if (
+      this.options.readOnly &&
+      (resolution.operator === "delete" ||
+        resolution.operator === "change" ||
+        (command !== null && !readOnlyVimCommand(command)))
+    ) {
+      event.preventDefault();
+      this.input = createVimInputState();
+      this.action = "readonly:blocked";
+      this.emit();
+      return true;
+    }
     if (
       !resolution.operator &&
       (command === "cursor.find-forward" ||

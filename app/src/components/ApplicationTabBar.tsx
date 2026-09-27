@@ -1,4 +1,5 @@
 import { noteDisplayTitle, type NoteMetadata } from "../core/documents";
+import { ALL_NOTES_TITLE } from "../core/all-notes";
 import { SymbolText } from "./SymbolText";
 import {
   listTabWindowIds,
@@ -122,7 +123,10 @@ function tabLabel(
   const title = noteId
     ? notes.find((note) => note.noteId === noteId)?.title
     : null;
-  if (buffer.kind === "utility") return buffer.utility.toUpperCase();
+  if (buffer.kind === "utility")
+    return buffer.utility === "all-notes"
+      ? ALL_NOTES_TITLE
+      : buffer.utility.toUpperCase();
   if (buffer.kind === "image") return imageLabel(buffer.attachmentId);
   return title === null || title === undefined
     ? "Unknown note"

@@ -1382,6 +1382,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(helpEditor, { key: "w", code: "KeyW", ctrlKey: true });
     fireEvent.keyDown(helpEditor, { key: "h", code: "KeyH" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
+    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
     fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
     await waitFor(() =>
       expect(view.container.querySelector(".window-title")?.textContent).toBe(
@@ -1812,6 +1813,7 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
     tree.focus();
+    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
     fireEvent.keyDown(tree, { key: "Enter" });
     await waitFor(() => {
       const reopened =

@@ -1,4 +1,5 @@
 import { assertUuidV7 } from "./ids";
+import { ALL_NOTES_DOCUMENT_ID } from "./all-notes";
 import {
   equalizeWindowLayout,
   resizeWindowLayout,
@@ -17,7 +18,10 @@ import {
 
 export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 12;
 
-export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
+export type UtilityBufferKind =
+  "tree" | "search" | "trash" | "outline" | "all-notes";
+
+export const ALL_NOTES_TREE_ENTRY_ID = "utility:all-notes";
 
 export type LeftSidebarUtility = "tree" | "search";
 export type SidebarSide = "left" | "right";
@@ -278,23 +282,30 @@ export function openBufferInWindow(
   const window = next.windows[windowId];
   const previous =
     window.bufferId === null ? null : next.buffers[window.bufferId];
-  if (previous?.kind === "note")
-    window.noteViews[previous.noteId] = rememberedNoteView(window.view);
-  const sameNote =
-    previous?.kind === "note" &&
-    buffer.kind === "note" &&
-    previous.noteId === buffer.noteId;
+  const previousViewId =
+    previous?.kind === "note"
+      ? previous.noteId
+      : previous?.kind === "utility" && previous.utility === "all-notes"
+        ? ALL_NOTES_DOCUMENT_ID
+        : null;
+  const nextViewId =
+    buffer.kind === "note"
+      ? buffer.noteId
+      : buffer.kind === "utility" && buffer.utility === "all-notes"
+        ? ALL_NOTES_DOCUMENT_ID
+        : null;
+  if (previousViewId)
+    window.noteViews[previousViewId] = rememberedNoteView(window.view);
+  const sameNote = previousViewId !== null && previousViewId === nextViewId;
   window.bufferId = buffer.id;
   const saved =
-    !sameNote && buffer.kind === "note"
-      ? window.noteViews[buffer.noteId]
-      : undefined;
+    !sameNote && nextViewId ? window.noteViews[nextViewId] : undefined;
   window.view = {
     ...createWindowLocalViewState(options.mode ?? "normal"),
     ...(saved ? structuredClone(saved) : {}),
   };
-  if (buffer.kind === "note")
-    window.noteViews[buffer.noteId] = rememberedNoteView(window.view);
+  if (nextViewId)
+    window.noteViews[nextViewId] = rememberedNoteView(window.view);
   if (options.activate !== false) {
     next.activeTabId = tab.id;
     activateTabWindow(tab, windowId);
@@ -714,8 +725,13 @@ export function updateWindowView(
   window.view = updated;
   const buffer =
     window.bufferId === null ? null : next.buffers[window.bufferId];
-  if (buffer?.kind === "note")
-    window.noteViews[buffer.noteId] = rememberedNoteView(updated);
+  const viewId =
+    buffer?.kind === "note"
+      ? buffer.noteId
+      : buffer?.kind === "utility" && buffer.utility === "all-notes"
+        ? ALL_NOTES_DOCUMENT_ID
+        : null;
+  if (viewId) window.noteViews[viewId] = rememberedNoteView(updated);
   validateApplicationWindowState(next);
   return next;
 }
@@ -1279,7 +1295,8 @@ function isUtilityBufferKind(value: unknown): value is UtilityBufferKind {
     value === "tree" ||
     value === "search" ||
     value === "trash" ||
-    value === "outline"
+    value === "outline" ||
+    value === "all-notes"
   );
 }
 

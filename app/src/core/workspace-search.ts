@@ -12,7 +12,7 @@ export const WORKSPACE_SEARCH_RESULT_LIMIT = 100;
 export type WorkspaceSearchTarget = "workspace" | "buffers" | "trash";
 export type WorkspaceSearchBlockKind = "body";
 export type WorkspaceSearchResultKind =
-  "title" | "image" | "group" | WorkspaceSearchBlockKind;
+  "title" | "image" | "group" | "all-notes" | WorkspaceSearchBlockKind;
 
 export interface WorkspaceSearchSection {
   readonly sectionId: string;

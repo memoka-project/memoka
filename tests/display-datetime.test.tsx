@@ -14,6 +14,9 @@ describe("GUI date/time presentation", () => {
     expect(formatDisplayDateTime(midnight.toISOString())).toBe(
       "2026/01/02 00:04:05",
     );
+    expect(formatDisplayDateTime(midnight.toISOString(), "minute")).toBe(
+      "2026/01/02 00:04",
+    );
     expect(
       formatDisplayDateTime(new Date(2026, 8, 6, 23, 59, 1).toISOString()),
     ).toBe("2026/09/06 23:59:01");

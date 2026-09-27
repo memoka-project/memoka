@@ -4,6 +4,7 @@ import {
   FileText,
   FolderClosed,
   FolderOpen,
+  Sheet,
   createElement,
 } from "lucide";
 
@@ -13,6 +14,7 @@ const icons = {
   "file-text": FileText,
   "folder-closed": FolderClosed,
   "folder-open": FolderOpen,
+  sheet: Sheet,
 };
 const masks = new Map<string, string>();
 

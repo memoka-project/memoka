@@ -1,9 +1,15 @@
 /** GUI formatting only. Persisted timestamps and CLI JSON remain ISO 8601. */
-export function formatDisplayDateTime(value: string): string {
+export function formatDisplayDateTime(
+  value: string,
+  precision: "minute" | "second" = "second",
+): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "—";
   const pad = (part: number): string => String(part).padStart(2, "0");
-  return `${String(date.getFullYear()).padStart(4, "0")}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  const minute = `${String(date.getFullYear()).padStart(4, "0")}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return precision === "minute"
+    ? minute
+    : `${minute}:${pad(date.getSeconds())}`;
 }
 
 export function formatElapsedTime(

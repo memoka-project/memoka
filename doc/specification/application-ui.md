@@ -99,6 +99,7 @@ Bufferは次のいずれかである。
 
 - Note Buffer
 - Image Buffer
+- すべてのノート Buffer（読み取り専用）
 - Empty Buffer
 
 Windowを閉じることとBufferを閉じることを分離する。Buffer closeは参照WindowをEmpty Bufferにし、
@@ -139,6 +140,8 @@ Tree/Outline共通で、選択背景は親の階層縦線位置より4px右か�
 選択枠線は表示しない。focus中はselection色、非focus時はsurface-hover色の背景を表示する。文字・アイコンの位置と色は変更しない。
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
+例外として先頭に固定の「すべてのノート」を表示する。これはNamespaceEntryではなく、Lucide `sheet`を使う。
+Enterまたは選択済み行のclickで現在Windowに開き、Tree上で移動・削除・子や兄弟の作成はできない。
 親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
 Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/再clickでは開閉しない。
 chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Noteを開かず、double clickも行へ伝播させない。
@@ -160,6 +163,18 @@ mouseによる並べ替え、作成、inline renameは提供しない。
 Noteなしgroupはfolderとして表示し、Enterまたは選択済み行のclickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
 `:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
 削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
+
+### すべてのノート
+
+Windowには一時的な読み取り専用NoteDocのTableを表示する。永続NoteやNamespaceEntryを作らず、
+live Noteを1件1行で「ノート名」「最終更新日時」に並べる。更新日時の降順、同時刻ではNote ID順とし、
+日時はローカルの`YYYY/MM/DD HH:mm`形式で表示する。対象が0件でも見出し行を残す。
+ノート名はNote IDをtargetとする内部リンクであり、`gf`で開く。`Ctrl-o/i`は同じWindowのJump Listで
+一覧の元の行と移動先を往復する。通常のカーソル移動、Table移動、検索、Visual選択・コピーを利用できるが、
+編集・貼り付け・Undo/RedoでTableを変更できない。
+Noteの追加・削除・復元・改名・本文更新と同期更新はTableへ反映する。並べ替え後も同じNoteの同じ列へ
+カーソルを維持し、対象Noteが消えた場合は近い行、行がなければ見出しへ移す。
+WindowごとのBuffer、選択Note・列、scroll位置は再起動後も復元する。
 
 ## 8. Outline
 
@@ -291,7 +306,7 @@ localと追加保存先ごとのcardへ設定とstateを並べ、設定は個別
 閉じる・中断・切替の取消で現在のWorkspaceを継続でき、modal間の移動や閉じた後もfocusを復元する。
 同期設定を開くだけでは有効化しない。本文の取得後にWorkspaceを開き、添付の取得は引き続き行う。
 
-GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。過去のeventは`(5m ago)`などを併記する。
+GUI日時はOS timezoneで`YYYY/MM/DD HH:mm:ss`（24時間・ゼロ埋め）に統一する。「すべてのノート」の最終更新日時だけ秒を省略する。過去のeventは`(5m ago)`などを併記する。
 単位はs/m/h/d/mo/y、月は30日・年は365日換算で端数を切り捨てる。未来日時にagoを付けず、不正日時は`—`とする。
 日時部品のみが表示中に共通の1秒clockを購読し、Editor/preview本文全体を再描画しない。永続データ・CLI JSON・利用者のNote本文は変換しない。
 `:history`は共通検索ペインの読み取り専用previewを使い、過去Note、内部link、添付を選択世代の範囲で表示する。
