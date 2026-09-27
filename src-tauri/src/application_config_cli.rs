@@ -393,7 +393,7 @@ mod tests {
     fn custom_theme_and_selection_commit_together_and_preserve_unrelated_settings() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.toml");
-        fs::write(&path, "# My preferences\ntheme = 'nightfox' # favorite theme\nzoom_percent = 100 # zoom comment\nleader = ';'\n[vim]\nwhichwrap = false\n").unwrap();
+        fs::write(&path, "# My preferences\ntheme = 'nightfox' # favorite theme\nzoom_percent = 100 # zoom comment\nleader = 'q'\n[vim]\nwhichwrap = false\n").unwrap();
         let change = request(
             &path,
             json!({"theme":"my-night","themes.my-night":{"base":"nightfox","name":"夜のテーマ","palette":{"bg1":"#121212","orange":"#ff9933"}},"zoom_percent":120,"japanese.word_segmentation":"unicode"}),
@@ -404,7 +404,7 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("# My preferences"));
         assert!(text.contains("zoom_percent = 120 # zoom comment"));
-        assert!(text.contains("leader = ';'"));
+        assert!(text.contains("leader = 'q'"));
         assert!(text.contains("whichwrap = false"));
         let loaded = load_application_key_config(&path);
         assert_eq!(loaded.theme, "my-night");
