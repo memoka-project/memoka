@@ -225,12 +225,12 @@ fn validate_documents(documents: &[DocumentUpdate], workspace_id: &str) -> Resul
         id(&doc.document_id)?;
         if !matches!(
             (doc.kind.as_str(), doc.schema_version),
-            ("note", 7) | ("workspace", 4)
+            ("note", 7) | ("workspace", 5)
         ) || (doc.kind == "workspace" && doc.document_id != workspace_id)
         {
             return Err(error(
                 "SYNC_SCHEMA",
-                "Replication requires NoteDoc 7 and WorkspaceMetadataDoc 4 of this Workspace",
+                "Replication requires NoteDoc 7 and WorkspaceMetadataDoc 5 of this Workspace",
             ));
         }
         total = total

@@ -60,6 +60,7 @@ export type EditorNavigationDestination =
       sectionLineNumber: number;
       offset: number;
       query: string;
+      alignment?: "center";
     }
   | {
       kind: "note-search-match";

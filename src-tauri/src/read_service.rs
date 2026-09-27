@@ -356,6 +356,9 @@ impl WorkspaceReader {
         };
         let mut trashed = false;
         for note_id in ids {
+            if self.namespace.is_purged_note(&note_id) {
+                continue;
+            }
             let deleted = self.namespace.notes[&note_id]["deleted_at"].is_string();
             let mut pending = vec![(&self.note(&note_id)?.root, 0)];
             while let Some((section, depth)) = pending.pop() {
@@ -443,6 +446,9 @@ impl WorkspaceReader {
         // never a live document while viewing a historical snapshot.
         let mut titles = BTreeMap::new();
         for id in self.document_revisions.keys().cloned().collect::<Vec<_>>() {
+            if self.namespace.is_purged_note(&id) {
+                continue;
+            }
             if !request.include_trash && self.namespace.notes[&id]["deleted_at"].is_string() {
                 continue;
             }
@@ -454,6 +460,9 @@ impl WorkspaceReader {
         }
         let mut items = Vec::new();
         for id in self.document_revisions.keys().cloned().collect::<Vec<_>>() {
+            if self.namespace.is_purged_note(&id) {
+                continue;
+            }
             if !request.include_trash && self.namespace.notes[&id]["deleted_at"].is_string() {
                 continue;
             }
@@ -557,6 +566,9 @@ impl WorkspaceReader {
             let mut live = false;
             let mut trash = false;
             for note_id in self.document_revisions.keys().cloned().collect::<Vec<_>>() {
+                if self.namespace.is_purged_note(&note_id) {
+                    continue;
+                }
                 // Exact JSON attribute comparison, not a substring search of user text.
                 let tree = serde_json::to_value(&self.note(&note_id)?.root)?;
                 let mut pending = vec![&tree];

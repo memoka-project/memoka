@@ -39,7 +39,6 @@ export const SIDEBAR_COMMAND_IDS: readonly SidebarCommandId[] = [
   "application.command_line",
   "application.command_picker",
   "context.action_picker",
-  "note.search",
   "workspace.search_title",
   "workspace.search_body",
   "workspace.search_buffers",

@@ -69,7 +69,11 @@ fn seed_peers(help: bool) -> Vec<Peer> {
             } else {
                 crate::replicated_namespace::migrate(&doc, &members[0].origin.replica_id).unwrap()
             };
-            doc.schema_version = if doc.kind == "note" { 7 } else { 4 };
+            doc.schema_version = if doc.kind == "note" {
+                7
+            } else {
+                crate::replicated_namespace::SCHEMA_VERSION
+            };
             if help && doc.kind == "workspace" {
                 let ydoc = decode_document(&doc).unwrap();
                 {
@@ -466,7 +470,7 @@ fn received_multidocument_batches_rollback_together_and_resume_after_lost_commit
     request.documents.push(DocumentCommitInput {
         kind: "workspace".into(),
         document_id: workspace.document_id.clone(),
-        schema_version: 4,
+        schema_version: crate::replicated_namespace::SCHEMA_VERSION,
         base_revision: workspace.revision,
         snapshot: None,
         update: Some(doc.transact().encode_state_as_update_v1(&vector)),

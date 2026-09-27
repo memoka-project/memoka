@@ -104,6 +104,7 @@ import {
   ManagedCrdtDocument,
 } from "./transaction-gateway";
 import {
+  rememberedNoteView,
   validateWindowViewState,
   type WindowLocalViewState,
   type WindowViewState,
@@ -167,7 +168,14 @@ import {
   type NoteSearchNavigationStatus,
   type NoteSearchOrigin,
   type NoteSearchProjection,
+  type NoteSearchLocation,
 } from "./note-search";
+import { deriveNoteFuzzySearchProjection } from "./note-fuzzy-search";
+import {
+  deriveNoteWordSearchProjection,
+  noteWordAtOrigin,
+} from "./note-word-search";
+import { getJapaneseSegmentationConfiguration } from "./japanese-segmentation";
 import {
   deriveInternalLinkCandidates,
   deriveTrashSearchCandidates,
@@ -181,8 +189,12 @@ import {
   type TreeMoveDirection,
 } from "./note-tree";
 import { siblingPositionSeed } from "./sibling-position";
-import { type StableEditorPosition } from "./stable-position";
 import {
+  saveStableEditorPosition,
+  type StableEditorPosition,
+} from "./stable-position";
+import {
+  WORKSPACE_SEARCH_RESULT_LIMIT,
   deriveWorkspaceSearchDocumentAsync,
   filterWorkspaceSearchCatalog,
   normalizeWorkspaceSearchText,
@@ -195,6 +207,26 @@ import {
   workspaceSearchResultFromIndexedEntry,
   workspaceSearchJapaneseGrams,
 } from "./workspace-search";
+import {
+  compileWorkspaceQuery,
+  matchWorkspaceBodyLine,
+  matchWorkspaceTitleTerm,
+  mergeWorkspaceMatchRanges,
+  workspaceMatchRanges,
+  type WorkspaceQueryTerm,
+} from "./workspace-search-matcher";
+import {
+  emptySearchRankingState,
+  learnSearchRankingSelection,
+  rankWorkspaceResults,
+  rankingNoteScore,
+  readSearchRankingState,
+  recordSearchRankingOpen,
+  type RankedWorkspaceResult,
+  type SearchRankingContext,
+  type SearchRankingState,
+} from "./workspace-search-ranking";
+import { loadNoteMigemo } from "./note-migemo";
 import {
   WORKSPACE_SEARCH_INDEX_SCHEMA_VERSION,
   supportsWorkspaceSearchIndex,
@@ -301,7 +333,9 @@ interface PendingWindowViewUpdate {
   readonly update: {
     mode?: WindowViewState["mode"];
     selection?: WindowViewState["selection"];
+    stableCaret?: WindowLocalViewState["stableCaret"];
     scrollTop?: number;
+    caretViewportTop?: number | null;
     collapsedSectionIds?: string[];
     collapsedCodeBlockIds?: string[];
     detailsFoldOverrides?: Record<string, boolean>;
@@ -311,6 +345,10 @@ interface PendingWindowViewUpdate {
 
 interface WindowNoteSearchState {
   readonly query: string;
+  readonly direction: NoteSearchDirection;
+  readonly mode: "literal" | "fuzzy-migemo" | "word-exact";
+  readonly migemoPattern: string;
+  readonly wordSegmentation: string;
   readonly noteId: string;
   readonly scopeSectionId: string;
   readonly document: Y.Doc;
@@ -328,6 +366,17 @@ interface WorkspaceSearchProjectionCacheEntry {
 
 export interface NoteSearchNavigationResult
   extends EditorNavigationResult, NoteSearchNavigationStatus {}
+
+export interface TrashPurgePreview {
+  readonly entryId: string;
+  readonly deletionId: string;
+  readonly entryIds: readonly string[];
+  readonly noteCount: number;
+  readonly groupCount: number;
+  readonly title: string;
+  readonly available: boolean;
+  readonly reason?: string;
+}
 
 export const APPLICATION_WINDOW_LOCAL_STATE_ID = "application-window:main";
 
@@ -358,6 +407,10 @@ export class CoreRuntime {
 
   private readonly notePersistence = new Map<string, NotePersistenceSession>();
   private readonly agentEditors = new Map<TiptapEditorAdapter, string>();
+  private readonly windowEditorAdapters = new Map<
+    string,
+    TiptapEditorAdapter
+  >();
   private externalCommit: Promise<void> | null = null;
   private commandsInFlight = 0;
   private readonly noteLoads = new Map<
@@ -380,7 +433,11 @@ export class CoreRuntime {
   private readonly imageReturnOrigins = new Map<string, StableEditorPosition>();
   private readonly pendingNavigations = new Map<
     string,
-    { destination: EditorNavigationDestination; detail: string }
+    {
+      destination: EditorNavigationDestination;
+      detail: string;
+      restoreView?: boolean;
+    }
   >();
   private readonly optimisticSectionFocuses = new Map<
     string,
@@ -455,6 +512,7 @@ export class CoreRuntime {
     typeof globalThis.setTimeout
   > | null = null;
   private workspaceSearchIndexWarning: string | null = null;
+  private searchRankingState: SearchRankingState = emptySearchRankingState();
   private localStateQueue: Promise<void> = Promise.resolve();
   /**
    * Window-local projections are not part of NoteDoc durability. Merge all
@@ -1504,6 +1562,7 @@ export class CoreRuntime {
     attachmentId: string,
     origin?: StableEditorPosition | null,
   ): Promise<{ windowId: string; attachmentId: string }> {
+    await this.captureWindowViewBeforeNoteChange(windowId);
     const buffer = createImageBuffer(attachmentId);
     const result = await this.commitApplicationWindowMutation(
       this.idFactory(),
@@ -1845,6 +1904,117 @@ export class CoreRuntime {
     return this.editNamespace({ kind: "restore", entryId, at: this.clock() });
   }
 
+  previewTrashPurge(entryId: string): TrashPurgePreview {
+    const entries = listNamespaceEntries(this.workspaceDocument.root);
+    const selected = entries.find((entry) => entry.entryId === entryId);
+    if (!selected?.deletedAt || !selected.trashOperationId || selected.purgedAt)
+      throw new Error("選択項目はTrashにありません");
+    const affected = entries
+      .filter(
+        (entry) =>
+          entry.deletedAt &&
+          !entry.purgedAt &&
+          entry.trashOperationId === selected.trashOperationId,
+      )
+      .sort((a, b) => a.entryId.localeCompare(b.entryId));
+    const help = affected.some(
+      (entry) =>
+        entry.target &&
+        readNoteMetadata(this.workspaceDocument, entry.target.id)
+          ?.systemRole === "help",
+    );
+    return {
+      entryId,
+      deletionId: selected.trashOperationId,
+      entryIds: affected.map((entry) => entry.entryId),
+      noteCount: affected.filter((entry) => entry.target).length,
+      groupCount: affected.filter((entry) => !entry.target).length,
+      title: selected.target
+        ? (readNoteMetadata(this.workspaceDocument, selected.target.id)
+            ?.title ?? "新しいノート")
+        : (selected.name ?? "無題のグループ"),
+      available: !help,
+      reason: help ? "管理HelpノートはTrashから削除できません" : undefined,
+    };
+  }
+
+  async purgeTrashOperation(expected: TrashPurgePreview): Promise<void> {
+    await this.localStateQueue.catch(() => undefined);
+    const current = this.previewTrashPurge(expected.entryId);
+    if (
+      !current.available ||
+      current.deletionId !== expected.deletionId ||
+      JSON.stringify(current.entryIds) !== JSON.stringify(expected.entryIds)
+    )
+      throw new Error(
+        current.reason ?? "Trashの対象が変わりました。再確認してください",
+      );
+    this.setSaving();
+    try {
+      await this.transactions.transact(
+        {
+          operationId: this.idFactory(),
+          scope: "workspace-structure",
+          documents: [this.workspace],
+        },
+        () => {
+          const at = this.clock();
+          const entries = listNamespaceEntries(this.workspaceDocument.root);
+          const purged = new Set(current.entryIds);
+          const byId = new Map(entries.map((entry) => [entry.entryId, entry]));
+          const reparented = entries.flatMap((entry) => {
+            if (
+              purged.has(entry.entryId) ||
+              !entry.parentEntryId ||
+              !purged.has(entry.parentEntryId)
+            )
+              return [];
+            let parentId: string | null = entry.parentEntryId;
+            while (parentId && purged.has(parentId))
+              parentId = byId.get(parentId)?.parentEntryId ?? null;
+            return [{ ...entry, parentEntryId: parentId }];
+          });
+          if (this.workspaceDocument.replicated) {
+            if (reparented.length) {
+              const changes = new Map(
+                reparented.map((entry) => [entry.entryId, entry]),
+              );
+              this.workspaceDocument.replicated.writeEntries(
+                entries.map((entry) => changes.get(entry.entryId) ?? entry),
+                new Set(changes.keys()),
+              );
+            }
+            this.workspaceDocument.replicated.purgeEntries(
+              current.entryIds,
+              current.deletionId,
+              this.idFactory(),
+              at,
+            );
+          } else {
+            const entries = readMainNamespace(
+              this.workspaceDocument.root,
+            ).entries;
+            this.workspaceDocument.doc.transact(() => {
+              for (const entry of reparented)
+                entries
+                  .get(entry.entryId)
+                  ?.set("parent_entry_id", entry.parentEntryId);
+              for (const id of current.entryIds)
+                entries.get(id)?.set("purged_at", at);
+            }, CORE_TRANSACTION_ORIGIN);
+          }
+        },
+      );
+      this.sectionCatalogRevision += 1;
+      this.internalLinkLabelRevision += 1;
+      this.queueWorkspaceSearchIndexRebuild();
+      this.setReady();
+    } catch (error) {
+      this.reportError(error);
+      throw error;
+    }
+  }
+
   createNoteAtEntry(
     windowId: string,
     selectedEntryId: string | null,
@@ -2089,6 +2259,7 @@ export class CoreRuntime {
     const applied = adapter.applyNavigationDestination(
       pending.destination,
       pending.detail,
+      pending.restoreView ? { reveal: false } : undefined,
     );
     if (applied) this.pendingNavigations.delete(windowId);
     return applied;
@@ -2176,30 +2347,76 @@ export class CoreRuntime {
     origin: NoteSearchOrigin,
     query: string,
     count = 1,
+    direction: NoteSearchDirection = "forward",
   ): Promise<NoteSearchNavigationResult> {
-    if (!query)
-      return this.repeatNoteSearch(windowId, origin, "forward", count);
+    if (!query) {
+      const previous = this.noteSearchStates.get(windowId);
+      if (!previous?.query)
+        return this.repeatNoteSearch(windowId, origin, "forward", count);
+      return this.navigateNoteSearch(
+        windowId,
+        origin,
+        previous.query,
+        direction,
+        count,
+        true,
+        previous.mode,
+        previous.migemoPattern,
+      );
+    }
     return this.navigateNoteSearch(
       windowId,
       origin,
       query,
-      "forward",
+      direction,
       count,
       true,
+      "literal",
+      "",
     );
   }
 
-  repeatNoteSearch(
+  searchFuzzyNote(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    query: string,
+    migemoPattern: string,
+    direction: NoteSearchDirection = "forward",
+  ): Promise<NoteSearchNavigationResult> {
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      direction,
+      1,
+      true,
+      "fuzzy-migemo",
+      migemoPattern,
+    );
+  }
+
+  searchNoteWord(
     windowId: string,
     origin: NoteSearchOrigin,
     direction: NoteSearchDirection,
     count = 1,
   ): Promise<NoteSearchNavigationResult> {
-    const query = this.noteSearchStates.get(windowId)?.query;
+    const windowState = this.windows.get(windowId);
+    if (!windowState) throw new Error(`Unknown window: ${windowId}`);
+    const note = this.getNoteHandle(origin.stable.noteId).current;
+    const units =
+      note.kind === "note"
+        ? deriveNoteSearchProjection(
+            note,
+            "",
+            windowState.focusedSectionId ?? note.noteId,
+          ).units
+        : [];
+    const query = noteWordAtOrigin(units, origin.location);
     if (!query) {
       return Promise.resolve({
         handled: false,
-        detail: "search:note:no-pattern",
+        detail: "search:note:no-word",
         query: null,
         matchCount: 0,
         matchIndex: null,
@@ -2212,7 +2429,67 @@ export class CoreRuntime {
       query,
       direction,
       count,
+      true,
+      "word-exact",
+      "",
+    );
+  }
+
+  selectFuzzyNoteSearch(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    query: string,
+    migemoPattern: string,
+    selectedLocation: NoteSearchLocation,
+    direction: NoteSearchDirection = "forward",
+  ): Promise<NoteSearchNavigationResult> {
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      direction,
+      1,
+      true,
+      "fuzzy-migemo",
+      migemoPattern,
+      selectedLocation,
+    );
+  }
+
+  /** `forward` means n (same as the last / or ?); `backward` means N. */
+  repeatNoteSearch(
+    windowId: string,
+    origin: NoteSearchOrigin,
+    direction: NoteSearchDirection,
+    count = 1,
+  ): Promise<NoteSearchNavigationResult> {
+    const previous = this.noteSearchStates.get(windowId);
+    const query = previous?.query;
+    if (!query) {
+      return Promise.resolve({
+        handled: false,
+        detail: "search:note:no-pattern",
+        query: null,
+        matchCount: 0,
+        matchIndex: null,
+        wrapped: false,
+      });
+    }
+    const searchDirection =
+      direction === "forward"
+        ? previous.direction
+        : previous.direction === "forward"
+          ? "backward"
+          : "forward";
+    return this.navigateNoteSearch(
+      windowId,
+      origin,
+      query,
+      searchDirection,
+      count,
       false,
+      previous?.mode ?? "literal",
+      previous?.migemoPattern ?? "",
     );
   }
 
@@ -2223,6 +2500,9 @@ export class CoreRuntime {
     direction: NoteSearchDirection,
     count: number,
     replacePattern: boolean,
+    mode: "literal" | "fuzzy-migemo" | "word-exact",
+    migemoPattern: string,
+    selectedLocation?: NoteSearchLocation,
   ): Promise<NoteSearchNavigationResult> {
     const windowState = this.windows.get(windowId);
     if (!windowState) throw new Error(`Unknown window: ${windowId}`);
@@ -2249,41 +2529,71 @@ export class CoreRuntime {
       };
     }
     const documentVersion = this.noteSearchDocumentVersion(note.doc);
+    const wordSegmentation =
+      getJapaneseSegmentationConfiguration().wordSegmentation;
     const scopeSectionId = windowState.focusedSectionId ?? note.noteId;
     const cached = this.noteSearchStates.get(windowId);
     const projection =
       !replacePattern &&
       cached?.noteId === note.noteId &&
+      cached.mode === mode &&
+      cached.migemoPattern === migemoPattern &&
+      cached.wordSegmentation === wordSegmentation &&
       cached.scopeSectionId === scopeSectionId &&
       cached.query === query &&
       cached.document === note.doc &&
       cached.documentVersion === documentVersion
         ? cached.projection
-        : deriveNoteSearchProjection(note, query, scopeSectionId);
-    this.noteSearchStates.set(windowId, {
+        : mode === "fuzzy-migemo"
+          ? deriveNoteFuzzySearchProjection(
+              note,
+              query,
+              migemoPattern,
+              scopeSectionId,
+            )
+          : mode === "word-exact"
+            ? deriveNoteWordSearchProjection(note, query, scopeSectionId)
+            : deriveNoteSearchProjection(note, query, scopeSectionId);
+    const nextSearchState: WindowNoteSearchState = {
       query,
+      direction: replacePattern ? direction : (cached?.direction ?? direction),
+      mode,
+      migemoPattern,
+      wordSegmentation,
       noteId: note.noteId,
       scopeSectionId,
       document: note.doc,
       documentVersion,
       projection,
-    });
-    const selected = selectNoteSearchMatch(
-      projection,
-      origin.location,
-      direction,
-      count,
-    );
+    };
+    const selected = selectedLocation
+      ? (() => {
+          const index = projection.matches.findIndex(
+            (match) =>
+              match.sectionId === selectedLocation.sectionId &&
+              match.blockId === selectedLocation.blockId &&
+              match.offset === selectedLocation.offset,
+          );
+          return index < 0
+            ? null
+            : { match: projection.matches[index]!, index, wrapped: false };
+        })()
+      : selectNoteSearchMatch(projection, origin.location, direction, count);
     if (!selected) {
+      if (!selectedLocation)
+        this.noteSearchStates.set(windowId, nextSearchState);
       return {
         handled: false,
-        detail: `search:note:not-found:${query}`,
+        detail: selectedLocation
+          ? "search:note:stale-target"
+          : `search:note:not-found:${query}`,
         query,
         matchCount: 0,
         matchIndex: null,
         wrapped: false,
       };
     }
+    this.noteSearchStates.set(windowId, nextSearchState);
     const destination: EditorNavigationDestination = {
       kind: "note-search-match",
       noteId: note.noteId,
@@ -2295,6 +2605,7 @@ export class CoreRuntime {
     const detail = `search:note:${direction}:${selected.index + 1}/${projection.matches.length}${selected.wrapped ? ":wrapped" : ""}`;
     const result = {
       query,
+      direction: nextSearchState.direction,
       matchCount: projection.matches.length,
       matchIndex: selected.index,
       wrapped: selected.wrapped,
@@ -2351,7 +2662,7 @@ export class CoreRuntime {
           ...(await deriveWorkspaceSearchDocumentAsync(
             document,
             metadata.title,
-            noteAncestorPath(noteMetadata, metadata.noteId),
+            noteAncestorPath(noteMetadata, metadata),
             metadata.updatedAt,
             metadata.parentNoteId,
           )),
@@ -2393,10 +2704,80 @@ export class CoreRuntime {
   async searchWorkspace(
     query: string,
     scope: WorkspaceSearchScope = "title",
-    limit = 20,
+    limit = WORKSPACE_SEARCH_RESULT_LIMIT,
     target: WorkspaceSearchTarget = "workspace",
+    windowId = "window-1",
   ): Promise<WorkspaceSearchResponse> {
     const startedAt = performance.now();
+    if (target === "workspace" && scope === "title") {
+      const useMigemo = query
+        .trim()
+        .split(/\s+/u)
+        .some((word) => /^[a-z][a-z-]*$/u.test(word) && word.length <= 128);
+      const migemo = useMigemo
+        ? await loadNoteMigemo().catch(() => null)
+        : null;
+      const terms = compileWorkspaceQuery(query, migemo);
+      const catalog = this.workspaceMetadataSearchCatalog("workspace");
+      const context = this.searchRankingContext(windowId);
+      const candidates: RankedWorkspaceResult[] = [];
+      for (const result of filterWorkspaceSearchCatalog(
+        catalog,
+        "",
+        "title",
+        catalog.documents.length || 1,
+      )) {
+        const titleMatches = terms.map((term) =>
+          matchWorkspaceTitleTerm(result.title, term),
+        );
+        const pathMatches = terms.map((term) =>
+          matchWorkspaceTitleTerm(result.parentPath, term),
+        );
+        if (titleMatches.some((match, index) => !match && !pathMatches[index]))
+          continue;
+        const matched = {
+          ...result,
+          query,
+          matchScore:
+            terms.length === 0
+              ? 0
+              : titleMatches.reduce(
+                  (sum, match) => sum + (match?.score ?? 0),
+                  0,
+                ) / terms.length,
+          pathMatchScore:
+            terms.length === 0
+              ? 0
+              : pathMatches.reduce(
+                  (sum, match) => sum + (match?.score ?? 0),
+                  0,
+                ) / terms.length,
+          titleRanges: mergeWorkspaceMatchRanges(
+            titleMatches.flatMap((match) => match?.ranges ?? []),
+          ),
+          pathRanges: mergeWorkspaceMatchRanges(
+            pathMatches.flatMap((match) => match?.ranges ?? []),
+          ),
+          openStatus: this.searchOpenStatus(result.noteId, context),
+        };
+        candidates.push({
+          result: matched,
+          match: matched.matchScore,
+          pathMatch: matched.pathMatchScore,
+        });
+      }
+      return {
+        scope,
+        results: rankWorkspaceResults(candidates, context, limit).map(
+          ({ result }) => result,
+        ),
+        failures: [],
+        backend: "metadata",
+        elapsedMs: performance.now() - startedAt,
+        warning: null,
+        migemoUnavailable: useMigemo && !migemo,
+      };
+    }
     if (target !== "workspace") {
       if (scope !== "title") {
         throw new Error(`${target} search only supports note titles`);
@@ -2415,7 +2796,9 @@ export class CoreRuntime {
           .split(/\s+/u)
           .filter(Boolean);
         const groups: WorkspaceSearchResult[] = entries
-          .filter((entry) => entry.deletedAt && !entry.target)
+          .filter(
+            (entry) => entry.deletedAt && !entry.purgedAt && !entry.target,
+          )
           .flatMap((entry) => {
             const path = namespacePath(entries, titles, entry.entryId);
             if (
@@ -2463,20 +2846,144 @@ export class CoreRuntime {
         warning: null,
       };
     }
-    // Opening ,g with an empty query must be constant-time. In particular it
-    // must not drain a pending 100 MB NoteDoc projection before the user has
-    // typed anything.
-    if (scope === "body" && query.trim().length === 0) {
+    if (scope === "body") {
+      return this.searchWorkspaceBodyRanked(query, limit, windowId, startedAt);
+    }
+    throw new Error(`Unsupported Workspace search scope: ${scope}`);
+  }
+
+  private rankedBodyResult(
+    entry: {
+      resultId: string;
+      noteId: string;
+      sectionId: string;
+      title: string;
+      parentPath: string;
+      updatedAt: string;
+      kind: "body";
+      text: string;
+      blockId: string | null;
+      logicalLineNumber: number | null;
+      sectionLineNumber: number | null;
+      lineIndex: number;
+      sourceOffset: number;
+    },
+    query: string,
+    terms: readonly WorkspaceQueryTerm[],
+  ): RankedWorkspaceResult | null {
+    const matched = matchWorkspaceBodyLine(entry.text, terms);
+    if (!matched) return null;
+    const result = workspaceSearchResultFromIndexedEntry(
+      entry,
+      query,
+      "body",
+      matched.ranges[0]?.from ?? 0,
+    );
+    if (!result) return null;
+    return {
+      result: {
+        ...result,
+        title: noteDisplayTitle(
+          readNoteMetadata(this.workspaceDocument, entry.noteId)?.title ??
+            result.title,
+        ),
+        matchScore: matched.score,
+        pathMatchScore: 0,
+        lineRanges: matched.ranges,
+        previewRanges: workspaceMatchRanges(result.preview, terms, "body"),
+        matchPatterns: terms.map((term) => term.migemoPattern),
+      },
+      match: matched.score,
+      pathMatch: 0,
+    };
+  }
+
+  private rankedBodyCatalog(
+    catalog: WorkspaceSearchCatalog,
+    query: string,
+    terms: readonly WorkspaceQueryTerm[],
+  ): RankedWorkspaceResult[] {
+    const output: RankedWorkspaceResult[] = [];
+    for (const document of catalog.documents) {
+      const sections = new Map(
+        document.sections?.map((section) => [section.sectionId, section]),
+      );
+      for (const block of document.blocks) {
+        const section = sections.get(block.sectionId);
+        const matched = this.rankedBodyResult(
+          {
+            resultId: `${document.noteId}:${block.kind}:line:${block.logicalLineNumber}`,
+            noteId: document.noteId,
+            sectionId: block.sectionId,
+            title: section?.title ?? document.title,
+            parentPath: section?.parentPath ?? document.parentPath,
+            updatedAt: document.updatedAt,
+            kind: "body",
+            text: block.text,
+            blockId: block.blockId,
+            logicalLineNumber: block.logicalLineNumber,
+            sectionLineNumber: block.sectionLineNumber,
+            lineIndex: block.lineIndex,
+            sourceOffset: block.sourceOffset,
+          },
+          query,
+          terms,
+        );
+        if (matched) output.push(matched);
+      }
+    }
+    return output;
+  }
+
+  private async searchWorkspaceBodyRanked(
+    query: string,
+    limit: number,
+    windowId: string,
+    startedAt: number,
+  ): Promise<WorkspaceSearchResponse> {
+    const index = this.workspaceSearchIndex;
+    if (!query.trim()) {
       return {
-        scope,
+        scope: "body",
         results: [],
         failures: [],
-        backend: this.workspaceSearchIndex ? "sqlite-fts" : "crdt-fallback",
+        backend: index ? "sqlite-fts" : "crdt-fallback",
         elapsedMs: performance.now() - startedAt,
         warning: null,
       };
     }
-    const index = this.workspaceSearchIndex;
+    const useMigemo = query
+      .trim()
+      .split(/\s+/u)
+      .some((word) => /^[a-z][a-z-]*$/u.test(word) && word.length <= 128);
+    const migemo = useMigemo ? await loadNoteMigemo().catch(() => null) : null;
+    const terms = compileWorkspaceQuery(query, migemo);
+    const context = this.searchRankingContext(windowId);
+    const noteScores = Object.fromEntries(
+      [...context.paths.keys()].flatMap((noteId) => {
+        const score = rankingNoteScore(noteId, context);
+        return score > 0 ? [[noteId, score]] : [];
+      }),
+    );
+    const finish = (
+      candidates: readonly RankedWorkspaceResult[],
+      failures: WorkspaceSearchCatalog["failures"],
+      backend: WorkspaceSearchResponse["backend"],
+      warning: string | null,
+    ): WorkspaceSearchResponse => ({
+      scope: "body",
+      results: rankWorkspaceResults(candidates, context, limit).map(
+        ({ result }) => ({
+          ...result,
+          openStatus: this.searchOpenStatus(result.noteId, context),
+        }),
+      ),
+      failures,
+      backend,
+      elapsedMs: performance.now() - startedAt,
+      warning,
+      migemoUnavailable: useMigemo && !migemo,
+    });
     if (index) {
       if (this.pendingWorkspaceSearchIndexHierarchyBaseRevision !== null) {
         this.enqueuePendingWorkspaceSearchIndexHierarchyUpdates();
@@ -2493,39 +3000,33 @@ export class CoreRuntime {
         this.workspaceDocument.workspaceId,
         this.workspace.revision,
         query,
-        scope,
+        "body",
         limit,
         dirtyNoteIds,
+        { terms, noteScores },
       );
       try {
         const indexed = await index.queryWorkspaceSearchIndex(request);
         if (indexed.status === "ready") {
           this.workspaceSearchIndexWarning = null;
-          const indexedResults = indexed.hits
-            .map((hit) =>
-              workspaceSearchResultFromIndexedEntry(hit, query, scope),
-            )
-            .filter((result): result is WorkspaceSearchResult =>
-              Boolean(result),
+          const candidates = indexed.hits.flatMap((hit) => {
+            if (hit.kind !== "body") return [];
+            const result = this.rankedBodyResult(
+              { ...hit, kind: "body" },
+              query,
+              terms,
             );
-          const dirtyResults = filterWorkspaceSearchCatalog(
-            dirtyCatalog,
-            query,
-            scope,
-            limit,
+            return result ? [result] : [];
+          });
+          return finish(
+            [
+              ...candidates,
+              ...this.rankedBodyCatalog(dirtyCatalog, query, terms),
+            ],
+            dirtyCatalog.failures,
+            dirtyNoteIds.length ? "sqlite-fts+crdt" : "sqlite-fts",
+            null,
           );
-          return {
-            results: this.mergeWorkspaceSearchResults(
-              indexedResults,
-              dirtyResults,
-              limit,
-            ),
-            failures: dirtyCatalog.failures,
-            scope,
-            backend: dirtyNoteIds.length > 0 ? "sqlite-fts+crdt" : "sqlite-fts",
-            elapsedMs: performance.now() - startedAt,
-            warning: null,
-          };
         }
         this.queueWorkspaceSearchIndexRebuild();
       } catch (error) {
@@ -2533,23 +3034,16 @@ export class CoreRuntime {
           error instanceof Error ? error.message : String(error);
         this.queueWorkspaceSearchIndexRebuild();
       }
-    }
-    if (!index) {
-      // The browser/test fallback has no SQLite dirty-note contract to make a
-      // live projection stable. Let the pending persistence chain settle
-      // before the cooperative projection yields; otherwise the revision can
-      // advance midway through a large NoteDoc scan and the coherent-snapshot
-      // guard correctly discards every result.
+    } else {
       await Promise.all(
         [...this.notePersistence.values()].map((session) => session.flush()),
       );
     }
-    return this.workspaceSearchFallback(
-      await this.cachedWorkspaceSearchCatalog(),
-      query,
-      scope,
-      limit,
-      startedAt,
+    const catalog = await this.cachedWorkspaceSearchCatalog();
+    return finish(
+      this.rankedBodyCatalog(catalog, query, terms),
+      catalog.failures,
+      "crdt-fallback",
       this.workspaceSearchIndexWarning,
     );
   }
@@ -2566,7 +3060,7 @@ export class CoreRuntime {
       const handle = this.notes.get(noteId);
       if (!noteMetadata || noteMetadata.deletedAt || !handle) continue;
       if (handle.current.kind !== "note") continue;
-      const parentPath = noteAncestorPath(metadata, noteId);
+      const parentPath = noteAncestorPath(metadata, noteMetadata);
       const cached = this.workspaceSearchProjectionCache.get(noteId);
       if (
         cached?.sourceRevision === handle.revision &&
@@ -2628,33 +3122,6 @@ export class CoreRuntime {
     return promise;
   }
 
-  private mergeWorkspaceSearchResults(
-    indexed: readonly WorkspaceSearchResult[],
-    dirty: readonly WorkspaceSearchResult[],
-    limit: number,
-  ): WorkspaceSearchResult[] {
-    const inputOrder = new Map<string, number>();
-    const unique = new Map<string, WorkspaceSearchResult>();
-    for (const result of [...indexed, ...dirty]) {
-      if (unique.has(result.resultId)) continue;
-      inputOrder.set(result.resultId, inputOrder.size);
-      unique.set(result.resultId, result);
-    }
-    return [...unique.values()]
-      .sort((left, right) => {
-        const updated = right.updatedAt.localeCompare(left.updatedAt);
-        if (updated !== 0) return updated;
-        const document = left.noteId.localeCompare(right.noteId);
-        if (document !== 0) return document;
-        return (
-          (left.logicalLineNumber ?? 0) - (right.logicalLineNumber ?? 0) ||
-          (inputOrder.get(left.resultId) ?? 0) -
-            (inputOrder.get(right.resultId) ?? 0)
-        );
-      })
-      .slice(0, limit);
-  }
-
   async navigateWorkspaceSearchResult(
     windowId: string,
     current: StableEditorPosition | null,
@@ -2673,6 +3140,45 @@ export class CoreRuntime {
     if (!this.isLiveNote(result.noteId)) {
       return { handled: false, detail: "jump:search:missing-note" };
     }
+    if (!result.blockId && result.sectionId === result.noteId) {
+      if (current) {
+        const opened = await this.navigateNoteOpen(
+          windowId,
+          current,
+          result.noteId,
+          "jump:search:changed",
+        );
+        return {
+          handled: opened.handled,
+          detail: opened.handled ? "jump:search:changed" : opened.detail,
+        };
+      }
+      try {
+        const remembered =
+          this.requireApplicationWindowState().windows[windowId].noteViews[
+            result.noteId
+          ];
+        if (
+          !remembered?.stableCaret &&
+          !remembered?.selection &&
+          !remembered?.focusedSectionId &&
+          !remembered?.scrollTop
+        ) {
+          return this.openNavigationDestination(
+            windowId,
+            { kind: "document-start", noteId: result.noteId },
+            "jump:search:changed",
+          );
+        }
+        await this.openNote(windowId, result.noteId);
+        return { handled: true, detail: "jump:search:changed" };
+      } catch (error) {
+        return {
+          handled: false,
+          detail: `jump:open:error:${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
     const destination: EditorNavigationDestination = result.blockId
       ? {
           kind: "search-match",
@@ -2682,12 +3188,31 @@ export class CoreRuntime {
           sectionLineNumber: result.sectionLineNumber ?? 1,
           offset: result.matchOffset,
           query: result.query,
+          alignment: result.kind === "body" ? "center" : undefined,
         }
       : {
           kind: "section-start",
           noteId: result.noteId,
           sectionId: result.sectionId,
         };
+    if (result.kind === "body") {
+      const detail = "jump:search:changed";
+      if (
+        windowState.noteId === result.noteId &&
+        !windowState.focusedSectionId
+      ) {
+        if (current) this.jumpListFor(windowId).recordOrigin(current);
+        return { handled: true, detail, destination };
+      }
+      return this.openNavigationDestination(
+        windowId,
+        destination,
+        detail,
+        current
+          ? () => this.jumpListFor(windowId).recordOrigin(current)
+          : undefined,
+      );
+    }
     return this.focusNavigationSection(
       windowId,
       result.noteId,
@@ -2780,6 +3305,7 @@ export class CoreRuntime {
     windowId: string,
     current: StableEditorPosition,
     noteId: string,
+    detail = "jump:note-open:changed",
   ): Promise<EditorNavigationResult> {
     const windowState = this.windows.get(windowId);
     if (!windowState) throw new Error(`Unknown window: ${windowId}`);
@@ -2797,14 +3323,30 @@ export class CoreRuntime {
     ) {
       return { handled: true, detail: "jump:note-open:unchanged" };
     }
-    const jumpList = this.jumpListFor(windowId);
-    return this.openNavigationDestination(
-      windowId,
-      { kind: "document-start", noteId },
-      "jump:note-open:changed",
-      () => jumpList.recordOrigin(current),
-      undefined,
-    );
+    const remembered = applicationWindow.windows[windowId].noteViews[noteId];
+    if (
+      !remembered?.stableCaret &&
+      !remembered?.selection &&
+      !remembered?.focusedSectionId &&
+      !remembered?.scrollTop
+    ) {
+      return this.openNavigationDestination(
+        windowId,
+        { kind: "document-start", noteId },
+        detail,
+        () => this.jumpListFor(windowId).recordOrigin(current),
+      );
+    }
+    try {
+      await this.openNote(windowId, noteId);
+      this.jumpListFor(windowId).recordOrigin(current);
+      return { handled: true, detail };
+    } catch (error) {
+      return {
+        handled: false,
+        detail: `jump:open:error:${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   repeatStoreFor(windowId: string): VimRepeatStore {
@@ -2873,8 +3415,18 @@ export class CoreRuntime {
       repeatStore: this.repeatStoreFor(windowId),
       visualSelectionStore: this.visualSelectionStoreFor(windowId),
       getWindowState: () => this.requireContentWindowState(windowId),
-      onSelectionUpdate: (editor, activeSectionId) => {
+      onSelectionUpdate: (editor, activeSectionId, caretViewportTop) => {
         const selection = editor.state.selection;
+        let stableCaret: WindowLocalViewState["stableCaret"] = null;
+        const current = handle.current;
+        if (current.kind === "note") {
+          try {
+            const saved = saveStableEditorPosition(current, editor.view);
+            stableCaret = { ...saved, relative: [...saved.relative] };
+          } catch {
+            // Keep the raw selection when the Editor is between bindings.
+          }
+        }
         this.persistWindowUpdate(
           windowId,
           {
@@ -2888,6 +3440,8 @@ export class CoreRuntime {
                   ? selection.$headCell.pos
                   : selection.head,
             },
+            stableCaret,
+            caretViewportTop,
           },
           attachedNoteId,
           activeSectionId,
@@ -2895,8 +3449,12 @@ export class CoreRuntime {
       },
       onModeChange: (mode) =>
         this.persistWindowUpdate(windowId, { mode }, attachedNoteId),
-      onScrollUpdate: (scrollTop) =>
-        this.persistWindowUpdate(windowId, { scrollTop }, attachedNoteId),
+      onScrollUpdate: (scrollTop, caretViewportTop) =>
+        this.persistWindowUpdate(
+          windowId,
+          { scrollTop, caretViewportTop },
+          attachedNoteId,
+        ),
       onVimSnapshot: options.onVimSnapshot,
       onCaretSectionChange: options.onCaretSectionChange,
       onCaretExternalLinkChange: options.onCaretExternalLinkChange,
@@ -2944,6 +3502,8 @@ export class CoreRuntime {
           }),
       onNoteSearchRepeat: (origin, direction, count) =>
         this.repeatNoteSearch(windowId, origin, direction, count),
+      onNoteWordSearch: (origin, direction, count) =>
+        this.searchNoteWord(windowId, origin, direction, count),
       onCommandLine: options.onCommandLine,
       onCommandPicker: options.onCommandPicker,
       onApplicationCommand: options.onApplicationCommand,
@@ -3118,6 +3678,7 @@ export class CoreRuntime {
     });
     this.applyPendingNavigation(windowId, adapter);
     this.agentEditors.set(adapter, attachedNoteId);
+    this.windowEditorAdapters.set(windowId, adapter);
     return adapter;
   }
 
@@ -3222,6 +3783,7 @@ export class CoreRuntime {
     }
     this.pendingWindowViewUpdates.clear();
     this.inFlightWindowViewUpdates.clear();
+    this.windowEditorAdapters.clear();
     if (this.workspaceSearchIndexDocumentTimer !== null) {
       globalThis.clearTimeout(this.workspaceSearchIndexDocumentTimer);
       this.workspaceSearchIndexDocumentTimer = null;
@@ -3259,6 +3821,11 @@ export class CoreRuntime {
     );
     const liveNoteIds = new Set(metadata.map(({ noteId }) => noteId));
     const persistedStates = await this.persistence.loadLocalStates();
+    this.searchRankingState = readSearchRankingState(
+      persistedStates.find(
+        ({ windowId }) => windowId === this.searchRankingLocalStateId(),
+      )?.state,
+    );
     const restored = this.restoreApplicationWindowState(
       persistedStates,
       liveNoteIds,
@@ -3283,6 +3850,80 @@ export class CoreRuntime {
     );
     await this.primeInternalLinkCandidates();
     this.queueWorkspaceSearchIndexStartupValidation();
+  }
+
+  private searchRankingLocalStateId(): string {
+    return `search-ranking:${this.workspaceDocument.workspaceId}`;
+  }
+
+  private searchRankingContext(windowId: string): SearchRankingContext {
+    const state = this.requireApplicationWindowState();
+    const metadata = listNoteMetadata(this.workspaceDocument).filter(
+      ({ deletedAt }) => !deletedAt,
+    );
+    const paths = new Map(
+      metadata.map((note) => [
+        note.noteId,
+        `${noteAncestorPath(metadata, note)}/${noteDisplayTitle(note.title)}`,
+      ]),
+    );
+    const openNoteIds = new Set<string>();
+    for (const window of Object.values(state.windows)) {
+      const buffer = window.bufferId ? state.buffers[window.bufferId] : null;
+      if (buffer?.kind === "note") openNoteIds.add(buffer.noteId);
+    }
+    const window = state.windows[windowId];
+    const buffer = window?.bufferId ? state.buffers[window.bufferId] : null;
+    return {
+      state: this.searchRankingState,
+      now: this.clock(),
+      activeNoteId: buffer?.kind === "note" ? buffer.noteId : null,
+      openNoteIds,
+      paths,
+    };
+  }
+
+  captureWorkspaceSearchRankingContext(windowId: string): SearchRankingContext {
+    return this.searchRankingContext(windowId);
+  }
+
+  private searchOpenStatus(
+    noteId: string,
+    context: SearchRankingContext,
+  ): WorkspaceSearchResult["openStatus"] {
+    if (context.activeNoteId === noteId) return "current";
+    return context.openNoteIds.has(noteId) ? "other" : undefined;
+  }
+
+  async learnWorkspaceSearchSelection(
+    windowId: string,
+    selected: WorkspaceSearchResult,
+    skipped: readonly WorkspaceSearchResult[],
+    rankingContext = this.searchRankingContext(windowId),
+  ): Promise<void> {
+    const asRanked = (
+      result: WorkspaceSearchResult,
+    ): RankedWorkspaceResult => ({
+      result,
+      match: result.matchScore ?? 0,
+      pathMatch: result.pathMatchScore ?? 0,
+    });
+    const next = learnSearchRankingSelection(
+      this.searchRankingState,
+      asRanked(selected),
+      skipped.map(asRanked),
+      rankingContext,
+    );
+    if (next === this.searchRankingState) return;
+    this.localStateQueue = this.localStateQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await this.transactions.persistLocalStates(this.idFactory(), [
+          { windowId: this.searchRankingLocalStateId(), state: { ...next } },
+        ]);
+        this.searchRankingState = next;
+      });
+    await this.localStateQueue;
   }
 
   private restoreApplicationWindowState(
@@ -3435,10 +4076,14 @@ export class CoreRuntime {
         ? [entry.target.id]
         : [],
     );
-    let next = structuredClone(this.requireApplicationWindowState());
     const removedNotes = new Set(
       request.kind === "trash" ? plan.affectedNoteIds : [],
     );
+    if (removedNotes.size)
+      for (const state of this.windows.values())
+        if (state.noteId && removedNotes.has(state.noteId))
+          await this.captureWindowViewBeforeNoteChange(state.windowId);
+    let next = structuredClone(this.requireApplicationWindowState());
     const fallbackNoteId = plan.entries.find(
       (entry) => entry.entryId === plan.fallbackEntryId,
     )?.target?.id;
@@ -4856,6 +5501,8 @@ export class CoreRuntime {
       ) {
         throw new Error(`Unknown Section: ${targetId}`);
       }
+      if (this.windows.get(windowId)?.noteId !== noteId)
+        await this.captureWindowViewBeforeNoteChange(windowId);
       return this.commitApplicationWindowMutation(
         envelope.operationId,
         fault,
@@ -4904,7 +5551,14 @@ export class CoreRuntime {
             targetId === noteId ? null : targetId;
           next.windows[windowId].view.selection =
             selection ?? (preserveView ? window.view.selection : null);
-          if (!preserveView) next.windows[windowId].view.scrollTop = 0;
+          if (!preserveView) next.windows[windowId].view.stableCaret = null;
+          if (!preserveView) {
+            next.windows[windowId].view.scrollTop = 0;
+            next.windows[windowId].view.caretViewportTop = null;
+          }
+          next.windows[windowId].noteViews[noteId] = rememberedNoteView(
+            next.windows[windowId].view,
+          );
           return {
             state: next,
             changed: true,
@@ -4933,14 +5587,29 @@ export class CoreRuntime {
         validateApplicationWindowState(planned.state);
         result = planned.result;
         if (!planned.changed) return;
+        const nextRanking = this.rankingAfterWindowChanges(
+          previous,
+          planned.state,
+        );
         this.setSaving();
         try {
           await this.transactions.persistLocalStates(
             operationId,
-            [toApplicationLocalStateCommit(planned.state)],
+            [
+              toApplicationLocalStateCommit(planned.state),
+              ...(nextRanking === this.searchRankingState
+                ? []
+                : [
+                    {
+                      windowId: this.searchRankingLocalStateId(),
+                      state: { ...nextRanking },
+                    },
+                  ]),
+            ],
             fault,
           );
           this.applicationWindowState = planned.state;
+          this.searchRankingState = nextRanking;
           this.cleanupClosedWindows(previous, planned.state);
           this.syncActiveNoteFromApplicationWindow();
           this.setReady();
@@ -4956,6 +5625,29 @@ export class CoreRuntime {
     return result;
   }
 
+  private rankingAfterWindowChanges(
+    previous: ApplicationWindowState | null,
+    next: ApplicationWindowState,
+  ): SearchRankingState {
+    let ranking = this.searchRankingState;
+    for (const [windowId, window] of Object.entries(next.windows)) {
+      const oldWindow = previous?.windows[windowId];
+      if (oldWindow?.bufferId === window.bufferId) continue;
+      const buffer = window.bufferId ? next.buffers[window.bufferId] : null;
+      if (buffer?.kind !== "note") continue;
+      const oldBuffer = oldWindow?.bufferId
+        ? previous?.buffers[oldWindow.bufferId]
+        : null;
+      ranking = recordSearchRankingOpen(
+        ranking,
+        buffer.noteId,
+        oldBuffer?.kind === "note" ? oldBuffer.noteId : null,
+        this.clock(),
+      );
+    }
+    return ranking;
+  }
+
   private cleanupClosedWindows(
     previous: ApplicationWindowState,
     next: ApplicationWindowState,
@@ -4969,6 +5661,7 @@ export class CoreRuntime {
       this.jumpLists.delete(windowId);
       this.imageReturnOrigins.delete(windowId);
       this.pendingNavigations.delete(windowId);
+      this.windowEditorAdapters.delete(windowId);
       this.optimisticSectionFocuses.delete(windowId);
       this.repeatStores.delete(windowId);
       this.visualSelectionStores.delete(windowId);
@@ -4981,8 +5674,8 @@ export class CoreRuntime {
   ): Promise<{ noteId: string; windowId: string }> {
     const { noteId, windowId, fault } = envelope.payload;
     this.requireLiveMetadata(noteId);
-    await this.ensureNoteLoaded(noteId);
-    await this.localStateQueue.catch(() => undefined);
+    const handle = await this.ensureNoteLoaded(noteId);
+    await this.captureWindowViewBeforeNoteChange(windowId);
     const current = this.requireApplicationWindowState();
     if (!current.windows[windowId]) {
       throw new Error(`Unknown window: ${windowId}`);
@@ -4995,20 +5688,83 @@ export class CoreRuntime {
         mode: "normal",
       },
     );
+    const targetView = next.windows[windowId].view;
+    const explicit = this.pendingNavigations.get(windowId);
+    if (explicit?.destination.noteId === noteId && !explicit.restoreView) {
+      targetView.focusedSectionId = null;
+      targetView.selection = null;
+      targetView.stableCaret = null;
+      targetView.scrollTop = 0;
+      targetView.caretViewportTop = null;
+      next.windows[windowId].noteViews[noteId] = rememberedNoteView(targetView);
+    }
+    if (
+      targetView.focusedSectionId &&
+      (handle.current.kind !== "note" ||
+        !findSectionById(
+          handle.current.rootSection,
+          targetView.focusedSectionId,
+        ))
+    ) {
+      targetView.focusedSectionId = null;
+      targetView.selection = null;
+      targetView.scrollTop = 0;
+      targetView.caretViewportTop = null;
+      next.windows[windowId].noteViews[noteId] = rememberedNoteView(targetView);
+    }
+    const previousBufferId = current.windows[windowId].bufferId;
+    const noteChanged = previousBufferId !== createNoteBuffer(noteId).id;
+    const previousBuffer = previousBufferId
+      ? current.buffers[previousBufferId]
+      : null;
+    const previousNoteId =
+      previousBuffer?.kind === "note" ? previousBuffer.noteId : null;
     this.localStateQueue = this.localStateQueue
       .catch(() => undefined)
       .then(async () => {
         this.setSaving();
         try {
+          const nextRanking = noteChanged
+            ? recordSearchRankingOpen(
+                this.searchRankingState,
+                noteId,
+                previousNoteId,
+                this.clock(),
+              )
+            : this.searchRankingState;
           await this.transactions.persistLocalStates(
             envelope.operationId,
-            [toApplicationLocalStateCommit(next)],
+            [
+              toApplicationLocalStateCommit(next),
+              ...(noteChanged
+                ? [
+                    {
+                      windowId: this.searchRankingLocalStateId(),
+                      state: { ...nextRanking },
+                    },
+                  ]
+                : []),
+            ],
             fault,
           );
           this.applicationWindowState = next;
+          this.searchRankingState = nextRanking;
           const pending = this.pendingNavigations.get(windowId);
           if (pending && pending.destination.noteId !== noteId) {
             this.pendingNavigations.delete(windowId);
+          }
+          if (noteChanged && !this.pendingNavigations.has(windowId)) {
+            const saved = next.windows[windowId].view.stableCaret;
+            if (saved?.noteId === noteId)
+              this.pendingNavigations.set(windowId, {
+                destination: {
+                  kind: "stable",
+                  noteId,
+                  saved: { ...saved, relative: new Uint8Array(saved.relative) },
+                },
+                detail: "jump:note-open:restored",
+                restoreView: true,
+              });
           }
           this.syncActiveNoteFromApplicationWindow();
           this.setReady();
@@ -5025,7 +5781,9 @@ export class CoreRuntime {
     envelope: CoreCommandEnvelope<"note.open_help">,
   ): Promise<CoreCommandResults["note.open_help"]> {
     const { windowId, newNoteId, synchronizedAt, fault } = envelope.payload;
-    await this.localStateQueue.catch(() => undefined);
+    if (envelope.payload.activate !== false)
+      await this.captureWindowViewBeforeNoteChange(windowId);
+    else await this.localStateQueue.catch(() => undefined);
     const currentApplicationState = this.requireApplicationWindowState();
     if (!currentApplicationState.windows[windowId]) {
       throw new Error(`Unknown window: ${windowId}`);
@@ -5314,6 +6072,8 @@ export class CoreRuntime {
       windowId,
       fault,
     } = input;
+    if (windowId && this.applicationWindowState)
+      await this.captureWindowViewBeforeNoteChange(windowId);
     if (this.notes.has(noteId) || this.workspaceDocument.notes.has(noteId)) {
       throw new Error(`Duplicate note: ${noteId}`);
     }
@@ -5368,6 +6128,10 @@ export class CoreRuntime {
         this.applicationWindowState.windows[candidateWindowId]?.bufferId !==
           nextApplicationState.windows[candidateWindowId].bufferId,
     );
+    const nextRanking = this.rankingAfterWindowChanges(
+      this.applicationWindowState,
+      nextApplicationState,
+    );
     this.setSaving();
     try {
       await this.transactions.transact(
@@ -5375,7 +6139,17 @@ export class CoreRuntime {
           operationId,
           scope: "workspace-structure",
           documents: [this.workspace, note],
-          localStates: [toApplicationLocalStateCommit(nextApplicationState)],
+          localStates: [
+            toApplicationLocalStateCommit(nextApplicationState),
+            ...(nextRanking === this.searchRankingState
+              ? []
+              : [
+                  {
+                    windowId: this.searchRankingLocalStateId(),
+                    state: { ...nextRanking },
+                  },
+                ]),
+          ],
           fault,
         },
         () => {
@@ -5425,6 +6199,7 @@ export class CoreRuntime {
       );
       this.notes.set(noteId, note);
       this.applicationWindowState = nextApplicationState;
+      this.searchRankingState = nextRanking;
       this.syncActiveNoteFromApplicationWindow();
       for (const changedWindowId of changedWindowIds) {
         this.pendingNavigations.delete(changedWindowId);
@@ -5540,51 +6315,44 @@ export class CoreRuntime {
       }));
   }
 
-  private workspaceSearchFallback(
-    catalog: WorkspaceSearchCatalog,
-    query: string,
-    scope: WorkspaceSearchScope,
-    limit: number,
-    startedAt: number,
-    warning: string | null,
-  ): WorkspaceSearchResponse {
-    return {
-      scope,
-      results: filterWorkspaceSearchCatalog(catalog, query, scope, limit),
-      failures: catalog.failures,
-      backend: "crdt-fallback",
-      elapsedMs: performance.now() - startedAt,
-      warning,
-    };
-  }
-
   private workspaceMetadataSearchCatalog(
-    target: Exclude<WorkspaceSearchTarget, "workspace">,
+    target: WorkspaceSearchTarget,
   ): WorkspaceSearchCatalog {
     const notes = listNoteMetadata(this.workspaceDocument);
     const candidates =
-      target === "buffers"
-        ? (() => {
-            const bufferedNoteIds = new Set(
-              Object.values(this.requireApplicationWindowState().buffers)
-                .filter((buffer) => buffer.kind === "note")
-                .map((buffer) => buffer.noteId),
-            );
-            return notes
-              .filter(
-                ({ noteId, deletedAt }) =>
-                  !deletedAt && bufferedNoteIds.has(noteId),
-              )
-              .map((note) => ({
-                noteId: note.noteId,
-                sectionId: note.noteId,
-                title: noteDisplayTitle(note.title),
-                parentPath: noteAncestorPath(notes, note.noteId),
-                shortId: note.noteId.slice(-8),
-                updatedAt: note.updatedAt,
-              }));
-          })()
-        : deriveTrashSearchCandidates(notes);
+      target === "workspace"
+        ? notes
+            .filter(({ deletedAt }) => !deletedAt)
+            .map((note) => ({
+              noteId: note.noteId,
+              sectionId: note.noteId,
+              title: noteDisplayTitle(note.title),
+              parentPath: noteAncestorPath(notes, note),
+              shortId: note.noteId.slice(-8),
+              updatedAt: note.updatedAt,
+            }))
+        : target === "buffers"
+          ? (() => {
+              const bufferedNoteIds = new Set(
+                Object.values(this.requireApplicationWindowState().buffers)
+                  .filter((buffer) => buffer.kind === "note")
+                  .map((buffer) => buffer.noteId),
+              );
+              return notes
+                .filter(
+                  ({ noteId, deletedAt }) =>
+                    !deletedAt && bufferedNoteIds.has(noteId),
+                )
+                .map((note) => ({
+                  noteId: note.noteId,
+                  sectionId: note.noteId,
+                  title: noteDisplayTitle(note.title),
+                  parentPath: noteAncestorPath(notes, note),
+                  shortId: note.noteId.slice(-8),
+                  updatedAt: note.updatedAt,
+                }));
+            })()
+          : deriveTrashSearchCandidates(notes);
     return {
       documents: candidates.map((candidate) => ({
         noteId: candidate.noteId,
@@ -5865,10 +6633,7 @@ export class CoreRuntime {
         ...(await deriveWorkspaceSearchDocumentAsync(
           sourceDocument,
           metadata.title,
-          noteAncestorPath(
-            listNoteMetadata(this.workspaceDocument),
-            metadata.noteId,
-          ),
+          noteAncestorPath(listNoteMetadata(this.workspaceDocument), metadata),
           metadata.updatedAt,
           metadata.parentNoteId,
         )),
@@ -6280,7 +7045,9 @@ export class CoreRuntime {
     update: {
       mode?: WindowViewState["mode"];
       selection?: WindowViewState["selection"];
+      stableCaret?: WindowLocalViewState["stableCaret"];
       scrollTop?: number;
+      caretViewportTop?: number | null;
       collapsedSectionIds?: string[];
       collapsedCodeBlockIds?: string[];
       detailsFoldOverrides?: Record<string, boolean>;
@@ -6343,7 +7110,23 @@ export class CoreRuntime {
     });
   }
 
-  private flushPendingWindowViewUpdates(): void {
+  private async captureWindowViewBeforeNoteChange(
+    windowId: string,
+  ): Promise<void> {
+    const adapter = this.windowEditorAdapters.get(windowId);
+    const noteId = this.windows.get(windowId)?.noteId;
+    if (
+      adapter &&
+      !adapter.editor.isDestroyed &&
+      noteId &&
+      this.agentEditors.get(adapter) === noteId
+    )
+      adapter.captureWindowViewBeforeLayoutChange();
+    await this.flushPendingWindowViewUpdates();
+    await this.localStateQueue.catch(() => undefined);
+  }
+
+  private flushPendingWindowViewUpdates(): Promise<void> {
     if (this.windowViewUpdateFrame !== null) {
       cancelAnimationFrame(this.windowViewUpdateFrame);
       this.windowViewUpdateFrame = null;
@@ -6354,17 +7137,19 @@ export class CoreRuntime {
     }
     const updates = [...this.pendingWindowViewUpdates];
     this.pendingWindowViewUpdates.clear();
-    for (const [windowId, pending] of updates) {
-      this.persistWindowUpdateNow(windowId, pending);
-    }
+    return Promise.all(
+      updates.map(([windowId, pending]) =>
+        this.persistWindowUpdateNow(windowId, pending),
+      ),
+    ).then(() => undefined);
   }
 
   private persistWindowUpdateNow(
     windowId: string,
     pending: PendingWindowViewUpdate,
-  ): void {
+  ): Promise<void> {
     this.inFlightWindowViewUpdates.set(windowId, pending);
-    void this.executeCommand({
+    return this.executeCommand({
       name: "window.update_view",
       operationId: this.idFactory(),
       source: "editor",
@@ -6375,6 +7160,7 @@ export class CoreRuntime {
         activeSectionId: pending.activeSectionId,
       },
     })
+      .then(() => undefined)
       .catch((error: unknown) => this.reportError(error))
       .finally(() => {
         if (this.inFlightWindowViewUpdates.get(windowId) === pending) {

@@ -842,7 +842,9 @@ export function readNoteMetadata(
 ): NoteMetadata | undefined {
   const value = workspace.notes.get(noteId);
   if (!value) return undefined;
-  return projectNoteMetadata(noteId, value, metadataPlacementIndex(workspace));
+  const index = metadataPlacementIndex(workspace);
+  if (index.byNote.get(noteId)?.purgedAt) return undefined;
+  return projectNoteMetadata(noteId, value, index);
 }
 
 function metadataPlacementIndex(workspace: WorkspaceDocument) {
@@ -924,6 +926,7 @@ function projectNoteMetadata(
 export function listNoteMetadata(workspace: WorkspaceDocument): NoteMetadata[] {
   const index = metadataPlacementIndex(workspace);
   return [...workspace.notes.entries()]
+    .filter(([noteId]) => !index.byNote.get(noteId)?.purgedAt)
     .map(([noteId, value]) => projectNoteMetadata(noteId, value, index))
     .sort(
       (left, right) =>
@@ -2273,7 +2276,8 @@ function workspaceDocumentFromYDoc(
   const schemaVersion = root.get("schema_version");
   if (
     schemaVersion !== WORKSPACE_DOC_SCHEMA_VERSION &&
-    schemaVersion !== REPLICATED_WORKSPACE_SCHEMA_VERSION
+    schemaVersion !== REPLICATED_WORKSPACE_SCHEMA_VERSION &&
+    schemaVersion !== 4
   ) {
     throw new Error("Unsupported WorkspaceMetadataDoc schema_version");
   }

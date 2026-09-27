@@ -327,7 +327,7 @@ pub fn capture(workspace: &Path, restic: &Restic) -> Result<(PathBuf, Descriptor
 pub fn validate_descriptor(descriptor: &Descriptor) -> Result<(), ReadError> {
     if descriptor.backup_format_version != FORMAT_VERSION
         || !matches!(descriptor.database_schema, 5..=7)
-        || !matches!(descriptor.workspace_schema, 3 | 4)
+        || !matches!(descriptor.workspace_schema, 3 | 4 | 5)
         || !matches!(descriptor.note_schema, 3..=7)
     {
         return Err(ReadError::new(

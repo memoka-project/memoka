@@ -1022,6 +1022,7 @@ fn supported_document_schema(kind: &str, schema_version: i64) -> bool {
             schema_version == LEGACY_NOTE_DOCUMENT_SCHEMA_VERSION
                 || schema_version == 3
                 || schema_version == 4
+                || schema_version == crate::replicated_namespace::SCHEMA_VERSION
                 || schema_version == 5
                 || schema_version == NOTE_DOCUMENT_SCHEMA_VERSION
                 || schema_version == crate::replicated_note::SCHEMA_VERSION

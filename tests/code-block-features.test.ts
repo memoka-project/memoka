@@ -193,7 +193,7 @@ describe("Code Block presentation and actions", () => {
     }
   });
 
-  it("offers every built-in language and routes ,a to Code actions", async () => {
+  it("offers every built-in language and routes Space a to Code actions", async () => {
     expect(CODE_LANGUAGE_CATALOG.length).toBeGreaterThan(190);
     expect(filterCodeLanguageCatalog("abnf")).toMatchObject([{ id: "abnf" }]);
     expect(filterCodeLanguageCatalog("toml")).toMatchObject([
@@ -221,7 +221,7 @@ describe("Code Block presentation and actions", () => {
       editor.commands.setTextSelection(textPosition(editor, "answer"));
       editor.commands.focus();
       press(editor, "Escape");
-      press(editor, ",");
+      press(editor, " ");
       press(editor, "a");
       const opened = request as unknown as CodeActionPickerRequest | null;
       expect(opened?.selection).toMatchObject({ blockId, language: null });

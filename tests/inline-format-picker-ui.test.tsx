@@ -17,6 +17,7 @@ describe("Memoka Inline Format picker", () => {
           windowId: "window-1",
           selectedText: "sample",
           existingHref: null,
+          hasFormatting: false,
           apply,
           restoreFocus,
         }}
@@ -47,6 +48,7 @@ describe("Memoka Inline Format picker", () => {
           windowId: "window-1",
           selectedText: "重要",
           existingHref: null,
+          hasFormatting: false,
           apply,
           restoreFocus: vi.fn(),
         }}
@@ -77,6 +79,7 @@ describe("Memoka Inline Format picker", () => {
           windowId: "window-1",
           selectedText: "website",
           existingHref: null,
+          hasFormatting: false,
           apply,
           restoreFocus: vi.fn(),
         }}
@@ -110,6 +113,7 @@ describe("Memoka Inline Format picker", () => {
           windowId: "window-1",
           selectedText: "website",
           existingHref: null,
+          hasFormatting: false,
           apply,
           restoreFocus,
         }}

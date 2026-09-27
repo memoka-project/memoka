@@ -303,7 +303,11 @@ fn restore_documents(
             crate::replicated_namespace::migrate(document, &replica)
         }
         .map_err(legacy_error)?;
-        document.schema_version = if document.kind == "note" { 7 } else { 4 };
+        document.schema_version = if document.kind == "note" {
+            7
+        } else {
+            crate::replicated_namespace::SCHEMA_VERSION
+        };
     }
     let transaction = store.connection.transaction()?;
     for document in documents {

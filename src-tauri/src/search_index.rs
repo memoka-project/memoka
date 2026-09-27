@@ -114,6 +114,10 @@ pub struct SearchIndexQueryRequest {
     limit: i64,
     #[serde(default)]
     excluded_note_ids: Vec<String>,
+    #[serde(default)]
+    migemo_patterns: Vec<Option<String>>,
+    #[serde(default)]
+    note_scores: HashMap<String, f64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -442,6 +446,7 @@ pub fn query(
     }
 
     let mut hits = match request.strategy.as_str() {
+        "ranked-body" if request.scope == "body" => query_ranked_body(connection, request)?,
         "all-titles" if request.scope == "title" && request.normalized_terms.is_empty() => {
             query_all_titles(connection, request)?
         }
@@ -1342,6 +1347,137 @@ fn query_recent_body_prefix(
     read_hits(&mut statement, params_from_iter(parameters.iter()))
 }
 
+fn query_ranked_body(
+    connection: &Connection,
+    request: &SearchIndexQueryRequest,
+) -> Result<Vec<SearchIndexHit>, PersistenceError> {
+    if request.normalized_terms.is_empty()
+        || (!request.migemo_patterns.is_empty()
+            && request.migemo_patterns.len() != request.normalized_terms.len())
+    {
+        return Err(PersistenceError::InvalidInput(
+            "invalid ranked body query terms".to_owned(),
+        ));
+    }
+    let patterns = request
+        .migemo_patterns
+        .iter()
+        .map(|pattern| {
+            pattern
+                .as_ref()
+                .map(|value| {
+                    regex::RegexBuilder::new(&value.replace("\\-", "-"))
+                        .case_insensitive(true)
+                        .build()
+                        .map_err(|error| {
+                            PersistenceError::InvalidInput(format!(
+                                "invalid Migemo pattern: {error}"
+                            ))
+                        })
+                })
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let japanese_script = regex::Regex::new(r"[\p{Han}\p{Hiragana}\p{Katakana}]")
+        .expect("valid Japanese script regex");
+    let exclusion = excluded_note_predicate(request, "b", 2);
+    // A literal term can seed the ranked scan through the trigram index.
+    // Migemo terms still need the full row scan because their Japanese
+    // alternatives are not represented by the romaji FTS token.
+    let literal_seed = request
+        .normalized_terms
+        .iter()
+        .enumerate()
+        .find_map(|(index, term)| {
+            (term.chars().count() >= 3
+                && request
+                    .migemo_patterns
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .is_none())
+            .then_some(term)
+        });
+    let seed_parameter = request.excluded_note_ids.len() + 2;
+    let seed_filter = if literal_seed.is_some() {
+        format!(
+            " AND b.row_id IN (SELECT rowid FROM workspace_search_body_trigram
+             WHERE workspace_search_body_trigram MATCH ?{seed_parameter})"
+        )
+    } else {
+        String::new()
+    };
+    let sql = format!(
+        "SELECT {BODY_HIT_COLUMNS}, b.normalized_text
+         FROM workspace_search_body_rows AS b
+         JOIN workspace_search_documents AS d
+           ON d.workspace_id = b.workspace_id AND d.note_id = b.note_id
+         JOIN workspace_search_sections AS s
+           ON s.workspace_id = b.workspace_id AND s.section_id = b.section_id
+         WHERE b.workspace_id = ?1 {exclusion}{seed_filter}"
+    );
+    let mut parameters = vec![Value::Text(request.workspace_id.clone())];
+    parameters.extend(request.excluded_note_ids.iter().cloned().map(Value::Text));
+    if let Some(seed) = literal_seed {
+        parameters.push(Value::Text(format!("\"{}\"", seed.replace('"', "\"\""))));
+    }
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query(params_from_iter(parameters.iter()))?;
+    let mut best: Vec<(f64, SearchIndexHit)> = Vec::new();
+    while let Some(row) = rows.next()? {
+        let normalized: String = row.get(13)?;
+        let hit = read_hit_row(row)?;
+        let mut relevance = 0.0;
+        let mut matched = true;
+        for (index, term) in request.normalized_terms.iter().enumerate() {
+            if normalized.contains(term) {
+                relevance += 1.0;
+            } else if patterns
+                .get(index)
+                .and_then(Option::as_ref)
+                .is_some_and(|pattern| {
+                    pattern
+                        .find_iter(&hit.text)
+                        .any(|matched| japanese_script.is_match(matched.as_str()))
+                })
+            {
+                relevance += 0.9;
+            } else {
+                matched = false;
+                break;
+            }
+        }
+        if !matched {
+            continue;
+        }
+        let score = relevance * 6.0 / request.normalized_terms.len() as f64
+            + request
+                .note_scores
+                .get(&hit.note_id)
+                .copied()
+                .unwrap_or(0.0);
+        best.push((score, hit));
+        if best.len() >= 128 {
+            best.sort_by(ranked_body_compare);
+            best.truncate(request.limit as usize);
+        }
+    }
+    best.sort_by(ranked_body_compare);
+    best.truncate(request.limit as usize);
+    Ok(best.into_iter().map(|(_, hit)| hit).collect())
+}
+
+fn ranked_body_compare(
+    left: &(f64, SearchIndexHit),
+    right: &(f64, SearchIndexHit),
+) -> std::cmp::Ordering {
+    right
+        .0
+        .total_cmp(&left.0)
+        .then_with(|| right.1.updated_at.cmp(&left.1.updated_at))
+        .then_with(|| left.1.note_id.cmp(&right.1.note_id))
+        .then_with(|| left.1.logical_line_number.cmp(&right.1.logical_line_number))
+}
+
 fn query_scan(
     connection: &Connection,
     request: &SearchIndexQueryRequest,
@@ -1479,25 +1615,27 @@ fn read_hits<P: Params>(
     parameters: P,
 ) -> Result<Vec<SearchIndexHit>, PersistenceError> {
     statement
-        .query_map(parameters, |row| {
-            Ok(SearchIndexHit {
-                result_id: row.get(0)?,
-                note_id: row.get(1)?,
-                section_id: row.get(2)?,
-                title: row.get(3)?,
-                parent_path: row.get(4)?,
-                updated_at: row.get(5)?,
-                kind: row.get(6)?,
-                text: row.get(7)?,
-                block_id: row.get(8)?,
-                logical_line_number: row.get(9)?,
-                section_line_number: row.get(10)?,
-                line_index: row.get(11)?,
-                source_offset: row.get(12)?,
-            })
-        })?
+        .query_map(parameters, read_hit_row)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+fn read_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchIndexHit> {
+    Ok(SearchIndexHit {
+        result_id: row.get(0)?,
+        note_id: row.get(1)?,
+        section_id: row.get(2)?,
+        title: row.get(3)?,
+        parent_path: row.get(4)?,
+        updated_at: row.get(5)?,
+        kind: row.get(6)?,
+        text: row.get(7)?,
+        block_id: row.get(8)?,
+        logical_line_number: row.get(9)?,
+        section_line_number: row.get(10)?,
+        line_index: row.get(11)?,
+        source_offset: row.get(12)?,
+    })
 }
 
 fn drop_derived_tables_impl(connection: &Connection) -> Result<(), PersistenceError> {
@@ -1696,6 +1834,8 @@ mod tests {
                 match_expression: "\"新親\"".to_owned(),
                 limit: 20,
                 excluded_note_ids: Vec::new(),
+                migemo_patterns: Vec::new(),
+                note_scores: HashMap::new(),
             },
         )
         .unwrap();
@@ -1905,6 +2045,8 @@ mod tests {
                 .join(" AND "),
             limit: 20,
             excluded_note_ids: Vec::new(),
+            migemo_patterns: Vec::new(),
+            note_scores: HashMap::new(),
         }
     }
 
@@ -2574,6 +2716,65 @@ mod tests {
             })
             .unwrap();
         assert_eq!(state_count, 0);
+    }
+
+    #[test]
+    fn ranks_migemo_body_hits_before_applying_the_result_limit() {
+        let mut connection = connection_with_sources(2);
+        let mut older = document("note-0", "Older", "/", "本文に検索があります", 1);
+        older.updated_at = "2026-08-09T00:00:00.000Z".to_owned();
+        let newer = document("note-1", "Newer", "/", "kensaku is literal", 1);
+        rebuild(&mut connection, &rebuild_request(vec![older, newer])).unwrap();
+
+        let mut request = query_request("kensaku", "ranked-body", "body");
+        request.migemo_patterns = vec![Some("(kensaku|検索)".to_owned())];
+        request.note_scores.insert("note-0".to_owned(), 2.0);
+        request.limit = 1;
+        let response = query(&mut connection, &request).unwrap();
+        assert_eq!(response.status, "ready");
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].note_id, "note-0");
+        assert_eq!(response.hits[0].text, "本文に検索があります");
+    }
+
+    #[test]
+    fn ranked_body_uses_literal_fts_seed_with_real_migemo_pattern() {
+        let mut connection = connection_with_sources(2);
+        rebuild(
+            &mut connection,
+            &rebuild_request(vec![
+                document("note-0", "Mixed", "/", "literal 検索", 1),
+                document("note-1", "Japanese", "/", "検索", 1),
+            ]),
+        )
+        .unwrap();
+        let mut request = query_request("literal kensaku", "ranked-body", "body");
+        request.normalized_terms = vec!["literal".to_owned(), "kensaku".to_owned()];
+        request.migemo_patterns = vec![
+            None,
+            Some("(kensaku|けんさく|ケンサク|健[作策]|兼作|建策|憲作|検索|献策|県作|研削|羂索|腱索|謙作|賢作|ｋｅｎｓａｋｕ|ｹﾝｻｸ)".to_owned()),
+        ];
+        let response = query(&mut connection, &request).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].note_id, "note-0");
+    }
+
+    #[test]
+    fn ranked_body_ignores_partial_ascii_migemo_syllables() {
+        let mut connection = connection_with_sources(2);
+        rebuild(
+            &mut connection,
+            &rebuild_request(vec![
+                document("note-0", "English", "/", "alert", 1),
+                document("note-1", "Japanese", "/", "alert テスト", 1),
+            ]),
+        )
+        .unwrap();
+        let mut request = query_request("te", "ranked-body", "body");
+        request.migemo_patterns = vec![Some("(t|て|テ|ｔｅ)".to_owned())];
+        let response = query(&mut connection, &request).unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(response.hits[0].note_id, "note-1");
     }
 
     #[test]

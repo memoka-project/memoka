@@ -28,6 +28,10 @@ import {
   insertChildSection,
 } from "../app/src/core/section-model";
 import { CoreRuntime } from "../app/src/core/runtime";
+import { MemoryPersistencePort } from "../app/src/core/persistence";
+import { MemoryCommandHistoryPort } from "../app/src/platform/command-history";
+import type { TiptapEditorAdapter } from "../app/src/editor/tiptap-adapter";
+import { defaultVimBlockSemantics } from "../app/src/vim/block-semantics";
 import type { NoteSearchOrigin } from "../app/src/core/note-search";
 import { APPLICATION_THEME_DATA_ATTRIBUTE } from "../app/src/platform/application-theme";
 import {
@@ -742,7 +746,7 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(firstEditor));
 
     enterNormal(firstEditor);
-    fireEvent.keyDown(firstEditor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(firstEditor, { key: " ", code: "Space" });
     fireEvent.keyDown(firstEditor, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
@@ -1232,7 +1236,180 @@ describe("Memoka Application utilities", () => {
     view.unmount();
   });
 
-  it("opens Command Picker with Leader c and transfers the selected command", async () => {
+  it.each(["editor", "sidebar"] as const)(
+    "focuses the already open Note after selecting it with Leader-f from %s",
+    async (surface) => {
+      const view = render(<App />);
+      const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      if (surface === "editor") enterNormal(editor);
+      else tree.focus();
+      const source = surface === "editor" ? editor : tree;
+      fireEvent.keyDown(source, { key: " ", code: "Space" });
+      fireEvent.keyDown(source, { key: "f", code: "KeyF" });
+      const search = await screen.findByRole("combobox", {
+        name: "ワークスペースを検索",
+      });
+      await screen.findByRole("option");
+      expect(document.activeElement).toBe(search);
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("combobox", { name: "ワークスペースを検索" }),
+        ).toBeNull();
+        expect(document.activeElement).toBe(editor);
+      });
+      view.unmount();
+    },
+  );
+
+  it("opens a numeric Command history candidate at the logical line", async () => {
+    const port = new MemoryCommandHistoryPort();
+    await port.record("1");
+    const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+    const view = render(<App commandHistory={port} />);
+    await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        ".editor-window .memoka-editor",
+      );
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const adapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    if (!adapter) throw new Error("Editor adapter did not attach");
+    const lines = defaultVimBlockSemantics.logicalLines(adapter.editor.view);
+    adapter.editor.commands.setTextSelection(lines[1]!.cursorPositions[0]!);
+    enterNormal(editor);
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
+    fireEvent.keyDown(editor, { key: "c", code: "KeyC" });
+    const picker = await screen.findByRole("combobox", {
+      name: "Memoka Commandを検索",
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("option")
+          .some((option) => option.textContent?.includes(":1")),
+      ).toBe(true),
+    );
+    fireEvent.change(picker, { target: { value: "1" } });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("combobox", { name: "Memoka Commandを検索" }),
+      ).toBeNull();
+      expect(adapter.editor.state.selection.head).toBe(
+        lines[0]!.cursorPositions[0],
+      );
+      expect(document.activeElement).toBe(editor);
+    });
+    view.unmount();
+  });
+
+  it("restores a Help body caret after keyboard navigation through Tree", async () => {
+    class ReplicatedPersistence extends MemoryPersistencePort {
+      readonly replicaId = createUuidV7();
+      override async manifest() {
+        return {
+          ...(await super.manifest()),
+          databaseSchemaVersion: 7,
+          replicaId: this.replicaId,
+        };
+      }
+    }
+    const originalOpen = CoreRuntime.open.bind(CoreRuntime);
+    vi.spyOn(CoreRuntime, "open").mockImplementation((_port, options) =>
+      originalOpen(new ReplicatedPersistence(), options),
+    );
+    const openHelp = vi.spyOn(CoreRuntime.prototype, "openHelpNote");
+    const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+    const view = render(<App />);
+    const tree = await screen.findByRole("tree", { name: "ノートツリー" });
+    const editor = await waitFor(() => {
+      const mounted =
+        view.container.querySelector<HTMLElement>(".memoka-editor");
+      if (!mounted) throw new Error("Editor did not mount");
+      return mounted;
+    });
+    const command = openCommandLine(editor);
+    fireEvent.change(command, { target: { value: "help" } });
+    await act(async () => {
+      fireEvent.keyDown(command, { key: "Enter" });
+      await openHelp.mock.results[0]!.value;
+    });
+    const helpEditor = await waitFor(() => {
+      const mounted = view.container.querySelector<HTMLElement>(
+        '.memoka-editor[data-vim-mode="normal"]',
+      );
+      if (!mounted || mounted.dataset.noteId === editor.dataset.noteId)
+        throw new Error("Help editor did not mount");
+      return mounted;
+    });
+    await waitFor(() => expect(document.activeElement).toBe(helpEditor));
+    const helpAdapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    if (!helpAdapter) throw new Error("Help adapter did not attach");
+    let paragraphStart = -1;
+    helpAdapter.editor.state.doc.descendants((node, position) => {
+      if (
+        paragraphStart < 0 &&
+        node.isText &&
+        node.text?.includes("Memokaでは")
+      )
+        paragraphStart = position + node.text.indexOf("Memokaでは");
+    });
+    if (paragraphStart < 0) throw new Error("Help paragraph was not found");
+    helpAdapter.editor.commands.setTextSelection(paragraphStart);
+    const runtime = openHelp.mock.contexts[0] as CoreRuntime;
+    await waitFor(() =>
+      expect(
+        runtime.snapshot().applicationWindow.windows["window-1"].view.selection
+          ?.head,
+      ).toBe(paragraphStart),
+    );
+    await runtime.flush();
+    const before =
+      runtime.snapshot().applicationWindow.windows["window-1"].view;
+    expect(before.stableCaret?.blockId).not.toBe("");
+    fireEvent.keyDown(helpEditor, { key: "w", code: "KeyW", ctrlKey: true });
+    fireEvent.keyDown(helpEditor, { key: "h", code: "KeyH" });
+    await waitFor(() => expect(document.activeElement).toBe(tree));
+    fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
+    await waitFor(() =>
+      expect(view.container.querySelector(".window-title")?.textContent).toBe(
+        "新しいノート",
+      ),
+    );
+    tree.focus();
+    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
+    fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
+    await waitFor(() =>
+      expect(
+        view.container.querySelector(".window-title")?.textContent,
+      ).toContain("Memoka help"),
+    );
+    await runtime.flush();
+    expect(
+      runtime.snapshot().applicationWindow.windows["window-1"].view.selection
+        ?.head,
+    ).toBe(before.selection?.head);
+    const restoredAdapter = attachEditor.mock.results.at(-1)?.value as
+      TiptapEditorAdapter | undefined;
+    expect(restoredAdapter?.editor.state.selection.head).toBe(paragraphStart);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(restoredAdapter?.editor.state.selection.head).toBe(paragraphStart);
+    view.unmount();
+  });
+
+  it("executes a no-argument Command Picker selection directly", async () => {
     const view = render(<App />);
     await screen.findByRole("tree", { name: "ノートツリー" });
     const editor = await waitFor(() => {
@@ -1243,22 +1420,68 @@ describe("Memoka Application utilities", () => {
       return mounted;
     });
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "c", code: "KeyC" });
     const picker = await screen.findByRole("combobox", {
       name: "Memoka Commandを検索",
     });
     fireEvent.change(picker, { target: { value: "version" } });
     fireEvent.keyDown(picker, { key: "Enter", code: "Enter" });
-    const commandLine = await screen.findByRole("textbox", {
-      name: "Memoka Command",
-    });
-    expect((commandLine as HTMLInputElement).value).toBe("version");
-    expect(document.activeElement).toBe(commandLine);
-    fireEvent.keyDown(commandLine, { key: "Escape", code: "Escape" });
+    expect(
+      screen.queryByRole("textbox", { name: "Memoka Command" }),
+    ).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(editor));
     view.unmount();
   });
+
+  it.each(["editor", "sidebar"] as const)(
+    "moves from a numeric Command-line address to the Editor logical line from %s",
+    async (surface) => {
+      const attachEditor = vi.spyOn(CoreRuntime.prototype, "attachEditor");
+      const view = render(<App />);
+      await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      const adapter = attachEditor.mock.results.at(-1)?.value as
+        TiptapEditorAdapter | undefined;
+      if (!adapter) throw new Error("Editor adapter did not attach");
+      const lines = defaultVimBlockSemantics.logicalLines(adapter.editor.view);
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+      adapter.editor.commands.setTextSelection(lines[1]!.cursorPositions[0]!);
+      let command: HTMLInputElement;
+      if (surface === "editor") {
+        command = openCommandLine(editor);
+      } else {
+        const tree = screen.getByRole("tree", { name: "ノートツリー" });
+        tree.focus();
+        fireEvent.keyDown(tree, {
+          key: ":",
+          code: "Semicolon",
+          shiftKey: true,
+        });
+        command = screen.getByRole("textbox", {
+          name: "Memoka Command",
+        }) as HTMLInputElement;
+      }
+      fireEvent.change(command, { target: { value: "1" } });
+      fireEvent.keyDown(command, { key: "Enter" });
+      await waitFor(() => {
+        expect(
+          screen.queryByRole("textbox", { name: "Memoka Command" }),
+        ).toBeNull();
+        expect(adapter.editor.state.selection.head).toBe(
+          lines[0]!.cursorPositions[0],
+        );
+        expect(document.activeElement).toBe(editor);
+      });
+      view.unmount();
+    },
+  );
 
   it("routes application-wide commands while a Sidebar utility owns focus", async () => {
     const view = render(<App />);
@@ -1284,7 +1507,7 @@ describe("Memoka Application utilities", () => {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "f", code: "KeyF" });
     const search = await screen.findByRole("combobox", {
       name: "ワークスペースを検索",
@@ -1295,18 +1518,23 @@ describe("Memoka Application utilities", () => {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "s", code: "KeyS" });
-    const noteSearch = await screen.findByRole("textbox", {
-      name: "ノート内を検索",
+    const bodySearch = await screen.findByRole("combobox", {
+      name: "ワークスペースを検索",
     });
-    expect(document.activeElement).toBe(noteSearch);
-    fireEvent.keyDown(noteSearch, { key: "Escape", code: "Escape" });
+    expect(
+      bodySearch
+        .closest("[data-search-scope]")
+        ?.getAttribute("data-search-scope"),
+    ).toBe("body");
+    expect(document.activeElement).toBe(bodySearch);
+    fireEvent.keyDown(bodySearch, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(tree), {
       timeout: 3_000,
     });
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "C", code: "KeyC", shiftKey: true });
     await screen.findByText(/Config \/ Settings · 予約済み/);
     expect(document.activeElement).toBe(tree);
@@ -1348,7 +1576,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(editor, { key: "h", code: "KeyH" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "t", code: "KeyT" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
@@ -1356,9 +1584,9 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     await screen.findByText("utility.outline · closed");
     expect(
@@ -1367,12 +1595,12 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
 
-    fireEvent.keyDown(tree, { key: ",", code: "Comma" });
+    fireEvent.keyDown(tree, { key: " ", code: "Space" });
     fireEvent.keyDown(tree, { key: "b", code: "KeyB" });
     const bufferSearch = await screen.findByRole("combobox", {
       name: "ワークスペースを検索",
@@ -1390,7 +1618,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(tree, { key: "l", code: "KeyL" });
     await waitFor(() => expect(document.activeElement).toBe(editor));
     enterNormal(editor);
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     const outline = await screen.findByRole("tree", {
       name: "Sectionアウトライン",
@@ -1413,7 +1641,7 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(editor, { key: "l", code: "KeyL" });
     await waitFor(() => expect(document.activeElement).toBe(outline));
 
-    fireEvent.keyDown(outline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(outline, { key: " ", code: "Space" });
     fireEvent.keyDown(outline, { key: "o", code: "KeyO" });
     await waitFor(() =>
       expect(
@@ -1423,20 +1651,20 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(document.activeElement).toBe(editor));
 
     fireEvent.keyDown(editor, { key: "Escape", code: "Escape" });
-    fireEvent.keyDown(editor, { key: ",", code: "Comma" });
+    fireEvent.keyDown(editor, { key: " ", code: "Space" });
     fireEvent.keyDown(editor, { key: "o", code: "KeyO" });
     const reopenedOutline = await screen.findByRole("tree", {
       name: "Sectionアウトライン",
     });
     await waitFor(() => expect(document.activeElement).toBe(reopenedOutline));
 
-    fireEvent.keyDown(reopenedOutline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(reopenedOutline, { key: " ", code: "Space" });
     fireEvent.keyDown(reopenedOutline, { key: "t", code: "KeyT" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
     );
     await waitFor(() => expect(document.activeElement).toBe(reopenedOutline));
-    fireEvent.keyDown(reopenedOutline, { key: ",", code: "Comma" });
+    fireEvent.keyDown(reopenedOutline, { key: " ", code: "Space" });
     fireEvent.keyDown(reopenedOutline, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
@@ -1501,14 +1729,14 @@ describe("Memoka Application utilities", () => {
       }
       return empty;
     });
-    fireEvent.keyDown(newTabWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(newTabWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(newTabWindow, { key: "t", code: "KeyT" });
     tree = await screen.findByRole("tree", { name: "ノートツリー" });
     tree.focus();
     fireEvent.keyDown(tree, { key: "g" });
     fireEvent.keyDown(tree, { key: "g" });
     await waitFor(() => expect(selectedTreeItem()?.id).toBe(initialNoteId));
-    fireEvent.keyDown(tree, { key: "," });
+    fireEvent.keyDown(tree, { key: " " });
     fireEvent.keyDown(tree, { key: "t" });
     await waitFor(() =>
       expect(screen.queryByRole("tree", { name: "ノートツリー" })).toBeNull(),
@@ -1527,7 +1755,7 @@ describe("Memoka Application utilities", () => {
     );
     if (!emptyWindow) throw new Error("Second TabPage is not empty");
     emptyWindow.focus();
-    fireEvent.keyDown(emptyWindow, { key: "," });
+    fireEvent.keyDown(emptyWindow, { key: " " });
     fireEvent.keyDown(emptyWindow, { key: "t" });
     await screen.findByRole("tree", { name: "ノートツリー" });
     expect(selectedTreeItem()?.id).toBe(initialNoteId);
@@ -1562,7 +1790,7 @@ describe("Memoka Application utilities", () => {
       emptyWindow.querySelector(".empty-editor-window__body")?.textContent,
     ).toBe("");
 
-    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "c", code: "KeyC" });
     const emptyCommandPicker = await screen.findByRole("combobox", {
       name: "Memoka Commandを検索",
@@ -1570,10 +1798,18 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(emptyCommandPicker, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
-    fireEvent.keyDown(emptyWindow, { key: ",", code: "Comma" });
+    fireEvent.keyDown(emptyWindow, { key: " ", code: "Space" });
     fireEvent.keyDown(emptyWindow, { key: "s", code: "KeyS" });
-    await screen.findByText(/Note Search · この画面では利用できません/);
-    expect(document.activeElement).toBe(emptyWindow);
+    const bodySearch = await screen.findByRole("combobox", {
+      name: "ワークスペースを検索",
+    });
+    expect(
+      bodySearch
+        .closest("[data-search-scope]")
+        ?.getAttribute("data-search-scope"),
+    ).toBe("body");
+    fireEvent.keyDown(bodySearch, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(emptyWindow));
 
     tree.focus();
     fireEvent.keyDown(tree, { key: "Enter" });
@@ -1632,6 +1868,7 @@ describe("Memoka Application utilities", () => {
       <ApplicationCommandLine
         session={session}
         onExecute={onExecute}
+        onGoToLine={vi.fn()}
         onClose={onClose}
       />,
     );
@@ -1649,7 +1886,7 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
   });
 
-  it("filters Command Picker entries and hands the selected canonical command to Command-line", async () => {
+  it("filters Command Picker entries and transfers an invalid argument to Command-line", async () => {
     const restoreFocus = vi.fn();
     const session: ApplicationCommandPickerSession = { restoreFocus };
     const onSelect = vi.fn();
@@ -1664,12 +1901,13 @@ describe("Memoka Application utilities", () => {
     const input = screen.getByRole("combobox", {
       name: "Memoka Commandを検索",
     });
-    fireEvent.change(input, { target: { value: "colo Nightfox" } });
+    fireEvent.change(input, { target: { value: "colo no-such-theme" } });
     expect(screen.getByRole("option").textContent).toContain(":colorscheme");
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "colorscheme", argument: "optional" }),
-    );
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: "transfer",
+      value: "colorscheme no-such-theme",
+    });
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -1678,6 +1916,7 @@ describe("Memoka Application utilities", () => {
       <ApplicationCommandLine
         session={{ restoreFocus: vi.fn(), initialValue: "colorscheme " }}
         onExecute={vi.fn()}
+        onGoToLine={vi.fn()}
         onClose={vi.fn()}
       />,
     );
@@ -1690,30 +1929,36 @@ describe("Memoka Application utilities", () => {
     ).toBe("colorscheme ");
   });
 
-  it("opens the shared application input surface with / and restores Editor focus on cancel", async () => {
-    const view = render(<App />);
-    await screen.findByRole("tree", { name: "ノートツリー" });
-    const editor = await waitFor(() => {
-      const mounted = view.container.querySelector<HTMLElement>(
-        ".editor-window .memoka-editor",
+  it.each([
+    ["/", false],
+    ["?", true],
+  ])(
+    "opens the shared application input surface with %s and restores Editor focus on cancel",
+    async (key, shiftKey) => {
+      const view = render(<App />);
+      await screen.findByRole("tree", { name: "ノートツリー" });
+      const editor = await waitFor(() => {
+        const mounted = view.container.querySelector<HTMLElement>(
+          ".editor-window .memoka-editor",
+        );
+        if (!mounted) throw new Error("Editor did not mount");
+        return mounted;
+      });
+      enterNormal(editor);
+      fireEvent.keyDown(editor, { key, code: "Slash", shiftKey });
+      const input = await screen.findByRole("textbox", {
+        name: "ノート内を検索",
+      });
+      expect(document.activeElement).toBe(input);
+      expect(input.closest(".application-commandline")?.textContent).toContain(
+        key,
       );
-      if (!mounted) throw new Error("Editor did not mount");
-      return mounted;
-    });
-    enterNormal(editor);
-    fireEvent.keyDown(editor, { key: "/", code: "Slash" });
-    const input = await screen.findByRole("textbox", {
-      name: "ノート内を検索",
-    });
-    expect(document.activeElement).toBe(input);
-    expect(input.closest(".application-commandline")?.textContent).toContain(
-      "/",
-    );
 
-    fireEvent.keyDown(input, { key: "Escape", code: "Escape" });
-    await waitFor(() => expect(document.activeElement).toBe(editor));
-    view.unmount();
-  });
+      fireEvent.keyDown(input, { key: "Escape", code: "Escape" });
+      await waitFor(() => expect(document.activeElement).toBe(editor));
+      view.unmount();
+    },
+  );
 
   it("does not submit note search with an IME composition Enter", async () => {
     const restoreFocus = vi.fn();
@@ -1724,6 +1969,7 @@ describe("Memoka Application utilities", () => {
     const origin = createNoteSearchOrigin();
     const session: ApplicationNoteSearchSession = {
       windowId: "window-1",
+      direction: "forward",
       origin,
       applyDestination,
       requestInputMethodDeactivation,
@@ -1760,7 +2006,13 @@ describe("Memoka Application utilities", () => {
 
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(searchNote).toHaveBeenCalledTimes(1));
-    expect(searchNote).toHaveBeenCalledWith("window-1", origin, "日本語");
+    expect(searchNote).toHaveBeenCalledWith(
+      "window-1",
+      origin,
+      "日本語",
+      1,
+      "forward",
+    );
     expect(applyDestination).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledWith("/日本語 · 1/1");
@@ -1779,6 +2031,7 @@ describe("Memoka Application utilities", () => {
         runtime={{ searchNote: vi.fn() } as unknown as CoreRuntime}
         session={{
           windowId: "window-1",
+          direction: "forward",
           origin: createNoteSearchOrigin(),
           applyDestination: vi.fn(() => null),
           requestInputMethodDeactivation,

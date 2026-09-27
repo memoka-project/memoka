@@ -10,6 +10,21 @@ import {
 
 describe("Memoka Application Command-line", () => {
   it("parses only the documented minimal commands and aliases", () => {
+    expect(parseApplicationCommand(":12")).toEqual({
+      kind: "line",
+      lineNumber: 12,
+    });
+    expect(parseApplicationCommand("003")).toEqual({
+      kind: "line",
+      lineNumber: 3,
+    });
+    expect(parseApplicationCommand(":0")).toEqual({
+      kind: "error",
+      message: "行番号は1以上の整数で指定してください",
+    });
+    expect(parseApplicationCommand(":9999999999999999999999")).toMatchObject({
+      kind: "error",
+    });
     expect(parseApplicationCommand(" :tree ")).toMatchObject({
       kind: "command",
       command: { id: "utility.tree" },
@@ -173,6 +188,15 @@ describe("Memoka Application Command-line", () => {
     );
     expect(commandLineKeymap.resolve("command-line.insert", "Ctrl+c")).toBe(
       "command-line.close",
+    );
+    expect(commandLineKeymap.resolve("command-line.insert", "Tab")).toBe(
+      "command-line.keep_focus",
+    );
+    expect(commandLineKeymap.resolve("command-line.insert", "ArrowUp")).toBe(
+      "command-line.history_older_prefix",
+    );
+    expect(commandLineKeymap.resolve("command-line.insert", "Ctrl+p")).toBe(
+      "command-line.history_older",
     );
     expect(
       commandLineKeySequence({

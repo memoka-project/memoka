@@ -116,7 +116,7 @@ describe("Memoka Sidebar application keymap", () => {
   });
 
   it("resolves leader search and tab movement as prefix sequences", () => {
-    const leader = advanceSidebarInput(createSidebarInputState(), key(","));
+    const leader = advanceSidebarInput(createSidebarInputState(), key(" "));
     expect(leader).toMatchObject({
       state: { pending: "leader" },
       action: { kind: "pending", prefix: "leader" },
@@ -126,8 +126,8 @@ describe("Memoka Sidebar application keymap", () => {
       state: { pending: null },
       action: { kind: "execute", command: "workspace.search_title" },
     });
-    const bodyLeader = advanceSidebarInput(createSidebarInputState(), key(","));
-    expect(advanceSidebarInput(bodyLeader.state, key("g"))).toMatchObject({
+    const bodyLeader = advanceSidebarInput(createSidebarInputState(), key(" "));
+    expect(advanceSidebarInput(bodyLeader.state, key("s"))).toMatchObject({
       state: { pending: null },
       action: { kind: "execute", command: "workspace.search_body" },
     });
@@ -136,11 +136,10 @@ describe("Memoka Sidebar application keymap", () => {
       ["o", "utility.toggle-outline"],
       ["b", "workspace.search_buffers"],
       ["c", "application.command_picker"],
-      ["s", "note.search"],
     ] as const) {
       const utilityLeader = advanceSidebarInput(
         createSidebarInputState(),
-        key(","),
+        key(" "),
       );
       expect(
         advanceSidebarInput(utilityLeader.state, key(keyValue)),
@@ -150,7 +149,7 @@ describe("Memoka Sidebar application keymap", () => {
     }
     const unavailableLeader = advanceSidebarInput(
       createSidebarInputState(),
-      key(","),
+      key(" "),
     );
     expect(
       advanceSidebarInput(unavailableLeader.state, key("a")),
@@ -163,7 +162,7 @@ describe("Memoka Sidebar application keymap", () => {
     });
     const reservedLeader = advanceSidebarInput(
       createSidebarInputState(),
-      key(","),
+      key(" "),
     );
     expect(advanceSidebarInput(reservedLeader.state, key("C"))).toMatchObject({
       action: {
@@ -174,7 +173,7 @@ describe("Memoka Sidebar application keymap", () => {
     });
     const unknownLeader = advanceSidebarInput(
       createSidebarInputState(),
-      key(","),
+      key(" "),
     );
     expect(advanceSidebarInput(unknownLeader.state, key("x"))).toMatchObject({
       action: {
@@ -340,11 +339,14 @@ describe("Memoka Sidebar application keymap", () => {
     });
   });
 
-  it("leaves Space unmapped and cancels a pending Leader without replay", () => {
+  it("uses Space as Leader and cancels a pending Leader without replay", () => {
     expect(
       advanceSidebarInput(createSidebarInputState(), key(" ")),
-    ).toMatchObject({ action: { kind: "unmapped" }, consume: false });
-    const leader = advanceSidebarInput(createSidebarInputState(), key(","));
+    ).toMatchObject({
+      action: { kind: "pending", prefix: "leader" },
+      consume: true,
+    });
+    const leader = advanceSidebarInput(createSidebarInputState(), key(" "));
     expect(advanceSidebarInput(leader.state, key("Escape"))).toMatchObject({
       action: { kind: "cancel" },
       consume: true,
@@ -352,13 +354,13 @@ describe("Memoka Sidebar application keymap", () => {
   });
 
   it("uses an injected physical Leader key with the semantic bindings", () => {
-    const config = { leaderKey: ";" } as const;
+    const config = { leaderKey: "q" } as const;
     expect(
       advanceSidebarInput(createSidebarInputState(), key(","), config),
     ).toMatchObject({ action: { kind: "unmapped" }, consume: false });
     const leader = advanceSidebarInput(
       createSidebarInputState(),
-      key(";"),
+      key("q"),
       config,
     );
     expect(advanceSidebarInput(leader.state, key("t"), config)).toMatchObject({

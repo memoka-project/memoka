@@ -11,11 +11,13 @@ import {
 import { workspaceSearchMatchRanges } from "../core/workspace-search";
 import type { InlineFormatResult } from "../vim/inline-format";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface InlineFormatPickerSession {
   readonly windowId: string;
   readonly selectedText: string;
   readonly existingHref: string | null;
+  readonly hasFormatting: boolean;
   readonly apply: (action: InlineFormatAction) => InlineFormatResult;
   readonly restoreFocus: () => void;
 }
@@ -41,6 +43,7 @@ export function InlineFormatPicker({
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState(session.existingHref ?? "");
   const [operationError, setOperationError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   const entries = useMemo(() => filterInlineFormatCatalog(query), [query]);
   const normalizedLink = useMemo(() => normalizeExternalLink(url), [url]);
   const linkItems: readonly LinkSubmission[] = normalizedLink.valid
@@ -53,8 +56,13 @@ export function InlineFormatPicker({
       ]
     : [];
 
-  const finish = (result: InlineFormatResult, label: string): void => {
+  const finish = (
+    result: InlineFormatResult,
+    label: string,
+    recentId: InlineFormatCatalogEntry["id"],
+  ): void => {
     if (result.changed || result.reason === "no-op") {
+      record("inline-format", recentId);
       onClose();
       queueMicrotask(session.restoreFocus);
       onMessage(
@@ -80,6 +88,7 @@ export function InlineFormatPicker({
           : { kind: "apply", format: entry.id },
       ),
       entry.name,
+      entry.id,
     );
   };
 
@@ -124,7 +133,11 @@ export function InlineFormatPicker({
         prompt="URL›"
         countLabel={normalizedLink.valid ? "1 link" : "0 links"}
         onAccept={(item) =>
-          finish(session.apply({ kind: "link", href: item.href }), "リンク")
+          finish(
+            session.apply({ kind: "link", href: item.href }),
+            "リンク",
+            "link",
+          )
         }
         onClose={onClose}
         restoreFocus={session.restoreFocus}
@@ -158,6 +171,10 @@ export function InlineFormatPicker({
       }}
       items={entries}
       itemId={(entry) => entry.id}
+      recentKind="inline-format"
+      recentPriority={(entry) =>
+        entry.id === "clear" ? (session.hasFormatting ? 1 : -1) : 0
+      }
       renderItem={(entry, currentQuery) => (
         <span className="inline-format-picker__row">
           <HighlightedFormatName value={entry.name} query={currentQuery} />

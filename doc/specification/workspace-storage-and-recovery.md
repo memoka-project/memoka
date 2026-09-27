@@ -46,7 +46,8 @@ CLI実行時にNode、DOM、GTK、WebKit、WebViewを起動しない。
 ## 3. 移行前検査
 
 database schema 2〜6から7への移行では、live/Trash/Helpを含む全documentの最終Yjs stateを検査する。
-旧Namespace変換を経てWorkspaceMetadataDoc 4へ、NoteDocは安定IDごとに内容と配置を分離するschema 7へ変換する。
+旧Namespace変換を経てWorkspaceMetadataDoc 5へ、NoteDocは安定IDごとに内容と配置を分離するschema 7へ変換する。
+database schema 7でWorkspaceMetadataDoc 4のままの既存Workspaceも、事前検査とrollback copyを経てWorkspaceMetadataDoc 5へ更新する。
 独立した候補でMarkdown・装飾・構造・Note/Section/Block/Entry ID・添付hashを比較し、不一致なら元DBを変更しない。
 内容比較では未設定属性の`null`と省略、および同一装飾の隣接text nodeの分割・結合を同等と扱う。本文、装飾、設定済み属性（`false`・`0`・空文字を含む）、ID、構造の違いは許容しない。
 既存のNamespaceと旧ID対応表を維持し、同期journal等のtableとコピー固有のReplica IDを追加する。

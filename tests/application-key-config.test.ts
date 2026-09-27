@@ -30,16 +30,21 @@ function key(value: string) {
 }
 
 describe("application key configuration", () => {
+  it("normalizes character-find Leader conflicts to Space", () => {
+    for (const leaderKey of ["f", "F", ";", ","]) {
+      expect(mergeApplicationKeyConfig({ leaderKey }).leaderKey).toBe(" ");
+    }
+  });
   it("merges partial TOML-shaped overrides over the complete defaults", () => {
     const config = mergeApplicationKeyConfig({
-      leaderKey: ";",
+      leaderKey: "q",
       whichwrap: false,
       sharedNavigationBindings: { "cursor.logical-up": ["q"] },
       treeBindings: { "note.create_child": ["C"] },
       inlineFormatBindings: { "selection.format": ["M"] },
       tableBindings: { "table.next_cell": ["Ctrl+n"] },
     });
-    expect(config.leaderKey).toBe(";");
+    expect(config.leaderKey).toBe("q");
     expect(config.whichwrap).toBe(false);
     expect(config.sharedNavigationBindings?.["cursor.logical-up"]).toEqual([
       "q",
@@ -56,13 +61,13 @@ describe("application key configuration", () => {
 
   it("maps the configured visual-character formatting sequence", () => {
     const config = mergeApplicationKeyConfig({
-      inlineFormatBindings: { "selection.format": ["fm"] },
+      inlineFormatBindings: { "selection.format": ["qm"] },
     });
     validateVimKeyConfig(config);
     const prefix = advanceVimInput(
       createVimInputState(),
       "visual-char",
-      "f",
+      "q",
       noteContext,
       config,
     );
@@ -73,6 +78,15 @@ describe("application key configuration", () => {
       resolvedCommand: "selection.format",
       action: { kind: "execute", command: "selection.format" },
     });
+    for (const sequence of ["fm", "tm"]) {
+      expect(() =>
+        validateVimKeyConfig(
+          mergeApplicationKeyConfig({
+            inlineFormatBindings: { "selection.format": [sequence] },
+          }),
+        ),
+      ).toThrow(/Ambiguous visual-char key bindings/u);
+    }
   });
 
   it("uses one configured navigation binding in Tree, Normal and Visual modes", () => {
@@ -155,7 +169,7 @@ describe("application key configuration", () => {
       const prefix = advanceVimInput(
         createVimInputState(),
         mode,
-        ",",
+        " ",
         noteContext,
         config,
       );

@@ -6,6 +6,7 @@ import {
   type ApplicationThemeId,
 } from "../core/application-theme";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface ThemePickerSession {
   readonly initialThemeId: ApplicationThemeId;
@@ -28,6 +29,7 @@ export function ThemePicker({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   const themes = useMemo(() => filterApplicationThemes(query), [query]);
   const preview = useCallback(
     (theme: ApplicationThemeDefinition | null): void => {
@@ -41,6 +43,7 @@ export function ThemePicker({
     setError(null);
     try {
       await onAccept(theme.id);
+      record("theme", theme.id);
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -63,6 +66,7 @@ export function ThemePicker({
       }}
       items={themes}
       itemId={(theme) => theme.id}
+      recentKind="theme"
       initialSelectedItemId={session.initialThemeId}
       onSelectionChange={preview}
       renderItem={(theme) => (

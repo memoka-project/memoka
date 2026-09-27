@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 use toml_edit::{Document, value};
 
@@ -341,6 +341,190 @@ pub fn application_font_family_save(app: AppHandle, font_family: String) -> Resu
     save_application_font_family(&directory.join("config.toml"), &font_family)
 }
 
+const PICKER_RECENTS_FILE: &str = "picker-recents.json";
+const PICKER_RECENTS_LIMIT: usize = 100;
+const PICKER_RECENTS_MAX_BYTES: u64 = 128 * 1024;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PickerRecentsFile {
+    schema_version: u32,
+    recent: BTreeMap<String, Vec<String>>,
+}
+
+impl Default for PickerRecentsFile {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            recent: BTreeMap::new(),
+        }
+    }
+}
+
+fn picker_recents_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(PICKER_RECENTS_FILE))
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))
+}
+
+fn load_picker_recents_file(path: &Path) -> Result<PickerRecentsFile, String> {
+    if !path.exists() {
+        return Ok(PickerRecentsFile::default());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > PICKER_RECENTS_MAX_BYTES {
+        return Err("候補の利用履歴ファイルが不正です".to_owned());
+    }
+    let value: PickerRecentsFile =
+        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("候補の利用履歴を読めません: {error}"))?;
+    if value.schema_version != 1 {
+        return Err(format!("未対応の候補履歴schema: {}", value.schema_version));
+    }
+    Ok(value)
+}
+
+fn record_picker_recent(path: &Path, kind: &str, id: &str) -> Result<PickerRecentsFile, String> {
+    if !matches!(
+        kind,
+        "command"
+            | "inline-format"
+            | "block-type"
+            | "alert-type"
+            | "symbol"
+            | "code-action"
+            | "code-language"
+            | "table-action"
+            | "theme"
+            | "font-ui"
+            | "font-japanese"
+            | "font-latin"
+            | "font-monospace"
+    ) || id.is_empty()
+        || id.len() > 512
+        || id.chars().any(char::is_control)
+    {
+        return Err("候補履歴の種類またはIDが不正です".to_owned());
+    }
+    let parent = path.parent().ok_or("候補履歴の保存先が不正です")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let _lease = command::lock(path).map_err(|error| error.message)?;
+    let mut state = load_picker_recents_file(path)?;
+    let recent = state.recent.entry(kind.to_owned()).or_default();
+    recent.retain(|candidate| candidate != id);
+    recent.insert(0, id.to_owned());
+    recent.truncate(PICKER_RECENTS_LIMIT);
+    let output = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?
+    );
+    command::persist(path, &output).map_err(|error| error.message)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn picker_recents_load(app: AppHandle) -> Result<PickerRecentsFile, String> {
+    load_picker_recents_file(&picker_recents_path(&app)?)
+}
+
+#[tauri::command]
+pub fn picker_recents_record(
+    app: AppHandle,
+    kind: String,
+    id: String,
+) -> Result<PickerRecentsFile, String> {
+    record_picker_recent(&picker_recents_path(&app)?, &kind, &id)
+}
+
+const COMMAND_HISTORY_FILE: &str = "command-history.json";
+const COMMAND_HISTORY_LIMIT: usize = 200;
+const COMMAND_HISTORY_MAX_ENTRY_BYTES: usize = 16 * 1024;
+const COMMAND_HISTORY_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommandHistoryFile {
+    schema_version: u32,
+    entries: Vec<String>,
+}
+
+impl Default for CommandHistoryFile {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            entries: Vec::new(),
+        }
+    }
+}
+
+fn command_history_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(COMMAND_HISTORY_FILE))
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))
+}
+
+fn load_command_history_file(path: &Path) -> Result<CommandHistoryFile, String> {
+    if !path.exists() {
+        return Ok(CommandHistoryFile::default());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > COMMAND_HISTORY_MAX_BYTES {
+        return Err("Command履歴ファイルが不正です".to_owned());
+    }
+    let state: CommandHistoryFile =
+        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Command履歴を読めません: {error}"))?;
+    if state.schema_version != 1
+        || state.entries.len() > COMMAND_HISTORY_LIMIT
+        || state.entries.iter().any(|entry| {
+            entry.trim().is_empty()
+                || entry.len() > COMMAND_HISTORY_MAX_ENTRY_BYTES
+                || entry
+                    .chars()
+                    .any(|character| matches!(character, '\r' | '\n' | '\0'))
+        })
+    {
+        return Err("Command履歴ファイルが不正です".to_owned());
+    }
+    Ok(state)
+}
+
+fn record_command_history(path: &Path, value: &str) -> Result<CommandHistoryFile, String> {
+    if value.trim().is_empty()
+        || value.len() > COMMAND_HISTORY_MAX_ENTRY_BYTES
+        || value
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | '\0'))
+    {
+        return Err("Command履歴の入力が不正です".to_owned());
+    }
+    let parent = path.parent().ok_or("Command履歴の保存先が不正です")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let _lease = command::lock(path).map_err(|error| error.message)?;
+    let mut state = load_command_history_file(path)?;
+    state.entries.retain(|entry| entry != value);
+    state.entries.insert(0, value.to_owned());
+    state.entries.truncate(COMMAND_HISTORY_LIMIT);
+    let output = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?
+    );
+    command::persist(path, &output).map_err(|error| error.message)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn command_history_load(app: AppHandle) -> Result<CommandHistoryFile, String> {
+    load_command_history_file(&command_history_path(&app)?)
+}
+
+#[tauri::command]
+pub fn command_history_record(app: AppHandle, value: String) -> Result<CommandHistoryFile, String> {
+    record_command_history(&command_history_path(&app)?, &value)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NoteAppearancePatch {
@@ -636,12 +820,20 @@ fn load_application_key_config(path: &Path) -> ApplicationKeyConfigLoadResult {
             path.display()
         ));
     }
+    let mut leader = parsed.leader;
+    if matches!(leader.as_deref(), Some("f" | "F" | ";" | ",")) {
+        warnings.push(format!(
+            "{}: 指定されたLeaderはNormalの文字検索と衝突するため、Spaceを使用します",
+            path.display()
+        ));
+        leader = Some(" ".to_owned());
+    }
     let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     ApplicationKeyConfigLoadResult {
         config_path,
         revision: Some(command::revision(&source)),
         config: Some(ApplicationKeyConfigOverride {
-            leader_key: parsed.leader,
+            leader_key: leader,
             whichwrap: parsed.vim.and_then(|value| value.whichwrap),
             shared_navigation_bindings: keymap
                 .as_ref()
@@ -1026,13 +1218,57 @@ mod tests {
         DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
         DEFAULT_APPLICATION_ZOOM_PERCENT, DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
         DEFAULT_JAPANESE_WORD_SEGMENTATION, JapaneseLineBreakSegmentation,
-        JapaneseWordSegmentation, load_application_key_config, save_application_font_family,
-        save_application_indent_width_px, save_application_line_number_min_width_px,
-        save_application_note_max_width_px, save_application_theme, save_application_zoom_percent,
+        JapaneseWordSegmentation, load_application_key_config, load_command_history_file,
+        load_picker_recents_file, record_command_history, record_picker_recent,
+        save_application_font_family, save_application_indent_width_px,
+        save_application_line_number_min_width_px, save_application_note_max_width_px,
+        save_application_theme, save_application_zoom_percent,
         save_japanese_line_break_segmentation, save_japanese_word_segmentation,
     };
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn picker_recents_persist_across_reads_and_move_selections_to_front() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("picker-recents.json");
+        assert!(load_picker_recents_file(&path).unwrap().recent.is_empty());
+        record_picker_recent(&path, "command", "one").unwrap();
+        record_picker_recent(&path, "command", "two").unwrap();
+        record_picker_recent(&path, "command", "one").unwrap();
+        assert_eq!(
+            load_picker_recents_file(&path).unwrap().recent["command"],
+            ["one", "two"]
+        );
+        assert!(record_picker_recent(&path, "unknown", "x").is_err());
+        for index in 0..105 {
+            record_picker_recent(&path, "symbol", &format!("symbol-{index}")).unwrap();
+        }
+        let state = load_picker_recents_file(&path).unwrap();
+        assert_eq!(state.recent["symbol"].len(), 100);
+        assert_eq!(state.recent["symbol"][0], "symbol-104");
+    }
+
+    #[test]
+    fn command_history_persists_submitted_text_and_deduplicates_exact_entries() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("command-history.json");
+        assert!(load_command_history_file(&path).unwrap().entries.is_empty());
+        record_command_history(&path, "tree").unwrap();
+        record_command_history(&path, "unknown arg").unwrap();
+        record_command_history(&path, "tree").unwrap();
+        assert_eq!(
+            load_command_history_file(&path).unwrap().entries,
+            ["tree", "unknown arg"]
+        );
+        assert!(record_command_history(&path, "  ").is_err());
+        for index in 0..205 {
+            record_command_history(&path, &format!("command-{index}")).unwrap();
+        }
+        let state = load_command_history_file(&path).unwrap();
+        assert_eq!(state.entries.len(), 200);
+        assert_eq!(state.entries[0], "command-204");
+    }
 
     #[test]
     fn loads_partial_key_configuration_without_creating_the_file() {
@@ -1105,7 +1341,7 @@ wait_for_mirror = false
         .expect("write fixture");
         let loaded = load_application_key_config(&missing);
         let config = loaded.config.expect("config");
-        assert_eq!(config.leader_key.as_deref(), Some(";"));
+        assert_eq!(config.leader_key.as_deref(), Some(" "));
         assert_eq!(loaded.theme, "duskfox");
         assert_eq!(loaded.font_family, "Noto Sans CJK JP, sans-serif");
         assert_eq!(loaded.zoom_percent, 120);
@@ -1148,6 +1384,30 @@ wait_for_mirror = false
                 .as_deref()
                 .is_some_and(|warning| warning.contains("table.action_pickerは廃止"))
         );
+        assert!(loaded.warning.as_deref().unwrap().contains("Spaceを使用"));
+    }
+
+    #[test]
+    fn reads_reserved_find_leaders_as_space_without_rewriting_config() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("config.toml");
+        for leader in ["f", "F", ";", ","] {
+            let source = format!("leader = \"{leader}\"\n");
+            fs::write(&path, &source).expect("write config");
+            let loaded = load_application_key_config(&path);
+            assert_eq!(
+                loaded.config.expect("config").leader_key.as_deref(),
+                Some(" ")
+            );
+            assert!(
+                loaded
+                    .warning
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("Spaceを使用")
+            );
+            assert_eq!(fs::read_to_string(&path).expect("read config"), source);
+        }
     }
 
     #[test]

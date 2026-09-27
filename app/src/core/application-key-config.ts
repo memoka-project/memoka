@@ -82,7 +82,7 @@ export interface PartialApplicationKeyConfig {
 
 export const DEFAULT_APPLICATION_KEY_CONFIG: ApplicationKeyConfig =
   Object.freeze({
-    leaderKey: ",",
+    leaderKey: " ",
     whichwrap: true,
     sharedNavigationBindings: Object.freeze({
       "cursor.left": ["h"],
@@ -130,8 +130,12 @@ export const DEFAULT_APPLICATION_KEY_CONFIG: ApplicationKeyConfig =
 export function mergeApplicationKeyConfig(
   partial: PartialApplicationKeyConfig,
 ): ApplicationKeyConfig {
+  const requestedLeader =
+    partial.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey;
   const config: ApplicationKeyConfig = {
-    leaderKey: partial.leaderKey ?? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey,
+    leaderKey: ["f", "F", ";", ","].includes(requestedLeader)
+      ? DEFAULT_APPLICATION_KEY_CONFIG.leaderKey
+      : requestedLeader,
     whichwrap:
       partial.whichwrap ?? DEFAULT_APPLICATION_KEY_CONFIG.whichwrap ?? true,
     sharedNavigationBindings: mergeBindings(
@@ -174,6 +178,9 @@ export function validateApplicationKeyConfig(
 ): void {
   if (Array.from(config.leaderKey).length !== 1) {
     throw new Error("Leader key must be exactly one character");
+  }
+  if (["f", "F", ";", ","].includes(config.leaderKey)) {
+    throw new Error("Leader key conflicts with Normal character find");
   }
   if (config.whichwrap !== undefined && typeof config.whichwrap !== "boolean") {
     throw new Error("whichwrap must be a boolean");

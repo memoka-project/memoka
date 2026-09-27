@@ -178,7 +178,7 @@ describe("Memoka rebuildable Workspace search index", () => {
     await runtime.flush();
 
     const first = await runtime.searchWorkspace("検索元");
-    expect(first).toMatchObject({ backend: "sqlite-fts", warning: null });
+    expect(first).toMatchObject({ backend: "metadata", warning: null });
     expect(first.results[0]).toMatchObject({
       noteId: runtime.noteId,
       kind: "title",
@@ -262,10 +262,13 @@ describe("Memoka rebuildable Workspace search index", () => {
       pendingHierarchyCount: 1,
       pendingNoteCount: 1,
     });
+    expect(await runtime.searchWorkspace("probe", "body")).toMatchObject({
+      backend: "sqlite-fts+crdt",
+    });
     expect(
       await runtime.searchWorkspace("Renamed Child", "title"),
     ).toMatchObject({
-      backend: "sqlite-fts+crdt",
+      backend: "metadata",
       results: [
         expect.objectContaining({
           noteId: child.noteId,
@@ -284,7 +287,7 @@ describe("Memoka rebuildable Workspace search index", () => {
     expect(
       await runtime.searchWorkspace("Renamed Child", "title"),
     ).toMatchObject({
-      backend: "sqlite-fts",
+      backend: "metadata",
       results: [
         expect.objectContaining({
           noteId: child.noteId,
@@ -425,7 +428,7 @@ describe("Memoka rebuildable Workspace search index", () => {
     expect(
       await runtime.searchWorkspace("Renamed Child", "title"),
     ).toMatchObject({
-      backend: "sqlite-fts",
+      backend: "metadata",
       results: [
         expect.objectContaining({
           noteId: child.noteId,
@@ -490,7 +493,7 @@ describe("Memoka rebuildable Workspace search index", () => {
       ),
     ).toEqual(updatedAtBefore);
     expect(await runtime.searchWorkspace("First", "title")).toMatchObject({
-      backend: "sqlite-fts",
+      backend: "metadata",
       results: [expect.objectContaining({ noteId: firstId })],
     });
     runtime.destroy();
@@ -539,11 +542,14 @@ describe("Memoka rebuildable Workspace search index", () => {
     index.clear();
 
     const result = await runtime.searchWorkspace("再構築");
-    expect(result.backend).toBe("crdt-fallback");
+    expect(result.backend).toBe("metadata");
     expect(result.results[0].title).toBe("再構築対象");
+    expect((await runtime.searchWorkspace("再構築", "body")).backend).toBe(
+      "crdt-fallback",
+    );
     await runtime.flush();
     expect(index.rebuildCount).toBe(2);
-    expect((await runtime.searchWorkspace("再構築")).backend).toBe(
+    expect((await runtime.searchWorkspace("再構築", "body")).backend).toBe(
       "sqlite-fts",
     );
     runtime.destroy();
@@ -602,7 +608,7 @@ describe("Memoka rebuildable Workspace search index", () => {
     });
     await stale.flush();
     expect(index.rebuildCount).toBe(2);
-    expect((await stale.searchWorkspace("起動時")).backend).toBe("sqlite-fts");
+    expect((await stale.searchWorkspace("起動時")).backend).toBe("metadata");
     stale.destroy();
   });
 });

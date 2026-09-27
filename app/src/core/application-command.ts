@@ -2,6 +2,21 @@ import {
   normalizeWorkspaceSearchText,
   workspaceSearchTerms,
 } from "./workspace-search";
+import {
+  normalizeApplicationFontFamily,
+  normalizeApplicationIndentWidthPx,
+  normalizeApplicationLineNumberMinWidthPx,
+  normalizeApplicationNoteMaxWidthPx,
+  normalizeApplicationZoomPercent,
+  normalizeNoteGapEm,
+  normalizeNoteLineHeight,
+  normalizeNoteSectionTitleSizeEm,
+} from "./application-appearance";
+import { normalizeApplicationThemeId } from "./application-theme";
+import {
+  normalizeJapaneseLineBreakSegmentationMode,
+  normalizeJapaneseWordSegmentationMode,
+} from "./japanese-segmentation";
 
 export type ApplicationCommandId =
   | "workspace.backup"
@@ -403,6 +418,7 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
 
 export type ApplicationCommandParseResult =
   | { readonly kind: "empty" }
+  | { readonly kind: "line"; readonly lineNumber: number }
   | {
       readonly kind: "command";
       readonly command: ApplicationCommandDefinition;
@@ -415,6 +431,12 @@ export function parseApplicationCommand(
 ): ApplicationCommandParseResult {
   const source = input.trim().replace(/^:/u, "").trim();
   if (!source) return { kind: "empty" };
+  if (/^\d+$/u.test(source)) {
+    const lineNumber = Number(source);
+    return Number.isSafeInteger(lineNumber) && lineNumber > 0
+      ? { kind: "line", lineNumber }
+      : { kind: "error", message: "行番号は1以上の整数で指定してください" };
+  }
   const [name, ...arguments_] = source.split(/\s+/u);
   const normalized = name.toLocaleLowerCase();
   const command = APPLICATION_COMMANDS.find(
@@ -471,4 +493,168 @@ export function filterApplicationCommands(
     );
     return terms.every((term) => searchable.includes(term));
   });
+}
+
+export interface ApplicationCommandArgumentHelp {
+  readonly syntax: string;
+  readonly description: string;
+}
+
+const ARGUMENT_HELP: Partial<
+  Record<ApplicationCommandId, ApplicationCommandArgumentHelp>
+> = {
+  "editor.image_width": {
+    syntax: "[10..100%]",
+    description:
+      "現在の画像の表示幅を確認・変更します。変更時は10〜100の整数を指定し、末尾の%は省略できます。",
+  },
+  "application.colorscheme": {
+    syntax: "[theme-name]",
+    description:
+      "Nightfoxカラーテーマを選択・変更します。変更時はテーマ名を指定します（例: duskfox）。",
+  },
+  "application.font": {
+    syntax: "[font-family]",
+    description:
+      "アプリケーションUIのフォントを選択・変更します。変更時はCSS font-familyを指定し、空白を含む名前も使えます。",
+  },
+  "application.note_font_japanese": {
+    syntax: "[font-family]",
+    description:
+      "Noteの日本語フォントを選択・変更します。変更時はCSS font-familyを指定します。",
+  },
+  "application.note_font_latin": {
+    syntax: "[font-family]",
+    description:
+      "Noteの英数フォントを選択・変更します。変更時はCSS font-familyを指定します。",
+  },
+  "application.note_font_monospace": {
+    syntax: "[font-family]",
+    description:
+      "Noteの等幅フォントを選択・変更します。変更時はCSS font-familyを指定します。",
+  },
+  "application.note_line_height": {
+    syntax: "[1..2.5]",
+    description:
+      "Note本文の行間倍率を確認・変更します。変更時は1〜2.5の値を小数第2位まで指定します。",
+  },
+  "application.note_block_gap": {
+    syntax: "[0..3]",
+    description:
+      "Note本文のブロック間隔を確認・変更します。変更時は0〜3emの値を小数第2位まで指定します。",
+  },
+  "application.note_list_item_gap": {
+    syntax: "[0..3]",
+    description:
+      "Note本文のリスト項目間隔を確認・変更します。変更時は0〜3emの値を小数第2位まで指定します。",
+  },
+  "application.note_section_title_gap_before": {
+    syntax: "[0..3]",
+    description:
+      "Section title前の間隔を確認・変更します。変更時は0〜3emの値を小数第2位まで指定します。",
+  },
+  "application.note_section_title_gap_after": {
+    syntax: "[0..3]",
+    description:
+      "Section title後の間隔を確認・変更します。変更時は0〜3emの値を小数第2位まで指定します。",
+  },
+  "application.note_section_title_size": {
+    syntax: "[0.8..3]",
+    description:
+      "Section titleの相対サイズを確認・変更します。変更時は0.8〜3の値を小数第2位まで指定します。",
+  },
+  "application.zoom": {
+    syntax: "[50..200]",
+    description:
+      "現在のZoom倍率を確認・変更します。変更時は50〜200%の値を10刻みで指定します。",
+  },
+  "application.note_width": {
+    syntax: "[320..4096|off]",
+    description:
+      "Noteの最大表示幅を確認・変更します。変更時は320〜4096pxを指定し、offで上限を解除できます。",
+  },
+  "application.line_number_min_width": {
+    syntax: "[240..4096|off]",
+    description:
+      "行番号を表示するWindowの最小幅を確認・変更します。変更時は240〜4096pxを指定し、offで幅の条件を解除できます。",
+  },
+  "application.indent_width": {
+    syntax: "[16..64]",
+    description:
+      "SectionとListに共通のインデント幅を確認・変更します。変更時は16〜64pxを指定します。",
+  },
+  "application.japanese_word_segmentation": {
+    syntax: "[fine|budoux|unicode]",
+    description:
+      "日本語word操作の分割方式を確認・変更します。変更時はfine、budoux、unicodeのいずれかを指定します。",
+  },
+  "application.japanese_line_break_segmentation": {
+    syntax: "[fine|budoux|native]",
+    description:
+      "日本語本文の表示改行方式を確認・変更します。変更時はfine、budoux、nativeのいずれかを指定します。",
+  },
+};
+
+export function applicationCommandArgumentHelp(
+  command: ApplicationCommandDefinition,
+): ApplicationCommandArgumentHelp | null {
+  return ARGUMENT_HELP[command.id] ?? null;
+}
+
+/** Checks whether a Picker input can execute without additional editing. */
+export function applicationCommandArgumentIsComplete(
+  command: ApplicationCommandDefinition,
+  argument: string | null,
+): boolean {
+  if (command.argument === "none") return argument === null;
+  if (argument === null) return false;
+  const decimal = /^\d+(?:\.\d{1,2})?$/u.test(argument)
+    ? Number(argument)
+    : Number.NaN;
+  const integer = /^\d+$/u.test(argument) ? Number(argument) : Number.NaN;
+  switch (command.id) {
+    case "editor.image_width": {
+      const match = /^(\d+)%?$/u.exec(argument);
+      const value = match ? Number(match[1]) : Number.NaN;
+      return Number.isInteger(value) && value >= 10 && value <= 100;
+    }
+    case "application.colorscheme":
+      return normalizeApplicationThemeId(argument) !== null;
+    case "application.font":
+    case "application.note_font_japanese":
+    case "application.note_font_latin":
+    case "application.note_font_monospace":
+      return normalizeApplicationFontFamily(argument) !== null;
+    case "application.note_line_height":
+      return normalizeNoteLineHeight(decimal) !== null;
+    case "application.note_block_gap":
+    case "application.note_list_item_gap":
+    case "application.note_section_title_gap_before":
+    case "application.note_section_title_gap_after":
+      return normalizeNoteGapEm(decimal) !== null;
+    case "application.note_section_title_size":
+      return normalizeNoteSectionTitleSizeEm(decimal) !== null;
+    case "application.zoom":
+      return normalizeApplicationZoomPercent(integer) !== null;
+    case "application.note_width":
+      return (
+        normalizeApplicationNoteMaxWidthPx(
+          argument.toLocaleLowerCase() === "off" ? 0 : integer,
+        ) !== null
+      );
+    case "application.line_number_min_width":
+      return (
+        normalizeApplicationLineNumberMinWidthPx(
+          argument.toLocaleLowerCase() === "off" ? 0 : integer,
+        ) !== null
+      );
+    case "application.indent_width":
+      return normalizeApplicationIndentWidthPx(integer) !== null;
+    case "application.japanese_word_segmentation":
+      return normalizeJapaneseWordSegmentationMode(argument) !== null;
+    case "application.japanese_line_break_segmentation":
+      return normalizeJapaneseLineBreakSegmentationMode(argument) !== null;
+    default:
+      return false;
+  }
 }

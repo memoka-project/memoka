@@ -282,7 +282,7 @@ fn workspace_only_trash_publication_identifies_notes_whose_composition_must_fini
             documents: vec![DocumentCommitInput {
                 kind: "workspace".into(),
                 document_id: source.document_id,
-                schema_version: 4,
+                schema_version: crate::replicated_namespace::SCHEMA_VERSION,
                 base_revision: source.revision,
                 snapshot: None,
                 update: Some(update),

@@ -8,6 +8,7 @@ import {
 import { yXmlTextVisibleText } from "./yxml-text";
 
 export type WorkspaceSearchScope = "title" | "body";
+export const WORKSPACE_SEARCH_RESULT_LIMIT = 100;
 export type WorkspaceSearchTarget = "workspace" | "buffers" | "trash";
 export type WorkspaceSearchBlockKind = "body";
 export type WorkspaceSearchResultKind =
@@ -74,6 +75,16 @@ export interface WorkspaceSearchResult {
   /** Text offset in lineText, used by search result and preview highlights. */
   readonly lineMatchOffset: number;
   readonly query: string;
+  /** Candidate scores before context and learned weights are applied. */
+  readonly matchScore?: number;
+  readonly pathMatchScore?: number;
+  /** Actual match ranges in the result's title, path, or logical line. */
+  readonly titleRanges?: readonly { from: number; to: number }[];
+  readonly pathRanges?: readonly { from: number; to: number }[];
+  readonly lineRanges?: readonly { from: number; to: number }[];
+  readonly previewRanges?: readonly { from: number; to: number }[];
+  readonly matchPatterns?: readonly (string | null)[];
+  readonly openStatus?: "current" | "other";
   readonly attachmentId?: string;
   /** Group results have no Note/Section resource; only this placement is restored. */
   readonly namespaceEntryId?: string;
@@ -88,6 +99,7 @@ export interface WorkspaceSearchResponse {
   readonly elapsedMs: number;
   /** Diagnostic detail for development surfaces. Never rendered as a normal result warning. */
   readonly warning: string | null;
+  readonly migemoUnavailable?: boolean;
 }
 
 interface RankedSearchResult {
@@ -312,7 +324,7 @@ export function filterWorkspaceSearchCatalog(
   catalog: WorkspaceSearchCatalog,
   query: string,
   scope: WorkspaceSearchScope = "title",
-  limit = 20,
+  limit = WORKSPACE_SEARCH_RESULT_LIMIT,
 ): WorkspaceSearchResult[] {
   if (!Number.isSafeInteger(limit) || limit < 1) {
     throw new Error("Workspace search result limit must be positive");
@@ -401,6 +413,7 @@ export function workspaceSearchResultFromIndexedEntry(
   },
   query: string,
   scope: WorkspaceSearchScope,
+  matchedOffset?: number,
 ): WorkspaceSearchResult | null {
   const trimmedQuery = query.trim();
   const normalizedTerms = workspaceSearchTerms(trimmedQuery);
@@ -441,11 +454,9 @@ export function workspaceSearchResultFromIndexedEntry(
   }
 
   if (entry.kind === "title" || normalizedTerms.length === 0) return null;
-  const lineMatchOffset = firstNormalizedMatchOffset(
-    entry.text,
-    normalizedTerms,
-    true,
-  );
+  const lineMatchOffset =
+    matchedOffset ??
+    firstNormalizedMatchOffset(entry.text, normalizedTerms, true);
   if (lineMatchOffset === null) return null;
   return {
     resultId: entry.resultId,

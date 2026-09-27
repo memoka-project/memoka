@@ -141,6 +141,22 @@ locked JavaScript and Rust dependency graphs by
 machine-readable inventory. Each project remains subject to its listed license; consult the
 linked upstream project and the dependency source package for the complete license text.
 
+## Bundled Migemo dictionary
+
+The offline Migemo dictionary is copied unchanged from
+[jsmigemo 0.5.2](https://github.com/oguna/jsmigemo). The library is MIT-licensed;
+the dictionary derives from [yet-another-migemo-dict](https://github.com/oguna/yet-another-migemo-dict),
+which uses BSD-3-Clause-licensed Mozc and UniDic data.
+Its SHA-256 is \`402baabd752bfd04e48609fa02bcdd99e2853ba9a1d2959c5deb6f35c30e371e\`.
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/jsmigemo.txt", root), "utf8")).trimEnd()}
+\`\`\`
+
+\`\`\`text
+${(await readFile(new URL("LICENSES/yet-another-migemo-dict.txt", root), "utf8")).trimEnd()}
+\`\`\`
+
 ## Bundled emoji and icon catalogs
 
 Unicode Emoji 17.0 data is derived from https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt.

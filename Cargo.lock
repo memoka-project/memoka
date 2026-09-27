@@ -3054,7 +3054,7 @@ dependencies = [
 
 [[package]]
 name = "memoka-desktop"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3081,6 +3081,7 @@ dependencies = [
  "process-wrap",
  "pulldown-cmark",
  "rand 0.8.8",
+ "regex",
  "reqwest",
  "rpassword",
  "rusqlite",

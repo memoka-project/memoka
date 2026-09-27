@@ -161,6 +161,9 @@ Undo/Redo historyは実行中sessionのEditor stateに属し、アプリ再起�
 
 同じNoteDocを複数Windowで開いた場合、本文とrevisionは共有する。caret、mode、selection、Focused Section、
 fold、scroll、Jump ListはWindowごとに分離する。
+各WindowはNote別の安定caret位置、Focused Section、scroll、viewport内のcaretの高さをlocal UI stateに保持し、Note切替と再起動後に復元する。復元直後の再layoutではcaretの高さを基準にscrollを補正する。明示的なjump先は保存位置より優先し、Window closeでそのWindowの記憶を破棄する。
+保存scrollの適用や再layoutによってcaretが一時的にviewport外へ出ても、復元中はcaretを別の可視位置へ移さず、必要ならviewportを補正する。wheelなどのユーザー操作によるscrollは従来どおりviewportを優先する。
+相対位置が解決できない場合は、同じblock内で一致する文脈を優先し、文脈が繰り返されるときは保存時のoffsetに最も近い候補を選ぶ。
 
 ## 9. Tree projectionと検索projection
 
@@ -186,6 +189,7 @@ previous Window IDは旧保存dataでは省略可能であり、未設定なら�
 Windowを閉じる際は残ったTabから無効なprevious参照を除く。
 
 Section foldとFocused SectionもWindow-localである。同じNoteを別Windowで開いても表示範囲は独立する。
+保存するカーソル位置の前後文脈はサロゲートペアを途中で分割せず、JSONとして有効な文字列にする。
 Visual selection、IME composition、検索query、Command-line入力、picker選択は一時stateであり、
 通常は再起動後へ持ち越さない。
 
@@ -200,6 +204,7 @@ Treeの削除は永続消去ではなくmetadata上のTrash移動である。
 - 復元に必要な親が別operationのTrash内にある場合は、祖先を先に復元するまで拒否する。
 - 削除Noteを表示していたWindowは利用可能な既存BufferまたはEmpty Bufferへ移る。
 - live Noteが残らなくても代替Noteを暗黙作成しない。
-- 永続削除は実装しない。
+- Trashの完全削除は同期可能な、取り消せない論理削除マーカーとして記録する。同じTrash operationの現時点の対象を一括で隠し、遅れて届く復元より削除を優先する。別操作で削除済みの子孫は残し、削除対象の祖先の外へ配置を移して復元可能にする。管理Helpは対象外である。
+- NoteDoc本体、CRDT履歴、過去のバックアップ、添付実体は物理消去しない。通常のTree・Trash検索・CLI readerからは論理削除済み項目を除外する。
 
 Trash操作はWorkspace transactionであり、Editor本文のUndo/Redoや`.` repeatには含めない。

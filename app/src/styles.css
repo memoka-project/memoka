@@ -971,6 +971,34 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--memoka-color-selection-border);
 }
 
+.memoka-find-hint-overlay {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.memoka-find-hint {
+  position: absolute;
+  transform: translateY(calc(-100% + 0.7em));
+  padding: 0 0.25em;
+  border-radius: 3px;
+  background: var(--memoka-color-warning);
+  color: var(--memoka-color-surface);
+  font:
+    700 11px/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  white-space: nowrap;
+}
+
+.memoka-find-hint-typed {
+  color: var(--memoka-color-focus);
+}
+
 .memoka-visual-line-text-selected {
   position: relative;
   z-index: 3;
@@ -2495,7 +2523,7 @@ textarea {
 
 .workspace-search-row-heading {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   gap: 7px;
   min-width: 0;
 }
@@ -2509,13 +2537,23 @@ textarea {
 }
 
 .workspace-search-icon {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
   flex: none;
+  height: 16px;
   font-family: system-ui, sans-serif;
+}
+
+.workspace-search-icon .tree-icon {
+  flex-basis: 14px;
+  width: 14px;
+  height: 14px;
 }
 
 .workspace-search-result-path {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   flex: 1 1 auto;
   gap: 5px;
   min-width: 0;
@@ -2526,7 +2564,7 @@ textarea {
   min-width: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
   color: var(--memoka-color-text-subtle);
   direction: rtl;
 }
@@ -2537,13 +2575,14 @@ textarea {
   min-width: 24px;
   overflow: hidden;
   color: var(--memoka-color-text);
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .workspace-search-row-heading > .workspace-search-note-title {
-  flex: 1 1 auto;
-  max-width: none;
+  flex: 0 1 auto;
+  max-width: 62%;
 }
 
 .workspace-search-line-number {
@@ -2553,13 +2592,30 @@ textarea {
 }
 
 .workspace-search-title-hierarchy {
-  display: block;
-  margin: 3px 0 0 58px;
+  display: inline-block;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   color: var(--memoka-color-text-subtle);
   font-size: 10px;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
+}
+
+.workspace-search-open-indicator {
+  align-self: center;
+  flex: none;
+  margin-left: -3px;
+  font-size: 4.5px;
+  line-height: 1;
+}
+
+.workspace-search-open-indicator--current {
+  color: var(--memoka-color-success);
+}
+
+.workspace-search-open-indicator--other {
+  color: var(--memoka-color-link);
 }
 
 .workspace-search-preview-text {
@@ -2642,7 +2698,22 @@ textarea {
   grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  background: var(--memoka-color-surface-inset);
+  background: var(--memoka-color-surface);
+}
+
+.search-pane__preview-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.trash-search-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--memoka-color-danger-border);
 }
 
 .workspace-search-preview-root {
@@ -2655,7 +2726,7 @@ textarea {
 }
 
 .workspace-search-preview-root--centerable {
-  padding-block: calc(50% - 1em) 50%;
+  padding-block: var(--workspace-search-preview-padding, 22px);
 }
 
 .workspace-search-preview-document {

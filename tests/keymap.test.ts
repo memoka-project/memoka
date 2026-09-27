@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DeclarativeKeymap } from "../app/src/core/keymap";
-import { searchKeySequence, searchKeymap } from "../app/src/core/search-keymap";
+import {
+  resolveSearchCommand,
+  searchKeySequence,
+  searchKeymap,
+} from "../app/src/core/search-keymap";
 
 type Context = "note.normal" | "notes.normal" | "search.insert";
 type Command = "cursor.down" | "notes.next" | "search.insert-text";
@@ -88,11 +92,33 @@ describe("Memoka declarative keymap", () => {
     expect(searchKeymap.resolve("search.insert", "Escape")).toBe(
       "search.close",
     );
+    expect(searchKeymap.resolve("search.insert", "Ctrl+h")).toBe(
+      "search.delete_previous",
+    );
+    expect(searchKeymap.resolve("search.insert", "Ctrl+u")).toBe(
+      "search.delete_to_start",
+    );
+    expect(searchKeymap.resolve("search.insert", "Ctrl+w")).toBe(
+      "search.delete_word_backward",
+    );
+    expect(resolveSearchCommand("search.command", "Tab")).toBe(
+      "search.complete",
+    );
+    expect(resolveSearchCommand("search.command", "Ctrl+w")).toBe(
+      "search.delete_word_backward",
+    );
     expect(searchKeymap.resolve("search.insert", "r")).toBeNull();
     expect(searchKeymap.resolve("search.trash", "r")).toBe("search.restore");
+    expect(searchKeymap.resolve("search.trash", "D")).toBe("search.purge");
     expect(searchKeymap.resolve("search.trash", "Enter")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Tab")).toBe("search.ignore");
     expect(searchKeymap.resolve("search.trash", "Ctrl+c")).toBe("search.close");
+    expect(searchKeymap.resolve("search.trash", "Ctrl+h")).toBe(
+      "search.delete_previous",
+    );
+    expect(searchKeymap.resolve("search.trash", "Ctrl+u")).toBe(
+      "search.delete_to_start",
+    );
     expect(
       searchKeySequence({
         key: "N",
@@ -101,6 +127,14 @@ describe("Memoka declarative keymap", () => {
         altKey: false,
       }),
     ).toBe("Ctrl+n");
+    expect(
+      searchKeySequence({
+        key: "H",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+      }),
+    ).toBe("Ctrl+h");
     expect(
       searchKeySequence({
         key: "Enter",

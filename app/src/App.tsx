@@ -3,6 +3,10 @@ import {
   type SymbolPickerSession,
 } from "./components/SymbolPicker";
 import { SymbolText } from "./components/SymbolText";
+import { PickerRecentsProvider } from "./components/PickerRecents";
+import type { PickerRecentsPort } from "./platform/picker-recents";
+import { CommandHistoryProvider } from "./components/CommandHistory";
+import type { CommandHistoryPort } from "./platform/command-history";
 import {
   useCallback,
   useEffect,
@@ -247,6 +251,8 @@ export interface AppProps {
   initialJapaneseWordSegmentation?: JapaneseWordSegmentationMode;
   initialJapaneseLineBreakSegmentation?: JapaneseLineBreakSegmentationMode;
   applicationConfig?: ApplicationConfigPort;
+  pickerRecents?: PickerRecentsPort;
+  commandHistory?: CommandHistoryPort;
   applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
   keyConfigWarning?: string | null;
@@ -272,6 +278,8 @@ export function App({
   initialJapaneseWordSegmentation = DEFAULT_JAPANESE_WORD_SEGMENTATION,
   initialJapaneseLineBreakSegmentation = DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
   applicationConfig: applicationConfigOverride,
+  pickerRecents,
+  commandHistory,
   applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
   keyConfigWarning = null,
@@ -1074,9 +1082,21 @@ export function App({
       setInlineFormatPicker(null);
       setTableActionPicker(null);
       setCodeActionPicker(null);
-      setWorkspaceSearch(session);
+      setWorkspaceSearch({
+        ...session,
+        focusResult: () => {
+          if (!runtime) {
+            session.restoreFocus();
+            return;
+          }
+          void runtime.focusEditorWindow(session.windowId).then(
+            () => requestEditorFocus(session.windowId),
+            () => session.restoreFocus(),
+          );
+        },
+      });
     },
-    [clearEditorFocusRequests],
+    [clearEditorFocusRequests, requestEditorFocus, runtime],
   );
 
   const openNoteSearch = useCallback(
@@ -2475,39 +2495,12 @@ export function App({
     setCommandMessage(`workspace.search.${target}.${scope} · application`);
   };
 
-  const openNoteSearchFromApplication = (restoreFocus: () => void): void => {
-    const adapter = editorAdapters.current.get(effectiveTargetWindowId);
-    const origin = adapter?.captureNoteSearchOrigin() ?? null;
-    if (!adapter || !origin || targetWindow?.noteId === null) {
-      setCommandMessage("Note Search · 検索対象のNoteがありません");
-      queueMicrotask(restoreFocus);
-      return;
-    }
-    openNoteSearch({
-      windowId: effectiveTargetWindowId,
-      origin,
-      applyDestination: (destination, detail) =>
-        applyNavigationDestinationToWindow(
-          effectiveTargetWindowId,
-          destination,
-          detail,
-        ),
-      requestInputMethodDeactivation: () =>
-        adapter.requestInputMethodDeactivation(),
-      restoreFocus,
-      focusResult: () => requestEditorFocus(effectiveTargetWindowId),
-    });
-    setCommandMessage("note.search · application");
-  };
-
   const executeLeaderCommand = (
     command: LeaderActiveCommandId,
     restoreFocus: () => void,
   ): void => {
     if (command === "application.command_picker") {
       openCommandPicker({ restoreFocus });
-    } else if (command === "note.search") {
-      openNoteSearchFromApplication(restoreFocus);
     } else if (command === "context.action_picker") {
       const shortcut = leaderShortcutForCommand(command);
       setCommandMessage(
@@ -2693,13 +2686,49 @@ export function App({
     }
   };
 
+  const goToLogicalLine = (
+    lineNumber: number,
+    origin: ApplicationCommandLineSession | null = commandLine,
+  ): void => {
+    const windowId = effectiveTargetWindowId;
+    setCommandLine(null);
+    setCommandPicker(null);
+    if (!editorAdapters.current.has(windowId)) {
+      setCommandMessage("移動先のNoteが開かれていません");
+      queueMicrotask(() => origin?.restoreFocus());
+      return;
+    }
+    void runtime.focusEditorWindow(windowId).then(
+      () => {
+        const actualLine = editorAdapters.current
+          .get(windowId)
+          ?.focusLogicalLine(lineNumber, `command:line:${lineNumber}`);
+        if (actualLine === undefined || actualLine === null) {
+          setCommandMessage("移動先の論理行を表示できませんでした");
+          queueMicrotask(() => origin?.restoreFocus());
+          return;
+        }
+        setCommandMessage(`:${lineNumber} · ${actualLine}行目`);
+        requestEditorFocus(windowId);
+      },
+      (cause) => {
+        setCommandMessage(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+        queueMicrotask(() => origin?.restoreFocus());
+      },
+    );
+  };
+
   const executeApplicationCommand = (
     command: ApplicationCommandId,
     message: string,
     argument: string | null,
+    origin: ApplicationCommandLineSession | null = commandLine,
   ): void => {
-    const session = commandLine;
+    const session = origin;
     setCommandLine(null);
+    setCommandPicker(null);
     setCommandMessage(message);
     const commandRestoreFocus =
       session?.restoreFocus ??
@@ -3517,7 +3546,7 @@ export function App({
     );
   };
 
-  return (
+  const main = (
     <main
       ref={appRoot}
       className={`app-shell${applicationActive ? "" : " app-shell--inactive"}${updateProgress ? " app-shell--update-busy" : ""}${shutdownProgress ? " app-shell--shutdown-busy" : ""}`}
@@ -3862,6 +3891,7 @@ export function App({
       ) : fontPicker ? (
         <FontPicker
           session={fontPicker}
+          recentKind={`font-${fontPicker.target}`}
           onPreview={(selectedFontFamily) => {
             if (fontPicker.target === "ui") {
               setFontFamily(selectedFontFamily);
@@ -3957,14 +3987,27 @@ export function App({
       ) : commandPicker ? (
         <ApplicationCommandPicker
           session={commandPicker}
-          onSelect={(command) => {
+          onSelect={(selection) => {
             const restoreFocus = commandPicker.restoreFocus;
             setCommandPicker(null);
+            if (selection.kind === "line") {
+              goToLogicalLine(selection.lineNumber, commandPicker);
+              return;
+            }
+            if (selection.kind === "execute") {
+              executeApplicationCommand(
+                selection.command.id,
+                `:${selection.command.name}`,
+                selection.argument,
+                commandPicker,
+              );
+              return;
+            }
             openCommandLine({
               restoreFocus,
-              initialValue: `${command.name}${command.argument === "optional" ? " " : ""}`,
+              initialValue: selection.value,
             });
-            setCommandMessage(`:${command.name} · Command-lineへ転記`);
+            setCommandMessage(`:${selection.value} · Command-lineへ転記`);
           }}
           onClose={() => setCommandPicker(null)}
           focused
@@ -3973,6 +4016,7 @@ export function App({
         <ApplicationCommandLine
           session={commandLine}
           onExecute={executeApplicationCommand}
+          onGoToLine={goToLogicalLine}
           onClose={() => setCommandLine(null)}
           focused
         />
@@ -4017,6 +4061,13 @@ export function App({
         </div>
       )}
     </main>
+  );
+  return (
+    <PickerRecentsProvider port={pickerRecents}>
+      <CommandHistoryProvider port={commandHistory}>
+        {main}
+      </CommandHistoryProvider>
+    </PickerRecentsProvider>
   );
 }
 
@@ -4754,6 +4805,7 @@ function EditorWindow({
           windowId,
           selectedText: request.selectedText,
           existingHref: request.existingHref,
+          hasFormatting: request.hasFormatting,
           apply: request.apply,
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
@@ -4800,9 +4852,10 @@ function EditorWindow({
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
       onMessage,
-      onNoteSearch: (origin) =>
+      onNoteSearch: (origin, direction) =>
         onNoteSearch({
           windowId,
+          direction,
           origin,
           applyDestination: (destination, detail) =>
             adapterRef.current?.applyNavigationDestination(
@@ -4811,6 +4864,16 @@ function EditorWindow({
             ) ?? null,
           requestInputMethodDeactivation: () =>
             adapterRef.current?.requestInputMethodDeactivation(),
+          visibleWords: () =>
+            adapterRef.current?.noteSearchVisibleWords() ?? [],
+          locationAt: (position) =>
+            adapterRef.current?.noteSearchLocation(position) ?? null,
+          showHints: (hints, typed) =>
+            adapterRef.current?.showNoteSearchHints(hints, typed),
+          clearHints: () => adapterRef.current?.clearNoteSearchHints(),
+          viewport: () => adapterRef.current?.noteSearchViewport() ?? null,
+          onViewChange: (listener) =>
+            adapterRef.current?.onNoteSearchViewChange(listener) ?? (() => {}),
           restoreFocus: () => adapterRef.current?.editor.commands.focus(),
         }),
       onCommandLine: () =>

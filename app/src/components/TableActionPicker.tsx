@@ -10,6 +10,7 @@ import type {
   TableActionSelection,
 } from "../vim/table-editing";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface TableActionPickerSession {
   readonly windowId: string;
@@ -31,6 +32,7 @@ export function TableActionPicker({
 }) {
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   const entries = useMemo(() => filterTableActionCatalog(query), [query]);
   const { selection } = session;
   const scope = `${selection.rowTo - selection.rowFrom + 1}行 × ${
@@ -40,6 +42,7 @@ export function TableActionPicker({
   const accept = (entry: TableActionCatalogEntry): void => {
     const result = session.apply(entry.id);
     if (result.changed || result.reason === "boundary") {
+      if (result.changed) record("table-action", entry.id);
       onClose();
       queueMicrotask(session.restoreFocus);
       onMessage(
@@ -64,6 +67,7 @@ export function TableActionPicker({
       }}
       items={entries}
       itemId={(entry) => entry.id}
+      recentKind="table-action"
       renderItem={(entry, currentQuery) => (
         <span className="table-action-picker__row">
           <HighlightedActionName value={entry.name} query={currentQuery} />

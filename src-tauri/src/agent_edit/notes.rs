@@ -613,6 +613,7 @@ mod tests {
                     updated_at: "unused".into(),
                     deleted_at: None,
                     trash_operation_id: None,
+                    purged_at: None,
                 },
             );
         }

@@ -7,7 +7,7 @@
 
 - NoteDoc 7の安定IDごとの内容・配置・削除・観測済み復元、循環の決定的解消、H6表示補正、Table行列ID。
 - 要素ごとのProseMirror adapter、相対カーソル、IME待機、ローカルUndo、Vim操作、分割Window、復旧画面。
-- WorkspaceMetadataDoc 4のTree・Trash、削除された親への並行追加、GUI・CLI・検索・履歴の共通投影。
+- WorkspaceMetadataDoc 5のTree・Trash・完全削除、削除された親への並行追加、GUI・CLI・検索・履歴の共通投影。
 - SQLite 7への候補変換、移行前バックアップ、Markdown・装飾・構造・ID・添付hash比較、旧履歴読出し。
 - owner transactionと一体のjournal、永続inbox、受信/反映frontier、署名、複数文書の原子的反映、checkpoint集約。
 - 読出し専用snapshotによる準備とGUI保存queueへのpublication、応答消失時の再送、受信とTrashのIME待機。

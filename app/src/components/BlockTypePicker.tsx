@@ -23,6 +23,7 @@ import {
 import { workspaceSearchMatchRanges } from "../core/workspace-search";
 import type { BlockTransformResult } from "../vim/block-transform";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface BlockTypePickerSession {
   readonly windowId: string;
@@ -51,12 +52,14 @@ export function BlockTypePicker({
     "catalog",
   );
   const entries = useMemo(() => filterBlockTypeCatalog(query), [query]);
+  const { record } = usePickerRecents();
 
   const accept = (entry: BlockTypeCatalogEntry): void => {
     if (entry.id === "attachment") {
       onClose();
       if (session.attach) {
         session.attach();
+        record("block-type", "attachment");
       } else {
         queueMicrotask(session.restoreFocus);
         onMessage("attachment.insert · 添付ファイル機能を利用できません");
@@ -78,6 +81,7 @@ export function BlockTypePicker({
   const completeTransform = (
     entry: BlockTypeCatalogEntry,
     transform: () => BlockTransformResult | null,
+    alertType?: string,
   ): void => {
     onClose();
     queueMicrotask(() => {
@@ -86,6 +90,8 @@ export function BlockTypePicker({
       restoreFocusAfterEditorUpdate(session.restoreFocus);
       const result = transform();
       if (result?.changed) {
+        record("block-type", entry.id);
+        if (alertType) record("alert-type", alertType);
         onMessage(`block.transform · ${entry.name}`);
         return;
       }
@@ -133,8 +139,10 @@ export function BlockTypePicker({
         blockId={session.blockId}
         focused={focused}
         onAccept={(alert) =>
-          completeTransform(alertEntry, () =>
-            session.transform("alert", { alert }),
+          completeTransform(
+            alertEntry,
+            () => session.transform("alert", { alert }),
+            alert.type,
           )
         }
         onClose={() => {
@@ -154,6 +162,7 @@ export function BlockTypePicker({
       onQueryChange={setQuery}
       items={entries}
       itemId={(entry) => entry.id}
+      recentKind="block-type"
       renderItem={(entry, currentQuery) => (
         <span className="block-type-picker__row">
           <HighlightedBlockTypeName value={entry.name} query={currentQuery} />
@@ -219,6 +228,7 @@ function AlertTypePicker({
       onQueryChange={setQuery}
       items={entries}
       itemId={(entry) => entry.id}
+      recentKind="alert-type"
       renderItem={(entry, currentQuery) => (
         <span className="block-type-picker__row">
           <HighlightedBlockTypeName value={entry.name} query={currentQuery} />

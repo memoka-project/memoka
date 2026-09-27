@@ -12,6 +12,7 @@ import { CoreRuntime } from "../app/src/core/runtime";
 import {
   createSectionXml,
   insertChildSection,
+  removeChildSection,
 } from "../app/src/core/section-model";
 import type { StableEditorPosition } from "../app/src/core/stable-position";
 import { addSecondWindow } from "./helpers/runtime";
@@ -403,6 +404,234 @@ describe("Memoka Section Link and Jump List navigation", () => {
     expect(runtime.jumpListFor("window-1").snapshot().back).toHaveLength(1);
 
     source.adapter.destroy();
+    root.remove();
+    runtime.destroy();
+  });
+
+  it("restores a Window's Note caret after another Window edits it and after restart", async () => {
+    const persistence = new MemoryPersistencePort();
+    const runtime = await CoreRuntime.open(persistence, {
+      idFactory: deterministicIds(),
+      initialTitle: "source",
+    });
+    await addSecondWindow(runtime);
+    const sourceNoteId = runtime.noteId;
+    const target = await runtime.createNoteAtEnd("window-1", "target");
+    const firstRoot = editorRoot();
+    const first = runtime.editorForTesting("window-1", firstRoot, {
+      directBodyOnly: false,
+    });
+    first.editor.commands.setContent(
+      noteContent(target.noteId, "target", [paragraph("abcdef")]),
+    );
+    await settle(runtime);
+    first.editor.commands.setTextSelection(
+      firstParagraphStart(first.editor) + 3,
+    );
+    await runtime.openNote("window-1", sourceNoteId);
+    first.adapter.destroy();
+    firstRoot.remove();
+
+    await runtime.openNote("window-2", target.noteId);
+    const editingRoot = editorRoot();
+    const editing = runtime.editorForTesting("window-2", editingRoot, {
+      directBodyOnly: false,
+    });
+    editing.editor.commands.insertContentAt(
+      firstParagraphStart(editing.editor),
+      "XX",
+    );
+    await settle(runtime);
+
+    await runtime.openNote("window-1", target.noteId);
+    const restoredRoot = editorRoot();
+    const restored = runtime.editorForTesting("window-1", restoredRoot, {
+      directBodyOnly: false,
+    });
+    expect(restored.editor.state.selection.head).toBe(
+      firstParagraphStart(restored.editor) + 5,
+    );
+    restored.adapter.destroy();
+    restoredRoot.remove();
+    await runtime.openNote("window-1", sourceNoteId);
+    editing.adapter.destroy();
+    editingRoot.remove();
+    await runtime.flush();
+    runtime.destroy();
+
+    const reopened = await CoreRuntime.open(persistence);
+    try {
+      await reopened.openNote("window-1", target.noteId);
+      const root = editorRoot();
+      const adapter = reopened.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      expect(adapter.editor.state.selection.head).toBe(
+        firstParagraphStart(adapter.editor) + 5,
+      );
+      adapter.adapter.destroy();
+      root.remove();
+    } finally {
+      reopened.destroy();
+    }
+  });
+
+  it("restores the managed Help caret after switching to another loaded Note from Tree", async () => {
+    class ReplicatedPersistence extends MemoryPersistencePort {
+      readonly replicaId = createUuidV7();
+      override async manifest() {
+        return {
+          ...(await super.manifest()),
+          databaseSchemaVersion: 7,
+          replicaId: this.replicaId,
+        };
+      }
+    }
+    const runtime = await CoreRuntime.open(new ReplicatedPersistence(), {
+      idFactory: deterministicIds(),
+      initialTitle: "source",
+    });
+    const otherNoteId = runtime.noteId;
+    const help = await runtime.openHelpNote("window-1");
+    const helpRoot = editorRoot();
+    const helpView = runtime.editorForTesting("window-1", helpRoot, {
+      directBodyOnly: false,
+    });
+    const helpParagraphs: number[] = [];
+    helpView.editor.state.doc.descendants((node, position) => {
+      if (node.type.name === "paragraph" && node.content.size >= 6)
+        helpParagraphs.push(position + 5);
+    });
+    expect(helpParagraphs.length).toBeGreaterThan(2);
+    helpView.editor.commands.setTextSelection(
+      helpParagraphs[Math.floor(helpParagraphs.length / 2)],
+    );
+    const helpPosition = helpView.editor.state.selection.head;
+    const helpOrigin = helpView.adapter.captureStablePosition();
+    if (!helpOrigin) throw new Error("Help caret could not be captured");
+    expect(helpOrigin.relative.length).toBeGreaterThan(0);
+
+    await runtime.navigateNoteOpen("window-1", helpOrigin, otherNoteId);
+    helpView.adapter.destroy();
+    helpRoot.remove();
+    const otherRoot = editorRoot();
+    const otherView = runtime.editorForTesting("window-1", otherRoot, {
+      directBodyOnly: false,
+    });
+    const otherOrigin = otherView.adapter.captureStablePosition();
+    if (!otherOrigin) throw new Error("Other Note caret could not be captured");
+    await runtime.navigateNoteOpen("window-1", otherOrigin, help.noteId);
+    otherView.adapter.destroy();
+    otherRoot.remove();
+
+    const restoredRoot = editorRoot();
+    const restored = runtime.editorForTesting("window-1", restoredRoot, {
+      directBodyOnly: false,
+    });
+    expect(restored.editor.state.selection.head).toBe(helpPosition);
+    restored.adapter.destroy();
+    restoredRoot.remove();
+    runtime.destroy();
+  });
+
+  it("restores title and Buffer search opens but honors an explicit Section result", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "source",
+    });
+    const sourceId = runtime.noteId;
+    const target = await runtime.createNoteAtEnd("window-1", "target");
+    const root = editorRoot();
+    const first = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    first.editor.commands.setContent(
+      noteContent(target.noteId, "target", [paragraph("remember here")]),
+    );
+    await settle(runtime);
+    first.editor.commands.setTextSelection(
+      firstParagraphStart(first.editor) + 4,
+    );
+    await runtime.openNote("window-1", sourceId);
+    first.adapter.destroy();
+    root.remove();
+    const origin = stablePosition(sourceId, 0);
+
+    for (const searchTarget of ["workspace", "buffers"] as const) {
+      const result = (
+        await runtime.searchWorkspace("target", "title", 20, searchTarget)
+      ).results.find(
+        (entry) =>
+          entry.noteId === target.noteId && entry.sectionId === target.noteId,
+      );
+      expect(result).toBeDefined();
+      expect(
+        await runtime.navigateWorkspaceSearchResult(
+          "window-1",
+          origin,
+          result!,
+        ),
+      ).toMatchObject({ handled: true });
+      const attachedRoot = editorRoot();
+      const attached = runtime.editorForTesting("window-1", attachedRoot, {
+        directBodyOnly: false,
+      });
+      expect(attached.editor.state.selection.head).toBe(
+        firstParagraphStart(attached.editor) + 4,
+      );
+      attached.adapter.destroy();
+      attachedRoot.remove();
+      await runtime.openNote("window-1", sourceId);
+    }
+
+    const note = runtime.getNoteHandle(target.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const childId = createUuidV7();
+    note.doc.transact(() =>
+      insertChildSection(note.rootSection, createSectionXml(childId, "child")),
+    );
+    const titleResult = (
+      await runtime.searchWorkspace("target", "title")
+    ).results.find(
+      (entry) =>
+        entry.noteId === target.noteId && entry.sectionId === target.noteId,
+    )!;
+    const sectionResult = { ...titleResult, sectionId: childId };
+    expect(
+      await runtime.navigateWorkspaceSearchResult(
+        "window-1",
+        origin,
+        sectionResult,
+      ),
+    ).toMatchObject({ handled: true });
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBe(childId);
+    runtime.destroy();
+  });
+
+  it("falls back to the full Note when its remembered Focused Section was removed", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
+      idFactory: deterministicIds(),
+      initialTitle: "source",
+    });
+    const sourceId = runtime.noteId;
+    const target = await runtime.createNoteAtEnd("window-1", "target");
+    const note = runtime.getNoteHandle(target.noteId).current;
+    if (note.kind !== "note") throw new Error("Expected NoteDoc");
+    const childId = createUuidV7();
+    note.doc.transact(() =>
+      insertChildSection(note.rootSection, createSectionXml(childId, "child")),
+    );
+    await runtime.focusSection("window-1", target.noteId, childId);
+    await runtime.openNote("window-1", sourceId);
+    note.doc.transact(() => removeChildSection(note.rootSection, childId));
+    await runtime.openNote("window-1", target.noteId);
+    expect(runtime.windows.get("window-1")?.focusedSectionId).toBeNull();
+    const root = editorRoot();
+    const attached = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    expect(attached.editor.view.dom.dataset.sectionId).toBe(target.noteId);
+    attached.adapter.destroy();
     root.remove();
     runtime.destroy();
   });

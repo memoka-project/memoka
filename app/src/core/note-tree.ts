@@ -349,15 +349,17 @@ export function collectDescendantIds(
 
 export function noteAncestorPath(
   notes: readonly NoteMetadata[],
-  noteId: string,
+  noteIdOrMetadata: string | NoteMetadata,
 ): string {
-  const ancestors = notes.find(
-    (note) => note.noteId === noteId,
-  )?.namespaceAncestors;
+  const note =
+    typeof noteIdOrMetadata === "string"
+      ? notes.find(({ noteId }) => noteId === noteIdOrMetadata)
+      : noteIdOrMetadata;
+  const ancestors = note?.namespaceAncestors;
   if (ancestors) return ancestors.length ? `/${ancestors.join("/")}` : "/";
   const byId = new Map(notes.map((note) => [note.noteId, note]));
   const components: string[] = [];
-  let cursor = byId.get(noteId);
+  let cursor = note;
   const visited = new Set<string>();
   while (cursor?.parentNoteId) {
     if (visited.has(cursor.parentNoteId)) {

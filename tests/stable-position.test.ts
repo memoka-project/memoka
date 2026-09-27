@@ -20,6 +20,43 @@ function textPosition(editor: Editor, text: string): number {
 }
 
 describe("Memoka CRDT-stable editor position", () => {
+  it("does not persist half of an emoji in its JSON caret context", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const text = "😀abcdefghijklmnop😀";
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: createUuidV7(),
+      source: "internal",
+      payload: { noteId: runtime.noteId, text },
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    const start = textPosition(editor, text);
+    expect(
+      JSON.stringify(
+        editor.state.doc.textBetween(start + 7, start + 19, "", "\uFFFC"),
+      ),
+    ).toContain("\\ud83d");
+
+    for (let offset = 0; offset <= text.length; offset++) {
+      const saved = saveStableEditorPosition(
+        runtime.noteDocument,
+        editor.view,
+        start + offset,
+      );
+      expect(JSON.stringify(saved)).not.toMatch(
+        /\\u[dD][89a-fA-F][0-9a-fA-F]{2}/u,
+      );
+    }
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it("follows an insertion through a Yjs Relative Position", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     await runtime.executeCommand({
@@ -92,6 +129,40 @@ describe("Memoka CRDT-stable editor position", () => {
       blockId: saved.blockId,
       position: cursor,
     });
+
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("keeps the nearest occurrence when fallback context repeats within a block", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const repeated = "abcdefghijklmnop";
+    await runtime.executeCommand({
+      name: "note.replace_text",
+      operationId: createUuidV7(),
+      source: "internal",
+      payload: { noteId: runtime.noteId, text: repeated.repeat(4) },
+    });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      directBodyOnly: false,
+    });
+    const cursor = textPosition(editor, repeated) + repeated.length * 3 + 5;
+    const saved = saveStableEditorPosition(
+      runtime.noteDocument,
+      editor.view,
+      cursor,
+    );
+    const resolved = resolveStableEditorPosition(
+      runtime.noteDocument,
+      editor.view,
+      { ...saved, relative: new Uint8Array([255]) },
+    );
+
+    expect(resolved.source).toBe("block-fallback");
+    expect(resolved.position).toBe(cursor);
 
     adapter.destroy();
     runtime.destroy();

@@ -7,12 +7,15 @@ import {
 } from "./window-layout";
 import {
   createWindowLocalViewState,
+  rememberedNoteView,
+  validateRememberedNoteView,
   validateWindowLocalViewState,
+  type RememberedNoteView,
   type WindowLocalViewState,
   type WindowViewState as LegacyWindowViewState,
 } from "./window-state";
 
-export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 10;
+export const APPLICATION_WINDOW_STATE_SCHEMA_VERSION = 12;
 
 export type UtilityBufferKind = "tree" | "search" | "trash" | "outline";
 
@@ -82,6 +85,7 @@ export interface EditorWindowState {
   id: string;
   bufferId: string | null;
   view: WindowLocalViewState;
+  noteViews: Record<string, RememberedNoteView>;
 }
 
 export type SplitDirection = "horizontal" | "vertical";
@@ -220,6 +224,7 @@ export function createApplicationWindowState(
         id: input.windowId,
         bufferId: buffer?.id ?? null,
         view: createWindowLocalViewState(input.mode),
+        noteViews: {},
       },
     },
     buffers: buffer ? { [buffer.id]: structuredClone(buffer) } : {},
@@ -271,8 +276,25 @@ export function openBufferInWindow(
   if (!tab) throw new Error(`Unknown window: ${windowId}`);
   next.buffers[buffer.id] = structuredClone(buffer);
   const window = next.windows[windowId];
+  const previous =
+    window.bufferId === null ? null : next.buffers[window.bufferId];
+  if (previous?.kind === "note")
+    window.noteViews[previous.noteId] = rememberedNoteView(window.view);
+  const sameNote =
+    previous?.kind === "note" &&
+    buffer.kind === "note" &&
+    previous.noteId === buffer.noteId;
   window.bufferId = buffer.id;
-  window.view = createWindowLocalViewState(options.mode ?? "normal");
+  const saved =
+    !sameNote && buffer.kind === "note"
+      ? window.noteViews[buffer.noteId]
+      : undefined;
+  window.view = {
+    ...createWindowLocalViewState(options.mode ?? "normal"),
+    ...(saved ? structuredClone(saved) : {}),
+  };
+  if (buffer.kind === "note")
+    window.noteViews[buffer.noteId] = rememberedNoteView(window.view);
   if (options.activate !== false) {
     next.activeTabId = tab.id;
     activateTabWindow(tab, windowId);
@@ -336,6 +358,7 @@ export function splitWindow(
     id: input.newWindowId,
     bufferId,
     view: createWindowLocalViewState("normal"),
+    noteViews: {},
   };
   next.activeTabId = tab.id;
   next.focusOwner = { area: "window", windowId: input.newWindowId };
@@ -604,6 +627,7 @@ export function createTabPage(
     id: input.windowId,
     bufferId,
     view: createWindowLocalViewState("normal"),
+    noteViews: {},
   };
   const leftSidebar = structuredClone(sourceTab.leftSidebar);
   const rightSidebar = structuredClone(sourceTab.rightSidebar);
@@ -688,6 +712,10 @@ export function updateWindowView(
   const updated = { ...window.view, ...structuredClone(update) };
   validateWindowLocalViewState(updated);
   window.view = updated;
+  const buffer =
+    window.bufferId === null ? null : next.buffers[window.bufferId];
+  if (buffer?.kind === "note")
+    window.noteViews[buffer.noteId] = rememberedNoteView(updated);
   validateApplicationWindowState(next);
   return next;
 }
@@ -817,7 +845,7 @@ export function migrateApplicationWindowState(
   const candidateVersion = (value as { schemaVersion?: unknown }).schemaVersion;
   if (
     typeof candidateVersion !== "number" ||
-    ![5, 6, 7, 8, 9].includes(candidateVersion)
+    ![5, 6, 7, 8, 9, 10, 11].includes(candidateVersion)
   ) {
     return { state: value, changed: false };
   }
@@ -838,7 +866,13 @@ export function migrateApplicationWindowState(
           collapsedSectionIds?: string[];
           collapsedCodeBlockIds?: string[];
           detailsFoldOverrides?: Record<string, boolean>;
+          stableCaret?: null;
+          caretViewportTop?: number | null;
         };
+        noteViews?: Record<
+          string,
+          RememberedNoteView & { caretViewportTop?: number | null }
+        >;
       }
     >;
     buffers?: Record<string, { id?: string; kind?: string; utility?: string }>;
@@ -877,6 +911,15 @@ export function migrateApplicationWindowState(
       window.view.collapsedCodeBlockIds = [];
       window.view.detailsFoldOverrides = {};
     }
+  }
+  for (const window of Object.values(state.windows ?? {})) {
+    if (version <= 10) {
+      if (window.view) window.view.stableCaret = null;
+      window.noteViews = {};
+    }
+    if (window.view) window.view.caretViewportTop = null;
+    for (const remembered of Object.values(window.noteViews ?? {}))
+      remembered.caretViewportTop = null;
   }
   for (const tab of state.tabs ?? []) {
     const tree = tab.leftSidebar?.tree as
@@ -1030,6 +1073,18 @@ export function validateApplicationWindowState(
       );
     }
     validateWindowLocalViewState(window.view);
+    if (
+      !window.noteViews ||
+      typeof window.noteViews !== "object" ||
+      Array.isArray(window.noteViews)
+    )
+      throw new Error(`Window ${windowId} requires Note views`);
+    for (const [noteId, remembered] of Object.entries(window.noteViews)) {
+      assertUuidV7(noteId, "remembered Note ID");
+      validateRememberedNoteView(remembered);
+      if (remembered.stableCaret && remembered.stableCaret.noteId !== noteId)
+        throw new Error(`Window ${windowId} has mismatched Note caret`);
+    }
   }
   if (Object.keys(state.windows).length !== layoutWindowIds.size) {
     const missing = [...layoutWindowIds].find(
@@ -1481,7 +1536,9 @@ function legacyView(state: LegacyWindowViewState): WindowLocalViewState {
   return {
     mode: state.mode,
     selection: state.selection ? { ...state.selection } : null,
+    stableCaret: null,
     scrollTop: state.scrollTop,
+    caretViewportTop: null,
     focusedSectionId: null,
     collapsedSectionIds: [],
     collapsedCodeBlockIds: [],

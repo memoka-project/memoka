@@ -9,6 +9,7 @@ import {
 import type { CodeActionPickerRequest } from "../editor/tiptap-adapter";
 import { workspaceSearchMatchRanges } from "../core/workspace-search";
 import { SearchPane } from "./SearchPane";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface CodeActionPickerSession extends CodeActionPickerRequest {
   readonly windowId: string;
@@ -29,6 +30,7 @@ export function CodeActionPicker({
   const [phase, setPhase] = useState<"actions" | "languages">("actions");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   const actions = useMemo(() => filterCodeBlockActionCatalog(query), [query]);
   const languages = useMemo(() => filterCodeLanguageCatalog(query), [query]);
 
@@ -47,12 +49,15 @@ export function CodeActionPicker({
     closeAndRestore();
     void session.copy().then((result) => {
       if (result === "missing") onMessage("code.copy · 対象がありません");
+      else record("code-action", entry.id);
     });
   };
 
   const acceptLanguage = (entry: CodeLanguageCatalogEntry): void => {
     const result = session.setLanguage(entry.id);
     if (result.changed || result.reason === "no-op") {
+      record("code-action", "language");
+      record("code-language", entry.id ?? "plain-text");
       closeAndRestore();
       onMessage(
         result.changed
@@ -81,6 +86,7 @@ export function CodeActionPicker({
         }}
         items={languages}
         itemId={(entry) => entry.id ?? "plain-text"}
+        recentKind="code-language"
         renderItem={(entry, currentQuery) => (
           <PickerRow
             name={entry.name}
@@ -132,6 +138,7 @@ export function CodeActionPicker({
       }}
       items={actions}
       itemId={(entry) => entry.id}
+      recentKind="code-action"
       renderItem={(entry, currentQuery) => (
         <PickerRow
           name={entry.name}

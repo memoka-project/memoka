@@ -51,6 +51,12 @@ export const VIM_COMMANDS = [
   "line.open-above",
   "cursor.left",
   "cursor.right",
+  "cursor.find-forward",
+  "cursor.find-backward",
+  "cursor.till-forward",
+  "cursor.till-backward",
+  "cursor.find-repeat",
+  "cursor.find-reverse",
   "cursor.logical-up",
   "cursor.logical-down",
   "cursor.display-up",
@@ -92,6 +98,9 @@ export const VIM_COMMANDS = [
   "workspace.search_body",
   "workspace.search_buffers",
   "note.search",
+  "note.search_backward",
+  "note.search_word_forward",
+  "note.search_word_backward",
   "note.search_next",
   "note.search_previous",
   "application.command_line",
@@ -151,6 +160,7 @@ export type VimCommand = (typeof VIM_COMMANDS)[number];
 export interface KeyContext {
   isComposing: boolean;
   targetKind: "note-body" | "title" | "sidebar";
+  findHints?: readonly string[];
 }
 
 export type VimOperator = "delete" | "yank" | "change";
@@ -175,6 +185,14 @@ export type VimPendingInput =
       kind: "replace-character";
       key: "r";
       count: string;
+    }
+  | {
+      kind: "find-character";
+      key: "f" | "F" | "t" | "T";
+      count: string;
+      typed: string;
+      sequencePrefix: string;
+      operator?: VimOperator;
     }
   | {
       kind: "custom-prefix";
@@ -208,6 +226,7 @@ export type VimInputAction =
         | "pending:yank"
         | "pending:change"
         | "pending:replace-character"
+        | "pending:find-character"
         | "pending:text-object-inner"
         | "pending:text-object-around"
         | "pending:keymap";
@@ -228,6 +247,7 @@ export interface VimInputResolution {
   count: number;
   countExplicit?: boolean;
   argument?: string;
+  findHint?: boolean;
   action: VimInputAction;
 }
 
@@ -275,6 +295,10 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     R: "mode.replace",
     h: "cursor.left",
     l: "cursor.right",
+    f: "cursor.find-forward",
+    F: "cursor.find-backward",
+    ";": "cursor.find-repeat",
+    ",": "cursor.find-reverse",
     j: "cursor.logical-down",
     k: "cursor.logical-up",
     gj: "cursor.display-down",
@@ -311,6 +335,9 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     "Ctrl+o": "navigation.jump-back",
     "Ctrl+i": "navigation.jump-forward",
     "/": "note.search",
+    "?": "note.search_backward",
+    "*": "note.search_word_forward",
+    "#": "note.search_word_backward",
     n: "note.search_next",
     N: "note.search_previous",
     ":": "application.command_line",
@@ -379,6 +406,12 @@ export const DEFAULT_VIM_KEY_BINDINGS: readonly KeyBinding<
     Escape: "mode.normal",
     h: "cursor.left",
     l: "cursor.right",
+    f: "cursor.find-forward",
+    F: "cursor.find-backward",
+    t: "cursor.till-forward",
+    T: "cursor.till-backward",
+    ";": "cursor.find-repeat",
+    ",": "cursor.find-reverse",
     j: "cursor.logical-down",
     k: "cursor.logical-up",
     gj: "cursor.display-down",
@@ -490,6 +523,13 @@ const operatorMotions: Partial<Record<string, VimCommand>> = {
   gE: "motion.big-word-backward-end",
 };
 
+const findMotionCommands = {
+  f: "cursor.find-forward",
+  F: "cursor.find-backward",
+  t: "cursor.till-forward",
+  T: "cursor.till-backward",
+} as const;
+
 const modifierOnlyKeys = new Set([
   "Alt",
   "AltGraph",
@@ -550,6 +590,8 @@ export function createVimInputState(): VimInputState {
 }
 
 function pendingKey(pending: VimPendingInput | null): string {
+  if (pending?.kind === "find-character")
+    return `${pending.key}${pending.typed}`;
   if (pending?.kind === "operator") {
     return `${pending.key}${pending.textObjectPrefix ?? pending.motionPrefix ?? ""}`;
   }
@@ -565,6 +607,9 @@ function inputSequence(
   keyConfig: ApplicationKeyConfig,
 ): string {
   if (!state.pending) return `${state.count}${key}`;
+  if (state.pending.kind === "find-character") {
+    return `${state.pending.sequencePrefix}${state.pending.typed}${key}`;
+  }
   if (state.pending.kind === "operator") {
     return `${state.pending.count}${state.pending.key}${state.count}${state.pending.textObjectPrefix ?? state.pending.motionPrefix ?? ""}${key}`;
   }
@@ -589,6 +634,7 @@ function multipliedCount(left: string, right: string): number {
 }
 
 function isCountDigit(state: VimInputState, key: string): boolean {
+  if (state.pending?.kind === "find-character") return false;
   if (!/^\d$/u.test(key)) return false;
   if (state.pending?.kind === "replace-character") return false;
   if (state.pending?.kind === "prefix") return false;
@@ -646,6 +692,68 @@ export function advanceVimInput(
       resolvedCommand: null,
       operator: null,
       count: parsedCount(state.count),
+      action: { kind: "unmapped" },
+    };
+  }
+
+  if (state.pending?.kind === "find-character") {
+    const pending = state.pending;
+    const command = findMotionCommands[pending.key];
+    if (
+      key === "Escape" ||
+      context.isComposing ||
+      context.targetKind !== "note-body"
+    ) {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: null,
+        operator: pending.operator ?? null,
+        count: parsedCount(pending.count),
+        action: { kind: "unmapped" },
+      };
+    }
+    const typed = pending.typed + key;
+    const hints = context.findHints ?? [];
+    if (hints.includes(typed)) {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: command,
+        operator: pending.operator ?? null,
+        count: 1,
+        argument: typed,
+        findHint: true,
+        action: { kind: "execute", command, argument: typed },
+      };
+    }
+    if (hints.some((hint) => hint.startsWith(typed))) {
+      return {
+        state: { pending: { ...pending, typed }, count: "" },
+        sequence,
+        resolvedCommand: null,
+        operator: pending.operator ?? null,
+        count: parsedCount(pending.count),
+        action: { kind: "pending", detail: "pending:find-character" },
+      };
+    }
+    if (!pending.typed && graphemes(key).length === 1) {
+      return {
+        state: createVimInputState(),
+        sequence,
+        resolvedCommand: command,
+        operator: pending.operator ?? null,
+        count: parsedCount(pending.count),
+        argument: key,
+        action: { kind: "execute", command, argument: key },
+      };
+    }
+    return {
+      state: createVimInputState(),
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: 1,
       action: { kind: "unmapped" },
     };
   }
@@ -847,6 +955,40 @@ export function advanceVimInput(
     };
   }
 
+  const findKey =
+    key === "f" || key === "F" || key === "t" || key === "T" ? key : null;
+  if (
+    !context.isComposing &&
+    context.targetKind === "note-body" &&
+    pendingOperator &&
+    !textObjectPrefix &&
+    !motionPrefix &&
+    findKey
+  ) {
+    const count =
+      operatorInput?.count || state.count
+        ? String(multipliedCount(operatorInput?.count ?? "", state.count))
+        : "";
+    return {
+      state: {
+        pending: {
+          kind: "find-character",
+          key: findKey,
+          count,
+          typed: "",
+          sequencePrefix: sequence,
+          operator: pendingOperator,
+        },
+        count: "",
+      },
+      sequence,
+      resolvedCommand: findMotionCommands[findKey],
+      operator: null,
+      count: parsedCount(count),
+      action: { kind: "pending", detail: "pending:find-character" },
+    };
+  }
+
   const operatorMotion = operatorMotions[`${motionPrefix ?? ""}${key}`];
   if (
     !context.isComposing &&
@@ -1001,6 +1143,39 @@ export function advanceVimInput(
       operator: null,
       count: parsedCount(state.count),
       action: { kind: "pending", detail: "pending:replace-character" },
+    };
+  }
+
+  if (
+    resolvedCommand === "cursor.find-forward" ||
+    resolvedCommand === "cursor.find-backward" ||
+    resolvedCommand === "cursor.till-forward" ||
+    resolvedCommand === "cursor.till-backward"
+  ) {
+    const key =
+      resolvedCommand === "cursor.find-forward"
+        ? "f"
+        : resolvedCommand === "cursor.find-backward"
+          ? "F"
+          : resolvedCommand === "cursor.till-forward"
+            ? "t"
+            : "T";
+    return {
+      state: {
+        pending: {
+          kind: "find-character",
+          key,
+          count: state.count,
+          typed: "",
+          sequencePrefix: sequence,
+        },
+        count: "",
+      },
+      sequence,
+      resolvedCommand,
+      operator: null,
+      count: parsedCount(state.count),
+      action: { kind: "pending", detail: "pending:find-character" },
     };
   }
 

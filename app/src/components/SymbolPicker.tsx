@@ -7,6 +7,7 @@ import {
 } from "../core/symbols";
 import { SearchPane } from "./SearchPane";
 import { SymbolIcon } from "./SymbolText";
+import { usePickerRecents } from "./picker-recents-state";
 
 export interface SymbolPickerSession {
   readonly windowId: string;
@@ -25,6 +26,7 @@ export function SymbolPicker({
   const [filter, setFilter] = useState<SymbolFilter>("All");
   const [catalog, setCatalog] = useState<readonly SymbolEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const { record } = usePickerRecents();
   useEffect(() => {
     let active = true;
     void loadSymbolCatalog()
@@ -69,8 +71,10 @@ export function SymbolPicker({
         focusSurface="symbol-picker"
         query={query}
         onQueryChange={setQuery}
-        items={matches.slice(0, 200)}
+        items={matches}
         itemId={(item) => item.id}
+        recentKind="symbol"
+        maxItems={200}
         renderItem={(item) => (
           <span className="symbol-picker__row">
             <span>{glyph(item)}</span>
@@ -113,6 +117,7 @@ export function SymbolPicker({
             );
             return;
           }
+          record("symbol", item.id);
           onClose();
           queueMicrotask(session.restoreFocus);
         }}

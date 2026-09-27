@@ -61,6 +61,22 @@ function press(editor: Editor, key: string): KeyboardEvent {
 }
 
 describe("Memoka inline formatting", () => {
+  it("detects formatting when only part of the Visual-char selection has a mark", () => {
+    withEditor((editor) => {
+      editor.commands.setContent("<p>plain <strong>bold</strong> end</p>");
+      editor.commands.setTextSelection(textRange(editor));
+      expect(captureInlineFormatSelection(editor.view)?.hasFormatting).toBe(
+        true,
+      );
+
+      editor.commands.setContent("<p>plain text</p>");
+      editor.commands.setTextSelection(textRange(editor));
+      expect(captureInlineFormatSelection(editor.view)?.hasFormatting).toBe(
+        false,
+      );
+    });
+  });
+
   it("allows synthesized weight and oblique faces for Japanese editor text", () => {
     const style = document.createElement("style");
     style.textContent = readFileSync(

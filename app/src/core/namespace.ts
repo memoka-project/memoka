@@ -29,6 +29,8 @@ export interface NamespaceEntry {
   readonly updatedAt: string;
   readonly deletedAt?: string;
   readonly trashOperationId?: string;
+  /** Irreversible, replicated logical deletion; the underlying history remains. */
+  readonly purgedAt?: string;
 }
 
 export interface MainNamespace {
@@ -65,7 +67,7 @@ export function readNamespaceEntry(
   value: Y.Map<unknown>,
   placement?: Pick<
     NamespaceEntry,
-    "parentEntryId" | "position" | "deletedAt" | "trashOperationId"
+    "parentEntryId" | "position" | "deletedAt" | "trashOperationId" | "purgedAt"
   >,
 ): NamespaceEntry {
   assertUuidV7(entryId, "entryId");
@@ -108,6 +110,9 @@ export function readNamespaceEntry(
     : nullable("trash_operation_id");
   if ((deletedAt === undefined) !== (trashOperationId === undefined))
     throw new Error("Namespace Trash metadata must be paired");
+  const purgedAt = placement ? placement.purgedAt : nullable("purged_at");
+  if (purgedAt && (!deletedAt || !Number.isFinite(Date.parse(purgedAt))))
+    throw new Error("Invalid Namespace purge");
   if (trashOperationId !== undefined)
     assertUuidV7(trashOperationId, "trashOperationId");
   return {
@@ -120,6 +125,7 @@ export function readNamespaceEntry(
     updatedAt,
     deletedAt,
     trashOperationId,
+    purgedAt,
   };
 }
 
@@ -153,6 +159,7 @@ export function namespaceEntryMap(entry: NamespaceEntry): Y.Map<unknown> {
   value.set("updated_at", entry.updatedAt);
   value.set("deleted_at", entry.deletedAt ?? null);
   value.set("trash_operation_id", entry.trashOperationId ?? null);
+  value.set("purged_at", entry.purgedAt ?? null);
   return value;
 }
 
@@ -253,11 +260,12 @@ export function namespacePath(
     if (visited.has(cursor.entryId))
       throw new Error("Namespace contains a cycle");
     visited.add(cursor.entryId);
-    path.push(
-      cursor.target
-        ? noteTitles.get(cursor.target.id) || "新しいノート"
-        : cursor.name || "無題のグループ",
-    );
+    if (!cursor.purgedAt)
+      path.push(
+        cursor.target
+          ? noteTitles.get(cursor.target.id) || "新しいノート"
+          : cursor.name || "無題のグループ",
+      );
     cursor =
       cursor.parentEntryId === null
         ? undefined
@@ -293,6 +301,7 @@ export function namespaceTreeNodes(
       : entry.updatedAt,
     deletedAt: entry.deletedAt,
     trashOperationId: entry.trashOperationId,
+    purgedAt: entry.purgedAt,
   }));
 }
 
@@ -364,6 +373,8 @@ export function planNamespaceEdit(
     ];
   } else {
     if (!entry) throw new Error("Unknown Namespace entry");
+    if (entry.purgedAt)
+      throw new Error("Namespace entry was permanently deleted");
     if (request.kind !== "restore" && entry.deletedAt)
       throw new Error("Namespace entry is in Trash");
     if (request.kind === "rename-group") {
@@ -402,7 +413,10 @@ export function planNamespaceEdit(
         const plan = planNoteTrash(nodes, entry.entryId);
         affectedEntryIds = [...plan.noteIds];
         fallbackEntryId = plan.fallbackNoteId;
-      } else affectedEntryIds = [...planTrashRestore(nodes, entry.entryId)];
+      } else
+        affectedEntryIds = [...planTrashRestore(nodes, entry.entryId)].filter(
+          (id) => !entries.get(id)?.purgedAt,
+        );
       for (const id of affectedEntryIds) {
         const item = entries.get(id)!;
         item.deletedAt = request.kind === "trash" ? request.at : undefined;
