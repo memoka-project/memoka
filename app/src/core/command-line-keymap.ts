@@ -3,11 +3,22 @@ import { DeclarativeKeymap } from "./keymap";
 export type CommandLineKeymapContext = "command-line.insert";
 
 export type CommandLineCommandId =
-  "command-line.execute" | "command-line.close";
+  | "command-line.execute"
+  | "command-line.close"
+  | "command-line.keep_focus"
+  | "command-line.history_older_prefix"
+  | "command-line.history_newer_prefix"
+  | "command-line.history_older"
+  | "command-line.history_newer";
 
 export const COMMAND_LINE_COMMAND_IDS: readonly CommandLineCommandId[] = [
   "command-line.execute",
   "command-line.close",
+  "command-line.keep_focus",
+  "command-line.history_older_prefix",
+  "command-line.history_newer_prefix",
+  "command-line.history_older",
+  "command-line.history_newer",
 ];
 
 export const commandLineKeymap = new DeclarativeKeymap<
@@ -29,6 +40,31 @@ export const commandLineKeymap = new DeclarativeKeymap<
       context: "command-line.insert",
       sequence: "Ctrl+c",
       command: "command-line.close",
+    },
+    {
+      context: "command-line.insert",
+      sequence: "Tab",
+      command: "command-line.keep_focus",
+    },
+    {
+      context: "command-line.insert",
+      sequence: "ArrowUp",
+      command: "command-line.history_older_prefix",
+    },
+    {
+      context: "command-line.insert",
+      sequence: "ArrowDown",
+      command: "command-line.history_newer_prefix",
+    },
+    {
+      context: "command-line.insert",
+      sequence: "Ctrl+p",
+      command: "command-line.history_older",
+    },
+    {
+      context: "command-line.insert",
+      sequence: "Ctrl+n",
+      command: "command-line.history_newer",
     },
   ],
   COMMAND_LINE_COMMAND_IDS,

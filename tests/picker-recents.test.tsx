@@ -65,7 +65,10 @@ describe("shared picker recents", () => {
     fireEvent.click(backup!);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "workspace.backup" }),
+      expect.objectContaining({
+        kind: "execute",
+        command: expect.objectContaining({ id: "workspace.backup" }),
+      }),
     );
     await waitFor(async () =>
       expect((await port.load()).command).toEqual(["workspace.backup"]),

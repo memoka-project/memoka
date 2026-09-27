@@ -174,6 +174,15 @@ describe("Memoka Application Command-line", () => {
     expect(commandLineKeymap.resolve("command-line.insert", "Ctrl+c")).toBe(
       "command-line.close",
     );
+    expect(commandLineKeymap.resolve("command-line.insert", "Tab")).toBe(
+      "command-line.keep_focus",
+    );
+    expect(commandLineKeymap.resolve("command-line.insert", "ArrowUp")).toBe(
+      "command-line.history_older_prefix",
+    );
+    expect(commandLineKeymap.resolve("command-line.insert", "Ctrl+p")).toBe(
+      "command-line.history_older",
+    );
     expect(
       commandLineKeySequence({
         key: "c",

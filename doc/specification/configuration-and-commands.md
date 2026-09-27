@@ -193,13 +193,19 @@ Sidebar focus中も利用できる。
 
 - Enter: 実行
 - Esc/Ctrl-c: cancel
+- Tab: 入力欄にfocusを保つ。Command-lineでは補完しない
+- Up/Down: 入力開始時のcaret前prefixに一致するCommand履歴を古い/新しい方向へ選ぶ
+- Ctrl-p/Ctrl-n: prefixに関係なくCommand履歴を古い/新しい方向へ選ぶ
 - IME composition中のEnter: 変換を優先し、commandを実行しない
 - command名: case-insensitive
 - 引数: 定義上optionalなcommandに1つまで
 - 未知command、余分な引数: 入力面を保ってerrorを表示
+- 履歴候補は編集でき、最新候補の次へ進むと移動前の入力と選択位置に戻る。編集後の履歴移動は編集した入力を起点とする
+- 空入力以外でEnterした入力は未知commandや引数errorも含め、端末内のApplication設定へ最大200件保存する。完全一致の再入力は新しい位置へ移す。Workspace間と再起動後に共有し、Workspace同期はしない
 
 完全なVim Ex parserではない。`:q!`、range、pipe、substituteなど、catalog外の構文を推測しない。
-`<Leader>c`は共通検索paneからcommandを選び、canonical nameをCommand-lineへ転記する。
+`<Leader>c`は共通検索paneにCommand履歴とcatalog候補を表示する。引数なしの既知Command履歴はcatalog候補と1件にまとめ、引数付き履歴は全文を別候補にする。履歴は新しい順、履歴以外のcatalog候補は種類別の利用履歴順とする。Command名またはaliasの後へ引数を入力できる。previewは用途と引数の説明を1段落にまとめ、引数の書式・有効値と、Enterで実行できるかを示す。
+Enterは、引数を取らないCommandまたは妥当な引数を入力済みのCommandを直接実行する。optional引数を省略した場合、未知Command、不正な引数や未完成の入力は全文をCommand-lineへ渡して編集を続ける。Tabは選択履歴の全文、または選択Commandのcanonical nameで検索入力を置き換える。既知Command名・aliasの後に入力済みの引数は保持する。Tabでは履歴に追加せず、直接実行したCommandは履歴へ追加する。
 
 ## 7. Command catalog
 

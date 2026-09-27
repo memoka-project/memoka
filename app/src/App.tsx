@@ -5,6 +5,8 @@ import {
 import { SymbolText } from "./components/SymbolText";
 import { PickerRecentsProvider } from "./components/PickerRecents";
 import type { PickerRecentsPort } from "./platform/picker-recents";
+import { CommandHistoryProvider } from "./components/CommandHistory";
+import type { CommandHistoryPort } from "./platform/command-history";
 import {
   useCallback,
   useEffect,
@@ -250,6 +252,7 @@ export interface AppProps {
   initialJapaneseLineBreakSegmentation?: JapaneseLineBreakSegmentationMode;
   applicationConfig?: ApplicationConfigPort;
   pickerRecents?: PickerRecentsPort;
+  commandHistory?: CommandHistoryPort;
   applicationZoom?: ApplicationZoomPort;
   keyConfig?: ApplicationKeyConfig;
   keyConfigWarning?: string | null;
@@ -276,6 +279,7 @@ export function App({
   initialJapaneseLineBreakSegmentation = DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
   applicationConfig: applicationConfigOverride,
   pickerRecents,
+  commandHistory,
   applicationZoom: applicationZoomOverride,
   keyConfig = DEFAULT_APPLICATION_KEY_CONFIG,
   keyConfigWarning = null,
@@ -2686,9 +2690,11 @@ export function App({
     command: ApplicationCommandId,
     message: string,
     argument: string | null,
+    origin: ApplicationCommandLineSession | null = commandLine,
   ): void => {
-    const session = commandLine;
+    const session = origin;
     setCommandLine(null);
+    setCommandPicker(null);
     setCommandMessage(message);
     const commandRestoreFocus =
       session?.restoreFocus ??
@@ -3947,14 +3953,23 @@ export function App({
       ) : commandPicker ? (
         <ApplicationCommandPicker
           session={commandPicker}
-          onSelect={(command) => {
+          onSelect={(selection) => {
             const restoreFocus = commandPicker.restoreFocus;
             setCommandPicker(null);
+            if (selection.kind === "execute") {
+              executeApplicationCommand(
+                selection.command.id,
+                `:${selection.command.name}`,
+                selection.argument,
+                commandPicker,
+              );
+              return;
+            }
             openCommandLine({
               restoreFocus,
-              initialValue: `${command.name}${command.argument === "optional" ? " " : ""}`,
+              initialValue: selection.value,
             });
-            setCommandMessage(`:${command.name} · Command-lineへ転記`);
+            setCommandMessage(`:${selection.value} · Command-lineへ転記`);
           }}
           onClose={() => setCommandPicker(null)}
           focused
@@ -4009,7 +4024,11 @@ export function App({
     </main>
   );
   return (
-    <PickerRecentsProvider port={pickerRecents}>{main}</PickerRecentsProvider>
+    <PickerRecentsProvider port={pickerRecents}>
+      <CommandHistoryProvider port={commandHistory}>
+        {main}
+      </CommandHistoryProvider>
+    </PickerRecentsProvider>
   );
 }
 

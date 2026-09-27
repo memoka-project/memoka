@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   searchKeySequence,
-  searchKeymap,
+  resolveSearchCommand,
   type SearchKeymapContext,
 } from "../core/search-keymap";
 import { rankPickerItems, type PickerRecentKind } from "../core/picker-recents";
 import { usePickerRecents } from "./picker-recents-state";
+import { segmentVimWordCharacters } from "../vim/word-semantics";
 
 const queryGraphemes = new Intl.Segmenter(undefined, {
   granularity: "grapheme",
@@ -38,6 +39,7 @@ export interface SearchPaneProps<Item> {
   readonly prompt: ReactNode;
   readonly countLabel: ReactNode;
   readonly onAccept?: (item: Item) => void;
+  readonly onComplete?: (item: Item) => void;
   readonly onRestore?: (item: Item) => void;
   readonly onPurge?: (item: Item) => void;
   readonly initialSelectedItemId?: string | null;
@@ -73,6 +75,7 @@ export function SearchPane<Item>({
   prompt,
   countLabel,
   onAccept,
+  onComplete,
   onRestore,
   onPurge,
   initialSelectedItemId = null,
@@ -125,12 +128,6 @@ export function SearchPane<Item>({
   }, [onSelectionChange, selected]);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      if (list.current) list.current.scrollTop = list.current.scrollHeight;
-    });
-  }, [displayedItems]);
-
-  useEffect(() => {
     const selectedElement = list.current?.querySelector<HTMLElement>(
       `#${idPrefix}-result-${selectedIndex}`,
     );
@@ -155,18 +152,38 @@ export function SearchPane<Item>({
 
   const deleteQuery = (
     field: HTMLInputElement,
-    direction: "previous" | "start",
+    direction: "previous" | "start" | "word",
   ): void => {
     const value = field.value;
     const start = field.selectionStart ?? value.length;
     const end = field.selectionEnd ?? start;
-    const from =
-      direction === "start"
-        ? 0
-        : start === end
-          ? previousQueryGraphemeStart(value, start)
-          : start;
-    const to = direction === "start" ? start : end;
+    let from = start;
+    let to = end;
+    if (direction === "start") {
+      from = 0;
+      to = start;
+    } else if (start === end && direction === "previous") {
+      from = previousQueryGraphemeStart(value, start);
+    } else if (start === end && direction === "word") {
+      const units = [...queryGraphemes.segment(value.slice(0, start))];
+      const classes = segmentVimWordCharacters(
+        units.map((unit) => unit.segment),
+      );
+      let index = units.length - 1;
+      while (index >= 0 && /^\s+$/u.test(units[index]!.segment)) index -= 1;
+      if (index < 0) from = 0;
+      else {
+        const kind = classes[index] ?? null;
+        while (
+          index > 0 &&
+          classes[index - 1] === kind &&
+          !/^\s+$/u.test(units[index - 1]!.segment)
+        ) {
+          index -= 1;
+        }
+        from = units[index]!.index;
+      }
+    }
     if (from === to) return;
     setSelectedItemId(null);
     onQueryChange(value.slice(0, from) + value.slice(to));
@@ -193,7 +210,7 @@ export function SearchPane<Item>({
         const sequence = searchKeySequence(event);
         if (
           sequence &&
-          searchKeymap.resolve(commandContext, sequence) === "search.close"
+          resolveSearchCommand(commandContext, sequence) === "search.close"
         ) {
           event.preventDefault();
           event.stopPropagation();
@@ -253,7 +270,7 @@ export function SearchPane<Item>({
               if (event.nativeEvent.isComposing) return;
               const sequence = searchKeySequence(event);
               if (!sequence) return;
-              const command = searchKeymap.resolve(commandContext, sequence);
+              const command = resolveSearchCommand(commandContext, sequence);
               if (!command) return;
               event.preventDefault();
               if (command === "search.close") {
@@ -271,6 +288,11 @@ export function SearchPane<Item>({
                 deleteQuery(event.currentTarget, "previous");
               } else if (command === "search.delete_to_start") {
                 deleteQuery(event.currentTarget, "start");
+              } else if (command === "search.delete_word_backward") {
+                event.stopPropagation();
+                deleteQuery(event.currentTarget, "word");
+              } else if (command === "search.complete" && selected) {
+                onComplete?.(selected);
               } else if (command === "search.restore" && selected) {
                 onRestore?.(selected);
               } else if (command === "search.purge" && selected) {

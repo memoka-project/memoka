@@ -14,7 +14,7 @@ Application Window中央に表示し、左側を結果一覧と1行query、右�
 - 結果は下から上へ並べ、開始時は最下項目を選択する。
 - 上下矢印で選択し、選択行が常に一覧viewport内へ入るようscrollする。
 - mouse hoverでは選択を変えず、clickで選択する。
-- 入力中のCtrl-hは直前の1 grapheme（選択範囲があればその範囲）を削除し、Ctrl-uは入力欄の先頭からcaret直前までを削除する。削除後も入力欄のfocusとcaret位置を維持する。
+- 入力中のCtrl-hは直前の1 grapheme（選択範囲があればその範囲）を削除し、Ctrl-uは入力欄の先頭からcaret直前までを削除する。Ctrl-wはInsert modeの単語境界で直前の1語と直前の空白（選択範囲があればその範囲）を削除する。削除後も入力欄のfocusとcaret位置を維持する。
 - Esc/Ctrl-cで閉じる。
 - queryはUnicode正規化後、空白区切りtokenのAND条件として扱う。
 - 一致文字列を結果とpreviewで背景highlightする。

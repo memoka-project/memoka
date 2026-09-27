@@ -1,6 +1,7 @@
 import { DeclarativeKeymap } from "./keymap";
 
-export type SearchKeymapContext = "search.insert" | "search.trash";
+export type SearchKeymapContext =
+  "search.insert" | "search.trash" | "search.command";
 
 export type SearchCommandId =
   | "search.select_next"
@@ -11,6 +12,8 @@ export type SearchCommandId =
   | "search.ignore"
   | "search.delete_previous"
   | "search.delete_to_start"
+  | "search.delete_word_backward"
+  | "search.complete"
   | "search.close";
 
 export const SEARCH_COMMAND_IDS: readonly SearchCommandId[] = [
@@ -22,6 +25,8 @@ export const SEARCH_COMMAND_IDS: readonly SearchCommandId[] = [
   "search.ignore",
   "search.delete_previous",
   "search.delete_to_start",
+  "search.delete_word_backward",
+  "search.complete",
   "search.close",
 ];
 
@@ -79,6 +84,16 @@ export const searchKeymap = new DeclarativeKeymap<
       context: "search.insert",
       sequence: "Ctrl+u",
       command: "search.delete_to_start",
+    },
+    {
+      context: "search.insert",
+      sequence: "Ctrl+w",
+      command: "search.delete_word_backward",
+    },
+    {
+      context: "search.command",
+      sequence: "Tab",
+      command: "search.complete",
     },
     {
       context: "search.trash",
@@ -140,6 +155,11 @@ export const searchKeymap = new DeclarativeKeymap<
       sequence: "Ctrl+u",
       command: "search.delete_to_start",
     },
+    {
+      context: "search.trash",
+      sequence: "Ctrl+w",
+      command: "search.delete_word_backward",
+    },
   ],
   SEARCH_COMMAND_IDS,
 );
@@ -157,9 +177,22 @@ export function searchKeySequence(event: {
       key === "h" ||
       key === "n" ||
       key === "p" ||
-      key === "u"
+      key === "u" ||
+      key === "w"
       ? `Ctrl+${key}`
       : null;
   }
   return event.key;
+}
+
+export function resolveSearchCommand(
+  context: SearchKeymapContext,
+  sequence: string,
+): SearchCommandId | null {
+  return (
+    searchKeymap.resolve(context, sequence) ??
+    (context === "search.command"
+      ? searchKeymap.resolve("search.insert", sequence)
+      : null)
+  );
 }

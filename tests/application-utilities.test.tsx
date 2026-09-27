@@ -1362,7 +1362,7 @@ describe("Memoka Application utilities", () => {
     view.unmount();
   });
 
-  it("opens Command Picker with Leader c and transfers the selected command", async () => {
+  it("executes a no-argument Command Picker selection directly", async () => {
     const view = render(<App />);
     await screen.findByRole("tree", { name: "ノートツリー" });
     const editor = await waitFor(() => {
@@ -1380,12 +1380,9 @@ describe("Memoka Application utilities", () => {
     });
     fireEvent.change(picker, { target: { value: "version" } });
     fireEvent.keyDown(picker, { key: "Enter", code: "Enter" });
-    const commandLine = await screen.findByRole("textbox", {
-      name: "Memoka Command",
-    });
-    expect((commandLine as HTMLInputElement).value).toBe("version");
-    expect(document.activeElement).toBe(commandLine);
-    fireEvent.keyDown(commandLine, { key: "Escape", code: "Escape" });
+    expect(
+      screen.queryByRole("textbox", { name: "Memoka Command" }),
+    ).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(editor));
     view.unmount();
   });
@@ -1792,7 +1789,7 @@ describe("Memoka Application utilities", () => {
     await waitFor(() => expect(restoreFocus).toHaveBeenCalledTimes(1));
   });
 
-  it("filters Command Picker entries and hands the selected canonical command to Command-line", async () => {
+  it("filters Command Picker entries and transfers an invalid argument to Command-line", async () => {
     const restoreFocus = vi.fn();
     const session: ApplicationCommandPickerSession = { restoreFocus };
     const onSelect = vi.fn();
@@ -1807,12 +1804,13 @@ describe("Memoka Application utilities", () => {
     const input = screen.getByRole("combobox", {
       name: "Memoka Commandを検索",
     });
-    fireEvent.change(input, { target: { value: "colo Nightfox" } });
+    fireEvent.change(input, { target: { value: "colo no-such-theme" } });
     expect(screen.getByRole("option").textContent).toContain(":colorscheme");
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "colorscheme", argument: "optional" }),
-    );
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: "transfer",
+      value: "colorscheme no-such-theme",
+    });
     expect(onClose).not.toHaveBeenCalled();
   });
 

@@ -437,6 +437,94 @@ pub fn picker_recents_record(
     record_picker_recent(&picker_recents_path(&app)?, &kind, &id)
 }
 
+const COMMAND_HISTORY_FILE: &str = "command-history.json";
+const COMMAND_HISTORY_LIMIT: usize = 200;
+const COMMAND_HISTORY_MAX_ENTRY_BYTES: usize = 16 * 1024;
+const COMMAND_HISTORY_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommandHistoryFile {
+    schema_version: u32,
+    entries: Vec<String>,
+}
+
+impl Default for CommandHistoryFile {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            entries: Vec::new(),
+        }
+    }
+}
+
+fn command_history_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(COMMAND_HISTORY_FILE))
+        .map_err(|error| format!("設定ディレクトリを取得できません: {error}"))
+}
+
+fn load_command_history_file(path: &Path) -> Result<CommandHistoryFile, String> {
+    if !path.exists() {
+        return Ok(CommandHistoryFile::default());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > COMMAND_HISTORY_MAX_BYTES {
+        return Err("Command履歴ファイルが不正です".to_owned());
+    }
+    let state: CommandHistoryFile =
+        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("Command履歴を読めません: {error}"))?;
+    if state.schema_version != 1
+        || state.entries.len() > COMMAND_HISTORY_LIMIT
+        || state.entries.iter().any(|entry| {
+            entry.trim().is_empty()
+                || entry.len() > COMMAND_HISTORY_MAX_ENTRY_BYTES
+                || entry
+                    .chars()
+                    .any(|character| matches!(character, '\r' | '\n' | '\0'))
+        })
+    {
+        return Err("Command履歴ファイルが不正です".to_owned());
+    }
+    Ok(state)
+}
+
+fn record_command_history(path: &Path, value: &str) -> Result<CommandHistoryFile, String> {
+    if value.trim().is_empty()
+        || value.len() > COMMAND_HISTORY_MAX_ENTRY_BYTES
+        || value
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | '\0'))
+    {
+        return Err("Command履歴の入力が不正です".to_owned());
+    }
+    let parent = path.parent().ok_or("Command履歴の保存先が不正です")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let _lease = command::lock(path).map_err(|error| error.message)?;
+    let mut state = load_command_history_file(path)?;
+    state.entries.retain(|entry| entry != value);
+    state.entries.insert(0, value.to_owned());
+    state.entries.truncate(COMMAND_HISTORY_LIMIT);
+    let output = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?
+    );
+    command::persist(path, &output).map_err(|error| error.message)?;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn command_history_load(app: AppHandle) -> Result<CommandHistoryFile, String> {
+    load_command_history_file(&command_history_path(&app)?)
+}
+
+#[tauri::command]
+pub fn command_history_record(app: AppHandle, value: String) -> Result<CommandHistoryFile, String> {
+    record_command_history(&command_history_path(&app)?, &value)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NoteAppearancePatch {
@@ -1130,8 +1218,9 @@ mod tests {
         DEFAULT_APPLICATION_LINE_NUMBER_MIN_WIDTH_PX, DEFAULT_APPLICATION_NOTE_MAX_WIDTH_PX,
         DEFAULT_APPLICATION_ZOOM_PERCENT, DEFAULT_JAPANESE_LINE_BREAK_SEGMENTATION,
         DEFAULT_JAPANESE_WORD_SEGMENTATION, JapaneseLineBreakSegmentation,
-        JapaneseWordSegmentation, load_application_key_config, load_picker_recents_file,
-        record_picker_recent, save_application_font_family, save_application_indent_width_px,
+        JapaneseWordSegmentation, load_application_key_config, load_command_history_file,
+        load_picker_recents_file, record_command_history, record_picker_recent,
+        save_application_font_family, save_application_indent_width_px,
         save_application_line_number_min_width_px, save_application_note_max_width_px,
         save_application_theme, save_application_zoom_percent,
         save_japanese_line_break_segmentation, save_japanese_word_segmentation,
@@ -1158,6 +1247,27 @@ mod tests {
         let state = load_picker_recents_file(&path).unwrap();
         assert_eq!(state.recent["symbol"].len(), 100);
         assert_eq!(state.recent["symbol"][0], "symbol-104");
+    }
+
+    #[test]
+    fn command_history_persists_submitted_text_and_deduplicates_exact_entries() {
+        let directory = tempdir().expect("tempdir");
+        let path = directory.path().join("command-history.json");
+        assert!(load_command_history_file(&path).unwrap().entries.is_empty());
+        record_command_history(&path, "tree").unwrap();
+        record_command_history(&path, "unknown arg").unwrap();
+        record_command_history(&path, "tree").unwrap();
+        assert_eq!(
+            load_command_history_file(&path).unwrap().entries,
+            ["tree", "unknown arg"]
+        );
+        assert!(record_command_history(&path, "  ").is_err());
+        for index in 0..205 {
+            record_command_history(&path, &format!("command-{index}")).unwrap();
+        }
+        let state = load_command_history_file(&path).unwrap();
+        assert_eq!(state.entries.len(), 200);
+        assert_eq!(state.entries[0], "command-204");
     }
 
     #[test]
