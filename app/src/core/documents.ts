@@ -957,6 +957,19 @@ export function synchronizeNoteTitleCache(
 /** @deprecated Use a transaction that updates Root Section and its cache. */
 export const renameNoteMetadata = synchronizeNoteTitleCache;
 
+export function setNoteTreeVisibility(
+  workspace: WorkspaceDocument,
+  noteId: string,
+  visible: boolean,
+  origin: unknown = CORE_TRANSACTION_ORIGIN,
+): void {
+  const value = requireMetadata(workspace, noteId);
+  workspace.doc.transact(() => {
+    if (visible) value.delete("tree_hidden");
+    else value.set("tree_hidden", true);
+  }, origin);
+}
+
 export function updateNotePlacements(
   workspace: WorkspaceDocument,
   updates: readonly NotePlacementMetadataUpdate[],

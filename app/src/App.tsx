@@ -2770,6 +2770,71 @@ export function App({
           },
         );
         return;
+      case "note.tree_visibility": {
+        const target = runtime
+          .snapshot()
+          .windows.find(
+            (window) => window.windowId === effectiveTargetWindowId,
+          );
+        const note = runtime
+          .snapshot()
+          .notes.find((item) => item.noteId === target?.noteId);
+        if (!note || note.deletedAt) {
+          setCommandMessage("ノートを開いてください");
+          commandRestoreFocus();
+          return;
+        }
+        if (argument !== null && argument !== "show" && argument !== "hide") {
+          setCommandMessage(":note-tree · showまたはhideを指定してください");
+          commandRestoreFocus();
+          return;
+        }
+        const status = (): string => {
+          const current = runtime.snapshot();
+          if (
+            current.notes.find((item) => item.noteId === note.noteId)
+              ?.treeHidden
+          )
+            return ":note-tree · Treeルートに非表示";
+          const entry = current.namespaceEntries.find(
+            (item) => item.targetNoteId === note.noteId,
+          );
+          const byId = new Map(
+            current.namespaceEntries.map((item) => [item.entryId, item]),
+          );
+          let ancestor = entry?.parentNoteId
+            ? byId.get(entry.parentNoteId)
+            : undefined;
+          while (ancestor) {
+            if (ancestor.treeHidden)
+              return ":note-tree · 設定は表示、非表示の祖先があるためTreeルートには表示されません";
+            ancestor = ancestor.parentNoteId
+              ? byId.get(ancestor.parentNoteId)
+              : undefined;
+          }
+          return ":note-tree · Treeルートに表示";
+        };
+        if (argument === null) {
+          setCommandMessage(status());
+          commandRestoreFocus();
+          return;
+        }
+        void runtime
+          .setActiveNoteTreeVisibility(note.noteId, argument === "show")
+          .then(
+            () => {
+              setCommandMessage(status());
+              commandRestoreFocus();
+            },
+            (error: unknown) => {
+              setCommandMessage(
+                error instanceof Error ? error.message : String(error),
+              );
+              commandRestoreFocus();
+            },
+          );
+        return;
+      }
       case "workspace.sync":
       case "workspace.sync_settings": {
         if (!synchronizationAvailable()) {

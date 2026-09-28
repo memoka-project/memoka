@@ -70,6 +70,7 @@ WorkspaceMetadataDoc
 
 `tree_hidden: true`のNoteもNamespaceに配置を1つ持つ。属性がないNoteはTreeに表示する。
 Tree投影だけでこのNoteとその子孫を隠し、All NotesとWorkspace検索には含める。属性はWorkspace metadataとして同期・復元する。
+表示設定の変更はWorkspace transactionとし、Noteの`updated_at`を変更しない。
 
 ### 3.1 sibling順序
 
@@ -178,6 +179,9 @@ Tree表示はWorkspaceMetadataDocから次の順で導出する。
 3. 各siblingを`position`、Entry IDの順にsortする。
 4. 展開状態を適用してdepth-firstに平坦化する。
 5. viewport付近だけを表示する。
+
+Treeのactive Note段は同じNamespaceから祖先経路とそのNoteの子孫を投影し、`tree_hidden`を適用しない。
+通常のルート段は`tree_hidden`を適用する。重複するEntryの表示行IDは段ごとに異なるが、操作先のEntry IDは共通である。
 
 FTS indexは再構築可能なSQLite派生dataである。Note本文indexへ祖先pathを複製せず、
 結果表示時にWorkspace metadataから現在のpathを解決する。親変更や祖先renameだけでは

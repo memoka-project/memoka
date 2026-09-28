@@ -39,7 +39,7 @@ describe("All Notes", () => {
       );
       fireEvent.keyDown(tree, { key: "ArrowDown" });
       expect(tree.getAttribute("aria-activedescendant")).toBe(
-        `tree-note-${runtime.snapshot().namespaceEntries[0]?.entryId}`,
+        `tree-context-${runtime.snapshot().namespaceEntries[0]?.entryId}`,
       );
       view.unmount();
     } finally {

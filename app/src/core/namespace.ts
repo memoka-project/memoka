@@ -278,6 +278,7 @@ export function namespacePath(
 export interface NamespaceTreeNode extends NoteMetadata {
   readonly entryId: string;
   readonly targetNoteId: string | null;
+  readonly purgedAt?: string;
 }
 
 export function namespaceTreeNodes(
@@ -343,6 +344,42 @@ export function treeVisibleNamespaceNodes(
     return result;
   };
   return nodes.filter((node) => !isHidden(node));
+}
+
+/** The active Note's ancestor path and entire subtree, including hidden Entries. */
+export function activeNoteContextNodes(
+  nodes: readonly NamespaceTreeNode[],
+  activeNoteId: string | null,
+): NamespaceTreeNode[] {
+  if (!activeNoteId) return [];
+  const live = nodes.filter((node) => !node.deletedAt && !node.purgedAt);
+  const active = live.find((node) => node.targetNoteId === activeNoteId);
+  if (!active) return [];
+  const byId = new Map(live.map((node) => [node.entryId, node]));
+  const selected = new Set<string>();
+  let cursor: NamespaceTreeNode | undefined = active;
+  while (cursor) {
+    if (selected.has(cursor.entryId))
+      throw new Error("Namespace contains a cycle");
+    selected.add(cursor.entryId);
+    cursor = cursor.parentNoteId ? byId.get(cursor.parentNoteId) : undefined;
+  }
+  const children = new Map<string, NamespaceTreeNode[]>();
+  for (const node of live) {
+    if (!node.parentNoteId) continue;
+    const siblings = children.get(node.parentNoteId) ?? [];
+    siblings.push(node);
+    children.set(node.parentNoteId, siblings);
+  }
+  const pending = [...(children.get(active.entryId) ?? [])];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (selected.has(node.entryId))
+      throw new Error("Namespace contains a cycle");
+    selected.add(node.entryId);
+    pending.push(...(children.get(node.entryId) ?? []));
+  }
+  return live.filter((node) => selected.has(node.entryId));
 }
 
 export type NamespaceEdit =

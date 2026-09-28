@@ -123,6 +123,7 @@ describe("Workspace Tree", () => {
   it("shares screen/page navigation and retains its own jump history across remounts", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
+      await runtime.openAllNotes("window-1");
       for (let i = 0; i < 24; i++)
         await runtime.createNamespaceGroup(null, `Group ${i}`);
       const props = treeProps(runtime);
@@ -146,15 +147,15 @@ describe("Workspace Tree", () => {
         configurable: true,
         value: 300,
       });
-      tree.scrollTop = 0;
+      tree.scrollTop = 30;
       key("L");
       expect(selectedId(tree)).toBe(`tree-note-${ids[8]}`);
       key("f", true);
       expect(selectedId(tree)).toBe(`tree-note-${ids[16]}`);
-      expect(tree.scrollTop).toBe(240);
+      expect(tree.scrollTop).toBe(270);
       key("z");
       key("t");
-      expect(tree.scrollTop).toBe(480); // document end clamps placement
+      expect(tree.scrollTop).toBe(495); // document end clamps placement
       key("g");
       key("g");
       expect(selectedId(tree)).toBe("tree-note-utility:all-notes");
@@ -185,7 +186,9 @@ describe("Workspace Tree", () => {
       '[role="treeitem"][aria-selected="true"]',
     );
     if (!initial) throw new Error("Initial Tree item did not mount");
-    const initialId = initial.id;
+    const initialId = initial.id.replace("tree-context-", "tree-note-");
+    fireEvent.click(document.getElementById(initialId)!);
+    expect(selectedId(tree)).toBe(initialId);
     expect(
       tree.closest("aside")?.querySelector(".utility-statusline"),
     ).toBeNull();
@@ -230,7 +233,7 @@ describe("Workspace Tree", () => {
 
     fireEvent.keyDown(tree, { key: "D", code: "KeyD", shiftKey: true });
     await waitFor(() =>
-      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(2),
+      expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(3),
     );
     expect(
       tree.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
@@ -318,7 +321,7 @@ describe("Workspace Tree", () => {
     await waitFor(() =>
       expect(rootRow.getAttribute("aria-expanded")).toBe("false"),
     );
-    expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(2);
+    expect(tree.querySelectorAll('[role="treeitem"]')).toHaveLength(4);
     fireEvent.keyDown(tree, { key: "ArrowRight" });
     await waitFor(() =>
       expect(rootRow.getAttribute("aria-expanded")).toBe("true"),
@@ -333,6 +336,7 @@ describe("Workspace Tree", () => {
   it("uses arrow keys for visible rows, hierarchy, boundaries and counted scrolling", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     try {
+      await runtime.openAllNotes("window-1");
       const rootId = runtime.snapshot().namespaceEntries[0]!.entryId;
       const child = await runtime.createNamespaceGroup(rootId, "Child");
       const grandchild = await runtime.createNamespaceGroup(
@@ -370,10 +374,10 @@ describe("Workspace Tree", () => {
       select("ArrowUp", rootId);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowDown", sibling.entryId);
-      expect(tree.scrollTop).toBe(4 * 30);
+      expect(tree.scrollTop).toBe(135);
       fireEvent.keyDown(tree, { key: "3" });
       select("ArrowUp", rootId);
-      expect(tree.scrollTop).toBe(30);
+      expect(tree.scrollTop).toBe(45);
       view.unmount();
     } finally {
       runtime.destroy();
@@ -457,12 +461,14 @@ describe("Workspace Tree", () => {
     let tree = await screen.findByRole("tree", { name: "ノートツリー" });
     await focusApplicationTree(tree);
     fireEvent.keyDown(tree, { key: "ArrowDown" });
-    const firstNoteId = tree.querySelector<HTMLElement>(
-      '[role="treeitem"][aria-selected="true"]',
-    )?.id;
+    const firstNoteId = tree
+      .querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]')
+      ?.id.replace("tree-context-", "tree-note-");
     if (!firstNoteId) throw new Error("Initial Tree item did not mount");
+    fireEvent.click(document.getElementById(firstNoteId)!);
+    expect(selectedId(tree)).toBe(firstNoteId);
 
-    for (let expectedCount = 3; expectedCount <= 5; expectedCount += 1) {
+    for (let expectedCount = 4; expectedCount <= 6; expectedCount += 1) {
       tree.focus();
       fireEvent.keyDown(tree, { key: "A", code: "KeyA", shiftKey: true });
       await waitFor(() =>
@@ -473,21 +479,23 @@ describe("Workspace Tree", () => {
       tree = screen.getByRole("tree", { name: "ノートツリー" });
     }
 
-    tree.focus();
-    fireEvent.keyDown(tree, { key: "g", code: "KeyG" });
-    fireEvent.keyDown(tree, { key: "g", code: "KeyG" });
-    fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
+    const firstRootId = firstNoteId.replace("tree-context-", "tree-note-");
+    fireEvent.click(document.getElementById(firstRootId)!);
     await waitFor(() =>
       expect(
         tree.querySelector<HTMLElement>(
           '[role="treeitem"][aria-selected="true"]',
         )?.id,
-      ).toBe(firstNoteId),
+      ).toBe(firstRootId),
     );
-    const originalOrder = Array.from(
-      tree.querySelectorAll<HTMLElement>('[role="treeitem"]'),
-      (item) => item.id,
-    );
+    const rootOrder = () =>
+      Array.from(tree.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+        .map((item) => item.id)
+        .filter(
+          (id) =>
+            id.startsWith("tree-note-") && id !== "tree-note-utility:all-notes",
+        );
+    const originalOrder = rootOrder();
 
     fireEvent.keyDown(tree, { key: "2", code: "Digit2" });
     fireEvent.keyDown(tree, { key: "Shift", code: "ShiftLeft" });
@@ -498,16 +506,12 @@ describe("Workspace Tree", () => {
     });
 
     await waitFor(() => {
-      const movedOrder = Array.from(
-        tree.querySelectorAll<HTMLElement>('[role="treeitem"]'),
-        (item) => item.id,
-      );
+      const movedOrder = rootOrder();
       expect(movedOrder).toEqual([
-        originalOrder[0],
-        originalOrder[2],
-        originalOrder[3],
         originalOrder[1],
-        originalOrder[4],
+        originalOrder[2],
+        originalOrder[0],
+        originalOrder[3],
       ]);
     });
     view.unmount();

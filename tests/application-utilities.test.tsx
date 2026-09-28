@@ -1382,6 +1382,8 @@ describe("Memoka Application utilities", () => {
     fireEvent.keyDown(helpEditor, { key: "w", code: "KeyW", ctrlKey: true });
     fireEvent.keyDown(helpEditor, { key: "h", code: "KeyH" });
     await waitFor(() => expect(document.activeElement).toBe(tree));
+    // The active Help Note now occupies the context row before root Entries.
+    fireEvent.keyDown(tree, { key: "2", code: "Digit2" });
     fireEvent.keyDown(tree, { key: "j", code: "KeyJ" });
     fireEvent.keyDown(tree, { key: "Enter", code: "Enter" });
     await waitFor(() =>
@@ -1708,11 +1710,19 @@ describe("Memoka Application utilities", () => {
           '[role="treeitem"][aria-selected="true"]',
         ) ?? null;
     const initialNoteId = selectedTreeItem()?.id;
+    await waitFor(() =>
+      expect(tree.querySelectorAll('[role="treeitem"]').length).toBeGreaterThan(
+        1,
+      ),
+    );
     tree.focus();
+    fireEvent.keyDown(tree, { key: "G", code: "KeyG", shiftKey: true });
+    const selectedRootId = selectedTreeItem()?.id;
+    expect(selectedRootId).not.toBe(initialNoteId);
     fireEvent.keyDown(tree, { key: "A" });
     const createdNoteId = await waitFor(() => {
       const id = selectedTreeItem()?.id;
-      if (!id || id === initialNoteId) {
+      if (!id || id === initialNoteId || id === selectedRootId) {
         throw new Error("New root Note was not selected in the first TabPage");
       }
       return id;

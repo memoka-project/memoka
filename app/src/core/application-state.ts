@@ -28,7 +28,10 @@ export type SidebarSide = "left" | "right";
 
 export interface TreeSidebarViewState {
   selectedEntryId: string | null;
+  /** Defaults to root for previously saved sidebar state. */
+  selectedRegion?: "context" | "root";
   collapsedEntryIds: string[];
+  contextCollapsedEntryIds?: string[];
 }
 
 export interface OutlineSidebarViewState {
@@ -1264,6 +1267,12 @@ function validateTreeSidebarViewState(value: unknown): void {
   if (tree.selectedEntryId !== null) {
     assertNonEmptyId(tree.selectedEntryId, "Tree selected noteId");
   }
+  if (
+    tree.selectedRegion !== undefined &&
+    tree.selectedRegion !== "context" &&
+    tree.selectedRegion !== "root"
+  )
+    throw new Error("Invalid Tree selected region");
   if (!Array.isArray(tree.collapsedEntryIds)) {
     throw new Error("Tree collapsed note IDs must be an array");
   }
@@ -1274,6 +1283,17 @@ function validateTreeSidebarViewState(value: unknown): void {
       throw new Error(`Duplicate collapsed Tree note: ${noteId}`);
     }
     seen.add(noteId);
+  }
+  if (tree.contextCollapsedEntryIds !== undefined) {
+    if (!Array.isArray(tree.contextCollapsedEntryIds))
+      throw new Error("Tree context collapsed IDs must be an array");
+    const contextSeen = new Set<string>();
+    for (const entryId of tree.contextCollapsedEntryIds) {
+      assertNonEmptyId(entryId, "Tree context collapsed entryId");
+      if (contextSeen.has(entryId))
+        throw new Error(`Duplicate collapsed Tree context entry: ${entryId}`);
+      contextSeen.add(entryId);
+    }
   }
 }
 

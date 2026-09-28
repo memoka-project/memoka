@@ -70,6 +70,7 @@ import {
   readNoteUpdatedAt,
   renameRootSection,
   renameNoteMetadata,
+  setNoteTreeVisibility,
   replaceNoteSectionTree,
   replaceFirstTextBlock,
   restoreNotesFromTrash,
@@ -1545,6 +1546,18 @@ export class CoreRuntime {
         createdAt: this.clock(),
         windowId,
       },
+    });
+  }
+
+  setActiveNoteTreeVisibility(
+    noteId: string,
+    visible: boolean,
+  ): Promise<{ noteId: string; changed: boolean }> {
+    return this.executeCommand({
+      name: "note.set_tree_visibility",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: { noteId, visible },
     });
   }
 
@@ -4215,6 +4228,18 @@ export class CoreRuntime {
         tree.collapsedEntryIds = collapsedEntryIds;
         changed = true;
       }
+      if (tree.contextCollapsedEntryIds) {
+        const contextCollapsedEntryIds = tree.contextCollapsedEntryIds.filter(
+          (id) => liveEntryIds.has(id),
+        );
+        if (
+          contextCollapsedEntryIds.length !==
+          tree.contextCollapsedEntryIds.length
+        ) {
+          tree.contextCollapsedEntryIds = contextCollapsedEntryIds;
+          changed = true;
+        }
+      }
       const outline = tab.rightSidebar.outline;
       if (outline.noteId && !liveNoteIds.has(outline.noteId)) {
         outline.noteId = null;
@@ -4294,6 +4319,10 @@ export class CoreRuntime {
         tree.collapsedEntryIds = tree.collapsedEntryIds.filter(
           (id) => !removedEntries.has(id),
         );
+        if (tree.contextCollapsedEntryIds)
+          tree.contextCollapsedEntryIds = tree.contextCollapsedEntryIds.filter(
+            (id) => !removedEntries.has(id),
+          );
         if (
           tab.rightSidebar.outline.noteId &&
           removedNotes.has(tab.rightSidebar.outline.noteId)
@@ -4388,6 +4417,37 @@ export class CoreRuntime {
         afterNoteId: null,
       }),
     );
+
+    this.commands.register("note.set_tree_visibility", async (envelope) => {
+      const { noteId, visible, fault } = envelope.payload;
+      const note = this.requireLiveMetadata(noteId);
+      if ((note.treeHidden !== true) === visible)
+        return { noteId, changed: false };
+      await this.localStateQueue.catch(() => undefined);
+      this.setSaving();
+      try {
+        await this.transactions.transact(
+          {
+            operationId: envelope.operationId,
+            scope: "workspace-structure",
+            documents: [this.workspace],
+            fault,
+          },
+          () =>
+            setNoteTreeVisibility(
+              this.workspaceDocument,
+              noteId,
+              visible,
+              CORE_TRANSACTION_ORIGIN,
+            ),
+        );
+        this.setReady();
+        return { noteId, changed: true };
+      } catch (error) {
+        this.reportError(error);
+        throw error;
+      }
+    });
 
     this.commands.register("note.create_child", (envelope) =>
       this.createNewNote({

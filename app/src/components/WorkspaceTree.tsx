@@ -20,10 +20,14 @@ import {
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
 import { noteDisplayTitle } from "../core/documents";
-import { treeVisibleNamespaceNodes } from "../core/namespace";
+import {
+  activeNoteContextNodes,
+  treeVisibleNamespaceNodes,
+} from "../core/namespace";
 import {
   deriveVisibleNoteTree,
   type TreeMoveDirection,
+  type VisibleNoteTreeEntry,
 } from "../core/note-tree";
 import {
   advanceTreeInput,
@@ -35,8 +39,48 @@ import { focusSurfaceFromPointer } from "./focus-surface";
 import { navigateSidebar } from "../core/sidebar-navigation";
 
 const TREE_ROW_HEIGHT_PX = 30;
+const TREE_SEPARATOR_HEIGHT_PX = TREE_ROW_HEIGHT_PX / 2;
 const TREE_OVERSCAN_ROWS = 8;
 const DEFAULT_VIEWPORT_ROWS = 10;
+type TreeRegion = "context" | "root";
+interface TreeRow extends VisibleNoteTreeEntry {
+  readonly rowId: string;
+  readonly region: TreeRegion;
+  readonly separator?: boolean;
+}
+
+function separatorRow(id: string): TreeRow {
+  return {
+    rowId: id,
+    region: "root",
+    separator: true,
+    note: {
+      noteId: id,
+      parentNoteId: null,
+      notePosition: "",
+      createdAt: "",
+      updatedAt: "",
+      title: "",
+    },
+    depth: 0,
+    hasChildren: false,
+    expanded: true,
+  };
+}
+
+function rowIndexAtOffset(
+  offsets: readonly number[],
+  position: number,
+): number {
+  let low = 0;
+  let high = offsets.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (offsets[middle]! <= position) low = middle;
+    else high = middle - 1;
+  }
+  return Math.min(low, offsets.length - 2);
+}
 
 export interface WorkspaceTreeProps {
   runtime: CoreRuntime;
@@ -74,17 +118,23 @@ export function WorkspaceTree({
   const [localTreeState, setLocalTreeState] = useState(() => ({
     source: treeState,
     selectedEntryId: treeState.selectedEntryId,
+    selectedRegion: treeState.selectedRegion ?? ("root" as TreeRegion),
     collapsedEntryIds: treeState.collapsedEntryIds,
+    contextCollapsedEntryIds: treeState.contextCollapsedEntryIds ?? [],
   }));
   if (localTreeState.source !== treeState) {
     setLocalTreeState({
       source: treeState,
       selectedEntryId: treeState.selectedEntryId,
+      selectedRegion: treeState.selectedRegion ?? "root",
       collapsedEntryIds: treeState.collapsedEntryIds,
+      contextCollapsedEntryIds: treeState.contextCollapsedEntryIds ?? [],
     });
   }
   const localSelectedNoteId = localTreeState.selectedEntryId;
+  const localSelectedRegion = localTreeState.selectedRegion;
   const localCollapsedNoteIds = localTreeState.collapsedEntryIds;
+  const localContextCollapsedEntryIds = localTreeState.contextCollapsedEntryIds;
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(
     TREE_ROW_HEIGHT_PX * DEFAULT_VIEWPORT_ROWS,
@@ -95,13 +145,56 @@ export function WorkspaceTree({
     () => new Set(localCollapsedNoteIds),
     [localCollapsedNoteIds],
   );
+  const contextCollapsed = useMemo(
+    () => new Set(localContextCollapsedEntryIds),
+    [localContextCollapsedEntryIds],
+  );
+  const activeNoteId =
+    snapshot.windows.find(
+      (window) =>
+        window.windowId === targetWindowId && window.bufferKind === "note",
+    )?.noteId ?? null;
+  const contextEntries = useMemo(
+    () => activeNoteContextNodes(snapshot.namespaceEntries, activeNoteId),
+    [snapshot.namespaceEntries, activeNoteId],
+  );
+  const activeContextEntryId = contextEntries.find(
+    (entry) => entry.targetNoteId === activeNoteId,
+  )?.entryId;
+  const contextPathEntryIds = useMemo(() => {
+    const byId = new Map(contextEntries.map((entry) => [entry.entryId, entry]));
+    const path = new Set<string>();
+    let entryId: string | null = activeContextEntryId ?? null;
+    while (entryId && !path.has(entryId)) {
+      path.add(entryId);
+      entryId = byId.get(entryId)?.parentNoteId ?? null;
+    }
+    return path;
+  }, [contextEntries, activeContextEntryId]);
   const treeEntries = useMemo(
     () => treeVisibleNamespaceNodes(snapshot.namespaceEntries),
     [snapshot.namespaceEntries],
   );
-  const entries = useMemo(
-    () => [
+  const entries = useMemo((): TreeRow[] => {
+    const contextRows = deriveVisibleNoteTree(
+      contextEntries,
+      contextCollapsed,
+    ).map((entry): TreeRow => ({
+      ...entry,
+      rowId: `tree-context-${entry.note.noteId}`,
+      region: "context",
+    }));
+    const rootRows = deriveVisibleNoteTree(treeEntries, collapsed).map(
+      (entry): TreeRow => ({
+        ...entry,
+        rowId: `tree-note-${entry.note.noteId}`,
+        region: "root",
+      }),
+    );
+    return [
       {
+        rowId: `tree-note-${ALL_NOTES_TREE_ENTRY_ID}`,
+        region: "root",
         note: {
           noteId: ALL_NOTES_TREE_ENTRY_ID,
           parentNoteId: null,
@@ -114,37 +207,79 @@ export function WorkspaceTree({
         hasChildren: false,
         expanded: true,
       },
-      ...deriveVisibleNoteTree(treeEntries, collapsed),
-    ],
-    [treeEntries, collapsed],
-  );
-  const selectedEntryId = entries.some(
-    (entry) => entry.note.noteId === localSelectedNoteId,
-  )
-    ? localSelectedNoteId
-    : (entries[0]?.note.noteId ?? null);
+      ...(contextRows.length || rootRows.length
+        ? [separatorRow("tree-separator-all-notes")]
+        : []),
+      ...(contextRows.length
+        ? [
+            ...contextRows,
+            ...(rootRows.length
+              ? [separatorRow("tree-separator-context")]
+              : []),
+          ]
+        : []),
+      ...rootRows,
+    ];
+  }, [contextEntries, contextCollapsed, treeEntries, collapsed]);
+  const rowOffsets = useMemo(() => {
+    const offsets = [0];
+    for (const entry of entries)
+      offsets.push(
+        offsets[offsets.length - 1]! +
+          (entry.separator ? TREE_SEPARATOR_HEIGHT_PX : TREE_ROW_HEIGHT_PX),
+      );
+    return offsets;
+  }, [entries]);
+  const selectedRow =
+    entries.find(
+      (entry) =>
+        !entry.separator &&
+        entry.note.noteId === localSelectedNoteId &&
+        entry.region === localSelectedRegion,
+    ) ??
+    entries.find(
+      (entry) => !entry.separator && entry.note.noteId === localSelectedNoteId,
+    ) ??
+    (localSelectedNoteId
+      ? entries.find(
+          (entry) =>
+            entry.region === "context" &&
+            entry.note.noteId === activeContextEntryId,
+        )
+      : null) ??
+    entries[0]!;
+  const selectedEntryId = selectedRow.note.noteId;
+  const selectedRegion = selectedRow.region;
+  const selectedRowId = selectedRow.rowId;
   const selectedIndex = Math.max(
     0,
-    entries.findIndex((entry) => entry.note.noteId === selectedEntryId),
+    entries.findIndex((entry) => entry.rowId === selectedRowId),
   );
   const firstVisible = Math.max(
     0,
-    Math.floor(scrollTop / TREE_ROW_HEIGHT_PX) - TREE_OVERSCAN_ROWS,
+    rowIndexAtOffset(rowOffsets, scrollTop) - TREE_OVERSCAN_ROWS,
   );
   const lastVisible = Math.min(
     entries.length,
-    Math.ceil((scrollTop + viewportHeight) / TREE_ROW_HEIGHT_PX) +
+    rowIndexAtOffset(rowOffsets, scrollTop + viewportHeight) +
+      1 +
       TREE_OVERSCAN_ROWS,
   );
   const visibleEntries = entries.slice(firstVisible, lastVisible);
   const guides = useMemo(
     () =>
-      treeGuides(entries.map((entry) => ({ ...entry, id: entry.note.noteId }))),
+      treeGuides(
+        entries.map((entry) => ({
+          ...entry,
+          id: entry.region === "context" ? entry.rowId : entry.note.noteId,
+        })),
+      ),
     [entries],
   );
   const namespaceById = useMemo(
-    () => new Map(treeEntries.map((entry) => [entry.entryId, entry])),
-    [treeEntries],
+    () =>
+      new Map(snapshot.namespaceEntries.map((entry) => [entry.entryId, entry])),
+    [snapshot.namespaceEntries],
   );
 
   useEffect(() => {
@@ -163,9 +298,9 @@ export function WorkspaceTree({
 
   useEffect(() => {
     const element = root.current;
-    if (!element || selectedEntryId === null || entries.length === 0) return;
-    const top = selectedIndex * TREE_ROW_HEIGHT_PX;
-    const bottom = top + TREE_ROW_HEIGHT_PX;
+    if (!element || entries.length === 0) return;
+    const top = rowOffsets[selectedIndex]!;
+    const bottom = rowOffsets[selectedIndex + 1]!;
     let nextScrollTop = element.scrollTop;
     if (top < element.scrollTop) nextScrollTop = top;
     else if (bottom > element.scrollTop + element.clientHeight) {
@@ -175,7 +310,7 @@ export function WorkspaceTree({
     setScrollTop((current) =>
       current === nextScrollTop ? current : nextScrollTop,
     );
-  }, [entries.length, selectedIndex, selectedEntryId]);
+  }, [entries.length, rowOffsets, selectedIndex, selectedRowId]);
 
   const showError = (cause: unknown): void => {
     setError(cause instanceof Error ? cause.message : String(cause));
@@ -183,17 +318,26 @@ export function WorkspaceTree({
 
   const persistTree = (
     selected: string | null,
+    region: TreeRegion = selectedRegion,
     collapsedEntryIds = localCollapsedNoteIds,
+    contextCollapsedEntryIds = localContextCollapsedEntryIds,
   ): void => {
     setLocalTreeState({
       source: treeState,
       selectedEntryId: selected,
+      selectedRegion: region,
       collapsedEntryIds,
+      contextCollapsedEntryIds,
     });
     void runtime
       .updateSidebar({
         side: "left",
-        tree: { selectedEntryId: selected, collapsedEntryIds },
+        tree: {
+          selectedEntryId: selected,
+          selectedRegion: region,
+          collapsedEntryIds,
+          contextCollapsedEntryIds,
+        },
       })
       .catch(showError);
   };
@@ -202,41 +346,66 @@ export function WorkspaceTree({
     noteId: string,
     shouldCollapse: boolean,
     selected = selectedEntryId,
+    region: TreeRegion = selectedRegion,
   ): void => {
-    const next = new Set(localCollapsedNoteIds);
+    const next = new Set(
+      region === "context"
+        ? localContextCollapsedEntryIds
+        : localCollapsedNoteIds,
+    );
     if (shouldCollapse) next.add(noteId);
     else next.delete(noteId);
-    persistTree(selected, [...next].sort());
+    persistTree(
+      selected,
+      region,
+      region === "root" ? [...next].sort() : localCollapsedNoteIds,
+      region === "context" ? [...next].sort() : localContextCollapsedEntryIds,
+    );
   };
 
-  const selectEntry = (entryId: string): void => {
+  const selectEntry = (entryId: string, region: TreeRegion): void => {
     inputState.current = createTreeInputState();
-    if (entryId !== selectedEntryId) persistTree(entryId);
+    if (entryId !== selectedEntryId || region !== selectedRegion)
+      persistTree(entryId, region);
   };
 
-  const openEntry = async (entryId: string | null): Promise<void> => {
+  const openEntry = async (
+    entryId: string | null,
+    region: TreeRegion = selectedRegion,
+  ): Promise<void> => {
     if (!entryId || busy) return;
     if (entryId === ALL_NOTES_TREE_ENTRY_ID) {
-      if (entryId !== selectedEntryId) persistTree(entryId);
+      if (entryId !== selectedEntryId || region !== selectedRegion)
+        persistTree(entryId, region);
       await run(async () => {
         await runtime.openAllNotes(targetWindowId);
         onRequestEditorFocus(targetWindowId);
       });
       return;
     }
-    const entry = treeEntries.find((entry) => entry.entryId === entryId);
+    const entry = namespaceById.get(entryId);
     if (!entry) return;
     inputState.current = createTreeInputState();
     const noteId = entry.targetNoteId;
     if (!noteId) {
-      if (entries.find((item) => item.note.noteId === entryId)?.hasChildren) {
-        setCollapsed(entryId, !collapsed.has(entryId), entryId);
+      if (
+        entries.find(
+          (item) => item.note.noteId === entryId && item.region === region,
+        )?.hasChildren
+      ) {
+        setCollapsed(
+          entryId,
+          !(region === "context" ? contextCollapsed : collapsed).has(entryId),
+          entryId,
+          region,
+        );
       } else {
-        selectEntry(entryId);
+        selectEntry(entryId, region);
       }
       return;
     }
-    if (entryId !== selectedEntryId) persistTree(entryId);
+    if (entryId !== selectedEntryId || region !== selectedRegion)
+      persistTree(entryId, region);
     await run(async () => {
       await onOpenNote(targetWindowId, noteId);
       onRequestEditorFocus(targetWindowId);
@@ -244,6 +413,15 @@ export function WorkspaceTree({
   };
 
   const create = async (kind: "root" | "child" | "sibling"): Promise<void> => {
+    if (
+      (kind === "root" &&
+        (selectedEntryId === ALL_NOTES_TREE_ENTRY_ID ||
+          selectedRegion === "context")) ||
+      (selectedRegion === "context" &&
+        contextPathEntryIds.has(selectedEntryId) &&
+        (kind === "sibling" || selectedEntryId !== activeContextEntryId))
+    )
+      return;
     if (
       kind !== "root" &&
       (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID)
@@ -255,7 +433,11 @@ export function WorkspaceTree({
         selectedEntryId,
         kind,
       );
-      const nextCollapsed = new Set(localCollapsedNoteIds);
+      const nextCollapsed = new Set(
+        selectedRegion === "context"
+          ? localContextCollapsedEntryIds
+          : localCollapsedNoteIds,
+      );
       if (kind === "child" && selectedEntryId) {
         nextCollapsed.delete(selectedEntryId);
       }
@@ -267,7 +449,10 @@ export function WorkspaceTree({
               .snapshot()
               .notes.find((note) => note.noteId === result.noteId)?.entryId ??
             null,
-          collapsedEntryIds: [...nextCollapsed].sort(),
+          selectedRegion,
+          ...(selectedRegion === "context"
+            ? { contextCollapsedEntryIds: [...nextCollapsed].sort() }
+            : { collapsedEntryIds: [...nextCollapsed].sort() }),
         },
       });
       onRequestEditorFocus(targetWindowId);
@@ -281,6 +466,16 @@ export function WorkspaceTree({
     if (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID) return;
     await run(async () => {
       for (let index = 0; index < count; index += 1) {
+        if (direction === "outdent" && selectedRegion === "context") {
+          const entry = runtime
+            .snapshot()
+            .namespaceEntries.find((item) => item.entryId === selectedEntryId);
+          if (
+            contextPathEntryIds.has(selectedEntryId) ||
+            entry?.parentNoteId === activeContextEntryId
+          )
+            break;
+        }
         const result = await runtime.moveNamespaceEntry(
           selectedEntryId,
           direction,
@@ -292,11 +487,18 @@ export function WorkspaceTree({
           .snapshot()
           .namespaceEntries.find((note) => note.entryId === selectedEntryId);
         if (moved?.parentNoteId) {
-          const next = new Set(localCollapsedNoteIds);
+          const next = new Set(
+            selectedRegion === "context"
+              ? localContextCollapsedEntryIds
+              : localCollapsedNoteIds,
+          );
           next.delete(moved.parentNoteId);
           await runtime.updateSidebar({
             side: "left",
-            tree: { collapsedEntryIds: [...next].sort() },
+            tree:
+              selectedRegion === "context"
+                ? { contextCollapsedEntryIds: [...next].sort() }
+                : { collapsedEntryIds: [...next].sort() },
           });
         }
       }
@@ -305,6 +507,12 @@ export function WorkspaceTree({
 
   const trash = async (): Promise<void> => {
     if (!selectedEntryId || selectedEntryId === ALL_NOTES_TREE_ENTRY_ID) return;
+    if (
+      selectedRegion === "context" &&
+      selectedEntryId !== activeContextEntryId &&
+      contextPathEntryIds.has(selectedEntryId)
+    )
+      return;
     await run(async () => {
       const result = await runtime.trashNamespaceEntry(selectedEntryId);
       setLocalTreeState((current) => ({
@@ -321,20 +529,28 @@ export function WorkspaceTree({
   ): void => {
     const selected = entries[selectedIndex] ?? null;
     if (isSidebarFoldCommand(command)) {
-      if (selectedEntryId && selectedEntryId !== ALL_NOTES_TREE_ENTRY_ID)
+      if (selectedEntryId && selectedEntryId !== ALL_NOTES_TREE_ENTRY_ID) {
+        const next = foldSidebarSubtree(
+          deriveVisibleNoteTree(
+            selectedRegion === "context" ? contextEntries : treeEntries,
+          ).map((entry) => ({
+            id: entry.note.noteId,
+            depth: entry.depth,
+            foldable: entry.hasChildren,
+          })),
+          selectedEntryId,
+          selectedRegion === "context"
+            ? localContextCollapsedEntryIds
+            : localCollapsedNoteIds,
+          command,
+        );
         persistTree(
           selectedEntryId,
-          foldSidebarSubtree(
-            deriveVisibleNoteTree(treeEntries).map((entry) => ({
-              id: entry.note.noteId,
-              depth: entry.depth,
-              foldable: entry.hasChildren,
-            })),
-            selectedEntryId,
-            localCollapsedNoteIds,
-            command,
-          ),
+          selectedRegion,
+          selectedRegion === "root" ? next : localCollapsedNoteIds,
+          selectedRegion === "context" ? next : localContextCollapsedEntryIds,
         );
+      }
       return;
     }
     if (command !== "cursor.left" && command !== "cursor.right") {
@@ -343,28 +559,46 @@ export function WorkspaceTree({
         command,
         count,
         countExplicit,
-        items: entries.map((entry, i) => ({
-          id: entry.note.noteId,
-          parentId: entry.note.parentNoteId,
-          top: i * TREE_ROW_HEIGHT_PX,
-          bottom: (i + 1) * TREE_ROW_HEIGHT_PX,
-        })),
-        selectedId: selectedEntryId,
+        items: entries.flatMap((entry, i) =>
+          entry.separator
+            ? []
+            : [
+                {
+                  id: entry.rowId,
+                  parentId: entry.note.parentNoteId
+                    ? `${entry.region === "context" ? "tree-context" : "tree-note"}-${entry.note.parentNoteId}`
+                    : null,
+                  top: rowOffsets[i]!,
+                  bottom: rowOffsets[i + 1]!,
+                },
+              ],
+        ),
+        selectedId: selectedRowId,
         scrollTop: element?.scrollTop ?? scrollTop,
         height: element?.clientHeight || viewportHeight,
-        scrollHeight: entries.length * TREE_ROW_HEIGHT_PX,
+        scrollHeight: rowOffsets[entries.length]!,
         history: runtime.sidebarJumpListFor(tab.id, "tree"),
         resolveHistoryId: (id) => {
-          if (id === ALL_NOTES_TREE_ENTRY_ID) return id;
-          let entry = snapshot.namespaceEntries.find(
-            (item) => item.entryId === id,
-          );
+          if (id === ALL_NOTES_TREE_ENTRY_ID)
+            return `tree-note-${ALL_NOTES_TREE_ENTRY_ID}`;
+          if (entries.some((item) => !item.separator && item.rowId === id))
+            return id;
+          const region: TreeRegion = id.startsWith("tree-context-")
+            ? "context"
+            : "root";
+          const entryId = id.replace(/^tree-(?:context|note)-/u, "");
+          let entry = namespaceById.get(entryId);
           while (entry) {
-            if (entries.some((item) => item.note.noteId === entry!.entryId))
-              return entry.entryId;
-            entry = snapshot.namespaceEntries.find(
-              (item) => item.entryId === entry!.parentNoteId,
+            const candidates = entries.filter(
+              (item) => !item.separator && item.note.noteId === entry!.entryId,
             );
+            const match =
+              candidates.find((item) => item.region === region) ??
+              candidates[0];
+            if (match) return match.rowId;
+            entry = entry.parentNoteId
+              ? namespaceById.get(entry.parentNoteId)
+              : undefined;
           }
           return null;
         },
@@ -372,8 +606,13 @@ export function WorkspaceTree({
       if (result) {
         if (element) element.scrollTop = result.scrollTop;
         setScrollTop(result.scrollTop);
-        if (result.selectedId !== selectedEntryId)
-          persistTree(result.selectedId);
+        if (result.selectedId !== selectedRowId) {
+          const destination = entries.find(
+            (entry) => entry.rowId === result.selectedId,
+          );
+          if (destination && !destination.separator)
+            persistTree(destination.note.noteId, destination.region);
+        }
         return;
       }
     }
@@ -382,20 +621,27 @@ export function WorkspaceTree({
         if (selected?.hasChildren && selected.expanded) {
           setCollapsed(selected.note.noteId, true);
         } else if (selected?.note.parentNoteId) {
-          persistTree(selected.note.parentNoteId);
+          if (
+            entries.some(
+              (entry) =>
+                entry.note.noteId === selected.note.parentNoteId &&
+                entry.region === selectedRegion,
+            )
+          )
+            persistTree(selected.note.parentNoteId, selectedRegion);
         }
         return;
       case "cursor.right":
         if (selected?.hasChildren && !selected.expanded) {
           setCollapsed(selected.note.noteId, false);
         } else if (selected?.hasChildren) {
-          persistTree(
-            entries[selectedIndex + 1]?.note.noteId ?? selectedEntryId,
-          );
+          const child = entries[selectedIndex + 1];
+          if (child?.region === selectedRegion && !child.separator)
+            persistTree(child.note.noteId, selectedRegion);
         }
         return;
       case "note.open":
-        void openEntry(selectedEntryId);
+        void openEntry(selectedEntryId, selectedRegion);
         return;
       case "note.create_root":
         void create("root");
@@ -458,9 +704,7 @@ export function WorkspaceTree({
         role="tree"
         aria-label="ノートツリー"
         tabIndex={0}
-        aria-activedescendant={
-          selectedEntryId ? `tree-note-${selectedEntryId}` : undefined
-        }
+        aria-activedescendant={selectedRowId}
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
         onKeyDown={(event) => {
           if (
@@ -498,28 +742,41 @@ export function WorkspaceTree({
       >
         <div
           className="note-tree-spacer"
-          style={{ height: entries.length * TREE_ROW_HEIGHT_PX }}
+          style={{ height: rowOffsets[entries.length] }}
         >
           {visibleEntries.map((entry, offset) => {
             const index = firstVisible + offset;
-            const selected = entry.note.noteId === selectedEntryId;
+            if (entry.separator)
+              return (
+                <div
+                  key={entry.rowId}
+                  className="note-tree-separator"
+                  role="presentation"
+                  aria-hidden="true"
+                  style={{
+                    top: rowOffsets[index],
+                    height: TREE_SEPARATOR_HEIGHT_PX,
+                  }}
+                />
+              );
+            const selected = entry.rowId === selectedRowId;
             return (
               <div
-                id={`tree-note-${entry.note.noteId}`}
-                key={entry.note.noteId}
+                id={entry.rowId}
+                key={entry.rowId}
                 className={`note-tree-row${selected ? " note-tree-row--selected" : ""}`}
                 role="treeitem"
                 aria-level={entry.depth + 1}
                 aria-selected={selected}
                 aria-expanded={entry.hasChildren ? entry.expanded : undefined}
                 onClick={() => {
-                  if (selected) void openEntry(entry.note.noteId);
-                  else selectEntry(entry.note.noteId);
+                  if (selected) void openEntry(entry.note.noteId, entry.region);
+                  else selectEntry(entry.note.noteId, entry.region);
                 }}
                 style={
                   {
                     "--tree-depth": entry.depth,
-                    top: index * TREE_ROW_HEIGHT_PX,
+                    top: rowOffsets[index],
                     height: TREE_ROW_HEIGHT_PX,
                   } as CSSProperties
                 }
@@ -539,6 +796,7 @@ export function WorkspaceTree({
                         entry.note.noteId,
                         entry.expanded,
                         entry.note.noteId,
+                        entry.region,
                       );
                       root.current?.focus();
                     }}
@@ -582,13 +840,10 @@ export function WorkspaceTree({
                   style={
                     {
                       "--tree-depth": guide.depth,
-                      top:
-                        Math.max(guide.start, firstVisible) *
-                        TREE_ROW_HEIGHT_PX,
+                      top: rowOffsets[Math.max(guide.start, firstVisible)],
                       height:
-                        (Math.min(guide.end, lastVisible) -
-                          Math.max(guide.start, firstVisible)) *
-                        TREE_ROW_HEIGHT_PX,
+                        rowOffsets[Math.min(guide.end, lastVisible)]! -
+                        rowOffsets[Math.max(guide.start, firstVisible)]!,
                     } as CSSProperties
                   }
                 />

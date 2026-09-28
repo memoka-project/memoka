@@ -552,6 +552,21 @@ textarea {
   min-width: 100%;
 }
 
+.note-tree-separator {
+  position: absolute;
+  right: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.note-tree-separator::before {
+  content: "";
+  width: 100%;
+  border-top: 1px solid var(--memoka-color-border-subtle);
+}
+
 .note-tree-row {
   --sidebar-selection-start: calc(var(--tree-depth) * 20px);
   isolation: isolate;

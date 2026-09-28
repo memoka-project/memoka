@@ -214,6 +214,7 @@ Enterは、引数を取らないCommandまたは妥当な引数を入力済み�
 | ------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `:tree`                                           | Treeを開いてfocus                                                             |
 | `:new-note`                                       | Treeに表示しない空Noteを作り、現在Windowで編集可能にする                      |
+| `:note-tree [show                                 | hide]`                                                                        | active NoteのTreeルート表示状態を確認・変更 |
 | `:group`                                          | 選択Entryの子（選択なしならtop-level）にgroup作成                             |
 | `:rename-group`                                   | 選択groupのname変更                                                           |
 | `:backup`                                         | 保存barrier後にlocal captureと追加先copyを要求                                |

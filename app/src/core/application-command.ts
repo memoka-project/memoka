@@ -29,6 +29,7 @@ export type ApplicationCommandId =
   | "namespace.rename_group"
   | "utility.tree"
   | "note.new"
+  | "note.tree_visibility"
   | "workspace.search_trash"
   | "workspace.search_buffers"
   | "utility.outline"
@@ -148,6 +149,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     aliases: [],
     description: "Treeに表示しない新しいノートを作り、現在のWindowで開く",
     argument: "none",
+  },
+  {
+    id: "note.tree_visibility",
+    name: "note-tree",
+    aliases: [],
+    description: "現在のNoteをTreeルート側に表示するか設定する",
+    argument: "optional",
   },
   {
     id: "workspace.search_trash",
@@ -511,6 +519,11 @@ export interface ApplicationCommandArgumentHelp {
 const ARGUMENT_HELP: Partial<
   Record<ApplicationCommandId, ApplicationCommandArgumentHelp>
 > = {
+  "note.tree_visibility": {
+    syntax: "[show|hide]",
+    description:
+      "現在のNoteのTreeルート側での表示を確認・設定します。showは表示、hideは非表示にします。",
+  },
   "editor.image_width": {
     syntax: "[10..100%]",
     description:
@@ -621,6 +634,8 @@ export function applicationCommandArgumentIsComplete(
     : Number.NaN;
   const integer = /^\d+$/u.test(argument) ? Number(argument) : Number.NaN;
   switch (command.id) {
+    case "note.tree_visibility":
+      return argument === "show" || argument === "hide";
     case "editor.image_width": {
       const match = /^(\d+)%?$/u.exec(argument);
       const value = match ? Number(match[1]) : Number.NaN;

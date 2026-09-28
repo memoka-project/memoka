@@ -140,14 +140,19 @@ Tree/Outline共通で、選択背景は親の階層縦線位置より4px右か�
 選択枠線は表示しない。focus中はselection色、非focus時はsurface-hover色の背景を表示する。文字・アイコンの位置と色は変更しない。
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
-`:new-note`で作ったNoteとその子孫のEntryはTreeの表示・移動対象から除く。このNoteはWorkspaceに保存され、Tree以外では通常のlive Noteとして扱う。
+`:new-note`で作ったNoteとその子孫のEntryは通常のTreeルート段から除く。このNoteはWorkspaceに保存され、他の投影では通常のlive Noteとして扱う。
+Treeは「すべてのノート」、水平線、active WindowのNoteの最上位からの祖先経路とそのNoteの全子孫、水平線、通常のTreeルート階層の順に表示する。
+中段はTree非表示のEntryも含める。Note以外のBufferでは中段を省く。水平線は後続に表示行がある場合だけ表示し、通常のTreeルート階層が空ならその直前の水平線を省く。同じEntryは中段と下段の両方に表示できる。
+水平線は選択・キーボード移動の対象外とし、2つの段で選択行と折り畳み状態を独立して保持する。Tree操作はどちらの段でも同じNamespace Entryに作用する。
+「すべてのノート」を選択中はtop-levelのNote作成もできない。中段ではtop-level作成を禁止する。active Noteとその上位の祖先では兄弟Noteを作成できず、上位の祖先では子Noteも作成できない。active Noteの子Noteと、その子孫内でのNote作成は許可する。
+中段ではactive Noteより上位の祖先Entryを削除できない。active Noteとその子孫は削除できる。中段での浅くする操作はactive Noteのsubtreeから外に出る直前で止め、Countを指定した場合も同じ境界を守る。下段ではこれらの制限を適用しない。
 例外として先頭に固定の「すべてのノート」を表示する。これはNamespaceEntryではなく、Lucide `sheet`を使う。
-Enterまたは選択済み行のclickで現在Windowに開き、Tree上で移動・削除・子や兄弟の作成はできない。
+Enterまたは選択済み行のclickで現在Windowに開き、Tree上で移動・削除・子・兄弟・top-level Noteの作成はできない。
 親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
 Noteには展開状態によらずfile-text、Groupにはfolder-open/closedを表示する。空Groupはfolder-closedとし、Enter/再clickでは開閉しない。
 chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Noteを開かず、double clickも行へ伝播させない。
 展開した親のchevron中心から、最後の表示子孫の行末まで、本文のSection縦線と同じ1px・border-subtle色の縦線を表示する。仮想scrollで親が画面外にある場合も線を維持し、兄弟subtreeへ延長しない。
-タイトル14px、アイコン16px、行高30px、階層indent 20pxとし、既存themeの配色・選択表示を維持する。
+タイトル14px、アイコン16px、通常行高30px、水平線の行高15px、階層indent 20pxとし、既存themeの配色・選択表示を維持する。
 選択Entryがviewport外へ移動した場合は、Tree内部をscrollして常に表示する。
 
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
@@ -163,6 +168,8 @@ mouseによる並べ替え、作成、inline renameは提供しない。
 
 Noteなしgroupはfolderとして表示し、Enterまたは選択済み行のclickではEditorを開かず、Treeにfocusを保って折り畳みをtoggleする。
 `:group`は選択Entryの子、選択なしならtop-levelにgroupを作る。`:rename-group`は選択groupのnameを変更する。
+`:note-tree show|hide`はactive WindowのNoteのTreeルート側での表示設定を変更し、配置・更新日時を変えない。引数なしでは設定を表示する。
+非表示の祖先がいる場合、showは対象Noteの設定だけを変更するため、祖先が表示されるまで下段には現れない。
 削除は対象Entryのsubtreeと、その中のlive Noteを同じtrash operationにする。group-only subtreeもTrash検索から復元できる。
 
 ### すべてのノート

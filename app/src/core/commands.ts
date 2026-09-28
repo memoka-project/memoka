@@ -41,6 +41,11 @@ export interface CoreCommandPayloads {
     windowId: string;
     fault?: CommitFault;
   };
+  "note.set_tree_visibility": {
+    noteId: string;
+    visible: boolean;
+    fault?: CommitFault;
+  };
   "note.create_child": {
     noteId: string;
     parentNoteId: string;
@@ -264,6 +269,7 @@ export interface CoreCommandResults {
   };
   "note.create_root": { noteId: string };
   "note.create_unfiled": { noteId: string };
+  "note.set_tree_visibility": { noteId: string; changed: boolean };
   "note.create_child": { noteId: string };
   "note.create_sibling_after": { noteId: string };
   "note.create": { noteId: string };
