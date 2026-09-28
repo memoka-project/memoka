@@ -35,6 +35,12 @@ export interface CoreCommandPayloads {
     windowId: string;
     fault?: CommitFault;
   };
+  "note.create_unfiled": {
+    noteId: string;
+    createdAt: string;
+    windowId: string;
+    fault?: CommitFault;
+  };
   "note.create_child": {
     noteId: string;
     parentNoteId: string;
@@ -257,6 +263,7 @@ export interface CoreCommandResults {
     fallbackEntryId: string | null;
   };
   "note.create_root": { noteId: string };
+  "note.create_unfiled": { noteId: string };
   "note.create_child": { noteId: string };
   "note.create_sibling_after": { noteId: string };
   "note.create": { noteId: string };

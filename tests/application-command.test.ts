@@ -53,6 +53,13 @@ describe("Memoka Application Command-line", () => {
       kind: "command",
       command: { id: "workspace.new" },
     });
+    expect(parseApplicationCommand(":new-note")).toMatchObject({
+      kind: "command",
+      command: { id: "note.new" },
+    });
+    expect(parseApplicationCommand(":new-note extra")).toMatchObject({
+      kind: "error",
+    });
     expect(parseApplicationCommand("switch-workspace")).toMatchObject({
       kind: "command",
       command: { id: "workspace.switch" },
@@ -175,7 +182,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: backup-status",
     });
     expect(applicationCommandHelp()).toBe(
-      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :ui-font · :note-font-ja · :note-font-latin · :note-font-mono · :note-line-height · :block-gap · :list-item-gap · :section-title-gap-before · :section-title-gap-after · :section-title-size · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :new-note · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :ui-font · :note-font-ja · :note-font-latin · :note-font-mono · :note-line-height · :block-gap · :list-item-gap · :section-title-gap-before · :section-title-gap-after · :section-title-size · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

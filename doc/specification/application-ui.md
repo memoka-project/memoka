@@ -140,6 +140,7 @@ Tree/Outline共通で、選択背景は親の階層縦線位置より4px右か�
 選択枠線は表示しない。focus中はselection色、非focus時はsurface-hover色の背景を表示する。文字・アイコンの位置と色は変更しない。
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
+`:new-note`で作ったNoteとその子孫のEntryはTreeの表示・移動対象から除く。このNoteはWorkspaceに保存され、Tree以外では通常のlive Noteとして扱う。
 例外として先頭に固定の「すべてのノート」を表示する。これはNamespaceEntryではなく、Lucide `sheet`を使う。
 Enterまたは選択済み行のclickで現在Windowに開き、Tree上で移動・削除・子や兄弟の作成はできない。
 親EntryにはLucideのchevron-down/rightを展開状態に応じて表示する。子を持たないEntryにはchevronを表示せず、同じ幅の空欄を置く。
@@ -172,8 +173,8 @@ live Noteを1件1行で「ノート名」「最終更新日時」に並べる。
 ノート名はNote IDをtargetとする内部リンクであり、`gf`で開く。`Ctrl-o/i`は同じWindowのJump Listで
 一覧の元の行と移動先を往復する。通常のカーソル移動、Table移動、検索、Visual選択・コピーを利用できるが、
 編集・貼り付け・Undo/RedoでTableを変更できない。
-Noteの追加・削除・復元・改名・本文更新と同期更新はTableへ反映する。並べ替え後も同じNoteの同じ列へ
-カーソルを維持し、対象Noteが消えた場合は近い行、行がなければ見出しへ移す。
+Noteの追加・削除・復元・改名・本文更新と同期更新はTableへ反映する。`:new-note`で作ったTree非表示のNoteも含める。
+並べ替え後も同じNoteの同じ列へカーソルを維持し、対象Noteが消えた場合は近い行、行がなければ見出しへ移す。
 WindowごとのBuffer、選択Note・列、scroll位置は再起動後も復元する。
 
 ## 8. Outline

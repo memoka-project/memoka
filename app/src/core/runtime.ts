@@ -320,6 +320,7 @@ interface CreateNewNoteInput {
   operationId: string;
   noteId: string;
   title: string;
+  treeHidden?: true;
   createdAt: string;
   parentNoteId: string | null;
   afterNoteId: string | null;
@@ -1524,6 +1525,19 @@ export class CoreRuntime {
   createRootNote(windowId: string): Promise<{ noteId: string }> {
     return this.executeCommand({
       name: "note.create_root",
+      operationId: this.idFactory(),
+      source: "ui",
+      payload: {
+        noteId: this.idFactory(),
+        createdAt: this.clock(),
+        windowId,
+      },
+    });
+  }
+
+  createUnfiledNote(windowId: string): Promise<{ noteId: string }> {
+    return this.executeCommand({
+      name: "note.create_unfiled",
       operationId: this.idFactory(),
       source: "ui",
       payload: {
@@ -4364,6 +4378,17 @@ export class CoreRuntime {
       }),
     );
 
+    this.commands.register("note.create_unfiled", (envelope) =>
+      this.createNewNote({
+        ...envelope.payload,
+        operationId: envelope.operationId,
+        title: "",
+        treeHidden: true,
+        parentNoteId: null,
+        afterNoteId: null,
+      }),
+    );
+
     this.commands.register("note.create_child", (envelope) =>
       this.createNewNote({
         ...envelope.payload,
@@ -6323,6 +6348,7 @@ export class CoreRuntime {
             {
               noteId,
               title,
+              treeHidden: input.treeHidden,
               parentNoteId,
               entryId,
               parentEntryId,

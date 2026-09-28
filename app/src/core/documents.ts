@@ -136,6 +136,7 @@ export type ProductDocument = NoteDocument | WorkspaceDocument;
 
 export interface NoteMetadataInput {
   noteId: string;
+  treeHidden?: true;
   entryId?: string;
   parentEntryId?: string | null;
   /** Null identifies a top-level Note. Missing legacy values load as null. */
@@ -154,6 +155,7 @@ export interface NoteMetadata {
   /** Query-time projection, including organizational groups. Never persisted. */
   readonly namespaceAncestors?: readonly string[];
   noteId: string;
+  treeHidden?: true;
   /** Placement projections are derived from Main Namespace, never stored on Notes. */
   entryId?: string;
   parentNoteId: string | null;
@@ -888,6 +890,7 @@ function projectNoteMetadata(
   const systemRole = value.get("system_role");
   return {
     noteId,
+    ...(value.get("tree_hidden") === true ? { treeHidden: true as const } : {}),
     entryId: entry.entryId,
     get namespaceAncestors() {
       const names: string[] = [];
@@ -2315,6 +2318,7 @@ function metadataToYMap(
   }
   value.set("system_role", input.systemRole ?? null);
   value.set("title_cache", input.title ?? "");
+  if (input.treeHidden) value.set("tree_hidden", true);
   return value;
 }
 
@@ -2355,6 +2359,8 @@ function validateWorkspaceMetadata(workspace: WorkspaceDocument): void {
         (value.has("deleted_at") || value.has("trash_operation_id")))
     )
       throw new Error("Note placement must be stored in Namespace");
+    if (value.has("tree_hidden") && value.get("tree_hidden") !== true)
+      throw new Error("Note tree_hidden must be true when present");
     const note = projectNoteMetadata(noteId, value, index);
     if (!isCanonicalSiblingPosition(note.notePosition)) {
       throw new Error(`Note ${noteId} has an invalid note_position`);

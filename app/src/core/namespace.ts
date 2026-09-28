@@ -287,6 +287,10 @@ export function namespaceTreeNodes(
     noteId: entry.entryId,
     entryId: entry.entryId,
     targetNoteId: entry.target?.id ?? null,
+    ...(entry.target &&
+    workspace.notes.get(entry.target.id)?.get("tree_hidden") === true
+      ? { treeHidden: true as const }
+      : {}),
     parentNoteId: entry.parentEntryId,
     notePosition: entry.position,
     title: entry.target
@@ -303,6 +307,42 @@ export function namespaceTreeNodes(
     trashOperationId: entry.trashOperationId,
     purgedAt: entry.purgedAt,
   }));
+}
+
+/** Tree presentation omits unfiled Notes and any placements below them. */
+export function treeVisibleNamespaceNodes(
+  nodes: readonly NamespaceTreeNode[],
+): NamespaceTreeNode[] {
+  const byId = new Map(nodes.map((node) => [node.entryId, node]));
+  const hidden = new Map<string, boolean>();
+  const isHidden = (node: NamespaceTreeNode): boolean => {
+    const path: NamespaceTreeNode[] = [];
+    const visited = new Set<string>();
+    let cursor: NamespaceTreeNode | undefined = node;
+    let result = false;
+    while (cursor) {
+      const cached = hidden.get(cursor.entryId);
+      if (cached !== undefined) {
+        result = cached;
+        break;
+      }
+      if (visited.has(cursor.entryId))
+        throw new Error("Namespace contains a cycle");
+      visited.add(cursor.entryId);
+      path.push(cursor);
+      if (cursor.treeHidden) {
+        result = true;
+        break;
+      }
+      cursor =
+        cursor.parentNoteId === null
+          ? undefined
+          : byId.get(cursor.parentNoteId);
+    }
+    for (const item of path) hidden.set(item.entryId, result);
+    return result;
+  };
+  return nodes.filter((node) => !isHidden(node));
 }
 
 export type NamespaceEdit =

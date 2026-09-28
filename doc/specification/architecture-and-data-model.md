@@ -43,7 +43,8 @@ WorkspaceMetadataDoc
 ├── notes[note_id]
 │   ├── title_cache
 │   ├── created_at / updated_at
-│   └── system_role?
+│   ├── system_role?
+│   └── tree_hidden? = true
 └── main_namespace
     ├── namespace_id
     ├── entries[entry_id]
@@ -66,6 +67,9 @@ WorkspaceMetadataDoc
 7. グループだけがEntryに`name`を持つ。空グループからNoteを暗黙作成しない。
 8. 配置、兄弟順、祖先pathの変更だけではNoteの`updated_at`を変更しない。
 9. Namespaceの深さへSectionのH6制限を流用しない。循環と走査量は検証する。
+
+`tree_hidden: true`のNoteもNamespaceに配置を1つ持つ。属性がないNoteはTreeに表示する。
+Tree投影だけでこのNoteとその子孫を隠し、All NotesとWorkspace検索には含める。属性はWorkspace metadataとして同期・復元する。
 
 ### 3.1 sibling順序
 
@@ -170,7 +174,7 @@ fold、scroll、Jump ListはWindowごとに分離する。
 Tree表示はWorkspaceMetadataDocから次の順で導出する。
 
 1. 配置履歴から循環のない親と兄弟順を導出し、削除・復元履歴を解釈してdeleted Entryを除く。
-2. parent-child adjacencyを構築する。
+2. `tree_hidden: true`のNote Entryとその子孫を除いてparent-child adjacencyを構築する。
 3. 各siblingを`position`、Entry IDの順にsortする。
 4. 展開状態を適用してdepth-firstに平坦化する。
 5. viewport付近だけを表示する。

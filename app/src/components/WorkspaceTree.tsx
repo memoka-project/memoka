@@ -20,6 +20,7 @@ import {
   type ApplicationKeyConfig,
 } from "../core/application-key-config";
 import { noteDisplayTitle } from "../core/documents";
+import { treeVisibleNamespaceNodes } from "../core/namespace";
 import {
   deriveVisibleNoteTree,
   type TreeMoveDirection,
@@ -94,6 +95,10 @@ export function WorkspaceTree({
     () => new Set(localCollapsedNoteIds),
     [localCollapsedNoteIds],
   );
+  const treeEntries = useMemo(
+    () => treeVisibleNamespaceNodes(snapshot.namespaceEntries),
+    [snapshot.namespaceEntries],
+  );
   const entries = useMemo(
     () => [
       {
@@ -109,9 +114,9 @@ export function WorkspaceTree({
         hasChildren: false,
         expanded: true,
       },
-      ...deriveVisibleNoteTree(snapshot.namespaceEntries, collapsed),
+      ...deriveVisibleNoteTree(treeEntries, collapsed),
     ],
-    [snapshot.namespaceEntries, collapsed],
+    [treeEntries, collapsed],
   );
   const selectedEntryId = entries.some(
     (entry) => entry.note.noteId === localSelectedNoteId,
@@ -138,9 +143,8 @@ export function WorkspaceTree({
     [entries],
   );
   const namespaceById = useMemo(
-    () =>
-      new Map(snapshot.namespaceEntries.map((entry) => [entry.entryId, entry])),
-    [snapshot.namespaceEntries],
+    () => new Map(treeEntries.map((entry) => [entry.entryId, entry])),
+    [treeEntries],
   );
 
   useEffect(() => {
@@ -220,9 +224,7 @@ export function WorkspaceTree({
       });
       return;
     }
-    const entry = snapshot.namespaceEntries.find(
-      (entry) => entry.entryId === entryId,
-    );
+    const entry = treeEntries.find((entry) => entry.entryId === entryId);
     if (!entry) return;
     inputState.current = createTreeInputState();
     const noteId = entry.targetNoteId;
@@ -323,7 +325,7 @@ export function WorkspaceTree({
         persistTree(
           selectedEntryId,
           foldSidebarSubtree(
-            deriveVisibleNoteTree(snapshot.namespaceEntries).map((entry) => ({
+            deriveVisibleNoteTree(treeEntries).map((entry) => ({
               id: entry.note.noteId,
               depth: entry.depth,
               foldable: entry.hasChildren,

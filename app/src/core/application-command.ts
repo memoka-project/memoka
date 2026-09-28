@@ -28,6 +28,7 @@ export type ApplicationCommandId =
   | "namespace.group"
   | "namespace.rename_group"
   | "utility.tree"
+  | "note.new"
   | "workspace.search_trash"
   | "workspace.search_buffers"
   | "utility.outline"
@@ -139,6 +140,13 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "tree",
     aliases: [],
     description: "Treeを開く",
+    argument: "none",
+  },
+  {
+    id: "note.new",
+    name: "new-note",
+    aliases: [],
+    description: "Treeに表示しない新しいノートを作り、現在のWindowで開く",
     argument: "none",
   },
   {

@@ -2756,6 +2756,20 @@ export function App({
       setCommandMessage(`:${commandName} · フォントを選択`);
     };
     switch (command) {
+      case "note.new":
+        void runtime.createUnfiledNote(effectiveTargetWindowId).then(
+          () => {
+            setCommandMessage(":new-note · ノートを作成しました");
+            requestEditorFocus(effectiveTargetWindowId);
+          },
+          (error: unknown) => {
+            setCommandMessage(
+              error instanceof Error ? error.message : String(error),
+            );
+            commandRestoreFocus();
+          },
+        );
+        return;
       case "workspace.sync":
       case "workspace.sync_settings": {
         if (!synchronizationAvailable()) {
