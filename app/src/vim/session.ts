@@ -157,7 +157,7 @@ import type {
 } from "../core/workspace-search";
 import type { NoteSearchDirection } from "../core/note-search";
 import { normalizeExternalLink } from "../core/external-links";
-import { VimRegisterStore } from "./register-store";
+import { VimRegisterStore, type VimRegisterName } from "./register-store";
 import {
   createVimRepeatDescriptor,
   replayVimRepeat,
@@ -293,7 +293,15 @@ export interface ProductVimSessionOptions {
   onNormalModeImeGuardChange?: (active: boolean) => void;
   onYank?: (
     register: VimRegister,
+    target?: "+" | "*",
   ) => VimClipboardWriteResult | Promise<VimClipboardWriteResult>;
+  onRegisterRead?: (
+    name: "+" | "*",
+  ) =>
+    | PreferredClipboardFormats
+    | null
+    | Promise<PreferredClipboardFormats | null>;
+  onRegisterPicker?: () => void;
   onPasteRead?: () =>
     | PreferredClipboardFormats
     | null
@@ -453,6 +461,7 @@ function readOnlyVimCommand(command: VimCommand): boolean {
     command.startsWith("tab.") ||
     command === "application.command_line" ||
     command === "application.command_picker" ||
+    command === "register.picker" ||
     command === "table.next_cell" ||
     command === "table.previous_cell" ||
     command === "operator.yank" ||
@@ -513,6 +522,7 @@ export class ProductVimSession {
   private composing = false;
   private action = "ready";
   private readonly registerStore: VimRegisterStore;
+  private selectedRegister: VimRegisterName | null = null;
   private readonly unsubscribeRegister: () => void;
   private readonly repeatStore: VimRepeatStore;
   private readonly visualSelectionStore: VimVisualSelectionStore;
@@ -586,6 +596,13 @@ export class ProductVimSession {
       imeOff: this.imeOff,
       imeOffDetail: this.imeOffDetail,
     };
+  }
+
+  armRegister(name: VimRegisterName): void {
+    this.selectedRegister = name;
+    this.input = createVimInputState();
+    this.action = `register:${name}:selected`;
+    this.emit();
   }
 
   requestInputMethodDeactivation(): void {
@@ -1731,6 +1748,53 @@ export class ProductVimSession {
     return true;
   }
 
+  private insertRegisterText(view: EditorView, name: VimRegisterName): void {
+    const insert = (text: string | null): void => {
+      if (!text) {
+        this.action = `register:${name}:empty`;
+        this.emit();
+        return;
+      }
+      this.pasteExplicitPlainText(view, text);
+      this.action = `register:${name}:inserted`;
+      this.emit();
+    };
+    if (name !== "+" && name !== "*") {
+      insert(this.registerStore.read(view.state.schema, name)?.text ?? null);
+      return;
+    }
+    const reader = this.options.onRegisterRead;
+    if (!reader) {
+      insert(null);
+      return;
+    }
+    const generation = ++this.clipboardReadGeneration;
+    const doc = view.state.doc;
+    const selection = view.state.selection;
+    void Promise.resolve(reader(name)).then(
+      (formats) => {
+        if (
+          generation !== this.clipboardReadGeneration ||
+          view !== this.view ||
+          view.isDestroyed ||
+          this.mode !== "insert" ||
+          this.composing ||
+          !view.state.doc.eq(doc) ||
+          !view.state.selection.eq(selection)
+        )
+          return;
+        insert(
+          formats?.plain ??
+            (formats?.internal
+              ? (decodeVimClipboard(formats.internal, view.state.schema)
+                  ?.text ?? null)
+              : null),
+        );
+      },
+      () => insert(null),
+    );
+  }
+
   private pasteListPlainFallback(view: EditorView, text: string): boolean {
     const tr = pastePlainListText(view.state.tr, text);
     if (!tr) return false;
@@ -2137,6 +2201,20 @@ export class ProductVimSession {
       return true;
     }
 
+    if (resolution.action.kind === "register-selected") {
+      event.preventDefault();
+      this.selectedRegister = resolution.action.name;
+      this.action = `register:${resolution.action.name}:selected`;
+      this.emit();
+      return true;
+    }
+
+    if (resolution.action.kind === "insert-register") {
+      event.preventDefault();
+      this.insertRegisterText(view, resolution.action.name);
+      return true;
+    }
+
     if (
       wasFinding &&
       resolution.state.pending?.kind !== "find-character" &&
@@ -2168,6 +2246,19 @@ export class ProductVimSession {
     }
 
     const command = resolution.resolvedCommand;
+    if (resolution.action.kind === "unmapped") this.selectedRegister = null;
+    const selectedRegister = this.selectedRegister;
+    if (resolution.action.kind === "execute") this.selectedRegister = null;
+
+    if (command === "register.picker") {
+      event.preventDefault();
+      this.options.onRegisterPicker?.();
+      this.action = this.options.onRegisterPicker
+        ? "register:picker:open"
+        : "register:picker:unavailable";
+      this.emit();
+      return true;
+    }
     if (
       this.options.readOnly &&
       (resolution.operator === "delete" ||
@@ -2715,6 +2806,7 @@ export class ProductVimSession {
         command,
         resolution.count,
         resolution.countExplicit ?? false,
+        selectedRegister,
       );
       return true;
     }
@@ -2770,7 +2862,10 @@ export class ProductVimSession {
           command === "text-object.around-paragraph")
           ? this.captureVisualSelection(view)
           : undefined;
-      const currentRegister = this.registerStore.read(view.state.schema);
+      const currentRegister = this.registerStore.read(
+        view.state.schema,
+        selectedRegister ?? '"',
+      );
       const focusedSectionDeletion =
         this.options.onFocusedSectionLineDelete &&
         ((this.mode === "normal" && command === "line.delete") ||
@@ -2934,6 +3029,7 @@ export class ProductVimSession {
             argument: operatorFind?.character ?? resolution.argument,
             tableRectangle: tableRectangle ?? undefined,
             visualChar: visualChar ?? undefined,
+            registerName: selectedRegister ?? undefined,
           })
         : null;
       if (result.handled && putCheckpoint) {
@@ -3001,11 +3097,27 @@ export class ProductVimSession {
       if (isolateUndo && !continuesIntoInsert) undoManager?.stopCapturing();
       if (repeatDescriptor) this.repeatStore.record(repeatDescriptor);
       this.action = `${result.detail}${resolution.count > 1 ? `:count:${resolution.count}` : ""}:${result.handled ? "changed" : "boundary"}`;
-      if (result.consumeRegister) this.registerStore.clear();
-      else if (result.register !== undefined)
-        this.registerStore.set(result.register);
-      else this.emit();
-      if (clipboardRegister) this.writeClipboard(clipboardRegister);
+      if (result.consumeRegister)
+        this.registerStore.clearNamed(selectedRegister ?? '"');
+      else if (result.register !== undefined && result.handled) {
+        const yank =
+          resolution.operator === "yank" ||
+          command === "line.yank" ||
+          command === "selection.yank";
+        this.registerStore.record(
+          result.register,
+          yank ? "yank" : "delete",
+          selectedRegister,
+        );
+      } else this.emit();
+      if (
+        result.handled &&
+        result.register &&
+        (selectedRegister === "+" || selectedRegister === "*")
+      )
+        this.writeClipboard(result.register, selectedRegister);
+      else if (clipboardRegister && selectedRegister !== "_")
+        this.writeClipboard(clipboardRegister);
       this.scheduleCaretRefresh(view);
       return true;
     }
@@ -3070,32 +3182,25 @@ export class ProductVimSession {
     command: "put.after" | "put.before",
     count: number,
     countExplicit: boolean,
+    selectedRegister: VimRegisterName | null,
   ): void {
-    if (
-      this.externalFileClipboardPaths?.length &&
-      this.options.onPasteNativePaths
-    ) {
-      this.putNativeClipboardFiles(
+    if (selectedRegister === "+" || selectedRegister === "*") {
+      this.readClipboardForNormalPut(
         view,
         command,
         count,
-        this.externalFileClipboardPaths,
+        countExplicit,
+        selectedRegister,
       );
       return;
     }
-    if (
-      this.normalPutClipboardReadInFlight ||
-      (this.normalPutClipboardDirty && this.options.onPasteRead)
-    ) {
-      if (!this.normalPutClipboardReadInFlight) {
-        this.readClipboardForNormalPut(view, command, count, countExplicit);
-      } else {
-        this.action = "clipboard:put:reading";
-        this.emit();
-      }
-      return;
-    }
-    this.putWorkspaceRegister(view, command, count, countExplicit);
+    this.putWorkspaceRegister(
+      view,
+      command,
+      count,
+      countExplicit,
+      selectedRegister,
+    );
   }
 
   private readClipboardForNormalPut(
@@ -3103,10 +3208,16 @@ export class ProductVimSession {
     command: "put.after" | "put.before",
     count: number,
     countExplicit: boolean,
+    name: "+" | "*",
   ): void {
-    const reader = this.options.onPasteRead;
+    const reader = this.options.onRegisterRead
+      ? () => this.options.onRegisterRead!(name)
+      : name === "+"
+        ? this.options.onPasteRead
+        : undefined;
     if (!reader) {
-      this.putWorkspaceRegister(view, command, count, countExplicit);
+      this.action = `register:${name}:unavailable`;
+      this.emit();
       return;
     }
     const generation = ++this.clipboardReadGeneration;
@@ -3136,6 +3247,7 @@ export class ProductVimSession {
           command,
           count,
           countExplicit,
+          name,
           formats,
         ),
       () =>
@@ -3147,6 +3259,7 @@ export class ProductVimSession {
           command,
           count,
           countExplicit,
+          name,
           null,
         ),
     );
@@ -3160,6 +3273,7 @@ export class ProductVimSession {
     command: "put.after" | "put.before",
     count: number,
     countExplicit: boolean,
+    name: "+" | "*",
     formats: PreferredClipboardFormats | null,
   ): void {
     if (
@@ -3187,8 +3301,14 @@ export class ProductVimSession {
       ? decodeVimClipboard(formats.internal, view.state.schema)
       : null;
     if (internalRegister) {
-      this.registerStore.set(internalRegister);
-      this.putWorkspaceRegister(view, command, count, countExplicit);
+      this.putWorkspaceRegister(
+        view,
+        command,
+        count,
+        countExplicit,
+        name,
+        internalRegister,
+      );
       return;
     }
     if (formats?.filePaths?.length && this.options.onPasteNativePaths) {
@@ -3217,8 +3337,14 @@ export class ProductVimSession {
         )
       : null;
     if (tabularRegister) {
-      this.registerStore.set(tabularRegister);
-      this.putWorkspaceRegister(view, command, count, countExplicit);
+      this.putWorkspaceRegister(
+        view,
+        command,
+        count,
+        countExplicit,
+        name,
+        tabularRegister,
+      );
       return;
     }
     if (formats?.html || formats?.markdown) {
@@ -3230,20 +3356,23 @@ export class ProductVimSession {
           ? registerFromMarkdown(formats.markdown, view.state.schema)
           : null);
       if (register) {
-        this.registerStore.set(register);
-        this.putWorkspaceRegister(view, command, count, countExplicit);
+        this.putWorkspaceRegister(
+          view,
+          command,
+          count,
+          countExplicit,
+          name,
+          register,
+        );
         return;
       }
     }
-    if (formats?.plain && !formats.html) {
-      this.registerStore.set({
-        kind: "text",
-        text: formats.plain,
-        externalPlain: true,
-      });
-    }
+    const plain: VimRegister | null =
+      formats?.plain && !formats.html
+        ? { kind: "text", text: formats.plain, externalPlain: true }
+        : null;
     this.externalFileClipboardPaths = null;
-    this.putWorkspaceRegister(view, command, count, countExplicit);
+    this.putWorkspaceRegister(view, command, count, countExplicit, name, plain);
   }
 
   private putNativeClipboardFiles(
@@ -3303,8 +3432,13 @@ export class ProductVimSession {
     command: "put.after" | "put.before",
     count: number,
     countExplicit: boolean,
+    name: VimRegisterName | null = null,
+    override?: VimRegister | null,
   ): void {
-    const register = this.registerStore.read(view.state.schema);
+    const register =
+      override === undefined
+        ? this.registerStore.read(view.state.schema, name ?? '"')
+        : override;
     const undoManager = findUndoManager(view);
     const cursorBeforeCommand = selectionCursor(view);
     undoManager?.stopCapturing();
@@ -3325,6 +3459,7 @@ export class ProductVimSession {
           operator: null,
           count,
           countExplicit,
+          registerName: name ?? undefined,
         })
       : null;
     if (result.handled) {
@@ -3336,9 +3471,9 @@ export class ProductVimSession {
     undoManager?.stopCapturing();
     if (repeatDescriptor) this.repeatStore.record(repeatDescriptor);
     this.action = `${result.detail}${count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
-    if (result.consumeRegister) this.registerStore.clear();
-    else if (result.register !== undefined)
-      this.registerStore.set(result.register);
+    if (result.consumeRegister) this.registerStore.clearNamed(name ?? '"');
+    else if (result.register !== undefined && result.handled)
+      this.registerStore.record(result.register, "delete", name);
     else this.emit();
     this.scheduleCaretRefresh(view);
   }
@@ -3410,6 +3545,20 @@ export class ProductVimSession {
       this.emit();
       return;
     }
+    if (
+      (descriptor.command === "put.after" ||
+        descriptor.command === "put.before") &&
+      (descriptor.registerName === "+" || descriptor.registerName === "*")
+    ) {
+      this.readClipboardForNormalPut(
+        view,
+        descriptor.command,
+        countExplicit ? count : descriptor.count,
+        countExplicit,
+        descriptor.registerName,
+      );
+      return;
+    }
     const undoManager = findUndoManager(view);
     undoManager?.stopCapturing();
     const undoStackDepth = undoManager?.undoStack.length ?? 0;
@@ -3417,7 +3566,10 @@ export class ProductVimSession {
     const continuesIntoInsert =
       !descriptor.visualChar &&
       changesIntoInsert(descriptor.command, descriptor.operator);
-    const repeatedRegister = this.registerStore.read(view.state.schema);
+    const repeatedRegister = this.registerStore.read(
+      view.state.schema,
+      descriptor.registerName ?? '"',
+    );
     const repeatedPut =
       descriptor.command === "put.after" || descriptor.command === "put.before"
         ? this.focusedSectionSiblingPutResult(
@@ -3485,10 +3637,21 @@ export class ProductVimSession {
     if (!continuesIntoInsert) undoManager?.stopCapturing();
     if (result.nextMode) this.changeMode(view, result.nextMode);
     this.action = `repeat:${result.detail}${!descriptor.visualChar && countExplicit && count > 1 ? `:count:${count}` : ""}:${result.handled ? "changed" : "boundary"}`;
-    if (result.consumeRegister) this.registerStore.clear();
+    if (result.consumeRegister)
+      this.registerStore.clearNamed(descriptor.registerName ?? '"');
     else if (result.register !== undefined)
-      this.registerStore.set(result.register);
+      this.registerStore.record(
+        result.register,
+        "delete",
+        descriptor.registerName ?? null,
+      );
     else this.emit();
+    if (
+      result.handled &&
+      result.register &&
+      (descriptor.registerName === "+" || descriptor.registerName === "*")
+    )
+      this.writeClipboard(result.register, descriptor.registerName);
     this.scheduleCaretRefresh(view);
   }
 
@@ -4353,7 +4516,7 @@ export class ProductVimSession {
     this.emit();
   }
 
-  private writeClipboard(register: VimRegister): void {
+  private writeClipboard(register: VimRegister, target: "+" | "*" = "+"): void {
     const writer = this.options.onYank;
     if (!writer) return;
     const generation = ++this.clipboardWriteGeneration;
@@ -4361,7 +4524,7 @@ export class ProductVimSession {
     this.emit();
     let pending: VimClipboardWriteResult | Promise<VimClipboardWriteResult>;
     try {
-      pending = writer(register);
+      pending = writer(register, target);
     } catch {
       this.setClipboardWriteResult(generation, "unavailable");
       return;

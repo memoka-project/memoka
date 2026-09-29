@@ -791,6 +791,8 @@ describe("rich ListItem editing", () => {
     });
     key(editor, "Escape");
     editor.commands.setTextSelection(position(editor, "first"));
+    key(editor, '"');
+    key(editor, "+");
     key(editor, "p");
     await vi.waitFor(() =>
       expect(editor.state.doc.firstChild!.firstChild!.childCount).toBe(3),
@@ -890,6 +892,8 @@ describe("rich ListItem editing", () => {
       key(editor, "Escape");
       const before = position(editor, "ab");
       editor.commands.setTextSelection(before);
+      key(editor, '"');
+      key(editor, "+");
       key(editor, put);
       await vi.waitFor(() =>
         expect(

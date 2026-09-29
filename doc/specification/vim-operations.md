@@ -170,6 +170,19 @@ List内の`o`は空のItemを作る。`Ctrl-Enter`は最外List直後へParagrap
 | `Ctrl-r`         | Redo                                        |
 | `.`              | 対応する直前編集をrepeat                    |
 
+### Register
+
+Workspace sessionは`"`、`0`～`9`、`a`～`z`、`+`、`*`、`_`を扱う。`"`は直近のyank・削除・変更、
+`0`は直近のyank、`1`～`9`は削除・変更の新しい順のFIFOである。名前付きregisterは明示指定で更新する。
+内部registerは再起動時に保存しない。構造を持つregisterは別のWindowでも構造を保持してputする。
+
+Normalの`"{name}`は次のoperatorまたは`p/P`に一度だけ適用する。`<Leader>r`の一覧で選択しても同じ状態になる。
+一覧は下から`"`、`+`、`*`、`_`、`a`～`z`、`0`～`9`の順に表示する。
+Insertの`Ctrl-r{name}`は内容のtextを現在位置へ1 Undo単位で挿入する。`_`は読み取り時に空とする。
+通常のyankは`+`へも公開するが、通常の削除・変更はOS Clipboardを変更しない。
+`+`/`*`を明示した場合はOS Clipboardを読み書きし、Linuxでは`*`がPRIMARY、Windowsでは`+`の別名となる。
+`_`への書込みは全registerとOS Clipboardへの書込みを抑止する。裸の`p/P`は内部の`"`を読む。
+
 `J`は英語どうしの境界へ空白を1つ入れ、日本語文字または日本語句読点に接する境界では空白を入れない。
 `gJ`は既存文字列をそのまま連結する。
 
@@ -426,6 +439,7 @@ Treeの折り畳み・選択はTabごとのEntry IDで管理する。既存confi
 | `<Leader>l` | Links / Backlinks（予約）       |
 | `<Leader>n` | Note Actions（予約）            |
 | `<Leader>p` | Paste / Yank History（予約）    |
+| `<Leader>r` | Registers（利用可能）           |
 | `<Leader>v` | View / Window Layout（予約）    |
 | `<Leader>w` | Workspace（予約）               |
 | `<Leader>y` | Yank / Export（予約）           |
@@ -436,7 +450,7 @@ Treeの折り畳み・選択はTabごとのEntry IDで管理する。既存confi
 ## 14. 非対応または意図的差異
 
 - 通常textに対する矩形Visual Block
-- named/numbered registerの完全なVim互換
+- 大文字の名前付きregister、特殊registerを含む完全なVim互換
 - macro記録と再生
 - mark/jump command全般
 - search pattern、regular expression、置換の完全なVim互換

@@ -1161,6 +1161,101 @@ describe("Memoka keyboard-only Vim golden scenario", () => {
     secondRoot.remove();
   });
 
+  it("keeps dd/p on the internal register and reads the OS clipboard only for explicit +", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const readExplicitClipboard = vi.fn(async () => ({
+      availableTypes: ["text/plain"],
+      sourceMime: "text/plain",
+      content: "outside",
+    }));
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      readExplicitClipboard,
+    });
+    editor.commands.setContent({
+      type: "doc",
+      content: ["alpha", "beta", "gamma"].map((value) => ({
+        type: "paragraph",
+        content: [{ type: "text", text: value }],
+      })),
+    });
+    editor.commands.setTextSelection(textPosition(editor, "beta"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, "d");
+    press(editor, "d");
+    expect(runtime.vimRegister.read(undefined, "1")?.text).toContain("beta");
+    press(editor, "p");
+    await runtime.flush();
+    expect(editor.getText()).toContain("beta");
+    expect(readExplicitClipboard).not.toHaveBeenCalled();
+
+    press(editor, '"');
+    press(editor, "+");
+    press(editor, "p");
+    await vi.waitFor(() => expect(readExplicitClipboard).toHaveBeenCalled());
+    await runtime.flush();
+    expect(editor.getText()).toContain("outside");
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("uses named and black-hole registers for Normal edits and inserts named text in Insert", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const { adapter, editor } = runtime.editorForTesting("window-1", root);
+    editor.commands.setContent("<p>abc</p>");
+    editor.commands.setTextSelection(textPosition(editor, "abc"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, '"');
+    press(editor, "a");
+    press(editor, "x");
+    expect(runtime.vimRegister.read(undefined, "a")?.text).toBe("a");
+    expect(runtime.vimRegister.read(undefined, "1")?.text).toBe("a");
+
+    press(editor, '"');
+    press(editor, "_");
+    press(editor, "x");
+    expect(editor.getText()).toBe("c");
+    expect(runtime.vimRegister.read()?.text).toBe("a");
+    expect(runtime.vimRegister.read(undefined, "1")?.text).toBe("a");
+
+    press(editor, "i");
+    press(editor, "r", { ctrlKey: true });
+    press(editor, "a");
+    expect(editor.getText()).toBe("ac");
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
+  it("opens the register picker from Leader-r and applies its selection", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const onRegisterPicker = vi.fn();
+    const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+      onRegisterPicker,
+    });
+    editor.commands.setContent("<p>abc</p>");
+    editor.commands.setTextSelection(textPosition(editor, "abc"));
+    editor.commands.focus();
+    press(editor, "Escape");
+    press(editor, " ");
+    press(editor, "r");
+    expect(onRegisterPicker).toHaveBeenCalledOnce();
+    adapter.armRegister("a");
+    press(editor, "x");
+    expect(runtime.vimRegister.read(undefined, "a")?.text).toBe("a");
+    adapter.destroy();
+    runtime.destroy();
+    root.remove();
+  });
+
   it("shares a structural register across Windows with fresh identities", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),

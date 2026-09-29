@@ -12,6 +12,7 @@ export type LeaderShortcutId =
   | "note-actions"
   | "outline"
   | "paste"
+  | "registers"
   | "tree"
   | "view"
   | "workspace"
@@ -22,6 +23,7 @@ export type LeaderActiveCommandId =
   | "context.action_picker"
   | "workspace.search_buffers"
   | "application.command_picker"
+  | "register.picker"
   | "workspace.search_title"
   | "workspace.search_body"
   | "utility.toggle-outline"
@@ -140,6 +142,14 @@ export const LEADER_SHORTCUT_CATALOG: readonly LeaderShortcut[] = [
     label: "Paste / Yank History",
     status: "reserved",
     surfaces: ALL_SURFACES,
+  },
+  {
+    id: "registers",
+    key: "r",
+    label: "Registers",
+    status: "active",
+    command: "register.picker",
+    surfaces: ["editor"],
   },
   {
     id: "tree",

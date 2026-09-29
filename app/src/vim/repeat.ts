@@ -14,6 +14,7 @@ import {
   type VimVisualCharShape,
 } from "./visual-repeat";
 import type { VimCommand, VimMode, VimOperator } from "./input";
+import type { VimRegisterName } from "./register-store";
 import type { TableActionRepeat } from "../core/table-actions";
 import {
   DEFAULT_APPLICATION_KEY_CONFIG,
@@ -30,6 +31,7 @@ export interface VimRepeatDescriptor {
   tableAction?: TableActionRepeat;
   visualChar?: VimVisualCharShape;
   inserted?: Slice;
+  registerName?: VimRegisterName;
 }
 
 export interface VimRepeatCandidate extends VimRepeatDescriptor {
@@ -58,6 +60,7 @@ function cloneDescriptor(descriptor: VimRepeatDescriptor): VimRepeatDescriptor {
       ? { ...descriptor.visualChar }
       : undefined,
     inserted: descriptor.inserted,
+    registerName: descriptor.registerName,
     tableRectangle: descriptor.tableRectangle
       ? { ...descriptor.tableRectangle }
       : undefined,

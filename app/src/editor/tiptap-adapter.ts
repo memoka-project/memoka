@@ -64,7 +64,7 @@ import {
   type SectionDepthShiftSelection,
   type SectionParagraphConversionSelection,
 } from "../vim/editor-commands";
-import type { VimRegisterStore } from "../vim/register-store";
+import type { VimRegisterName, VimRegisterStore } from "../vim/register-store";
 import {
   caretFitsViewport,
   findViewportCaretPosition,
@@ -261,6 +261,7 @@ export interface TiptapEditorAdapterOptions {
     | Promise<EditorNavigationResult & NoteSearchNavigationStatus>;
   onCommandLine?: () => void;
   onCommandPicker?: () => void;
+  onRegisterPicker?: () => void;
   onApplicationCommand?: (command: VimApplicationCommand) => void;
   onWindowCommand?: (command: VimWindowCommand, count: number) => void;
   onSectionFocus?: (
@@ -475,7 +476,9 @@ export class TiptapEditorAdapter {
       onNormalModeImeGuardChange:
         options.setNormalModeImeGuardActive ??
         this.normalModeImeGuard?.setActive.bind(this.normalModeImeGuard),
-      onYank: (register) => this.writeYankToClipboard(register),
+      onYank: (register, target) => this.writeYankToClipboard(register, target),
+      onRegisterRead: (name) => this.readRegisterClipboard(name),
+      onRegisterPicker: options.onRegisterPicker,
       onPasteRead: readPreferredClipboard,
       onPastePlainRead: () =>
         Promise.resolve(this.readExplicitClipboard("plain")).then(
@@ -1876,7 +1879,50 @@ export class TiptapEditorAdapter {
     return "changed";
   }
 
-  private writeYankToClipboard(register: VimRegister) {
+  armRegister(name: VimRegisterName): void {
+    this.vimSession.armRegister(name);
+  }
+
+  async registerPreview(name: VimRegisterName): Promise<string | null> {
+    if (name === "+" || name === "*") {
+      const formats = await this.readRegisterClipboard(name);
+      return formats?.plain ?? null;
+    }
+    return (
+      this.options.registerStore?.read(this.currentEditor.schema, name)?.text ??
+      null
+    );
+  }
+
+  private async readRegisterClipboard(
+    name: "+" | "*",
+  ): Promise<PreferredClipboardFormats | null> {
+    const selection = name === "*" ? "primary" : "clipboard";
+    if (name === "+" && this.options.readPreferredClipboard)
+      return this.options.readPreferredClipboard();
+    if (this.clipboard.supportsNativeBridge())
+      return this.clipboard.readPreferred(selection);
+    if (name === "*") return null;
+    const plain = await this.readExplicitClipboard("plain");
+    return plain
+      ? {
+          internal: null,
+          html: null,
+          markdown: null,
+          plain: plain.content,
+          availableTypes: plain.availableTypes,
+        }
+      : null;
+  }
+
+  private writeYankToClipboard(register: VimRegister, target: "+" | "*" = "+") {
+    if (target === "*")
+      return this.clipboard.write(
+        register,
+        this.currentEditor.schema,
+        this.options.resolveInternalLinkTitle,
+        "primary",
+      );
     const attachmentIds = attachmentIdsFromRegister(register);
     if (attachmentIds.length > 0 && this.options.attachmentRepository) {
       const formats = encodeVimClipboard(

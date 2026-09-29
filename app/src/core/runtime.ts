@@ -3617,6 +3617,7 @@ export class CoreRuntime {
       | "onTableActionPicker"
       | "onCommandLine"
       | "onCommandPicker"
+      | "onRegisterPicker"
       | "onApplicationCommand"
       | "onWindowCommand"
       | "onNavigationDestination"
@@ -3746,6 +3747,7 @@ export class CoreRuntime {
         this.searchNoteWord(windowId, origin, direction, count),
       onCommandLine: options.onCommandLine,
       onCommandPicker: options.onCommandPicker,
+      onRegisterPicker: options.onRegisterPicker,
       onApplicationCommand: options.onApplicationCommand,
       onWindowCommand: options.onWindowCommand,
       onSectionFocus: (direction, currentSectionId, origin) => {
@@ -3941,6 +3943,7 @@ export class CoreRuntime {
       | "onOpenImage"
       | "onCommandLine"
       | "onCommandPicker"
+      | "onRegisterPicker"
       | "onApplicationCommand"
       | "onWindowCommand"
       | "keyConfig"

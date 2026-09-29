@@ -1645,7 +1645,7 @@ describe("Memoka structured Clipboard", () => {
     }
   });
 
-  it("puts an external TSV rectangle with p and synthesizes a header outside a Table", async () => {
+  it('puts an external TSV rectangle with "+p and synthesizes a header outside a Table', async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort());
     const root = document.createElement("div");
     document.body.append(root);
@@ -1664,6 +1664,8 @@ describe("Memoka structured Clipboard", () => {
     editor.commands.setTextSelection(firstParagraphPosition(editor) + 1);
     editor.commands.focus();
     press(editor, "Escape");
+    press(editor, '"');
+    press(editor, "+");
     press(editor, "p");
     await Promise.resolve();
     await runtime.flush();

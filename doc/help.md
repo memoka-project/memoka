@@ -202,6 +202,7 @@ Normalの移動では、折り返した論理行がWindowに収まれば全体�
 | `y{motion}` / `yy` | 文字範囲または論理行・構造をyankします。                           |
 | `[count]Y`         | `yy`と同じく論理行全体をyankします。行末までの`y$`とは異なります。 |
 | `p` / `P`          | registerの内容をcaretの後、前へputします。                         |
+| `"{name}{操作}`    | 指定registerでyank・削除・変更・putします。                        |
 | `[count]r{char}`   | caret下から指定数の文字を1文字で置換します。                       |
 | `R`                | Replace modeへ入ります。                                           |
 | `J` / `gJ`         | 次の論理行を連結します。                                           |
@@ -636,6 +637,7 @@ Window間の境界、Treeと本文の境界、本文とOutlineの境界はマウ
 | `<Leader>f` | Note Search             | 利用可能 |
 | `<Leader>s` | Body Search             | 利用可能 |
 | `<Leader>o` | Outline                 | 利用可能 |
+| `<Leader>r` | Registers               | 利用可能 |
 | `<Leader>t` | Tree                    | 利用可能 |
 | `<Leader>C` | Config / Settings       | 予約済み |
 | `<Leader>h` | History / Recent / Jump | 予約済み |
@@ -799,6 +801,12 @@ memoka-cli config set --input settings.json --format json
 ## Clipboard・添付・画像
 
 `y`や`yy`は、可能な場合にMemoka内部構造、HTML、Markdown、plain textを同時にOS Clipboardへ公開します。
+`"`は直近のyank・削除・変更、`0`は直近のyank、`1`～`9`は削除・変更の履歴、`a`～`z`は名前付きregisterです。
+通常の削除・変更はOS Clipboardを上書きしません。`dd`の後の`p`は削除した行を内部registerから貼り付けます。
+`"+p`はOS Clipboardから貼り付けます。`*`はLinuxのPRIMARY selection、Windowsでは`+`と同じです。
+`"_d{motion}`のように`_`を指定すると内容を保存しません。Normalの`<Leader>r`では内容を確認してregisterを選べます。
+一覧は下から`"`、`+`、`*`、`_`、`a`～`z`、`0`～`9`の順です。
+Insertの`Ctrl-r{name}`はregisterのテキストを挿入します。内部registerはアプリの再起動後には残りません。
 `p`はcaretの後、`P`は前へ貼り付けます。Table内では`p`と`P`が同じ動作になり、現在Cellから貼り付けます。
 リスト項目をMemoka内でコピーして既存リストへ貼り付けると、元のインデント深さを可能な限り保ちます。
 その深さでは指定位置へ入れられない場合は、直前の項目から1段を超えて深くならない位置へ調整します。

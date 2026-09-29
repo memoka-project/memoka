@@ -1,4 +1,5 @@
 import { graphemes } from "./graphemes";
+import { isVimRegisterName, type VimRegisterName } from "./register-store";
 import { DeclarativeKeymap, type KeyBinding } from "../core/keymap";
 import {
   WINDOW_SHORTCUTS,
@@ -105,6 +106,7 @@ export const VIM_COMMANDS = [
   "note.search_previous",
   "application.command_line",
   "application.command_picker",
+  "register.picker",
   "utility.toggle-tree",
   "utility.toggle-outline",
   ...WINDOW_SHORTCUT_COMMANDS,
@@ -168,6 +170,8 @@ export type VimOperator = "delete" | "yank" | "change";
 export const MAX_VIM_COUNT = 9_999;
 
 export type VimPendingInput =
+  | { kind: "register"; key: '"'; count: string }
+  | { kind: "insert-register"; key: "Ctrl+r"; count: string }
   | {
       kind: "operator";
       operator: VimOperator;
@@ -231,6 +235,8 @@ export type VimInputAction =
         | "pending:text-object-around"
         | "pending:keymap";
     }
+  | { kind: "register-selected"; name: VimRegisterName }
+  | { kind: "insert-register"; name: VimRegisterName }
   | {
       kind: "unmapped";
     }
@@ -634,6 +640,11 @@ function multipliedCount(left: string, right: string): number {
 }
 
 function isCountDigit(state: VimInputState, key: string): boolean {
+  if (
+    state.pending?.kind === "register" ||
+    state.pending?.kind === "insert-register"
+  )
+    return false;
   if (state.pending?.kind === "find-character") return false;
   if (!/^\d$/u.test(key)) return false;
   if (state.pending?.kind === "replace-character") return false;
@@ -693,6 +704,68 @@ export function advanceVimInput(
       operator: null,
       count: parsedCount(state.count),
       action: { kind: "unmapped" },
+    };
+  }
+
+  if (
+    state.pending?.kind === "register" ||
+    state.pending?.kind === "insert-register"
+  ) {
+    const pending = state.pending;
+    return {
+      state:
+        pending.kind === "register" && isVimRegisterName(key)
+          ? { pending: null, count: pending.count }
+          : createVimInputState(),
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: parsedCount(pending.count),
+      action: isVimRegisterName(key)
+        ? pending.kind === "register"
+          ? { kind: "register-selected", name: key }
+          : { kind: "insert-register", name: key }
+        : { kind: "unmapped" },
+    };
+  }
+
+  if (
+    !context.isComposing &&
+    context.targetKind === "note-body" &&
+    state.pending === null &&
+    mode === "normal" &&
+    key === '"'
+  ) {
+    return {
+      state: {
+        pending: { kind: "register", key: '"', count: state.count },
+        count: "",
+      },
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: parsedCount(state.count),
+      action: { kind: "pending", detail: "pending:keymap" },
+    };
+  }
+
+  if (
+    !context.isComposing &&
+    context.targetKind === "note-body" &&
+    state.pending === null &&
+    mode === "insert" &&
+    key === "Ctrl+r"
+  ) {
+    return {
+      state: {
+        pending: { kind: "insert-register", key: "Ctrl+r", count: "" },
+        count: "",
+      },
+      sequence,
+      resolvedCommand: null,
+      operator: null,
+      count: 1,
+      action: { kind: "pending", detail: "pending:keymap" },
     };
   }
 

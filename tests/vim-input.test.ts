@@ -13,6 +13,35 @@ const noteContext = {
 };
 
 describe("Memoka Vim input grammar", () => {
+  it("parses one-shot Normal and Insert register names", () => {
+    const quoted = advanceVimInput(
+      createVimInputState(),
+      "normal",
+      '"',
+      noteContext,
+    );
+    expect(quoted.state.pending).toMatchObject({ kind: "register" });
+    const selected = advanceVimInput(quoted.state, "normal", "a", noteContext);
+    expect(selected.action).toEqual({ kind: "register-selected", name: "a" });
+    expect(
+      advanceVimInput(selected.state, "normal", "d", noteContext).state.pending,
+    ).toMatchObject({ kind: "operator" });
+    const inserting = advanceVimInput(
+      createVimInputState(),
+      "insert",
+      "Ctrl+r",
+      noteContext,
+    );
+    expect(inserting.state.pending).toMatchObject({ kind: "insert-register" });
+    expect(
+      advanceVimInput(inserting.state, "insert", "+", noteContext).action,
+    ).toEqual({ kind: "insert-register", name: "+" });
+    expect(
+      advanceVimInput(quoted.state, "normal", "Escape", noteContext).action
+        .kind,
+    ).toBe("unmapped");
+  });
+
   it("parses Normal f/F with literal characters, counts, hint prefixes, and cancellation", () => {
     const started = advanceVimInput(
       createVimInputState(),

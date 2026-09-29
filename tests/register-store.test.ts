@@ -14,6 +14,23 @@ function testSchema(): Schema {
 }
 
 describe("Memoka Workspace-session unnamed register", () => {
+  it("routes yanks, deletions, named targets, and black-hole writes", () => {
+    const store = new VimRegisterStore();
+    const value = (text: string): VimRegister => ({ kind: "text", text });
+    store.record(value("yank"), "yank");
+    expect(store.read(undefined, "0")?.text).toBe("yank");
+    store.record(value("first"), "delete", "a");
+    store.record(value("second"), "delete");
+    expect(store.read()?.text).toBe("second");
+    expect(store.read(undefined, "0")?.text).toBe("yank");
+    expect(store.read(undefined, "1")?.text).toBe("second");
+    expect(store.read(undefined, "2")?.text).toBe("first");
+    expect(store.read(undefined, "a")?.text).toBe("first");
+    store.record(value("discarded"), "delete", "_");
+    expect(store.read()?.text).toBe("second");
+    expect(store.read(undefined, "1")?.text).toBe("second");
+  });
+
   it("rebuilds structural content against the destination schema", () => {
     const sourceSchema = testSchema();
     const destinationSchema = testSchema();

@@ -354,7 +354,7 @@ describe("Memoka attachment boundary", () => {
     }
   });
 
-  it("puts externally copied files with p/P while preserving later local register puts", async () => {
+  it('puts externally copied files with "+p/P while preserving later local register puts', async () => {
     const port = new MemoryAttachmentPort();
     const importNativePaths = vi.fn(
       async (
@@ -409,6 +409,8 @@ describe("Memoka attachment boundary", () => {
       editor.commands.setTextSelection(1);
       press(editor, "Escape");
 
+      press(editor, '"');
+      press(editor, "+");
       expect(press(editor, "p").defaultPrevented).toBe(true);
       await vi.waitFor(() =>
         expect(
@@ -417,13 +419,15 @@ describe("Memoka attachment boundary", () => {
       );
       expect(importNativePaths).toHaveBeenCalledTimes(1);
 
+      press(editor, '"');
+      press(editor, "+");
       expect(press(editor, "P").defaultPrevented).toBe(true);
       await vi.waitFor(() =>
         expect(
           editor.state.doc.content.content.map((node) => node.type.name),
         ).toEqual(["paragraph", "attachment", "attachment", "paragraph"]),
       );
-      expect(readPreferredClipboard).toHaveBeenCalledTimes(1);
+      expect(readPreferredClipboard).toHaveBeenCalledTimes(2);
       expect(importNativePaths).toHaveBeenCalledTimes(2);
       const firstAttachmentId =
         importNativePaths.mock.calls[0]![2][0]!.attachmentId;
@@ -443,12 +447,14 @@ describe("Memoka attachment boundary", () => {
       expect(editor.state.doc.textContent).toContain("first");
 
       window.dispatchEvent(new Event("focus"));
+      press(editor, '"');
+      press(editor, "+");
       press(editor, "2");
       press(editor, "p");
       await vi.waitFor(() =>
         expect(importNativePaths).toHaveBeenCalledTimes(3),
       );
-      expect(readPreferredClipboard).toHaveBeenCalledTimes(2);
+      expect(readPreferredClipboard).toHaveBeenCalledTimes(3);
       expect(importNativePaths.mock.calls[2]![2]).toHaveLength(2);
     } finally {
       adapter.destroy();
@@ -515,6 +521,8 @@ describe("Memoka attachment boundary", () => {
       });
       editor.commands.setTextSelection(1);
       press(editor, "Escape");
+      press(editor, '"');
+      press(editor, "+");
       press(editor, "2");
       press(editor, "p");
       await vi.waitFor(() =>

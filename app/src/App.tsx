@@ -69,6 +69,10 @@ import {
   type ApplicationCommandPickerSession,
 } from "./components/ApplicationCommandPicker";
 import {
+  RegisterPicker,
+  type RegisterPickerSession,
+} from "./components/RegisterPicker";
+import {
   ApplicationNoteSearch,
   type ApplicationNoteSearchSession,
 } from "./components/ApplicationNoteSearch";
@@ -356,6 +360,8 @@ export function App({
     useState<ApplicationCommandLineSession | null>(null);
   const [commandPicker, setCommandPicker] =
     useState<ApplicationCommandPickerSession | null>(null);
+  const [registerPicker, setRegisterPicker] =
+    useState<RegisterPickerSession | null>(null);
   const [noteSearch, setNoteSearch] =
     useState<ApplicationNoteSearchSession | null>(null);
   const [blockTypePicker, setBlockTypePicker] =
@@ -1211,6 +1217,23 @@ export function App({
       setTableActionPicker(null);
       setCodeActionPicker(null);
       setCommandPicker(session);
+    },
+    [clearEditorFocusRequests],
+  );
+
+  const openRegisterPicker = useCallback(
+    (session: RegisterPickerSession): void => {
+      clearEditorFocusRequests();
+      setSymbolPicker(null);
+      setWorkspaceSearch(null);
+      setCommandLine(null);
+      setCommandPicker(null);
+      setNoteSearch(null);
+      setBlockTypePicker(null);
+      setInlineFormatPicker(null);
+      setTableActionPicker(null);
+      setCodeActionPicker(null);
+      setRegisterPicker(session);
     },
     [clearEditorFocusRequests],
   );
@@ -2502,6 +2525,11 @@ export function App({
   ): void => {
     if (command === "application.command_picker") {
       openCommandPicker({ restoreFocus });
+    } else if (command === "register.picker") {
+      setCommandMessage(
+        `${keyConfig.leaderKey}r · レジスタ · この画面では利用できません`,
+      );
+      queueMicrotask(restoreFocus);
     } else if (command === "context.action_picker") {
       const shortcut = leaderShortcutForCommand(command);
       setCommandMessage(
@@ -3653,6 +3681,7 @@ export function App({
         onNoteSearch={openNoteSearch}
         onCommandLine={openCommandLine}
         onCommandPicker={openCommandPicker}
+        onRegisterPicker={openRegisterPicker}
         onApplicationCommand={executeVimApplicationCommand}
         onWindowCommand={executeVimWindowCommand}
         keyConfig={keyConfig}
@@ -4127,6 +4156,11 @@ export function App({
           }}
           onClose={() => setCommandPicker(null)}
           focused
+        />
+      ) : registerPicker ? (
+        <RegisterPicker
+          session={registerPicker}
+          onClose={() => setRegisterPicker(null)}
         />
       ) : commandLine ? (
         <ApplicationCommandLine
@@ -4775,6 +4809,7 @@ function EditorWindow({
   onNoteSearch,
   onCommandLine,
   onCommandPicker,
+  onRegisterPicker,
   onApplicationCommand,
   onWindowCommand,
   keyConfig,
@@ -4807,6 +4842,7 @@ function EditorWindow({
   onNoteSearch: (session: ApplicationNoteSearchSession) => void;
   onCommandLine: (session: ApplicationCommandLineSession) => void;
   onCommandPicker: (session: ApplicationCommandPickerSession) => void;
+  onRegisterPicker: (session: RegisterPickerSession) => void;
   onApplicationCommand: (command: VimApplicationCommand) => void;
   onWindowCommand: (
     windowId: string,
@@ -5007,6 +5043,15 @@ function EditorWindow({
         onCommandPicker({
           restoreFocus: focusAttachedEditor,
         }),
+      onRegisterPicker: () => {
+        if (!adapterRef.current) return;
+        onRegisterPicker({
+          restoreFocus: focusAttachedEditor,
+          read: (name) =>
+            adapterRef.current?.registerPreview(name) ?? Promise.resolve(null),
+          select: (name) => adapterRef.current?.armRegister(name),
+        });
+      },
       onOpenImage: (attachmentId, newTab, origin) =>
         newTab
           ? runtime.openImageInNewTab(attachmentId, origin)
@@ -5052,6 +5097,7 @@ function EditorWindow({
     onNoteSearch,
     onCommandLine,
     onCommandPicker,
+    onRegisterPicker,
     onApplicationCommand,
     onWindowCommand,
     keyConfig,

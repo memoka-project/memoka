@@ -48,10 +48,15 @@ Insert modeのnative pasteは、次の優先順位で処理する。
 ListItem直下Paragraph以外では、単一GFM Tableとして厳格にparseできるplain textだけをTable交換形式として扱う。それ以外のplain textから
 Markdownらしさを一般的に推測しない。
 
-Normalの`p/P`は通常はWorkspace内registerを使う。OS focusが戻った後にnative Clipboardを取り込む対象は、
-内部MIME、外部file、raster画像data、HTML/GFM/TSV Table、Markdown、HTML、plain textである。
+Normalの`p/P`はWorkspace内の無名registerを使い、OS focusが戻っても自動で上書きしない。
+`"+p/P`はOS Clipboardを明示して読み、`"*p/P`はLinuxのPRIMARY selectionを読む。Windowsでは`*`は`+`と同じClipboardを指す。
+明示読取の対象は内部MIME、外部file、raster画像data、HTML/GFM/TSV Table、Markdown、HTML、plain textである。
 text registerの`p`はcaretの後、`P`は前へ貼り、貼り付け後caretは挿入した最後の文字または構造対象へ移る。
 Table内では`p/P`を同じ操作として現在Cellを左上にする。
+
+通常のyankは無名registerと`0`を更新し、OS Clipboardの`+`にも公開する。通常の削除・変更は無名registerと
+`1`～`9`の履歴を更新し、OS Clipboardを上書きしない。明示した`+`/`*`へのyank・削除・変更は指定したOS
+Clipboardへ書く。`_`への操作は内部registerもOS Clipboardも更新しない。
 
 ### テキスト形式を明示するpaste
 

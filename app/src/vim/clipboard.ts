@@ -1226,10 +1226,14 @@ export class BrowserVimClipboard {
     );
   }
 
-  async readPreferred(): Promise<PreferredClipboardFormats | null> {
+  async readPreferred(
+    selection: "clipboard" | "primary" = "clipboard",
+  ): Promise<PreferredClipboardFormats | null> {
     if (!this.supportsNativeBridge()) return null;
     try {
-      const value = await invoke<unknown>("clipboard_read_preferred");
+      const value = await invoke<unknown>("clipboard_read_preferred", {
+        selection,
+      });
       return validatePreferredClipboardFormats(value);
     } catch {
       return null;
@@ -1300,6 +1304,7 @@ export class BrowserVimClipboard {
     register: VimRegister,
     schema: Schema,
     resolveInternalLinkTitle?: InternalLinkClipboardTitleResolver,
+    selection: "clipboard" | "primary" = "clipboard",
   ): Promise<VimClipboardWriteResult> {
     const formats = encodeVimClipboard(
       register,
@@ -1309,6 +1314,7 @@ export class BrowserVimClipboard {
     if (this.supportsNativeBridge()) {
       try {
         await invoke("clipboard_write_rich", {
+          selection,
           formats: {
             internal: formats[MEMOKA_CLIPBOARD_MIME],
             html: formats["text/html"],
@@ -1322,6 +1328,8 @@ export class BrowserVimClipboard {
         // A platform without the native bridge can still use the Web API.
       }
     }
+
+    if (selection === "primary") return "unavailable";
 
     const clipboard = navigator.clipboard;
     if (!clipboard) return "unavailable";

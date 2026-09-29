@@ -76,13 +76,14 @@ struct RichFileClipboardPayloads {
 pub(crate) async fn clipboard_write_rich(
     app: AppHandle,
     formats: RichClipboardFormats,
+    selection: Option<String>,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         validate_rich_clipboard_formats(&formats)?;
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         app.run_on_main_thread(move || {
-            let _ = sender.try_send(write_linux_rich_clipboard(formats));
+            let _ = sender.try_send(write_linux_rich_clipboard(formats, selection.as_deref()));
         })
         .map_err(|error| format!("cannot schedule GTK Clipboard write: {error}"))?;
         return receiver
@@ -93,7 +94,7 @@ pub(crate) async fn clipboard_write_rich(
 
     #[cfg(target_os = "windows")]
     {
-        let _ = app;
+        let _ = (app, selection);
         validate_rich_clipboard_formats(&formats)?;
         return tauri::async_runtime::spawn_blocking(move || {
             windows_clipboard::write_rich_clipboard(formats)
@@ -146,12 +147,13 @@ pub(crate) async fn clipboard_write_text(app: AppHandle, text: String) -> Result
 #[tauri::command]
 pub(crate) async fn clipboard_read_preferred(
     app: AppHandle,
+    selection: Option<String>,
 ) -> Result<Option<PreferredClipboardFormats>, String> {
     #[cfg(target_os = "linux")]
     {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         app.run_on_main_thread(move || {
-            let _ = sender.try_send(read_linux_preferred_clipboard());
+            let _ = sender.try_send(read_linux_preferred_clipboard(selection.as_deref()));
         })
         .map_err(|error| format!("cannot schedule GTK Clipboard read: {error}"))?;
         return receiver
@@ -162,7 +164,7 @@ pub(crate) async fn clipboard_read_preferred(
 
     #[cfg(target_os = "windows")]
     {
-        let _ = app;
+        let _ = (app, selection);
         return tauri::async_runtime::spawn_blocking(windows_clipboard::read_preferred_clipboard)
             .await
             .map_err(|error| format!("Windows Clipboard read task failed: {error}"))?;
@@ -232,12 +234,15 @@ fn validate_rich_clipboard_formats(formats: &RichClipboardFormats) -> Result<(),
 }
 
 #[cfg(target_os = "linux")]
-fn write_linux_rich_clipboard(formats: RichClipboardFormats) -> Result<(), String> {
+fn write_linux_rich_clipboard(
+    formats: RichClipboardFormats,
+    selection: Option<&str>,
+) -> Result<(), String> {
     let payloads = rich_clipboard_targets(&formats)
         .into_iter()
         .map(|(mime_type, content)| (mime_type.to_owned(), content.to_owned()))
         .collect::<Vec<_>>();
-    write_linux_clipboard_payloads(payloads, None, None, "rich")
+    write_linux_clipboard_payloads_to_selection(payloads, None, None, "rich", selection)
 }
 
 #[cfg(target_os = "linux")]
@@ -261,6 +266,17 @@ fn write_linux_clipboard_payloads(
     image: Option<gdk_pixbuf::Pixbuf>,
     ownership_kind: &str,
 ) -> Result<(), String> {
+    write_linux_clipboard_payloads_to_selection(payloads, uri_payload, image, ownership_kind, None)
+}
+
+#[cfg(target_os = "linux")]
+fn write_linux_clipboard_payloads_to_selection(
+    payloads: Vec<(String, String)>,
+    uri_payload: Option<Vec<String>>,
+    image: Option<gdk_pixbuf::Pixbuf>,
+    ownership_kind: &str,
+    selection: Option<&str>,
+) -> Result<(), String> {
     let mut targets = payloads
         .iter()
         .enumerate()
@@ -282,7 +298,11 @@ fn write_linux_clipboard_payloads(
             image_info,
         ));
     }
-    let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+    let clipboard = gtk::Clipboard::get(if selection == Some("primary") {
+        &gdk::SELECTION_PRIMARY
+    } else {
+        &gdk::SELECTION_CLIPBOARD
+    });
     let wrote = clipboard.set_with_data(&targets, move |_clipboard, selection, index| {
         if image_info == Some(index) {
             if let Some(image) = &image {
@@ -341,8 +361,14 @@ fn rich_clipboard_targets(formats: &RichClipboardFormats) -> Vec<(&'static str, 
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_preferred_clipboard() -> Result<Option<PreferredClipboardFormats>, String> {
-    let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+fn read_linux_preferred_clipboard(
+    selection: Option<&str>,
+) -> Result<Option<PreferredClipboardFormats>, String> {
+    let clipboard = gtk::Clipboard::get(if selection == Some("primary") {
+        &gdk::SELECTION_PRIMARY
+    } else {
+        &gdk::SELECTION_CLIPBOARD
+    });
     let mut available_types: Vec<_> = clipboard
         .wait_for_targets()
         .ok_or_else(|| "GTK Clipboard did not expose target MIME types".to_owned())?
