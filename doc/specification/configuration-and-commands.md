@@ -214,6 +214,8 @@ Enterは、引数を取らないCommandまたは妥当な引数を入力済み�
 | ------------------------------------------------- | ----------------------------------------------------------------------------- |
 | `:tree`                                           | Treeを開いてfocus                                                             |
 | `:new-note`                                       | Treeに表示しない空Noteを作り、現在Windowで編集可能にする                      |
+| `:new-daily-note`                                 | ローカル日付`YYYY-MM-DD`のTree非表示Noteを毎回作成し、現在Windowで開く        |
+| `:open-daily-note`                                | 同名のlive Noteを開き、なければTree非表示Noteを作成して現在Windowで開く       |
 | `:note-tree [show                                 | hide]`                                                                        | active NoteのTreeルート表示状態を確認・変更 |
 | `:group`                                          | 選択Entryの子（選択なしならtop-level）にgroup作成                             |
 | `:rename-group`                                   | 選択groupのname変更                                                           |

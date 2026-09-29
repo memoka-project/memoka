@@ -8,6 +8,44 @@ import { MemoryPersistencePort } from "../app/src/core/persistence";
 import { CoreRuntime } from "../app/src/core/runtime";
 
 describe(":new-note", () => {
+  it("places the caret at the end of a new Note title", async () => {
+    const runtime = await CoreRuntime.open(new MemoryPersistencePort());
+    const root = document.createElement("div");
+    document.body.append(root);
+    try {
+      const title = "題名😀";
+      const { noteId } = await runtime.createUnfiledNote("window-1", title);
+      const { adapter, editor } = runtime.editorForTesting("window-1", root, {
+        directBodyOnly: false,
+      });
+      try {
+        let headerEnd = -1;
+        editor.state.doc.descendants((node, position) => {
+          if (
+            node.type.name === "sectionHeader" &&
+            node.attrs.sectionId === noteId
+          ) {
+            headerEnd = position + node.nodeSize - 1;
+            return false;
+          }
+          return true;
+        });
+        expect(headerEnd).toBeGreaterThan(0);
+        expect(editor.state.selection.anchor).toBe(headerEnd);
+        expect(editor.state.selection.head).toBe(headerEnd);
+        expect(runtime.snapshot().windows[0]?.selection).toEqual({
+          anchor: headerEnd,
+          head: headerEnd,
+        });
+      } finally {
+        adapter.destroy();
+      }
+    } finally {
+      runtime.destroy();
+      root.remove();
+    }
+  });
+
   it("keeps the created Note out of Tree and preserves it across restart and normalization", async () => {
     const persistence = new MemoryPersistencePort();
     let runtime = await CoreRuntime.open(persistence);

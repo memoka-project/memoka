@@ -29,6 +29,8 @@ export type ApplicationCommandId =
   | "namespace.rename_group"
   | "utility.tree"
   | "note.new"
+  | "note.new_daily"
+  | "note.open_daily"
   | "note.tree_visibility"
   | "workspace.search_trash"
   | "workspace.search_buffers"
@@ -148,6 +150,20 @@ export const APPLICATION_COMMANDS: readonly ApplicationCommandDefinition[] = [
     name: "new-note",
     aliases: [],
     description: "Treeに表示しない新しいノートを作り、現在のWindowで開く",
+    argument: "none",
+  },
+  {
+    id: "note.new_daily",
+    name: "new-daily-note",
+    aliases: [],
+    description: "今日の日付をタイトルにした新しいノートを作る",
+    argument: "none",
+  },
+  {
+    id: "note.open_daily",
+    name: "open-daily-note",
+    aliases: [],
+    description: "今日の日付のノートを開き、なければ作る",
     argument: "none",
   },
   {

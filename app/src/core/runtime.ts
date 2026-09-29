@@ -331,6 +331,15 @@ interface CreateNewNoteInput {
   fault?: CommitFault;
 }
 
+function dailyNoteTitle(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) throw new Error("Invalid date");
+  const year = String(date.getFullYear()).padStart(4, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 interface PreparedManagedNote {
   readonly handle: ManagedCrdtDocument<ProductDocument>;
   readonly attachAfterCommit: boolean;
@@ -530,6 +539,7 @@ export class CoreRuntime {
   private workspaceSearchIndexWarning: string | null = null;
   private searchRankingState: SearchRankingState = emptySearchRankingState();
   private localStateQueue: Promise<void> = Promise.resolve();
+  private dailyNoteQueue: Promise<void> = Promise.resolve();
   /**
    * Window-local projections are not part of NoteDoc durability. Merge all
    * mode/selection/scroll changes produced in one paint into one local-ui
@@ -1536,17 +1546,61 @@ export class CoreRuntime {
     });
   }
 
-  createUnfiledNote(windowId: string): Promise<{ noteId: string }> {
+  createUnfiledNote(windowId: string, title = ""): Promise<{ noteId: string }> {
     return this.executeCommand({
       name: "note.create_unfiled",
       operationId: this.idFactory(),
       source: "ui",
       payload: {
         noteId: this.idFactory(),
+        title,
         createdAt: this.clock(),
         windowId,
       },
     });
+  }
+
+  async createDailyNote(
+    windowId: string,
+  ): Promise<{ noteId: string; title: string }> {
+    const title = dailyNoteTitle(this.clock());
+    return this.enqueueDailyNote(async () => ({
+      ...(await this.createUnfiledNote(windowId, title)),
+      title,
+    }));
+  }
+
+  async openDailyNote(
+    windowId: string,
+  ): Promise<{ noteId: string; title: string; created: boolean }> {
+    const title = dailyNoteTitle(this.clock());
+    return this.enqueueDailyNote(async () => {
+      const existing = listNoteMetadata(this.workspaceDocument)
+        .filter((note) => !note.deletedAt && note.title === title)
+        .sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.noteId.localeCompare(right.noteId),
+        )[0];
+      if (existing) {
+        await this.openNote(windowId, existing.noteId);
+        return { noteId: existing.noteId, title, created: false };
+      }
+      return {
+        ...(await this.createUnfiledNote(windowId, title)),
+        title,
+        created: true,
+      };
+    });
+  }
+
+  private enqueueDailyNote<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.dailyNoteQueue.then(operation);
+    this.dailyNoteQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   setActiveNoteTreeVisibility(
@@ -4411,7 +4465,7 @@ export class CoreRuntime {
       this.createNewNote({
         ...envelope.payload,
         operationId: envelope.operationId,
-        title: "",
+        title: envelope.payload.title ?? "",
         treeHidden: true,
         parentNoteId: null,
         afterNoteId: null,
@@ -6371,6 +6425,7 @@ export class CoreRuntime {
     const nextApplicationState = this.creationApplicationWindowState(
       noteId,
       windowId,
+      title,
     );
     const changedWindowIds = Object.keys(nextApplicationState.windows).filter(
       (candidateWindowId) =>
@@ -6505,19 +6560,30 @@ export class CoreRuntime {
   private creationApplicationWindowState(
     noteId: string,
     windowId: string | undefined,
+    title: string,
   ): ApplicationWindowState {
+    let next: ApplicationWindowState;
+    let targetWindowId: string;
     if (!this.applicationWindowState) {
-      return this.createSafeApplicationWindowState(noteId);
+      next = this.createSafeApplicationWindowState(noteId);
+      targetWindowId = "window-1";
+    } else {
+      if (!windowId || !this.applicationWindowState.windows[windowId]) {
+        throw new Error(`Unknown window: ${windowId ?? "(missing)"}`);
+      }
+      next = openBufferInWindow(
+        this.applicationWindowState,
+        windowId,
+        createNoteBuffer(noteId),
+        { mode: "insert" },
+      );
+      targetWindowId = windowId;
     }
-    if (!windowId || !this.applicationWindowState.windows[windowId]) {
-      throw new Error(`Unknown window: ${windowId ?? "(missing)"}`);
-    }
-    return openBufferInWindow(
-      this.applicationWindowState,
-      windowId,
-      createNoteBuffer(noteId),
-      { mode: "insert" },
-    );
+    // The Root Header starts at the first document position.
+    const titleEnd = 1 + title.length;
+    return updateWindowView(next, targetWindowId, {
+      selection: { anchor: titleEnd, head: titleEnd },
+    });
   }
 
   private requireLiveMetadata(noteId: string): NoteMetadata {

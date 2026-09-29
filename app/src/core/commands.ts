@@ -37,6 +37,7 @@ export interface CoreCommandPayloads {
   };
   "note.create_unfiled": {
     noteId: string;
+    title?: string;
     createdAt: string;
     windowId: string;
     fault?: CommitFault;

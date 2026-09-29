@@ -60,6 +60,17 @@ describe("Memoka Application Command-line", () => {
     expect(parseApplicationCommand(":new-note extra")).toMatchObject({
       kind: "error",
     });
+    expect(parseApplicationCommand(":new-daily-note")).toMatchObject({
+      kind: "command",
+      command: { id: "note.new_daily" },
+    });
+    expect(parseApplicationCommand(":open-daily-note")).toMatchObject({
+      kind: "command",
+      command: { id: "note.open_daily" },
+    });
+    expect(parseApplicationCommand(":open-daily-note extra")).toMatchObject({
+      kind: "error",
+    });
     expect(parseApplicationCommand(":note-tree show")).toMatchObject({
       kind: "command",
       command: { id: "note.tree_visibility" },
@@ -187,7 +198,7 @@ describe("Memoka Application Command-line", () => {
       message: "未対応のCommandです: backup-status",
     });
     expect(applicationCommandHelp()).toBe(
-      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :new-note · :note-tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :ui-font · :note-font-ja · :note-font-latin · :note-font-mono · :note-line-height · :block-gap · :list-item-gap · :section-title-gap-before · :section-title-gap-after · :section-title-size · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
+      ":sync · :sync-settings · :backup · :backup-settings · :history · :recovery · :group · :rename-group · :tree · :new-note · :new-daily-note · :open-daily-note · :note-tree · :trash · :buffers · :outline · :split · :vsplit · :close · :bdelete · :tabnew · :tabclose · :tabnext · :tabprevious · :paste-markdown · :paste-html · :attach · :image-width · :new-workspace · :switch-workspace · :update · :version · :diagnostics · :colorscheme · :ui-font · :note-font-ja · :note-font-latin · :note-font-mono · :note-line-height · :block-gap · :list-item-gap · :section-title-gap-before · :section-title-gap-after · :section-title-size · :zoom · :note-width · :line-number-min-width · :indent-width · :word-segmentation · :line-break-segmentation · :quit",
     );
   });
 

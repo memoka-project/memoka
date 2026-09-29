@@ -555,9 +555,7 @@ describe("Details blocks", () => {
 
   it("restores a Details fold after restarting", async () => {
     const persistence = new MemoryPersistencePort();
-    const runtime = await CoreRuntime.open(persistence, {
-      initialTitle: "Details fold persistence",
-    });
+    const runtime = await CoreRuntime.open(persistence);
     const root = document.createElement("div");
     document.body.append(root);
     const attached = runtime.editorForTesting("window-1", root, {
@@ -605,6 +603,9 @@ describe("Details blocks", () => {
     root.remove();
 
     const reopened = await CoreRuntime.open(persistence);
+    expect(
+      reopened.windows.get("window-1")?.detailsFoldOverrides,
+    ).toMatchObject({ [detailsId]: false });
     const reopenedRoot = document.createElement("div");
     document.body.append(reopenedRoot);
     const reopenedEditor = reopened.editorForTesting("window-1", reopenedRoot, {

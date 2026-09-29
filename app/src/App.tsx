@@ -2770,6 +2770,36 @@ export function App({
           },
         );
         return;
+      case "note.new_daily":
+        void runtime.createDailyNote(effectiveTargetWindowId).then(
+          ({ title }) => {
+            setCommandMessage(`:new-daily-note · ${title}を作成しました`);
+            requestEditorFocus(effectiveTargetWindowId);
+          },
+          (error: unknown) => {
+            setCommandMessage(
+              error instanceof Error ? error.message : String(error),
+            );
+            commandRestoreFocus();
+          },
+        );
+        return;
+      case "note.open_daily":
+        void runtime.openDailyNote(effectiveTargetWindowId).then(
+          ({ title, created }) => {
+            setCommandMessage(
+              `:open-daily-note · ${title}を${created ? "作成しました" : "開きました"}`,
+            );
+            requestEditorFocus(effectiveTargetWindowId);
+          },
+          (error: unknown) => {
+            setCommandMessage(
+              error instanceof Error ? error.message : String(error),
+            );
+            commandRestoreFocus();
+          },
+        );
+        return;
       case "note.tree_visibility": {
         const target = runtime
           .snapshot()

@@ -141,6 +141,7 @@ Tree/Outline共通で、選択背景は親の階層縦線位置より4px右か�
 
 TreeはNamespaceEntryの親子構造をdepth-firstで表示する。選択と折り畳みはEntry IDをキーとしてTabPage localに保持する。
 `:new-note`で作ったNoteとその子孫のEntryは通常のTreeルート段から除く。このNoteはWorkspaceに保存され、他の投影では通常のlive Noteとして扱う。
+`:new-daily-note`は端末のローカル日付を`YYYY-MM-DD`形式のtitleとするTree非表示のNoteを毎回新規作成し、現在Windowに開く。`:open-daily-note`は同じtitleのlive NoteがあればそのNoteを現在Windowに開き、なければ同じ形式のTree非表示Noteを作成して開く。同名Noteが複数ある場合は作成日時が最も古いNoteを選び、同時刻ではNote ID順とする。Trash内のNoteは再利用しない。
 Treeは「すべてのノート」、水平線、active WindowのNoteの最上位からの祖先経路とそのNoteの全子孫、水平線、通常のTreeルート階層の順に表示する。
 中段はTree非表示のEntryも含める。Note以外のBufferでは中段を省く。水平線は後続に表示行がある場合だけ表示し、通常のTreeルート階層が空ならその直前の水平線を省く。同じEntryは中段と下段の両方に表示できる。
 水平線は選択・キーボード移動の対象外とし、2つの段で選択行と折り畳み状態を独立して保持する。Tree操作はどちらの段でも同じNamespace Entryに作用する。
@@ -158,7 +159,7 @@ chevronのclickは対象を選択して開閉し、Treeにfocusを保つ。Note�
 新規Noteの空titleは「新しいノート」として表示する。Tree上でrenameせず、NoteをBufferへ開いてRoot Headerを編集する。
 未選択Entryの行をclickすると、そのEntryを選択してTreeにDOM focusを保ち、Windowは変更しない。選択済みNoteの行を再度clickすると
 現在WindowへNoteを開き、EditorへDOM focusを移す。
-WindowはNote IDごとに安定したcaret位置、Focused Section、scroll位置、viewport内でのcaretの高さをlocal UI stateへ保存し、Tree・Note検索の結果・Buffer Searchから戻る際に復元する。再起動後も保持し、別Windowとは共有しない。復元直後の再描画で本文の高さが変わった場合はcaretの画面内位置を基準にscrollを補正し、次の明示的な移動・手動scrollを優先する。未訪問Noteはtitle先頭へ置く。消えたSection・本文位置は安全な表示位置へfallbackし、明示的なSection・本文検索結果やlinkの移動先を優先する。新規Windowには他Windowの記憶位置をコピーしない。
+WindowはNote IDごとに安定したcaret位置、Focused Section、scroll位置、viewport内でのcaretの高さをlocal UI stateへ保存し、Tree・Note検索の結果・Buffer Searchから戻る際に復元する。再起動後も保持し、別Windowとは共有しない。復元直後の再描画で本文の高さが変わった場合はcaretの画面内位置を基準にscrollを補正し、次の明示的な移動・手動scrollを優先する。新規作成したNoteはtitle末尾へ置き、未訪問の既存Noteはtitle先頭へ置く。消えたSection・本文位置は安全な表示位置へfallbackし、明示的なSection・本文検索結果やlinkの移動先を優先する。新規Windowには他Windowの記憶位置をコピーしない。
 mouse hoverだけでは選択を変更しない。
 mouseによる並べ替え、作成、inline renameは提供しない。
 

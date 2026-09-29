@@ -794,7 +794,7 @@ describe("Memoka Workspace search", () => {
     runtime.destroy();
   });
 
-  it("opens a result into an empty Window without inventing a Jump origin", async () => {
+  it("restores a new Note's caret from an empty Window without inventing a Jump origin", async () => {
     const runtime = await CoreRuntime.open(new MemoryPersistencePort(), {
       idFactory: deterministicIds(),
       initialTitle: "source",
@@ -824,8 +824,8 @@ describe("Memoka Workspace search", () => {
     const opened = runtime.editorForTesting("window-1", root, {
       directBodyOnly: false,
     });
-    expect(opened.editor.state.selection.from).toBe(1);
-    expect(opened.adapter.vimSnapshot.action).toBe("jump:search:changed");
+    expect(opened.editor.state.selection.from).toBe("empty target".length);
+    expect(opened.adapter.vimSnapshot.action).toBe("ready");
 
     opened.adapter.destroy();
     root.remove();
